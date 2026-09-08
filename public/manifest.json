@@ -1,9 +1,9 @@
 {
-  "name":"Radar 4x4 Brasil",
-  "short_name":"Radar 4x4",
-  "start_url":"/",
-  "display":"standalone",
-  "background_color":"#0f0f0f",
-  "theme_color":"#171717",
-  "description":"Agenda de encontros, trilhas, expedições 4x4 e overland por região do Brasil."
+  "name": "Radar 4x4 Brasil",
+  "short_name": "Radar 4x4",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#e7dcc1",
+  "theme_color": "#b85f1d",
+  "description": "Agenda de encontros, trilhas, expedições 4x4 e overland por região do Brasil."
 }
