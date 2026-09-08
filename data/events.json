@@ -1,0 +1,53 @@
+[
+  {
+    "id":"mit-outdoor-lagoa-santa-2026","title":"Mitsubishi Outdoor — Lagoa Santa","category":"Encontro / Passeio","region":"Sudeste","state":"MG","city":"Lagoa Santa","country":"Brasil","start":"2026-09-11","end":"2026-09-11","status":"Inscrições abertas","source":"Mitsubishi Outdoor","sourceUrl":"https://www.mitsubishimotors.com.br/ralis-e-passeios/mitsubishi-outdoor","summary":"Etapa do Mitsubishi Outdoor com atividades 4x4, esportes e estratégia ao ar livre.","tags":["4x4","família","Mitsubishi"]
+  },
+  {
+    "id":"trilha-erva-mate-2026","title":"9ª Trilha da Erva Mate — Taz na Lama","category":"Trilha / Passeio","region":"Sul","state":"RS","city":"Ilópolis","country":"Brasil","start":"2026-09-11","end":"2026-09-12","status":"Programado","source":"Tribos Off Road","sourceUrl":"https://tribosoffroad.com.br/eventos/","summary":"Evento de trilha off-road divulgado no calendário Tribos Off Road.","tags":["trilha","jeep clube","lama"]
+  },
+  {
+    "id":"coxilha-rica-2026","title":"Coxilha Rica Histórica — Raízes do Sul","category":"Expedição 4x4","region":"Sul","state":"SC","city":"Serra Catarinense","country":"Brasil","start":"2026-09-18","end":"2026-09-20","status":"Lotada","source":"4x4 Mundo Afora","sourceUrl":"https://4x4mundoafora.com.br/proximas-expedicoes/","summary":"Expedição 4x4 de aproximadamente 220 km pela região da Coxilha Rica.","tags":["expedição","história","serra"]
+  },
+  {
+    "id":"trilha-cruzeta-2026","title":"Trilha Cruzeta Jeep Clube","category":"Trilha / Passeio","region":"Sul","state":"RS","city":"Veranópolis","country":"Brasil","start":"2026-09-18","end":"2026-09-19","status":"Programado","source":"Tribos Off Road","sourceUrl":"https://tribosoffroad.com.br/eventos/","summary":"Trilha organizada por Jeep Clube em Veranópolis-RS.","tags":["trilha","jeep clube"]
+  },
+  {
+    "id":"aparados-off-road-2026","title":"Aparados Off Road","category":"Encontro / Passeio","region":"Sul","state":"RS","city":"Campos de Cima da Serra","country":"Brasil","start":"2026-09-23","end":"2026-09-26","status":"Programado","source":"Tribos Off Road","sourceUrl":"https://tribosoffroad.com.br/eventos/","summary":"Encontro off-road na região dos Campos de Cima da Serra Gaúcha.","tags":["encontro","serra","4x4"]
+  },
+  {
+    "id":"trilha-pescador-2026","title":"17ª Trilha do Pescador","category":"Trilha / Passeio","region":"Sul","state":"RS","city":"Arroio do Sal","country":"Brasil","start":"2026-09-25","end":"2026-09-26","status":"Programado","source":"Tribos Off Road","sourceUrl":"https://tribosoffroad.com.br/eventos/","summary":"Trilha promovida pelo Jeep Clube Cia da Trilha.","tags":["trilha","jeep clube","litoral"]
+  },
+  {
+    "id":"trilha-farrapos-2026","title":"4ª Trilha dos Farrapos","category":"Trilha / Passeio","region":"Sul","state":"RS","city":"Frederico Westphalen","country":"Brasil","start":"2026-09-25","end":"2026-09-26","status":"Programado","source":"Tribos Off Road","sourceUrl":"https://tribosoffroad.com.br/eventos/","summary":"Trilha 4x4 organizada pelo Jeep Clube Frederico Westphalen.","tags":["trilha","jeep clube"]
+  },
+  {
+    "id":"canastra-experience-2026","title":"Serra da Canastra — Experience Offroad","category":"Expedição 4x4","region":"Sudeste","state":"MG","city":"Serra da Canastra","country":"Brasil","start":"2026-09-28","end":"2026-10-02","status":"Próxima data","source":"Experience Offroad","sourceUrl":"https://experienceoffroadbr.com.br/","summary":"Expedição de 5 dias pela Serra da Canastra, incluindo atrativos naturais e trechos 4x4.","tags":["expedição","canastra","cachoeiras"]
+  },
+  {
+    "id":"estrada-real-wr-2026","title":"Expedição Estrada Real","category":"Expedição 4x4","region":"Sudeste","state":"MG","city":"Tiradentes","country":"Brasil","start":"2026-10-11","end":"2026-10-15","status":"Reservas","source":"WR Brasil","sourceUrl":"https://www.wrbrasil.com.br/calendario","summary":"Expedição 4x4 com saída/encontro em Tiradentes-MG.","tags":["expedição","estrada real","história"]
+  },
+  {
+    "id":"curso-expedition-out-2026","title":"Curso Expedition — Base para viajar de 4x4","category":"Curso / Treinamento","region":"Sul","state":"SC","city":"Porto Belo / região","country":"Brasil","start":"2026-10-17","end":"2026-10-18","status":"Há vagas","source":"4x4 Mundo Afora","sourceUrl":"https://4x4mundoafora.com.br/proximas-expedicoes/","summary":"Curso voltado à preparação, condução e planejamento de viagens 4x4.","tags":["curso","overland","preparação"]
+  },
+  {
+    "id":"canastra-casca-danta-2026","title":"Nascente do São Francisco & Casca D'anta","category":"Expedição 4x4","region":"Sudeste","state":"MG","city":"Vargem Bonita","country":"Brasil","start":"2026-10-23","end":"2026-10-25","status":"Programado","source":"Brasil Fora da Estrada","sourceUrl":"https://brasilforadaestrada.com.br/","summary":"Expedição na Serra da Canastra, com roteiro leve e perfil familiar.","tags":["expedição","família","canastra"]
+  },
+  {
+    "id":"atacama-nov-2026","title":"Expedição Atacama — Deserto e Pacífico","category":"Overland","region":"Internacional","state":"—","city":"Atacama","country":"Chile / Argentina","start":"2026-11-03","end":"2026-11-17","status":"Lotada","source":"4x4 Mundo Afora","sourceUrl":"https://4x4mundoafora.com.br/proximas-expedicoes/","summary":"Grande viagem overland com aproximadamente 7.000 km rumo ao Atacama e Oceano Pacífico.","tags":["overland","Atacama","internacional"]
+  },
+  {
+    "id":"canastra-caminho-ceu-2026","title":"Canastra — Cachoeiras, Rios e Caminho do Céu","category":"Expedição 4x4","region":"Sudeste","state":"MG","city":"Vargem Bonita","country":"Brasil","start":"2026-11-19","end":"2026-11-22","status":"Programado","source":"Brasil Fora da Estrada","sourceUrl":"https://brasilforadaestrada.com.br/","summary":"Expedição com cachoeiras, travessias de rio, queijarias e o Caminho do Céu.","tags":["expedição","rios","canastra"]
+  },
+  {
+    "id":"trilhao-moncoes-2026","title":"16º Trilhão das Monções","category":"Encontro / Passeio","region":"Sudeste","state":"SP","city":"Porto Feliz","country":"Brasil","start":"2026-11-28","end":"2026-11-28","status":"Inscrições abertas","source":"Agenda Off Road","sourceUrl":"https://agendaoffroad.com.br/","summary":"Evento off-road/trilhão divulgado na Agenda Off Road.","tags":["encontro","trilha","SP"]
+  },
+  {
+    "id":"curso-expedition-nov-2026","title":"Curso Expedition — Próximo passo para sua liberdade","category":"Curso / Treinamento","region":"Sul","state":"SC","city":"Porto Belo / região","country":"Brasil","start":"2026-11-28","end":"2026-11-29","status":"Há vagas","source":"4x4 Mundo Afora","sourceUrl":"https://4x4mundoafora.com.br/proximas-expedicoes/","summary":"Treinamento Expedition de aproximadamente 100 km para viajantes 4x4.","tags":["curso","overland","4x4"]
+  },
+  {
+    "id":"canastra-capitolio-premium-2026","title":"Serra da Canastra & Capitólio Premium","category":"Expedição 4x4","region":"Sudeste","state":"MG","city":"Canastra / Capitólio","country":"Brasil","start":"2026-12-06","end":"2026-12-10","status":"Há vagas","source":"4x4 Mundo Afora","sourceUrl":"https://4x4mundoafora.com.br/proximas-expedicoes/","summary":"Expedição 4x4 premium com cerca de 800 km entre Canastra e Capitólio.","tags":["expedição","premium","MG"]
+  },
+  {
+    "id":"andes-jan-2027","title":"Cordilheira dos Andes 4x4 — Noroeste Argentino","category":"Overland","region":"Internacional","state":"—","city":"Andes","country":"Argentina","start":"2027-01-09","end":"2027-01-20","status":"Há vagas","source":"4x4 Mundo Afora","sourceUrl":"https://4x4mundoafora.com.br/proximas-expedicoes/","summary":"Expedição internacional de aproximadamente 4.000 km pelo Noroeste Argentino.","tags":["overland","Andes","Argentina"]
+  }
+]
