@@ -1,4 +1,4 @@
-const CACHE='radar4x4-v2';
+const CACHE='radar4x4-v4-premium';
 const CORE=['/','/styles.css','/app.js','/manifest.json'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(CORE))));
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k))))));
