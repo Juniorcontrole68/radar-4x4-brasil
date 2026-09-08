@@ -1,0 +1,10 @@
+[
+  {"id":"agenda-offroad","name":"Agenda Off Road","type":"site","url":"https://agendaoffroad.com.br/","coverage":"Brasil","notes":"Agenda ampla de eventos off-road e modalidades relacionadas."},
+  {"id":"tribos-offroad","name":"Tribos Off Road","type":"site","url":"https://tribosoffroad.com.br/eventos/","coverage":"Brasil / forte presença no Sul","notes":"Agenda de trilhas, jeep clubes e encontros."},
+  {"id":"4x4-mundo-afora","name":"4x4 Mundo Afora","type":"site","url":"https://4x4mundoafora.com.br/proximas-expedicoes/","coverage":"Brasil e internacional","notes":"Expedições, cursos e viagens 4x4."},
+  {"id":"experience-offroad","name":"Experience Offroad","type":"site","url":"https://experienceoffroadbr.com.br/","coverage":"Brasil","notes":"Expedições 4x4 guiadas."},
+  {"id":"brasil-fora-estrada","name":"Brasil Fora da Estrada","type":"site","url":"https://brasilforadaestrada.com.br/","coverage":"Brasil","notes":"Expedições e treinamentos off-road."},
+  {"id":"wr-brasil","name":"WR Brasil","type":"site","url":"https://www.wrbrasil.com.br/calendario","coverage":"Brasil e internacional","notes":"Calendário de cursos e expedições."},
+  {"id":"mitsubishi-outdoor","name":"Mitsubishi Outdoor","type":"site/social","url":"https://www.mitsubishimotors.com.br/ralis-e-passeios/mitsubishi-outdoor","coverage":"Brasil","notes":"Passeios, provas e eventos oficiais Mitsubishi."},
+  {"id":"overland-expedicoes","name":"Overland Expedições","type":"site","url":"https://www.overlandexpedicoes.com.br/expedicoes","coverage":"Brasil e América do Sul","notes":"Roteiros e expedições overland/4x4."}
+]
