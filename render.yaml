@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: radar-4x4-brasil
+    runtime: node
+    plan: free
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ADMIN_TOKEN
+        sync: false
