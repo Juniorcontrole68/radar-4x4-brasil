@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: contas-a-pagar
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: DATABASE_URL
+        sync: false
+      - key: PGSSLMODE
+        value: require

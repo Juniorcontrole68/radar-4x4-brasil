@@ -1,0 +1,24 @@
+MANIFESTO DO PACOTE CONTAS A PAGAR v3.1
+
+ARQUIVOS:
+.env.example
+.gitignore
+INICIAR_WINDOWS.bat
+MANIFESTO-ARQUIVOS.txt
+README-PRIMEIRO.txt
+README.md
+VERSION.txt
+package.json
+render.yaml
+server.js
+database/schema.sql
+public/index.html
+public/styles.css
+public/app.js
+scripts/iniciar-linux.sh
+src/db.js
+src/handler.js
+src/utils.js
+
+OBSERVACAO: node_modules NAO vai no ZIP. Ele e criado automaticamente por npm install no computador/Render.
+O arquivo .env real tambem NAO vai no ZIP por seguranca; use .env.example como modelo.

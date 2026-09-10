@@ -1,0 +1,3 @@
+Contas A Pagar v3.1.0
+Front-end separado em public/index.html, public/styles.css e public/app.js.
+API separada em src/handler.js e banco em src/db.js.

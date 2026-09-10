@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Contas A Pagar</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header><div><h2>Contas A Pagar</h2><small>Celular E Notebook • Banco Permanente</small></div></header>
+<main>
+  <div class="online">✓ Banco PostgreSQL Permanente</div>
+  <div class="cards">
+    <div class="card">Pendente<b id="cardPending">R$ 0,00</b></div>
+    <div class="card">Vencido<b id="cardOverdue">R$ 0,00</b></div>
+    <div class="card">Vence No Mês<b id="cardMonth">R$ 0,00</b></div>
+    <div class="card">Pago No Mês<b id="cardPaidMonth">R$ 0,00</b></div>
+  </div>
+
+  <div class="box">
+    <h3>Nova Conta</h3>
+    <form class="form" id="billForm">
+      <label>Descrição<input name="description" required></label>
+      <label>Fornecedor<input name="supplier"></label>
+      <label>Área<input name="area" list="areas" value="Pessoal"><datalist id="areas"><option value="Pessoal"><option value="Trabalho"><option value="Casa"><option value="Veículo"><option value="Família"><option value="Empresa"><option value="Outros"></datalist></label>
+      <label>Categoria<input name="category" list="categorias" value="Outros"><datalist id="categorias"><option value="Aluguel"><option value="Água"><option value="Energia"><option value="Internet"><option value="Telefone"><option value="Mercado"><option value="Combustível"><option value="Manutenção"><option value="Impostos"><option value="Saúde"><option value="Educação"><option value="Lazer"><option value="Fornecedores"><option value="Serviços"><option value="Outros"></datalist></label>
+      <label>Valor<input name="amount" type="number" step="0.01" min="0" required></label>
+      <label>1º Vencimento<input id="dueDate" name="dueDate" type="date" required></label>
+      <div class="recField"><span>Recorrências</span><button type="button" class="btn rec" id="openRec">+ Adicionar Datas</button><span id="recSummary" class="recSummary">Nenhuma data adicional</span></div>
+      <div class="submitline"><button class="btn add" type="submit">Adicionar Conta(s)</button><span id="saveMsg" class="hint"></span></div>
+    </form>
+  </div>
+
+  <dialog id="recModal"><div class="modalHead"><b>Escolher Recorrências</b></div><div class="modalBody"><p class="hint">Escolha as datas adicionais para gerar a mesma conta.</p><div id="recDates" class="recDates"><label class="recItem">2ª Data<input class="recDate" type="date"></label><label class="recItem">3ª Data<input class="recDate" type="date"></label></div><div class="modalRow"><button type="button" class="btn secondary" id="addRecDate">+ Outra Data</button></div><div class="modalActions"><button type="button" class="btn secondary" id="cancelRec">Cancelar</button><button type="button" class="btn add" id="saveRec">Concluir</button></div></div></dialog>
+
+  <div class="box noPrint">
+    <h3>Em Aberto Até</h3>
+    <div class="filterbar">
+      <label>Data Limite<input type="date" id="untilDate"></label>
+      <button class="btn rec" id="filterBtn">Filtrar</button>
+      <button class="btn secondary" id="clearFilter">Limpar</button>
+      <button class="btn add" id="printBtn">Imprimir Relatório</button>
+      <a class="btn secondary" href="/api/export.csv">Exportar Backup CSV</a>
+      <div class="filterResult"><div id="filterLabel">Todas as contas em aberto</div><b id="filterTotal">R$ 0,00</b><div class="hint" id="filterCount">0 conta(s)</div></div>
+    </div>
+  </div>
+
+  <div class="box"><h3>Contas</h3><div class="table"><table><thead><tr><th>Vencimento</th><th>Descrição</th><th>Fornecedor</th><th>Área</th><th>Categoria</th><th>Valor</th><th>Status</th><th>Ações</th></tr></thead><tbody id="billsBody"><tr><td colspan="8" class="empty">Carregando...</td></tr></tbody></table></div></div>
+
+  <div class="box reportBox reportOnly"><h2>Relatório De Contas Em Aberto</h2><p id="printFilterLabel"></p><table><thead><tr><th>Check</th><th>Vencimento</th><th>Descrição</th><th>Fornecedor</th><th>Área</th><th>Categoria</th><th>Valor</th></tr></thead><tbody id="reportBody"></tbody></table><div class="printTotal" id="printTotal"></div></div>
+
+  <dialog id="postponeModal"><div class="modalHead"><b>Prorrogar Vencimento</b></div><div class="modalBody"><p id="postponeDesc"></p><input type="hidden" id="postponeId"><label>Nova Data<input type="date" id="postponeDate" required></label><div class="modalActions"><button type="button" class="btn secondary" id="cancelPostpone">Cancelar</button><button type="button" class="btn add" id="confirmPostpone">Prorrogar</button></div></div></dialog>
+</main>
+<script src="/app.js"></script>
+</body></html>
