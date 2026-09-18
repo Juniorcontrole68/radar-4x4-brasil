@@ -216,7 +216,10 @@ try{
         });
       })();
       <\/script>`;
-      html=html.replace('</body>',recebimentoAddon+'</body>');
+      const bodyClose=html.lastIndexOf('</body>');
+      if(bodyClose>=0){
+        html=html.slice(0,bodyClose)+recebimentoAddon+html.slice(bodyClose);
+      }
     }
 
     const newFront=zlib.gzipSync(Buffer.from(html,'utf8')).toString('base64');
