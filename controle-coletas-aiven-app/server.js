@@ -34,6 +34,14 @@ function sendHtml(res, file) {
   res.end(fs.readFileSync(file));
 }
 
+function sendJson(res, status, data) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store'
+  });
+  res.end(JSON.stringify(data));
+}
+
 async function migrateLegacyBillsIfNeeded() {
   try {
     const countResult = await pool.query('SELECT COUNT(*)::int AS total FROM bills');
@@ -109,6 +117,33 @@ async function start() {
       if (req.method === 'GET' && (u.pathname === '/contas' || u.pathname === '/contas/')) {
         return sendHtml(res, ACCOUNTS_INDEX);
       }
+
+      if (req.method === 'GET' && u.pathname === '/api/painel/coletas-resumo') {
+        const result = await pool.query(`
+          SELECT
+            id::text AS id,
+            COALESCE(to_jsonb(c)->>'numero_os', to_jsonb(c)->>'os', to_jsonb(c)->>'numero_coleta', to_jsonb(c)->>'collection_number', '') AS os,
+            COALESCE(to_jsonb(c)->>'cliente', to_jsonb(c)->>'client', to_jsonb(c)->>'nome_cliente', to_jsonb(c)->>'customer', '') AS cliente,
+            COALESCE(to_jsonb(c)->>'destino', to_jsonb(c)->>'cidade_entrega', to_jsonb(c)->>'endereco_entrega', to_jsonb(c)->>'delivery_address', '') AS destino,
+            COALESCE(to_jsonb(c)->>'placa', to_jsonb(c)->>'plate', '') AS placa,
+            COALESCE(to_jsonb(c)->>'data_coleta', to_jsonb(c)->>'collection_date', to_jsonb(c)->>'created_at', '') AS data
+          FROM coletas c
+          LIMIT 500
+        `);
+        return sendJson(res, 200, result.rows);
+      }
+
+      const deleteMatch = u.pathname.match(/^\/api\/painel\/coletas\/([^/]+)$/);
+      if (req.method === 'DELETE' && deleteMatch) {
+        const id = decodeURIComponent(deleteMatch[1]);
+        const result = await pool.query(
+          'DELETE FROM coletas WHERE id::text = $1 RETURNING id::text AS id',
+          [id]
+        );
+        if (!result.rowCount) return sendJson(res, 404, { error: 'Coleta não encontrada.' });
+        return sendJson(res, 200, { ok: true, id: result.rows[0].id });
+      }
+
       return handler(req, res);
     } catch (e) {
       console.error(e);
