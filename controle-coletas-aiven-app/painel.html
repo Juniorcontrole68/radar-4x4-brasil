@@ -192,7 +192,54 @@ function ativarTitleCaseNoModulo(){
   }
 }
 
-frame.addEventListener('load',ativarTitleCaseNoModulo);
+
+function ajustarCampoClienteColeta(){
+  try{
+    const doc=frame.contentDocument;
+    if(!doc) return;
+
+    const labels=[...doc.querySelectorAll('label')];
+    let encontrado=false;
+
+    for(const label of labels){
+      const texto=(label.textContent||'').trim().toLocaleLowerCase('pt-BR');
+      if(texto==='cliente' || texto==='nome do cliente' || texto.startsWith('cliente ')){
+        label.textContent='Nome Do Cliente Da Coleta';
+        encontrado=true;
+        const alvo=label.htmlFor ? doc.getElementById(label.htmlFor) : label.querySelector('input,textarea,select');
+        if(alvo && (alvo.tagName==='INPUT' || alvo.tagName==='TEXTAREA')){
+          alvo.placeholder='Nome Do Cliente Onde Será Feita A Coleta';
+          alvo.setAttribute('aria-label','Nome Do Cliente Da Coleta');
+        }
+        break;
+      }
+    }
+
+    if(!encontrado){
+      const campos=[...doc.querySelectorAll('input,textarea')];
+      for(const campo of campos){
+        const ident=((campo.name||'')+' '+(campo.id||'')+' '+(campo.placeholder||'')).toLocaleLowerCase('pt-BR');
+        if(/(^|\s)(cliente|client)(\s|$)/.test(ident)){
+          campo.placeholder='Nome Do Cliente Onde Será Feita A Coleta';
+          campo.setAttribute('aria-label','Nome Do Cliente Da Coleta');
+          const parent=campo.parentElement;
+          if(parent){
+            const lab=parent.querySelector('label');
+            if(lab) lab.textContent='Nome Do Cliente Da Coleta';
+          }
+          break;
+        }
+      }
+    }
+  }catch(e){
+    console.warn('Não foi possível ajustar o campo de cliente da coleta:',e);
+  }
+}
+
+frame.addEventListener('load',()=>{
+  ativarTitleCaseNoModulo();
+  ajustarCampoClienteColeta();
+});
 
 if(location.hash==='#contas') document.querySelector('.tab[data-src="/contas"]').click();
 else deleteBtn.style.display='inline-block';
