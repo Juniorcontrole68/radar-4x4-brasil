@@ -137,6 +137,63 @@ confirmDelete.addEventListener('click',async()=>{
   }
 });
 
+
+function titleCasePt(value){
+  return String(value||'')
+    .toLocaleLowerCase('pt-BR')
+    .replace(/(^|[\s\-\/])([\p{L}])/gu,(m,sep,ch)=>sep+ch.toLocaleUpperCase('pt-BR'));
+}
+
+function deveFormatarCampo(el){
+  if(!el) return false;
+  const tag=(el.tagName||'').toLowerCase();
+  if(tag!=='input' && tag!=='textarea') return false;
+  if(tag==='input'){
+    const type=(el.type||'text').toLowerCase();
+    if(!['text','search'].includes(type)) return false;
+  }
+  const ident=((el.name||'')+' '+(el.id||'')+' '+(el.autocomplete||'')).toLowerCase();
+  if(/email|e-mail|senha|password|url|site|login/.test(ident)) return false;
+  if(el.dataset && el.dataset.noTitlecase==='true') return false;
+  return true;
+}
+
+function aplicarTitleCaseNoDocumento(doc){
+  if(!doc || doc.__titleCaseAtivo) return;
+  doc.__titleCaseAtivo=true;
+
+  const formatar=(el)=>{
+    if(!deveFormatarCampo(el)) return;
+    const inicio=el.selectionStart, fim=el.selectionEnd;
+    const novo=titleCasePt(el.value);
+    if(novo!==el.value){
+      el.value=novo;
+      try{
+        if(inicio!==null && fim!==null) el.setSelectionRange(inicio,fim);
+      }catch{}
+    }
+  };
+
+  doc.addEventListener('input',e=>formatar(e.target),true);
+  doc.addEventListener('change',e=>formatar(e.target),true);
+  doc.querySelectorAll('input,textarea').forEach(formatar);
+
+  const obs=new MutationObserver(()=>{
+    doc.querySelectorAll('input,textarea').forEach(formatar);
+  });
+  obs.observe(doc.documentElement||doc.body,{childList:true,subtree:true});
+}
+
+function ativarTitleCaseNoModulo(){
+  try{
+    aplicarTitleCaseNoDocumento(frame.contentDocument);
+  }catch(e){
+    console.warn('Não foi possível ativar capitalização automática:',e);
+  }
+}
+
+frame.addEventListener('load',ativarTitleCaseNoModulo);
+
 if(location.hash==='#contas') document.querySelector('.tab[data-src="/contas"]').click();
 else deleteBtn.style.display='inline-block';
 </script>
