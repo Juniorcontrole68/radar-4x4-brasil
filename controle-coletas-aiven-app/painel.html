@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<title>Painel da Transportadora</title>
+<style>
+:root{--nav:#0f172a;--bg:#eef2f6;--white:#fff;--text:#0f172a;--muted:#64748b;--border:#d9e1e8;--blue:#2563eb}
+*{box-sizing:border-box}html,body{height:100%;margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)}
+.shell{height:100%;display:flex;flex-direction:column}
+.top{background:var(--nav);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:14px;box-shadow:0 2px 10px #0002;z-index:2}
+.brand{min-width:220px}.brand strong{display:block;font-size:19px}.brand span{font-size:12px;color:#cbd5e1}
+.tabs{display:flex;gap:8px;flex:1;justify-content:center}
+.tab{appearance:none;border:1px solid #ffffff28;background:#ffffff10;color:#fff;padding:10px 18px;border-radius:9px;font-weight:700;cursor:pointer}
+.tab.active{background:#fff;color:var(--nav)}
+.open{color:#fff;text-decoration:none;border:1px solid #ffffff28;border-radius:9px;padding:9px 12px;font-size:13px}
+.bar{background:#fff;border-bottom:1px solid var(--border);padding:8px 16px;display:flex;gap:9px;align-items:center;font-size:13px;color:var(--muted)}
+.dot{width:9px;height:9px;border-radius:50%;background:#22c55e}
+.body{flex:1;min-height:0;padding:8px}
+iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 2px 12px #0000000b}
+@media(max-width:720px){
+ .top{padding:9px;flex-wrap:wrap}.brand{min-width:0;flex:1}.brand strong{font-size:16px}.brand span,.open{display:none}
+ .tabs{order:2;width:100%;justify-content:stretch}.tab{flex:1;padding:10px 8px}.body{padding:3px}.bar{padding:7px 10px}iframe{border-radius:7px}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="top">
+    <div class="brand"><strong>Painel da Transportadora</strong><span>Operação e financeiro em um único sistema</span></div>
+    <div class="tabs">
+      <button class="tab active" data-src="/coletas" data-name="Controle de Coletas">Controle de Coletas</button>
+      <button class="tab" data-src="/contas" data-name="Contas a Pagar">Contas a Pagar</button>
+    </div>
+    <a class="open" id="open" href="/coletas" target="_blank" rel="noopener">Abrir separado ↗</a>
+  </div>
+  <div class="bar"><span class="dot"></span><span id="module">Controle de Coletas</span><span>• Banco Aiven conectado</span></div>
+  <div class="body"><iframe id="frame" src="/coletas" title="Módulo da Transportadora"></iframe></div>
+</div>
+<script>
+const frame=document.getElementById('frame'), moduleName=document.getElementById('module'), open=document.getElementById('open');
+document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  btn.classList.add('active');
+  frame.src=btn.dataset.src;
+  moduleName.textContent=btn.dataset.name;
+  open.href=btn.dataset.src;
+  history.replaceState(null,'','#'+(btn.dataset.src==='/contas'?'contas':'coletas'));
+}));
+if(location.hash==='#contas') document.querySelector('.tab[data-src="/contas"]').click();
+</script>
+</body>
+</html>
