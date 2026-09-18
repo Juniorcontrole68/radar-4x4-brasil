@@ -3,6 +3,7 @@ const path=require('path');
 const crypto=require('crypto');
 const {pool,getBills}=require('./db');
 const {titleCase,today}=require('./utils');
+const {handleColetas}=require('./coletas');
 const PUBLIC=path.join(__dirname,'..','public');
 function sendFile(res,file,type){res.writeHead(200,{'Content-Type':type,'Cache-Control':file==='index.html'?'no-store':'public, max-age=300'});res.end(fs.readFileSync(path.join(PUBLIC,file)));}
 function json(res,status,data){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));}
@@ -10,6 +11,7 @@ function readJson(req){return new Promise((resolve,reject)=>{let d='';req.on('da
 async function handler(req,res){
  try{
   const u=new URL(req.url,'http://localhost');
+  if(u.pathname.startsWith('/coletas')) { const handled=await handleColetas(req,res,u); if(handled)return; }
   if(req.method==='GET'&&u.pathname==='/') return sendFile(res,'index.html','text/html; charset=utf-8');
   if(req.method==='GET'&&u.pathname==='/styles.css') return sendFile(res,'styles.css','text/css; charset=utf-8');
   if(req.method==='GET'&&u.pathname==='/app.js') return sendFile(res,'app.js','application/javascript; charset=utf-8');
