@@ -26,7 +26,7 @@ try{
 
 
     if(!html.includes('financeiro-recebimento-addon')){
-      const recebimentoAddon=\`<style id="financeiro-recebimento-addon">
+      const recebimentoAddon=`<style id="financeiro-recebimento-addon">
       .recebido-cell{text-align:center;white-space:nowrap}
       .recebido-check{width:18px;height:18px;accent-color:#16a34a;vertical-align:middle}
       .recebido-date{min-width:145px}
@@ -215,7 +215,7 @@ try{
           setTimeout(decorarFinanceiro,250);
         });
       })();
-      <\/script>\`;
+      <\/script>`;
       html=html.replace('</body>',recebimentoAddon+'</body>');
     }
 
