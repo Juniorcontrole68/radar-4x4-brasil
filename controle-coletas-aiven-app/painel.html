@@ -16,6 +16,14 @@
 .tab.active{background:#fff;color:var(--nav)}
 .open{color:#fff;text-decoration:none;border:1px solid #ffffff28;border-radius:9px;padding:9px 12px;font-size:13px}
 .bar{background:#fff;border-bottom:1px solid var(--border);padding:8px 16px;display:flex;gap:9px;align-items:center;font-size:13px;color:var(--muted)}
+.delete-btn{margin-left:auto;border:0;border-radius:8px;background:#b91c1c;color:#fff;padding:8px 12px;font-weight:700;cursor:pointer}
+.delete-btn:hover{background:#991b1b}
+.modal{display:none;position:fixed;inset:0;z-index:50;background:#0f172acc;align-items:center;justify-content:center;padding:18px}
+.modal.show{display:flex}.modal-box{width:min(560px,100%);background:#fff;border-radius:14px;padding:20px;box-shadow:0 18px 60px #0005}
+.modal-box h3{margin:0 0 8px;color:#991b1b}.modal-box p{margin:0 0 14px;color:#475569;line-height:1.4}
+.modal-box select{width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;margin-bottom:14px}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end}.modal-actions button{border:0;border-radius:9px;padding:10px 14px;font-weight:700;cursor:pointer}
+.cancel{background:#e2e8f0;color:#0f172a}.confirm-delete{background:#b91c1c;color:#fff}.confirm-delete:disabled{opacity:.5;cursor:not-allowed}
 .dot{width:9px;height:9px;border-radius:50%;background:#22c55e}
 .body{flex:1;min-height:0;padding:8px}
 iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 2px 12px #0000000b}
@@ -35,20 +43,102 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
     </div>
     <a class="open" id="open" href="/coletas" target="_blank" rel="noopener">Abrir separado ↗</a>
   </div>
-  <div class="bar"><span class="dot"></span><span id="module">Controle de Coletas</span><span>• Banco Aiven conectado</span></div>
+  <div class="bar"><span class="dot"></span><span id="module">Controle de Coletas</span><span>• Banco Aiven conectado</span><button id="deleteColeta" class="delete-btn" type="button">🗑 Excluir coleta</button></div>
   <div class="body"><iframe id="frame" src="/coletas" title="Módulo da Transportadora"></iframe></div>
 </div>
+
+<div id="deleteModal" class="modal" aria-hidden="true">
+  <div class="modal-box">
+    <h3>Excluir coleta</h3>
+    <p>Selecione a coleta que deseja excluir. A exclusão é definitiva e será feita no banco Aiven.</p>
+    <select id="deleteSelect"><option value="">Carregando coletas...</option></select>
+    <div class="modal-actions">
+      <button id="cancelDelete" class="cancel" type="button">Cancelar</button>
+      <button id="confirmDelete" class="confirm-delete" type="button" disabled>Excluir definitivamente</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const frame=document.getElementById('frame'), moduleName=document.getElementById('module'), open=document.getElementById('open');
+const deleteBtn=document.getElementById('deleteColeta'), deleteModal=document.getElementById('deleteModal'), deleteSelect=document.getElementById('deleteSelect'), cancelDelete=document.getElementById('cancelDelete'), confirmDelete=document.getElementById('confirmDelete');
 document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   btn.classList.add('active');
   frame.src=btn.dataset.src;
   moduleName.textContent=btn.dataset.name;
   open.href=btn.dataset.src;
+  deleteBtn.style.display=btn.dataset.src==='/coletas'?'inline-block':'none';
   history.replaceState(null,'','#'+(btn.dataset.src==='/contas'?'contas':'coletas'));
 }));
+
+function coletaLabel(c){
+  const parts=[];
+  if(c.os) parts.push('OS/Coleta '+c.os);
+  if(c.cliente) parts.push(c.cliente);
+  if(c.destino) parts.push(c.destino);
+  if(c.placa) parts.push('Placa '+c.placa);
+  if(c.data) parts.push(String(c.data).slice(0,10));
+  return parts.length?parts.join(' • '):('ID '+c.id);
+}
+
+async function abrirExclusao(){
+  deleteModal.classList.add('show');
+  deleteModal.setAttribute('aria-hidden','false');
+  deleteSelect.innerHTML='<option value="">Carregando coletas...</option>';
+  confirmDelete.disabled=true;
+  try{
+    const r=await fetch('/api/painel/coletas-resumo',{cache:'no-store'});
+    if(!r.ok) throw new Error('Não foi possível carregar as coletas.');
+    const list=await r.json();
+    deleteSelect.innerHTML='<option value="">Selecione uma coleta</option>';
+    list.forEach(c=>{
+      const opt=document.createElement('option');
+      opt.value=c.id;
+      opt.textContent=coletaLabel(c);
+      deleteSelect.appendChild(opt);
+    });
+    if(!list.length) deleteSelect.innerHTML='<option value="">Nenhuma coleta cadastrada</option>';
+  }catch(e){
+    deleteSelect.innerHTML='<option value="">Erro ao carregar coletas</option>';
+    alert(e.message);
+  }
+}
+
+function fecharExclusao(){
+  deleteModal.classList.remove('show');
+  deleteModal.setAttribute('aria-hidden','true');
+}
+
+deleteBtn.addEventListener('click',abrirExclusao);
+cancelDelete.addEventListener('click',fecharExclusao);
+deleteModal.addEventListener('click',e=>{if(e.target===deleteModal)fecharExclusao();});
+deleteSelect.addEventListener('change',()=>{confirmDelete.disabled=!deleteSelect.value;});
+confirmDelete.addEventListener('click',async()=>{
+  const id=deleteSelect.value;
+  if(!id) return;
+  const descricao=deleteSelect.options[deleteSelect.selectedIndex]?.textContent||'esta coleta';
+  if(!confirm('Tem certeza que deseja excluir definitivamente?\n\n'+descricao+'\n\nEsta ação não pode ser desfeita.')) return;
+  confirmDelete.disabled=true;
+  const oldText=confirmDelete.textContent;
+  confirmDelete.textContent='Excluindo...';
+  try{
+    const r=await fetch('/api/painel/coletas/'+encodeURIComponent(id),{method:'DELETE'});
+    const body=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(body.error||'Não foi possível excluir a coleta.');
+    fecharExclusao();
+    frame.src='/coletas?refresh='+Date.now();
+    alert('Coleta excluída com sucesso.');
+  }catch(e){
+    alert(e.message);
+  }finally{
+    confirmDelete.textContent=oldText;
+    confirmDelete.disabled=!deleteSelect.value;
+  }
+});
+
 if(location.hash==='#contas') document.querySelector('.tab[data-src="/contas"]').click();
+else deleteBtn.style.display='inline-block';
 </script>
 </body>
 </html>
