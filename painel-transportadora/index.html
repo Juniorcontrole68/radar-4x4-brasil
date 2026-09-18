@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0f172a">
+<title>Painel da Transportadora</title>
+<style>
+:root{--bg:#f4f6f8;--nav:#0f172a;--card:#fff;--muted:#64748b;--accent:#2563eb;--border:#dbe2ea}
+*{box-sizing:border-box}html,body{height:100%;margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:#111827}
+.app{height:100%;display:flex;flex-direction:column}
+header{background:var(--nav);color:#fff;padding:14px 18px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;box-shadow:0 2px 10px #0002}
+.brand{font-size:20px;font-weight:700;white-space:nowrap}.subtitle{font-size:12px;color:#cbd5e1}
+.tabs{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
+button.tab,.open-btn{border:1px solid #ffffff22;background:#ffffff10;color:#fff;border-radius:9px;padding:10px 15px;font-weight:700;cursor:pointer}
+button.tab.active{background:#fff;color:#0f172a}
+.open-btn{font-size:13px;text-decoration:none}
+.statusbar{display:flex;align-items:center;gap:10px;padding:9px 16px;background:#fff;border-bottom:1px solid var(--border);font-size:13px;color:var(--muted)}
+.dot{width:9px;height:9px;border-radius:50%;background:#22c55e;display:inline-block}
+.frame-wrap{flex:1;min-height:0;padding:10px}
+iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 2px 10px #0000000d}
+@media(max-width:720px){header{padding:10px}.brand{font-size:17px}.subtitle{display:none}.tabs{width:100%;margin-left:0}.tab{flex:1}.open-btn{display:none}.frame-wrap{padding:4px}iframe{border-radius:8px}}
+</style>
+</head>
+<body>
+<div class="app">
+<header>
+  <div><div class="brand">Painel da Transportadora</div><div class="subtitle">Operação e financeiro em um único lugar</div></div>
+  <div class="tabs">
+    <button class="tab active" data-url="https://controle-coletas-jr.onrender.com" data-name="Controle de Coletas">Controle de Coletas</button>
+    <button class="tab" data-url="https://contas-jr.onrender.com" data-name="Contas a Pagar">Contas a Pagar</button>
+    <a id="openExternal" class="open-btn" href="https://controle-coletas-jr.onrender.com" target="_blank" rel="noopener">Abrir separado ↗</a>
+  </div>
+</header>
+<div class="statusbar"><span class="dot"></span><span id="moduleName">Controle de Coletas</span><span>•</span><span>dados preservados nos sistemas originais</span></div>
+<div class="frame-wrap"><iframe id="appFrame" src="https://controle-coletas-jr.onrender.com" title="Aplicativo da Transportadora"></iframe></div>
+</div>
+<script>
+const frame=document.getElementById('appFrame'),name=document.getElementById('moduleName'),open=document.getElementById('openExternal');
+document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{
+ document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
+ btn.classList.add('active'); frame.src=btn.dataset.url; name.textContent=btn.dataset.name; open.href=btn.dataset.url;
+}));
+</script>
+</body>
+</html>
