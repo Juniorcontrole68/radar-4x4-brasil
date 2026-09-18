@@ -38,13 +38,13 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
   <div class="top">
     <div class="brand"><strong>Painel da Transportadora</strong><span>Operação e financeiro em um único sistema</span></div>
     <div class="tabs">
-      <button class="tab active" data-src="/coletas" data-name="Controle de Coletas">Controle de Coletas</button>
-      <button class="tab" data-src="/contas" data-name="Contas a Pagar">Contas a Pagar</button>
+      <button class="tab active" data-src="/coletas?embed=1" data-name="Controle de Coletas">Controle de Coletas</button>
+      <button class="tab" data-src="/contas?embed=1" data-name="Contas a Pagar">Contas a Pagar</button>
     </div>
-    <a class="open" id="open" href="/coletas" target="_blank" rel="noopener">Abrir separado ↗</a>
+    <a class="open" id="open" href="/coletas?embed=1" target="_blank" rel="noopener">Abrir separado ↗</a>
   </div>
   <div class="bar"><span class="dot"></span><span id="module">Controle de Coletas</span><span>• Banco Aiven conectado</span><button id="deleteColeta" class="delete-btn" type="button">🗑 Excluir coleta</button></div>
-  <div class="body"><iframe id="frame" src="/coletas" title="Módulo da Transportadora"></iframe></div>
+  <div class="body"><iframe id="frame" src="/coletas?embed=1" title="Módulo da Transportadora"></iframe></div>
 </div>
 
 <div id="deleteModal" class="modal" aria-hidden="true">
@@ -68,8 +68,8 @@ document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>
   frame.src=btn.dataset.src;
   moduleName.textContent=btn.dataset.name;
   open.href=btn.dataset.src;
-  deleteBtn.style.display=btn.dataset.src==='/coletas'?'inline-block':'none';
-  history.replaceState(null,'','#'+(btn.dataset.src==='/contas'?'contas':'coletas'));
+  deleteBtn.style.display=btn.dataset.src.startsWith('/coletas')?'inline-block':'none';
+  history.replaceState(null,'','#'+(btn.dataset.src.startsWith('/contas')?'contas':'coletas'));
 }));
 
 function coletaLabel(c){
@@ -127,7 +127,7 @@ confirmDelete.addEventListener('click',async()=>{
     const body=await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(body.error||'Não foi possível excluir a coleta.');
     fecharExclusao();
-    frame.src='/coletas?refresh='+Date.now();
+    frame.src='/coletas?embed=1&refresh='+Date.now();
     alert('Coleta excluída com sucesso.');
   }catch(e){
     alert(e.message);
@@ -262,7 +262,7 @@ frame.addEventListener('load',()=>{
   ajustarCampoClienteEntrega();
 });
 
-if(location.hash==='#contas') document.querySelector('.tab[data-src="/contas"]').click();
+if(location.hash==='#contas') document.querySelector('.tab[data-src="/contas?embed=1"]').click();
 else deleteBtn.style.display='inline-block';
 </script>
 </body>
