@@ -42,6 +42,14 @@ function sendJson(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
+async function readJsonBody(req) {
+  let raw = '';
+  for await (const chunk of req) raw += chunk;
+  if (!raw) return {};
+  try { return JSON.parse(raw); }
+  catch { throw new Error('JSON inválido'); }
+}
+
 async function migrateLegacyBillsIfNeeded() {
   try {
     const countResult = await pool.query('SELECT COUNT(*)::int AS total FROM bills');
@@ -107,6 +115,8 @@ async function migrateLegacyBillsIfNeeded() {
 async function start() {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL nao configurada');
   await Promise.all([initDb(), initColetasDb()]);
+  await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS recebido BOOLEAN NOT NULL DEFAULT FALSE');
+  await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS data_recebimento DATE');
   await migrateLegacyBillsIfNeeded();
 
   http.createServer(async (req, res) => {
@@ -132,6 +142,23 @@ async function start() {
           LIMIT 500
         `);
         return sendJson(res, 200, result.rows);
+      }
+
+      const recebimentoMatch = u.pathname.match(/^\/api\/painel\/coletas-financeiro\/([^/]+)$/);
+      if (req.method === 'PATCH' && recebimentoMatch) {
+        const id = decodeURIComponent(recebimentoMatch[1]);
+        const body = await readJsonBody(req);
+        const recebido = body.recebido === true || body.recebido === 'true' || body.recebido === 1 || body.recebido === '1';
+        let dataRecebimento = body.data_recebimento ? String(body.data_recebimento).slice(0,10) : null;
+        if (recebido && !dataRecebimento) dataRecebimento = new Date().toISOString().slice(0,10);
+        if (!recebido) dataRecebimento = null;
+
+        const result = await pool.query(
+          'UPDATE coletas SET recebido=$1, data_recebimento=$2, updated_at=NOW() WHERE id::text=$3 RETURNING id::text AS id, recebido, data_recebimento',
+          [recebido, dataRecebimento, id]
+        );
+        if (!result.rowCount) return sendJson(res, 404, { error: 'Coleta não encontrada.' });
+        return sendJson(res, 200, { ok: true, ...result.rows[0] });
       }
 
       const deleteMatch = u.pathname.match(/^\/api\/painel\/coletas\/([^/]+)$/);
