@@ -124,6 +124,20 @@ function diagnosticarModuloColetas(){
         count++;
       }
     }
+    const fm=src.match(/const FRONTEND_B64='([^']+)'/);
+    if(fm){
+      const front=zlib.gunzipSync(Buffer.from(fm[1],'base64')).toString('utf8');
+      for(const term of ['cliente','endereco_entrega','form','os_numero']){
+        let from=0,count=0;
+        while(count<8){
+          const i=front.toLowerCase().indexOf(term.toLowerCase(),from);
+          if(i<0) break;
+          console.log('DIAG_FRONT '+term+' #'+(count+1)+': '+front.slice(Math.max(0,i-450),Math.min(front.length,i+1100)).replace(/\s+/g,' '));
+          from=i+term.length;
+          count++;
+        }
+      }
+    }
     console.log('DIAG_COLETAS_END');
   }catch(e){console.log('DIAG_COLETAS_ERR '+e.message);}
 }
