@@ -125,6 +125,17 @@ async function start() {
       if (req.method === 'GET' && (u.pathname === '/' || u.pathname === '/painel')) {
         return sendHtml(res, PANEL);
       }
+
+      if (req.method === 'GET' && (u.pathname === '/coletas' || u.pathname === '/coletas/') && u.searchParams.get('embed') !== '1') {
+        res.writeHead(302, { Location: '/#coletas', 'Cache-Control': 'no-store' });
+        return res.end();
+      }
+
+      if (req.method === 'GET' && (u.pathname === '/contas' || u.pathname === '/contas/') && u.searchParams.get('embed') !== '1') {
+        res.writeHead(302, { Location: '/#contas', 'Cache-Control': 'no-store' });
+        return res.end();
+      }
+
       if (req.method === 'GET' && (u.pathname === '/contas' || u.pathname === '/contas/')) {
         return sendHtml(res, ACCOUNTS_INDEX);
       }
