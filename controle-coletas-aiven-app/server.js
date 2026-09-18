@@ -104,46 +104,7 @@ async function migrateLegacyBillsIfNeeded() {
 }
 
 
-function diagnosticarModuloColetas(){
-  try{
-    const zlib=require('zlib');
-    const p=path.join(__dirname,'..','contas-a-pagar-v3','src','coletas.js');
-    const wrapped=fs.readFileSync(p,'utf8');
-    const m=wrapped.match(/Buffer\.from\('([^']+)'\s*,\s*'base64'\)/);
-    if(!m) return console.log('DIAG_COLETAS: base64 não encontrado');
-    const src=zlib.gunzipSync(Buffer.from(m[1],'base64')).toString('utf8');
-    const terms=['CREATE TABLE','INSERT INTO coletas','UPDATE coletas','/coletas/api','endereco_entrega','destino','cliente'];
-    console.log('DIAG_COLETAS_START');
-    for(const term of terms){
-      let from=0,count=0;
-      while(count<6){
-        const i=src.toLowerCase().indexOf(term.toLowerCase(),from);
-        if(i<0) break;
-        console.log('DIAG '+term+' #'+(count+1)+': '+src.slice(Math.max(0,i-350),Math.min(src.length,i+850)).replace(/\s+/g,' '));
-        from=i+term.length;
-        count++;
-      }
-    }
-    const fm=src.match(/const FRONTEND_B64='([^']+)'/);
-    if(fm){
-      const front=zlib.gunzipSync(Buffer.from(fm[1],'base64')).toString('utf8');
-      for(const term of ['cliente','endereco_entrega','form','os_numero']){
-        let from=0,count=0;
-        while(count<8){
-          const i=front.toLowerCase().indexOf(term.toLowerCase(),from);
-          if(i<0) break;
-          console.log('DIAG_FRONT '+term+' #'+(count+1)+': '+front.slice(Math.max(0,i-450),Math.min(front.length,i+1100)).replace(/\s+/g,' '));
-          from=i+term.length;
-          count++;
-        }
-      }
-    }
-    console.log('DIAG_COLETAS_END');
-  }catch(e){console.log('DIAG_COLETAS_ERR '+e.message);}
-}
-
 async function start() {
-  diagnosticarModuloColetas();
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL nao configurada');
   await Promise.all([initDb(), initColetasDb()]);
   await migrateLegacyBillsIfNeeded();
