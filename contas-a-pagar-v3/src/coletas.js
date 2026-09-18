@@ -24,6 +24,201 @@ try{
       html=html.replace('</head>',fontCss+'</head>');
     }
 
+
+    if(!html.includes('financeiro-recebimento-addon')){
+      const recebimentoAddon=\`<style id="financeiro-recebimento-addon">
+      .recebido-cell{text-align:center;white-space:nowrap}
+      .recebido-check{width:18px;height:18px;accent-color:#16a34a;vertical-align:middle}
+      .recebido-date{min-width:145px}
+      .recebido-inline{display:flex;align-items:center;gap:9px;min-height:42px}
+      </style>
+      <script id="financeiro-recebimento-script">
+      (() => {
+        const API_STATUS='/api/painel/coletas-financeiro/';
+        const today=()=>new Date().toISOString().slice(0,10);
+        const originalFetch=window.fetch.bind(window);
+        let dadosCache=[];
+
+        async function carregarDados(){
+          try{
+            const r=await originalFetch('/coletas/api/coletas',{cache:'no-store'});
+            if(r.ok) dadosCache=await r.json();
+          }catch(e){}
+          return dadosCache;
+        }
+
+        function acharPorLinha(tr){
+          const texto=(tr.cells?.[0]?.textContent||'').trim();
+          return dadosCache.find(c=>{
+            const os=String(c.os_numero||c.id||'').trim();
+            const id=String(c.id||'').trim();
+            return (os && texto.includes(os)) || (id && texto.includes('#'+id));
+          });
+        }
+
+        async function salvarStatus(id, recebido, data){
+          const r=await originalFetch(API_STATUS+encodeURIComponent(id),{
+            method:'PATCH',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({recebido:!!recebido,data_recebimento:data||null})
+          });
+          if(!r.ok){
+            const e=await r.json().catch(()=>({}));
+            throw new Error(e.error||'Não foi possível salvar o recebimento.');
+          }
+          return r.json();
+        }
+
+        async function decorarFinanceiro(){
+          const tbody=document.getElementById('tbodyFinanceiro');
+          if(!tbody) return;
+          await carregarDados();
+
+          const table=tbody.closest('table');
+          const headRow=table?.querySelector('thead tr');
+          if(headRow && !headRow.querySelector('[data-recebido-head]')){
+            const th1=document.createElement('th');
+            th1.textContent='Recebido';
+            th1.dataset.recebidoHead='1';
+            const th2=document.createElement('th');
+            th2.textContent='Data do recebimento';
+            th2.dataset.recebidoHead='1';
+            headRow.append(th1,th2);
+          }
+
+          [...tbody.querySelectorAll('tr')].forEach(tr=>{
+            if(tr.dataset.recebidoDecorado==='1') return;
+            const coleta=acharPorLinha(tr);
+            if(!coleta) return;
+            tr.dataset.recebidoDecorado='1';
+
+            const tdCheck=document.createElement('td');
+            tdCheck.className='recebido-cell';
+            const check=document.createElement('input');
+            check.type='checkbox';
+            check.className='recebido-check';
+            check.checked=!!coleta.recebido;
+            check.title='Marcar frete como recebido';
+
+            const tdData=document.createElement('td');
+            tdData.className='recebido-cell';
+            const date=document.createElement('input');
+            date.type='date';
+            date.className='recebido-date';
+            date.value=coleta.data_recebimento?String(coleta.data_recebimento).slice(0,10):'';
+            date.disabled=!check.checked;
+
+            check.addEventListener('change',async()=>{
+              const prev=!check.checked;
+              try{
+                if(check.checked && !date.value) date.value=today();
+                date.disabled=!check.checked;
+                await salvarStatus(coleta.id,check.checked,date.value);
+                coleta.recebido=check.checked;
+                coleta.data_recebimento=check.checked?date.value:null;
+              }catch(e){
+                check.checked=prev;
+                date.disabled=!check.checked;
+                alert(e.message);
+              }
+            });
+
+            date.addEventListener('change',async()=>{
+              if(!check.checked) return;
+              try{
+                await salvarStatus(coleta.id,true,date.value);
+                coleta.data_recebimento=date.value;
+              }catch(e){ alert(e.message); }
+            });
+
+            tdCheck.appendChild(check);
+            tdData.appendChild(date);
+            tr.append(tdCheck,tdData);
+          });
+        }
+
+        function garantirCamposFormulario(){
+          const frete=document.getElementById('frete_cobrado');
+          if(!frete || document.getElementById('recebido_financeiro')) return;
+          const grid=frete.closest('.grid');
+          if(!grid) return;
+
+          const lblCheck=document.createElement('label');
+          lblCheck.innerHTML='<span>Recebido</span><span class="recebido-inline"><input id="recebido_financeiro" type="checkbox" class="recebido-check"> <span>Frete recebido do cliente</span></span>';
+
+          const lblData=document.createElement('label');
+          lblData.innerHTML='<span>Data do recebimento</span><input id="data_recebimento_financeiro" type="date" disabled>';
+
+          grid.append(lblCheck,lblData);
+
+          const check=document.getElementById('recebido_financeiro');
+          const date=document.getElementById('data_recebimento_financeiro');
+          check.addEventListener('change',()=>{
+            if(check.checked && !date.value) date.value=today();
+            date.disabled=!check.checked;
+            if(!check.checked) date.value='';
+          });
+        }
+
+        async function carregarCamposFormulario(){
+          garantirCamposFormulario();
+          const modal=document.getElementById('modal');
+          if(!modal?.open) return;
+          const id=document.getElementById('id')?.value;
+          const check=document.getElementById('recebido_financeiro');
+          const date=document.getElementById('data_recebimento_financeiro');
+          if(!check || !date) return;
+
+          if(!id){
+            check.checked=false;
+            date.value='';
+            date.disabled=true;
+            return;
+          }
+          await carregarDados();
+          const coleta=dadosCache.find(c=>String(c.id)===String(id));
+          check.checked=!!coleta?.recebido;
+          date.value=coleta?.data_recebimento?String(coleta.data_recebimento).slice(0,10):'';
+          date.disabled=!check.checked;
+        }
+
+        window.fetch=async function(input,init={}){
+          const res=await originalFetch(input,init);
+          try{
+            const url=typeof input==='string'?input:(input?.url||'');
+            const method=String(init?.method||'GET').toUpperCase();
+            if(res.ok && /^\\/coletas\\/api\\/coletas(?:\\/\\d+)?$/.test(url) && (method==='POST'||method==='PUT')){
+              const data=await res.clone().json();
+              const check=document.getElementById('recebido_financeiro');
+              const date=document.getElementById('data_recebimento_financeiro');
+              if(data?.id && check){
+                await salvarStatus(data.id,check.checked,date?.value||'');
+                setTimeout(decorarFinanceiro,150);
+              }
+            }
+          }catch(e){ console.warn('Recebimento:',e); }
+          return res;
+        };
+
+        document.addEventListener('DOMContentLoaded',()=>{
+          garantirCamposFormulario();
+          const tbody=document.getElementById('tbodyFinanceiro');
+          if(tbody){
+            const obs=new MutationObserver(()=>setTimeout(decorarFinanceiro,30));
+            obs.observe(tbody,{childList:true,subtree:true});
+          }
+          const modal=document.getElementById('modal');
+          if(modal){
+            const obsModal=new MutationObserver(()=>setTimeout(carregarCamposFormulario,30));
+            obsModal.observe(modal,{attributes:true,attributeFilter:['open']});
+          }
+          setTimeout(decorarFinanceiro,250);
+        });
+      })();
+      <\/script>\`;
+      html=html.replace('</body>',recebimentoAddon+'</body>');
+    }
+
     const newFront=zlib.gzipSync(Buffer.from(html,'utf8')).toString('base64');
     src=src.replace(fm[0],"const FRONTEND_B64='"+newFront+"'");
   }
