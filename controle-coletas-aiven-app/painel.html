@@ -7,22 +7,22 @@
 <title>Painel da Transportadora</title>
 <style>
 :root{--nav:#0f172a;--bg:#eef2f6;--white:#fff;--text:#0f172a;--muted:#64748b;--border:#d9e1e8;--blue:#2563eb}
-*{box-sizing:border-box}html,body{height:100%;margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)}
+*{box-sizing:border-box}html,body{height:100%;margin:0;font-family:"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
 .shell{height:100%;display:flex;flex-direction:column}
 .top{background:var(--nav);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:14px;box-shadow:0 2px 10px #0002;z-index:2}
 .brand{min-width:220px}.brand strong{display:block;font-size:19px}.brand span{font-size:12px;color:#cbd5e1}
 .tabs{display:flex;gap:8px;flex:1;justify-content:center}
-.tab{appearance:none;border:1px solid #ffffff28;background:#ffffff10;color:#fff;padding:10px 18px;border-radius:9px;font-weight:700;cursor:pointer}
+.tab{appearance:none;border:1px solid #ffffff28;background:#ffffff10;color:#fff;padding:10px 18px;border-radius:9px;font-weight:600;cursor:pointer}
 .tab.active{background:#fff;color:var(--nav)}
 .open{color:#fff;text-decoration:none;border:1px solid #ffffff28;border-radius:9px;padding:9px 12px;font-size:13px}
 .bar{background:#fff;border-bottom:1px solid var(--border);padding:8px 16px;display:flex;gap:9px;align-items:center;font-size:13px;color:var(--muted)}
-.delete-btn{margin-left:auto;border:0;border-radius:8px;background:#b91c1c;color:#fff;padding:8px 12px;font-weight:700;cursor:pointer}
+.delete-btn{margin-left:auto;border:0;border-radius:8px;background:#b91c1c;color:#fff;padding:8px 12px;font-weight:600;cursor:pointer}
 .delete-btn:hover{background:#991b1b}
 .modal{display:none;position:fixed;inset:0;z-index:50;background:#0f172acc;align-items:center;justify-content:center;padding:18px}
 .modal.show{display:flex}.modal-box{width:min(560px,100%);background:#fff;border-radius:14px;padding:20px;box-shadow:0 18px 60px #0005}
 .modal-box h3{margin:0 0 8px;color:#991b1b}.modal-box p{margin:0 0 14px;color:#475569;line-height:1.4}
 .modal-box select{width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;margin-bottom:14px}
-.modal-actions{display:flex;gap:10px;justify-content:flex-end}.modal-actions button{border:0;border-radius:9px;padding:10px 14px;font-weight:700;cursor:pointer}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end}.modal-actions button{border:0;border-radius:9px;padding:10px 14px;font-weight:600;cursor:pointer}
 .cancel{background:#e2e8f0;color:#0f172a}.confirm-delete{background:#b91c1c;color:#fff}.confirm-delete:disabled{opacity:.5;cursor:not-allowed}
 .dot{width:9px;height:9px;border-radius:50%;background:#22c55e}
 .body{flex:1;min-height:0;padding:8px}
@@ -192,6 +192,26 @@ function ativarTitleCaseNoModulo(){
   }
 }
 
+function aplicarFonteLeveNoModulo(){
+  try{
+    const doc=frame.contentDocument;
+    if(!doc || doc.getElementById('painel-font-light')) return;
+    const style=doc.createElement('style');
+    style.id='painel-font-light';
+    style.textContent=`
+      html,body,button,input,select,textarea,table{font-family:"Segoe UI",Roboto,Arial,sans-serif!important}
+      body{font-weight:400!important;letter-spacing:0!important}
+      label,.muted,.hint,.toolbar,.finance-toolbar{font-weight:400!important}
+      button,.btn,.tab,.section-title,th{font-weight:500!important}
+      h1,h2,h3,strong,.os,.kpi strong{font-weight:600!important}
+      input,select,textarea{font-weight:400!important}
+    `;
+    (doc.head||doc.documentElement).appendChild(style);
+  }catch(e){
+    console.warn('Não foi possível aplicar a fonte mais leve:',e);
+  }
+}
+
 
 function ajustarCampoClienteEntrega(){
   try{
@@ -238,6 +258,7 @@ function ajustarCampoClienteEntrega(){
 
 frame.addEventListener('load',()=>{
   ativarTitleCaseNoModulo();
+  aplicarFonteLeveNoModulo();
   ajustarCampoClienteEntrega();
 });
 
