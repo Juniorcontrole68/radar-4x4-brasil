@@ -1,132 +1,20 @@
-<!doctype html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <meta name="theme-color" content="#b85f1d" />
-  <meta name="description" content="Agenda nacional de encontros, trilhas, expedições 4x4 e overland." />
-  <title>Radar 4x4 Brasil</title>
-  <link rel="manifest" href="/manifest.json" />
-  <link rel="stylesheet" href="/styles.css" />
-</head>
-<body>
-  <header class="topbar">
-    <button class="brand brandButton" data-go="agenda" aria-label="Ir para a agenda"><span class="mark">4×4</span><span><strong>Radar 4x4 Brasil</strong><small>Encontros · Trilhas · Expedições · Overland</small></span></button>
-    <button id="installBtn" class="ghost" hidden>Instalar app</button>
-  </header>
-
-  <main class="shell">
-    <section class="hero">
-      <div>
-        <span class="eyebrow">AGENDA NACIONAL COLABORATIVA</span>
-        <h1>Descubra sua próxima aventura fora do asfalto.</h1>
-        <p>Eventos por região e categoria, com fonte original, contato, inscrição e informações práticas para o seu 4x4.</p>
-        <div class="expeditionStrip"><span>Brasil inteiro</span><span>4x4 &amp; Overland</span><span>Fontes verificadas</span></div>
-        <div class="heroActions"><button class="primary" data-go="enviar">+ Cadastrar evento</button><button class="secondary" data-go="fontes">Ver fontes</button></div>
-      </div>
-      <div class="heroStat"><strong id="eventCount">0</strong><span>eventos na agenda</span><small id="nextEventText">Carregando próximos eventos…</small></div>
-    </section>
-
-    <nav class="tabs" aria-label="Seções">
-      <button class="tab active" data-tab="agenda">Agenda</button>
-      <button class="tab" data-tab="favoritos">Quero ir</button>
-      <button class="tab" data-tab="enviar">Cadastrar evento</button>
-      <button class="tab" data-tab="fontes">Fontes</button>
-      <button class="tab" data-tab="admin">Admin</button>
-    </nav>
-
-    <section id="agenda" class="panel active">
-      <div class="filters card">
-        <input id="search" type="search" placeholder="Buscar evento, cidade, estado ou organizador…" />
-        <select id="category"><option value="">Todas as categorias</option></select>
-        <select id="region"><option value="">Todas as regiões</option></select>
-        <select id="month"><option value="">Qualquer mês</option></select>
-        <select id="difficulty"><option value="">Qualquer dificuldade</option><option>Leve</option><option>Moderada</option><option>Difícil</option><option>Extrema</option></select>
-        <select id="sort"><option value="date">Mais próximos</option><option value="title">Nome A–Z</option></select>
-        <button id="clearFilters" class="secondary">Limpar</button>
-      </div>
-      <div id="chips" class="chips"></div>
-      <div id="events" class="eventGrid"></div>
-      <div id="empty" class="empty" hidden>Nenhum evento encontrado com esses filtros.</div>
-    </section>
-
-    <section id="favoritos" class="panel">
-      <div class="sectionHead"><div><span class="eyebrow">MINHA LISTA</span><h2>Eventos que quero acompanhar</h2><p>Os favoritos ficam salvos neste aparelho.</p></div></div>
-      <div id="favorites" class="eventGrid"></div>
-      <div id="favoritesEmpty" class="empty">Toque em “☆” em qualquer evento para salvá-lo aqui.</div>
-    </section>
-
-    <section id="enviar" class="panel">
-      <div class="sectionHead"><div><span class="eyebrow">PARA ORGANIZADORES E CLUBES</span><h2>Cadastre um encontro, passeio ou expedição</h2><p>O envio passa por revisão antes de aparecer na agenda pública.</p></div></div>
-      <form id="eventForm" class="card formGrid">
-        <label class="span2">Nome do evento<input name="title" required maxlength="140" placeholder="Ex.: Encontro Troller Serra Azul" /></label>
-        <label>Categoria<select name="category" required></select></label>
-        <label>Região<select name="region" required></select></label>
-        <label>Cidade / localidade<input name="city" required /></label>
-        <label>Estado<input name="state" maxlength="2" placeholder="SP" /></label>
-        <label>País<input name="country" value="Brasil" /></label>
-        <label>Data inicial<input name="start" type="date" required /></label>
-        <label>Data final<input name="end" type="date" /></label>
-        <label>Organizador / clube<input name="organizer" required /></label>
-        <label>WhatsApp<input name="whatsapp" inputmode="tel" placeholder="5511999999999" /></label>
-        <label>Valor / inscrição<input name="price" placeholder="Grátis, R$ 150 por carro…" /></label>
-        <label>Dificuldade<select name="difficulty"><option value="">Não informado</option><option>Leve</option><option>Moderada</option><option>Difícil</option><option>Extrema</option></select></label>
-        <fieldset class="span2"><legend>Veículos aceitos</legend><div class="checks"><label><input type="checkbox" name="vehicles" value="4x4 original" /> 4x4 original</label><label><input type="checkbox" name="vehicles" value="4x4 preparado" /> 4x4 preparado</label><label><input type="checkbox" name="vehicles" value="SUV AWD" /> SUV AWD</label><label><input type="checkbox" name="vehicles" value="Overlander" /> Overlander</label><label><input type="checkbox" name="vehicles" value="UTV" /> UTV</label></div></fieldset>
-        <label class="span2">Descrição<textarea name="summary" required maxlength="800" rows="4" placeholder="Roteiro, perfil do passeio, estrutura, principais atrações…"></textarea></label>
-        <label>Ponto de encontro<input name="meetingPoint" placeholder="Local ou endereço" /></label>
-        <label>Camping<input name="camping" placeholder="Disponível / não / nome do camping" /></label>
-        <label>Hospedagem<input name="lodging" placeholder="Hotel/pousada indicada" /></label>
-        <label>Tags<input name="tags" placeholder="família, lama, serra, camping" /></label>
-        <label class="span2">Link público do evento / Instagram / Facebook<input name="sourceUrl" type="url" required placeholder="https://…" /></label>
-        <label class="span2">Link de inscrição<input name="registrationUrl" type="url" placeholder="https://…" /></label>
-        <label class="span2">URL do cartaz ou foto<input name="photoUrl" type="url" placeholder="https://…" /></label>
-        <details class="span2 optionalFields"><summary>Localização exata e contato de revisão (opcional)</summary><div class="nestedGrid"><label>Latitude<input name="latitude" type="number" step="any" /></label><label>Longitude<input name="longitude" type="number" step="any" /></label><label>Seu nome<input name="contactName" /></label><label>Seu e-mail<input name="contactEmail" type="email" /></label></div></details>
-        <div class="span2 formActions"><button class="primary" type="submit">Enviar para revisão</button><span id="submitStatus" class="muted"></span></div>
-      </form>
-      <div class="sectionHead compact"><div><h3>Meus envios neste aparelho</h3></div><button id="refreshMySubmissions" class="secondary">Atualizar status</button></div>
-      <div id="mySubmissions" class="submissionList"></div>
-    </section>
-
-    <section id="fontes" class="panel">
-      <div class="sectionHead"><div><span class="eyebrow">MONITORAMENTO</span><h2>Fontes da agenda</h2><p>Sites, organizadores e páginas públicas usadas como referência.</p></div></div>
-      <div id="sources" class="sourceGrid"></div>
-      <div class="card sourceAdd">
-        <h3>Adicionar uma fonte sua</h3>
-        <p>Guarde páginas de Instagram, Facebook, Jeep Clubes e organizadores para acompanhar manualmente.</p>
-        <div class="row"><input id="customSourceName" placeholder="Nome da página / grupo"/><input id="customSourceUrl" placeholder="https://…"/><button id="addSource">Adicionar</button></div>
-        <div id="customSources" class="customSources"></div>
-      </div>
-      <div class="notice card"><strong>Instagram e Facebook</strong><p>Essas plataformas podem exigir login e bloquear leitura automatizada. O Radar usa somente informações públicas verificáveis e mantém a fonte original; dados não confirmados não são publicados automaticamente.</p></div>
-    </section>
-
-    <section id="admin" class="panel">
-      <div class="sectionHead"><div><span class="eyebrow">MODERAÇÃO</span><h2>Revisar eventos enviados</h2><p>Defina <code>ADMIN_TOKEN</code> no servidor. O token não é armazenado no backend.</p></div></div>
-      <div class="card adminLogin"><input id="adminToken" type="password" placeholder="Token de administrador"/><button id="loadAdmin" class="primary">Carregar envios</button><span id="adminStatus" class="muted"></span></div>
-      <div id="adminSubmissions" class="submissionList"></div>
-    </section>
-  </main>
-
-  <dialog id="eventDialog" class="eventDialog">
-    <button class="dialogClose" aria-label="Fechar">×</button>
-    <div id="eventDialogBody"></div>
-  </dialog>
-
-  <template id="eventTemplate">
-    <article class="eventCard">
-      <div class="eventImageWrap"><img class="eventImage" alt="" loading="lazy" /><div class="imageFallback">RADAR 4×4</div></div>
-      <div class="eventContent">
-        <div class="eventTop"><span class="category"></span><button class="favorite" aria-label="Salvar evento">☆</button></div>
-        <div class="dateLine"><span class="dateBadge"></span><span class="status"></span></div>
-        <h3 class="title"></h3>
-        <div class="location"></div>
-        <p class="summary"></p>
-        <div class="metaPills"></div>
-        <div class="tags"></div>
-        <div class="eventFoot"><span class="source"></span><button class="details secondary">Detalhes</button></div>
-      </div>
-    </article>
-  </template>
-
-  <script src="/app.js" type="module"></script>
-</body>
-</html>
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0f172a"><title>CONSTRULOG Dashboard</title><style>
+:root{--bg:#f5f7fb;--card:#fff;--ink:#172033;--muted:#708096;--line:#e4eaf2;--nav:#0f172a;--brand:#0f766e;--ok:#15803d;--bad:#b91c1c}*{box-sizing:border-box}body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--ink)}.app{display:grid;grid-template-columns:220px 1fr;min-height:100vh}.side{background:var(--nav);color:white;padding:22px 14px}.logo{font-weight:800;font-size:22px;margin:0 8px 24px}.logo small{display:block;font-size:11px;color:#a9b6c8;margin-top:4px}.nav button{width:100%;border:0;background:none;color:#cad5e3;text-align:left;padding:12px;border-radius:10px;margin:4px 0;cursor:pointer}.nav button.active,.nav button:hover{background:#1e293b;color:white}.main{padding:24px}.top{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}.top h1{margin:0;font-size:24px}.muted{color:var(--muted);font-size:12px}.filters{display:flex;gap:8px;flex-wrap:wrap}.filters input,.filters select,.filters button{border:1px solid var(--line);background:white;border-radius:9px;padding:9px}.filters button{background:var(--brand);color:white;font-weight:700;cursor:pointer}.grid{display:grid;gap:12px}.kpis{grid-template-columns:repeat(5,minmax(0,1fr));margin-bottom:14px}.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:15px;box-shadow:0 7px 22px rgba(15,23,42,.05)}.kpi.fin{border-top:3px solid var(--brand)}.label{font-size:12px;color:var(--muted)}.value{font-size:23px;font-weight:800;margin-top:7px}.sub{font-size:10px;color:var(--muted);margin-top:4px}.positive{color:var(--ok)}.negative{color:var(--bad)}.charts{grid-template-columns:2fr 1fr}.two{grid-template-columns:1fr 1fr}.chart{height:280px}.section{display:none}.section.active{display:block}.tablecard{padding:0;overflow:hidden}.thead{padding:15px;font-weight:700;border-bottom:1px solid var(--line)}.scroll{overflow:auto;max-height:520px}table{width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap}th,td{padding:9px 11px;border-bottom:1px solid var(--line);text-align:left}th{position:sticky;top:0;background:#f8fafc}.loading{position:fixed;inset:0;background:#ffffffdd;display:grid;place-items:center;z-index:9;font-weight:700}.hide{display:none}.err{display:none;background:#fee2e2;color:#991b1b;padding:11px;border-radius:10px;margin-bottom:12px}
+@media(max-width:1050px){.app{grid-template-columns:72px 1fr}.side{padding:16px 8px}.logo{font-size:0}.logo:before{content:'CL';font-size:20px}.logo small{display:none}.nav button{font-size:0;text-align:center}.nav button:before{font-size:18px}.nav button[data-tab=dashboard]:before{content:'◫'}.nav button[data-tab=operacoes]:before{content:'🚚'}.nav button[data-tab=agendamentos]:before{content:'📅'}.nav button[data-tab=ajudantes]:before{content:'👷'}.kpis{grid-template-columns:repeat(2,1fr)}.charts,.two{grid-template-columns:1fr}}@media(max-width:650px){.main{padding:14px}.filters{width:100%}.filters input,.filters select{flex:1;min-width:130px}.filters button{width:100%}.value{font-size:20px}}
+</style></head><body><div id="loading" class="loading">Carregando dados do Google Sheets…</div><div class="app"><aside class="side"><div class="logo">CONSTRULOG<small>Dashboard Operacional</small></div><div class="nav"><button class="active" data-tab="dashboard">Dashboard</button><button data-tab="operacoes">Operações</button><button data-tab="agendamentos">Agendamentos</button><button data-tab="ajudantes">Ajudantes</button></div></aside><main class="main"><div class="top"><div><h1 id="pageTitle">Dashboard</h1><div class="muted">Atualização ao vivo da planilha Controle de Entregas Site</div><div id="status" class="muted">Conectando…</div></div><div class="filters"><input id="from" type="date"><input id="to" type="date"><select id="driver"><option value="">Todos motoristas</option></select><select id="branch"><option value="">Todas filiais</option></select><button id="mobile">📱 Atalho no celular</button></div></div><div id="err" class="err"></div>
+<section id="dashboard" class="section active"><div class="grid kpis">
+<div class="card kpi"><div class="label">Entregas previstas</div><div id="del" class="value">—</div><div class="sub">período filtrado</div></div>
+<div class="card kpi"><div class="label">Realizadas</div><div id="done" class="value">—</div><div class="sub">total concluído</div></div>
+<div class="card kpi"><div class="label">Índice de entrega</div><div id="rate" class="value">—</div><div class="sub">realizadas ÷ previstas</div></div>
+<div class="card kpi"><div class="label">KM rodados</div><div id="km" class="value">—</div><div class="sub">somatório</div></div>
+<div class="card kpi fin"><div class="label">Receita de frete líquida</div><div id="revenue" class="value">—</div><div class="sub">Frete Vialog Liq.</div></div>
+<div class="card kpi fin"><div class="label">Frete gasto com motoristas</div><div id="driverCost" class="value">—</div><div class="sub">Frete Mot Liq.</div></div>
+<div class="card kpi fin"><div class="label">Lucro bruto</div><div id="gross" class="value">—</div><div class="sub">receita − motoristas</div></div>
+<div class="card kpi fin"><div class="label">Margem de lucro</div><div id="margin" class="value">—</div><div class="sub">lucro bruto ÷ receita</div></div>
+<div class="card kpi fin"><div class="label">Custo com ajudantes</div><div id="helpersCost" class="value">—</div><div class="sub">aba Ajudantes</div></div>
+<div class="card kpi fin"><div class="label">Lucro líquido</div><div id="net" class="value">—</div><div class="sub">lucro bruto − ajudantes</div></div>
+</div><div class="grid charts"><div class="card"><b>Entregas x retornos por dia</b><div class="chart"><canvas id="trend"></canvas></div></div><div class="card"><b>Entregas por motorista</b><div class="chart"><canvas id="drivers"></canvas></div></div></div><div class="grid two"><div class="card"><b>Status dos agendamentos</b><div class="chart"><canvas id="statusChart"></canvas></div></div><div class="card"><b>Custo de ajudantes por dia</b><div class="chart"><canvas id="helpersChart"></canvas></div></div></div></section>
+<section id="operacoes" class="section"><div class="card tablecard"><div class="thead">Operações / Entregas</div><div class="scroll"><table id="ops"></table></div></div></section>
+<section id="agendamentos" class="section"><div class="card tablecard"><div class="thead">Agendamentos</div><div class="scroll"><table id="sch"></table></div></div></section>
+<section id="ajudantes" class="section"><div class="grid kpis"><div class="card"><div class="label">Custo total</div><div id="hc" class="value">—</div></div><div class="card"><div class="label">Lançamentos</div><div id="hn" class="value">—</div></div><div class="card"><div class="label">Pessoas únicas</div><div id="hp" class="value">—</div></div></div><div class="card tablecard"><div class="thead">Ajudantes e conferentes</div><div class="scroll"><table id="help"></table></div></div></section>
+</main></div><script src="/app.js"></script></body></html>
