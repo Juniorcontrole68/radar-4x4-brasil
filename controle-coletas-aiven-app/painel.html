@@ -8,7 +8,7 @@
 <style>
 :root{--nav:#0f172a;--bg:#eef2f6;--white:#fff;--text:#0f172a;--muted:#64748b;--border:#d9e1e8;--blue:#2563eb}
 *{box-sizing:border-box}html,body{height:100%;margin:0;font-family:"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
-.shell{height:100%;display:flex;flex-direction:column}
+.shell{height:100%;height:100dvh;display:flex;flex-direction:column;overflow:hidden}
 .top{background:var(--nav);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:14px;box-shadow:0 2px 10px #0002;z-index:2}
 .brand{min-width:220px}.brand strong{display:block;font-size:19px}.brand span{font-size:12px;color:#cbd5e1}
 .tabs{display:flex;gap:8px;flex:1;justify-content:center}
@@ -25,11 +25,25 @@
 .modal-actions{display:flex;gap:10px;justify-content:flex-end}.modal-actions button{border:0;border-radius:9px;padding:10px 14px;font-weight:600;cursor:pointer}
 .cancel{background:#e2e8f0;color:#0f172a}.confirm-delete{background:#b91c1c;color:#fff}.confirm-delete:disabled{opacity:.5;cursor:not-allowed}
 .dot{width:9px;height:9px;border-radius:50%;background:#22c55e}
-.body{flex:1;min-height:0;padding:8px}
+.body{position:relative;flex:1;min-height:0;padding:8px}.module-loading{display:none;position:absolute;inset:8px;z-index:10;background:#ffffffee;align-items:center;justify-content:center;border-radius:12px;font-weight:700;color:#334155}.module-loading.show{display:flex}
 iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 2px 12px #0000000b}
 @media(max-width:720px){
- .top{padding:9px;flex-wrap:wrap}.brand{min-width:0;flex:1}.brand strong{font-size:16px}.brand span,.open{display:none}
- .tabs{order:2;width:100%;justify-content:stretch;display:grid;grid-template-columns:1fr 1fr}.tab{padding:10px 6px}.body{padding:3px}.bar{padding:7px 10px}iframe{border-radius:7px}
+ html,body{height:100%;height:100dvh;overflow:hidden}
+ .top{padding:9px 10px;display:flex;min-height:48px;flex-wrap:nowrap}
+ .brand{min-width:0;flex:1}.brand strong{font-size:17px}.brand span,.open{display:none}
+ .tabs{position:fixed;left:0;right:0;bottom:0;z-index:40;width:100%;height:68px;padding:6px;gap:5px;background:var(--nav);display:grid;grid-template-columns:repeat(4,minmax(0,1fr));box-shadow:0 -3px 14px #0003}
+ .tab{min-width:0;padding:7px 3px;border-radius:8px;font-size:10px;line-height:1.15;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;white-space:normal}
+ .tab:before{font-size:18px;line-height:1}
+ .tab[data-module="coletas"]:before{content:"🚚"}
+ .tab[data-module="financeiro"]:before{content:"💰"}
+ .tab[data-module="dashboard"]:before{content:"📊"}
+ .tab[data-module="contas"]:before{content:"🧾"}
+ .bar{padding:6px 9px;font-size:11px;min-height:35px}
+ .bar>span:nth-of-type(3){display:none}
+ .delete-btn{padding:6px 8px;font-size:11px}
+ .body{padding:3px 3px 72px}
+ .module-loading{inset:3px 3px 72px;border-radius:7px}
+ iframe{border-radius:7px;border:0}
 }
 </style>
 </head>
@@ -46,7 +60,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
     <a class="open" id="open" href="/coletas?embed=1" target="_blank" rel="noopener">Abrir separado ↗</a>
   </div>
   <div class="bar"><span class="dot"></span><span id="module">Controle de Coletas</span><span>• Banco Aiven conectado</span><button id="deleteColeta" class="delete-btn" type="button">🗑 Excluir coleta</button></div>
-  <div class="body"><iframe id="frame" src="/coletas?embed=1" title="Módulo CONSTRULOG"></iframe></div>
+  <div class="body"><div id="moduleLoading" class="module-loading">Abrindo módulo…</div><iframe id="frame" src="/coletas?embed=1" title="Módulo CONSTRULOG"></iframe></div>
 </div>
 
 <div id="deleteModal" class="modal" aria-hidden="true">
@@ -62,21 +76,28 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
 </div>
 
 <script>
-const frame=document.getElementById('frame'), moduleName=document.getElementById('module'), open=document.getElementById('open');
+const frame=document.getElementById('frame'), moduleName=document.getElementById('module'), open=document.getElementById('open'), moduleLoading=document.getElementById('moduleLoading');
 const deleteBtn=document.getElementById('deleteColeta'), deleteModal=document.getElementById('deleteModal'), deleteSelect=document.getElementById('deleteSelect'), cancelDelete=document.getElementById('cancelDelete'), confirmDelete=document.getElementById('confirmDelete');
-document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{
+function abrirModulo(btn){
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   btn.classList.add('active');
   const mod=btn.dataset.module||'coletas';
   frame.dataset.module=mod;
+  moduleLoading.classList.add('show');
   let src=btn.dataset.src;
-  if(mod==='financeiro') src += (src.includes('?')?'&':'?')+'view=financeiro&refresh='+Date.now();
+  const sep=src.includes('?')?'&':'?';
+  if(mod==='financeiro') src += sep+'view=financeiro&refresh='+Date.now();
+  else src += sep+'refresh='+Date.now();
   frame.src=src;
   moduleName.textContent=btn.dataset.name;
   open.href=btn.dataset.src;
   deleteBtn.style.display=mod==='coletas'?'inline-block':'none';
-  history.replaceState(null,'','#'+mod);
-}));
+  try{history.replaceState(null,'','#'+mod)}catch(e){}
+}
+document.querySelectorAll('.tab').forEach(btn=>{
+  btn.addEventListener('click',e=>{e.preventDefault();abrirModulo(btn)});
+  btn.addEventListener('touchend',e=>{e.preventDefault();abrirModulo(btn)},{passive:false});
+});
 
 function coletaLabel(c){
   const parts=[];
@@ -264,29 +285,40 @@ function ajustarCampoClienteEntrega(){
 
 function abrirFinanceiroNoModulo(){
   if(frame.dataset.module!=='financeiro') return;
-  let tentativa=0;
-  const tentar=()=>{
-    tentativa++;
+  let encerrado=false,obs=null,timer=null;
+  const localizar=()=>{
+    if(encerrado || frame.dataset.module!=='financeiro') return false;
     try{
       const doc=frame.contentDocument;
-      if(!doc) throw new Error('documento indisponível');
-      const candidatos=[...doc.querySelectorAll('button,a,[role="tab"],.tab,[data-tab],[data-view]')];
+      if(!doc) return false;
+      const candidatos=[...doc.querySelectorAll('button,a,[role="tab"],.tab,[data-tab],[data-view],[onclick]')];
       const alvo=candidatos.find(el=>{
         const txt=(el.textContent||'').trim().toLocaleLowerCase('pt-BR');
-        const meta=((el.id||'')+' '+(el.className||'')+' '+(el.getAttribute?.('data-tab')||'')+' '+(el.getAttribute?.('data-view')||'')+' '+(el.getAttribute?.('href')||'')).toLocaleLowerCase('pt-BR');
-        return txt.includes('financeiro') || meta.includes('financeiro');
+        const meta=((el.id||'')+' '+String(el.className||'')+' '+(el.getAttribute?.('data-tab')||'')+' '+(el.getAttribute?.('data-view')||'')+' '+(el.getAttribute?.('href')||'')+' '+(el.getAttribute?.('onclick')||'')).toLocaleLowerCase('pt-BR');
+        return txt==='financeiro' || txt.includes('financeiro') || meta.includes('financeiro');
       });
       if(alvo){
-        alvo.click();
-        return;
+        encerrado=true;
+        try{alvo.click()}catch(e){}
+        if(obs)obs.disconnect();
+        if(timer)clearInterval(timer);
+        return true;
+      }
+      if(!obs && doc.documentElement){
+        obs=new MutationObserver(()=>localizar());
+        obs.observe(doc.documentElement,{childList:true,subtree:true,attributes:true});
+        setTimeout(()=>{try{obs&&obs.disconnect()}catch(e){}},30000);
       }
     }catch(e){}
-    if(tentativa<12) setTimeout(tentar,250);
+    return false;
   };
-  tentar();
+  localizar();
+  timer=setInterval(()=>{if(localizar())clearInterval(timer)},500);
+  setTimeout(()=>{encerrado=true;clearInterval(timer);try{obs&&obs.disconnect()}catch(e){}},30000);
 }
 
 frame.addEventListener('load',()=>{
+  moduleLoading.classList.remove('show');
   ativarTitleCaseNoModulo();
   aplicarFonteLeveNoModulo();
   ajustarCampoClienteEntrega();
@@ -295,7 +327,12 @@ frame.addEventListener('load',()=>{
 
 const moduloInicial=(location.hash||'#coletas').slice(1);
 const botaoInicial=document.querySelector('.tab[data-module="'+moduloInicial+'"]')||document.querySelector('.tab[data-module="coletas"]');
-if(botaoInicial) botaoInicial.click();
+if(botaoInicial) abrirModulo(botaoInicial);
+window.addEventListener('hashchange',()=>{
+  const mod=(location.hash||'#coletas').slice(1);
+  const btn=document.querySelector('.tab[data-module="'+mod+'"]');
+  if(btn && frame.dataset.module!==mod) abrirModulo(btn);
+});
 </script>
 </body>
 </html>
