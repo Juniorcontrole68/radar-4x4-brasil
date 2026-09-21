@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0f172a">
-<title>Painel da Transportadora</title>
+<title>CONSTRULOG</title>
 <style>
 :root{--nav:#0f172a;--bg:#eef2f6;--white:#fff;--text:#0f172a;--muted:#64748b;--border:#d9e1e8;--blue:#2563eb}
 *{box-sizing:border-box}html,body{height:100%;margin:0;font-family:"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
@@ -29,22 +29,24 @@
 iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 2px 12px #0000000b}
 @media(max-width:720px){
  .top{padding:9px;flex-wrap:wrap}.brand{min-width:0;flex:1}.brand strong{font-size:16px}.brand span,.open{display:none}
- .tabs{order:2;width:100%;justify-content:stretch}.tab{flex:1;padding:10px 8px}.body{padding:3px}.bar{padding:7px 10px}iframe{border-radius:7px}
+ .tabs{order:2;width:100%;justify-content:stretch;display:grid;grid-template-columns:1fr 1fr}.tab{padding:10px 6px}.body{padding:3px}.bar{padding:7px 10px}iframe{border-radius:7px}
 }
 </style>
 </head>
 <body>
 <div class="shell">
   <div class="top">
-    <div class="brand"><strong>Painel da Transportadora</strong><span>Operação e financeiro em um único sistema</span></div>
+    <div class="brand"><strong>CONSTRULOG</strong><span>Coletas, financeiro, dashboard e contas em um único sistema</span></div>
     <div class="tabs">
-      <button class="tab active" data-src="/coletas?embed=1" data-name="Controle de Coletas">Controle de Coletas</button>
-      <button class="tab" data-src="/contas?embed=1" data-name="Contas a Pagar">Contas a Pagar</button>
+      <button class="tab active" data-module="coletas" data-src="/coletas?embed=1" data-name="Coletas">Coletas</button>
+      <button class="tab" data-module="financeiro" data-src="/coletas?embed=1" data-name="Financeiro">Financeiro</button>
+      <button class="tab" data-module="dashboard" data-src="https://construlog-dashboard.onrender.com/?embed=1" data-name="Dashboard">Dashboard</button>
+      <button class="tab" data-module="contas" data-src="/contas?embed=1" data-name="Contas a Pagar">Contas a Pagar</button>
     </div>
     <a class="open" id="open" href="/coletas?embed=1" target="_blank" rel="noopener">Abrir separado ↗</a>
   </div>
   <div class="bar"><span class="dot"></span><span id="module">Controle de Coletas</span><span>• Banco Aiven conectado</span><button id="deleteColeta" class="delete-btn" type="button">🗑 Excluir coleta</button></div>
-  <div class="body"><iframe id="frame" src="/coletas?embed=1" title="Módulo da Transportadora"></iframe></div>
+  <div class="body"><iframe id="frame" src="/coletas?embed=1" title="Módulo CONSTRULOG"></iframe></div>
 </div>
 
 <div id="deleteModal" class="modal" aria-hidden="true">
@@ -65,11 +67,15 @@ const deleteBtn=document.getElementById('deleteColeta'), deleteModal=document.ge
 document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   btn.classList.add('active');
-  frame.src=btn.dataset.src;
+  const mod=btn.dataset.module||'coletas';
+  frame.dataset.module=mod;
+  let src=btn.dataset.src;
+  if(mod==='financeiro') src += (src.includes('?')?'&':'?')+'view=financeiro&refresh='+Date.now();
+  frame.src=src;
   moduleName.textContent=btn.dataset.name;
   open.href=btn.dataset.src;
-  deleteBtn.style.display=btn.dataset.src.startsWith('/coletas')?'inline-block':'none';
-  history.replaceState(null,'','#'+(btn.dataset.src.startsWith('/contas')?'contas':'coletas'));
+  deleteBtn.style.display=mod==='coletas'?'inline-block':'none';
+  history.replaceState(null,'','#'+mod);
 }));
 
 function coletaLabel(c){
@@ -256,14 +262,40 @@ function ajustarCampoClienteEntrega(){
   }
 }
 
+function abrirFinanceiroNoModulo(){
+  if(frame.dataset.module!=='financeiro') return;
+  let tentativa=0;
+  const tentar=()=>{
+    tentativa++;
+    try{
+      const doc=frame.contentDocument;
+      if(!doc) throw new Error('documento indisponível');
+      const candidatos=[...doc.querySelectorAll('button,a,[role="tab"],.tab,[data-tab],[data-view]')];
+      const alvo=candidatos.find(el=>{
+        const txt=(el.textContent||'').trim().toLocaleLowerCase('pt-BR');
+        const meta=((el.id||'')+' '+(el.className||'')+' '+(el.getAttribute?.('data-tab')||'')+' '+(el.getAttribute?.('data-view')||'')+' '+(el.getAttribute?.('href')||'')).toLocaleLowerCase('pt-BR');
+        return txt.includes('financeiro') || meta.includes('financeiro');
+      });
+      if(alvo){
+        alvo.click();
+        return;
+      }
+    }catch(e){}
+    if(tentativa<12) setTimeout(tentar,250);
+  };
+  tentar();
+}
+
 frame.addEventListener('load',()=>{
   ativarTitleCaseNoModulo();
   aplicarFonteLeveNoModulo();
   ajustarCampoClienteEntrega();
+  abrirFinanceiroNoModulo();
 });
 
-if(location.hash==='#contas') document.querySelector('.tab[data-src="/contas?embed=1"]').click();
-else deleteBtn.style.display='inline-block';
+const moduloInicial=(location.hash||'#coletas').slice(1);
+const botaoInicial=document.querySelector('.tab[data-module="'+moduloInicial+'"]')||document.querySelector('.tab[data-module="coletas"]');
+if(botaoInicial) botaoInicial.click();
 </script>
 </body>
 </html>
