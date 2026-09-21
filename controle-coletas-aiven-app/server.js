@@ -117,6 +117,7 @@ async function start() {
   await Promise.all([initDb(), initColetasDb()]);
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS recebido BOOLEAN NOT NULL DEFAULT FALSE');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS data_recebimento DATE');
+  await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS previsao_pagamento_fatura DATE');
   await migrateLegacyBillsIfNeeded();
 
   http.createServer(async (req, res) => {
@@ -148,7 +149,8 @@ async function start() {
             COALESCE(to_jsonb(c)->>'cliente', to_jsonb(c)->>'client', to_jsonb(c)->>'nome_cliente', to_jsonb(c)->>'customer', '') AS cliente,
             COALESCE(to_jsonb(c)->>'destino', to_jsonb(c)->>'cidade_entrega', to_jsonb(c)->>'endereco_entrega', to_jsonb(c)->>'delivery_address', '') AS destino,
             COALESCE(to_jsonb(c)->>'placa', to_jsonb(c)->>'plate', '') AS placa,
-            COALESCE(to_jsonb(c)->>'data_coleta', to_jsonb(c)->>'collection_date', to_jsonb(c)->>'created_at', '') AS data
+            COALESCE(to_jsonb(c)->>'data_coleta', to_jsonb(c)->>'collection_date', to_jsonb(c)->>'created_at', '') AS data,
+            previsao_pagamento_fatura
           FROM coletas c
           LIMIT 500
         `);
@@ -167,6 +169,22 @@ async function start() {
         const result = await pool.query(
           'UPDATE coletas SET recebido=$1, data_recebimento=$2, updated_at=NOW() WHERE id::text=$3 RETURNING id::text AS id, recebido, data_recebimento',
           [recebido, dataRecebimento, id]
+        );
+        if (!result.rowCount) return sendJson(res, 404, { error: 'Coleta não encontrada.' });
+        return sendJson(res, 200, { ok: true, ...result.rows[0] });
+      }
+
+      const previsaoMatch = u.pathname.match(/^\/api\/painel\/coletas-previsao\/([^/]+)$/);
+      if (req.method === 'PATCH' && previsaoMatch) {
+        const id = decodeURIComponent(previsaoMatch[1]);
+        const body = await readJsonBody(req);
+        const previsao = body.previsao_pagamento_fatura ? String(body.previsao_pagamento_fatura).slice(0,10) : null;
+        if (previsao && !/^\d{4}-\d{2}-\d{2}$/.test(previsao)) {
+          return sendJson(res, 400, { error: 'Data de previsão inválida.' });
+        }
+        const result = await pool.query(
+          'UPDATE coletas SET previsao_pagamento_fatura=$1, updated_at=NOW() WHERE id::text=$2 RETURNING id::text AS id, previsao_pagamento_fatura',
+          [previsao, id]
         );
         if (!result.rowCount) return sendJson(res, 404, { error: 'Coleta não encontrada.' });
         return sendJson(res, 200, { ok: true, ...result.rows[0] });
