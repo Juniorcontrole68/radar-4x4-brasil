@@ -30,11 +30,13 @@ try{
       .recebido-cell{text-align:center;white-space:nowrap}
       .recebido-check{width:18px;height:18px;accent-color:#16a34a;vertical-align:middle}
       .recebido-date{min-width:145px}
+      .previsao-date{min-width:145px}
       .recebido-inline{display:flex;align-items:center;gap:9px;min-height:42px}
       </style>
       <script id="financeiro-recebimento-script">
       (() => {
         const API_STATUS='/api/painel/coletas-financeiro/';
+        const API_PREVISAO='/api/painel/coletas-previsao/';
         const today=()=>new Date().toISOString().slice(0,10);
         const originalFetch=window.fetch.bind(window);
         let dadosCache=[];
@@ -69,6 +71,19 @@ try{
           return r.json();
         }
 
+        async function salvarPrevisao(id, data){
+          const r=await originalFetch(API_PREVISAO+encodeURIComponent(id),{
+            method:'PATCH',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({previsao_pagamento_fatura:data||null})
+          });
+          if(!r.ok){
+            const e=await r.json().catch(()=>({}));
+            throw new Error(e.error||'Não foi possível salvar a previsão de pagamento.');
+          }
+          return r.json();
+        }
+
         async function decorarFinanceiro(){
           const tbody=document.getElementById('tbodyFinanceiro');
           if(!tbody) return;
@@ -83,7 +98,11 @@ try{
             const th2=document.createElement('th');
             th2.textContent='Data do recebimento';
             th2.dataset.recebidoHead='1';
-            headRow.append(th1,th2);
+            const th3=document.createElement('th');
+            th3.textContent='Prev. pagamento da fatura';
+            th3.dataset.recebidoHead='1';
+            th3.dataset.previsaoHead='1';
+            headRow.append(th1,th2,th3);
           }
 
           [...tbody.querySelectorAll('tr')].forEach(tr=>{
@@ -107,6 +126,24 @@ try{
             date.className='recebido-date';
             date.value=coleta.data_recebimento?String(coleta.data_recebimento).slice(0,10):'';
             date.disabled=!check.checked;
+
+            const tdPrev=document.createElement('td');
+            tdPrev.className='recebido-cell';
+            const prev=document.createElement('input');
+            prev.type='date';
+            prev.className='previsao-date';
+            prev.value=coleta.previsao_pagamento_fatura?String(coleta.previsao_pagamento_fatura).slice(0,10):'';
+            prev.title='Previsão de pagamento da fatura';
+            prev.addEventListener('change',async()=>{
+              const antigo=coleta.previsao_pagamento_fatura?String(coleta.previsao_pagamento_fatura).slice(0,10):'';
+              try{
+                await salvarPrevisao(coleta.id,prev.value);
+                coleta.previsao_pagamento_fatura=prev.value||null;
+              }catch(e){
+                prev.value=antigo;
+                alert(e.message);
+              }
+            });
 
             check.addEventListener('change',async()=>{
               const prev=!check.checked;
@@ -133,31 +170,40 @@ try{
 
             tdCheck.appendChild(check);
             tdData.appendChild(date);
-            tr.append(tdCheck,tdData);
+            tdPrev.appendChild(prev);
+            tr.append(tdCheck,tdData,tdPrev);
           });
         }
 
         function garantirCamposFormulario(){
           const frete=document.getElementById('frete_cobrado');
-          if(!frete || document.getElementById('recebido_financeiro')) return;
+          if(!frete) return;
           const grid=frete.closest('.grid');
           if(!grid) return;
 
-          const lblCheck=document.createElement('label');
-          lblCheck.innerHTML='<span>Recebido</span><span class="recebido-inline"><input id="recebido_financeiro" type="checkbox" class="recebido-check"> <span>Frete recebido do cliente</span></span>';
+          if(!document.getElementById('recebido_financeiro')){
+            const lblCheck=document.createElement('label');
+            lblCheck.innerHTML='<span>Recebido</span><span class="recebido-inline"><input id="recebido_financeiro" type="checkbox" class="recebido-check"> <span>Frete recebido do cliente</span></span>';
 
-          const lblData=document.createElement('label');
-          lblData.innerHTML='<span>Data do recebimento</span><input id="data_recebimento_financeiro" type="date" disabled>';
+            const lblData=document.createElement('label');
+            lblData.innerHTML='<span>Data do recebimento</span><input id="data_recebimento_financeiro" type="date" disabled>';
 
-          grid.append(lblCheck,lblData);
+            grid.append(lblCheck,lblData);
 
-          const check=document.getElementById('recebido_financeiro');
-          const date=document.getElementById('data_recebimento_financeiro');
-          check.addEventListener('change',()=>{
-            if(check.checked && !date.value) date.value=today();
-            date.disabled=!check.checked;
-            if(!check.checked) date.value='';
-          });
+            const check=document.getElementById('recebido_financeiro');
+            const date=document.getElementById('data_recebimento_financeiro');
+            check.addEventListener('change',()=>{
+              if(check.checked && !date.value) date.value=today();
+              date.disabled=!check.checked;
+              if(!check.checked) date.value='';
+            });
+          }
+
+          if(!document.getElementById('previsao_pagamento_fatura')){
+            const lblPrev=document.createElement('label');
+            lblPrev.innerHTML='<span>Previsão de pagamento da fatura</span><input id="previsao_pagamento_fatura" type="date" class="previsao-date">';
+            grid.appendChild(lblPrev);
+          }
         }
 
         async function carregarCamposFormulario(){
@@ -167,12 +213,14 @@ try{
           const id=document.getElementById('id')?.value;
           const check=document.getElementById('recebido_financeiro');
           const date=document.getElementById('data_recebimento_financeiro');
-          if(!check || !date) return;
+          const prev=document.getElementById('previsao_pagamento_fatura');
+          if(!check || !date || !prev) return;
 
           if(!id){
             check.checked=false;
             date.value='';
             date.disabled=true;
+            prev.value='';
             return;
           }
           await carregarDados();
@@ -180,6 +228,7 @@ try{
           check.checked=!!coleta?.recebido;
           date.value=coleta?.data_recebimento?String(coleta.data_recebimento).slice(0,10):'';
           date.disabled=!check.checked;
+          prev.value=coleta?.previsao_pagamento_fatura?String(coleta.previsao_pagamento_fatura).slice(0,10):'';
         }
 
         window.fetch=async function(input,init={}){
@@ -191,8 +240,10 @@ try{
               const data=await res.clone().json();
               const check=document.getElementById('recebido_financeiro');
               const date=document.getElementById('data_recebimento_financeiro');
-              if(data?.id && check){
-                await salvarStatus(data.id,check.checked,date?.value||'');
+              const prev=document.getElementById('previsao_pagamento_fatura');
+              if(data?.id){
+                if(check) await salvarStatus(data.id,check.checked,date?.value||'');
+                if(prev) await salvarPrevisao(data.id,prev.value||'');
                 setTimeout(decorarFinanceiro,150);
               }
             }
