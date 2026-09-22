@@ -204,11 +204,12 @@ async function fetchSsw38Rows(){
       td:(html.match(/<td\b/gi)||[]).length,
       table:(html.match(/<table\b/gi)||[]).length
     };
+    const inputs=[...html.matchAll(/<input\b([^>]*)>/gi)].map(m=>{const a=m[1]||'';return{name:(a.match(/\bname=["']?([^"'\s>]+)/i)||[])[1]||'',id:(a.match(/\bid=["']?([^"'\s>]+)/i)||[])[1]||'',type:(a.match(/\btype=["']?([^"'\s>]+)/i)||[])[1]||''}}).filter(x=>x.name||x.id);
     const scripts=[...html.matchAll(/<script\b[^>]*src=["']([^"']+)["']/gi)].map(m=>m[1]);
     const bins=[...new Set([...html.matchAll(/(?:\/bin\/)?(ssw\d{3,6})/gi)].map(m=>m[1]))];
     const ajax=[...new Set([...html.matchAll(/ajaxEnvia\(["']([^"']+)/gi)].map(m=>m[1]))];
     const xhr=[...new Set([...html.matchAll(/(?:url|action|href)\s*[:=]\s*["']([^"']+)/gi)].map(m=>m[1]).filter(x=>/ssw|ajax|cgi|bin/i.test(x)))].slice(0,20);
-    console.log('SSW38 estrutura: '+JSON.stringify({...structure,scripts,bins,ajax,xhr}));
+    console.log('SSW38 estrutura: '+JSON.stringify({...structure,inputs,scripts,bins,ajax,xhr}));
     try{
       const jr=await fetch('https://sistema.ssw.inf.br/scripts/ssw0198_181124.js?v=18.11.24',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},signal:AbortSignal.timeout(15000)});
       const js=await jr.text(),pos=js.indexOf('ROM_ALL');
