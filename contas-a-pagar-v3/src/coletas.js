@@ -123,6 +123,14 @@ try{
           [...tbody.querySelectorAll('tr')].forEach(tr=>{
             const coleta=acharPorLinha(tr);
             if(!coleta || !tr.cells || tr.cells.length<2) return;
+            const signature=[
+              coleta.os_numero||coleta.id||'',
+              coleta.cliente||'',
+              coleta.endereco_coleta||'',
+              coleta.destinatario||'',
+              coleta.endereco_entrega||''
+            ].join('|');
+            if(tr.dataset.identificacaoColeta===signature) return;
 
             tr.cells[0].innerHTML=
               '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
@@ -135,6 +143,8 @@ try{
               '<div><strong>Coleta:</strong> '+escLocal(coleta.endereco_coleta||'-')+'</div>'+
               '<div style="margin-top:5px"><strong>Destinatário:</strong> '+escLocal(coleta.destinatario||'-')+'</div>'+
               '<div class="muted" style="margin-top:3px"><strong>Entrega:</strong> '+escLocal(coleta.endereco_entrega||'-')+'</div>';
+
+            tr.dataset.identificacaoColeta=signature;
           });
         }
 
