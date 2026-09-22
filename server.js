@@ -220,6 +220,17 @@ async function fetchSsw38Rows(){
                   }
                 }
                 console.log('SSW38 PEN refs: '+JSON.stringify(rawFieldRefs));
+                const expectedSizes=(p.rows||[]).map(x=>Number(x.qtdeCtrcs||0)).sort((a,b)=>a-b);
+                const groupCandidates=[];
+                const groupByFields=fs=>{
+                  const m=new Map();for(const o of rr){const k=fs.map(n=>String(o[String(n)]||'')).join('|');if(!k.replace(/\|/g,''))continue;m.set(k,(m.get(k)||0)+1)}
+                  return[...m.values()].sort((a,b)=>a-b);
+                };
+                for(let i=0;i<=12;i++){
+                  const sizes=groupByFields([i]);if(sizes.length>=8&&sizes.length<=12)groupCandidates.push({key:'f'+i,groups:sizes.length,sizes});
+                  for(let j=i+1;j<=12;j++){const s2=groupByFields([i,j]);if(s2.length>=8&&s2.length<=12)groupCandidates.push({key:'f'+i+'+f'+j,groups:s2.length,sizes:s2})}
+                }
+                console.log('SSW38 PEN grouping: '+JSON.stringify({expectedSizes,candidates:groupCandidates.slice(0,30)}));
                 const classifyText=v=>{const s=norm38(v);if(/ENTREG/.test(s))return'ENTREGA';if(/TEMPO/.test(s))return'TEMPO';if(/RECUS/.test(s))return'RECUSA';if(/AUSENT|NAO ENCONTR/.test(s))return'AUSENTE';if(/ENDERE/.test(s))return'ENDERECO';if(/AGEND/.test(s))return'AGENDAMENTO';if(/DEVOL/.test(s))return'DEVOLUCAO';if(/AVARIA/.test(s))return'AVARIA';return'OUTRO'};
                 const textCats={};for(const o of rr){const k=classifyText(o['10']||'');textCats[k]=(textCats[k]||0)+1}
                 console.log('SSW38 PEN status: '+JSON.stringify({codeCounts,textCats}));
