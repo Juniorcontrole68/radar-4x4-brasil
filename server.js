@@ -61,8 +61,10 @@ async function fetchBi2ReportFolder(codigo,data='',folder='cliente'){if(!bi2Conf
 async function fetchBi2Report(codigo,data=''){return fetchBi2ReportFolder(codigo,data,bi2Auth().pasta)}
 
 function brDateToIso(v){
-  const m=String(v||'').trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  return m?m[3]+'-'+m[2]+'-'+m[1]:'';
+  const m=String(v||'').trim().match(/^(\d{2})\/(\d{2})\/(\d{2}|\d{4})$/);
+  if(!m)return'';
+  const y=m[3].length===2?'20'+m[3]:m[3];
+  return y+'-'+m[2]+'-'+m[1];
 }
 async function buildBi2Baixas(date=''){
   const target=date||new Date().toISOString().slice(0,10);
