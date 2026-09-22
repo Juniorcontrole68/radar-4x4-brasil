@@ -31,6 +31,17 @@ async function fetchColetasStatus(from='',to=''){
 }
 function internalSswConfigured(){return !!(process.env.SSW_INTERNAL_DOMINIO&&process.env.SSW_INTERNAL_CPF&&process.env.SSW_INTERNAL_USUARIO&&process.env.SSW_INTERNAL_SENHA)}
 async function testInternalSswLogin(){
+  const jar=new Map();
+  const apply=(headers)=>{
+    const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);
+    for(const raw of list){const pair=String(raw).split(';')[0],i=pair.indexOf('=');if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())}
+  };
+  const cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
+  const init=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{
+    headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},
+    redirect:'manual',signal:AbortSignal.timeout(15000)
+  });
+  apply(init.headers);
   const body=new URLSearchParams({
     act:'L',
     f1:process.env.SSW_INTERNAL_DOMINIO||'',
@@ -40,22 +51,41 @@ async function testInternalSswLogin(){
   });
   const r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{
     method:'POST',
-    headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},
+    headers:{
+      'Content-Type':'application/x-www-form-urlencoded',
+      'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36',
+      'Referer':'https://sistema.ssw.inf.br/bin/ssw0422',
+      'Cookie':cookie()
+    },
     body:body.toString(),
     redirect:'manual',
     signal:AbortSignal.timeout(15000)
   });
-  const cookies=typeof r.headers.getSetCookie==='function'?r.headers.getSetCookie():[];
+  apply(r.headers);
   const txt=await r.text();
-  const names=cookies.map(x=>String(x).split('=')[0].trim()).filter(Boolean);
-  const flags={
-    menu01:/menu01/i.test(txt),
+  const names=[...jar.keys()];
+  const ok=jar.has('token');
+  let menu={status:0,hints:[]};
+  if(ok){
+    const mr=await fetch('https://sistema.ssw.inf.br/bin/menu01',{
+      headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/ssw0422'},
+      redirect:'manual',signal:AbortSignal.timeout(15000)
+    });
+    apply(mr.headers);
+    const html=await mr.text();
+    const hints=[];
+    const re=/(href|onclick)=["']([^"']*(?:f3=0*38|op(?:cao)?=0*38|\b38\b)[^"']*)["']/ig;
+    let m;while((m=re.exec(html))&&hints.length<10)hints.push(m[2].replace(/\s+/g,' ').slice(0,220));
+    const textHit=html.match(/.{0,120}(?:38\s*[-–:]?\s*BAIXA DE ENTREGAS|BAIXA DE ENTREGAS).{0,220}/i);
+    if(textHit)hints.push(textHit[0].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,320));
+    menu={status:mr.status,hints:[...new Set(hints)]};
+  }
+  return{
+    ok,status:r.status,cookieNames:names,
     loginForm:/ssw0422|name=["']f4["']/i.test(txt),
     credError:/senha.{0,20}(inv[aá]lid|incorret)|usu[aá]rio.{0,20}(inv[aá]lid|incorret)|acesso.{0,20}negad/i.test(txt),
-    scriptRedirect:/location.{0,80}menu01/i.test(txt)
-  };
-  const ok=flags.menu01||flags.scriptRedirect||names.some(x=>/token|login|ssw_dom|chave/i.test(x));
-  return{ok,status:r.status,redirect:!!r.headers.get('location'),cookieNames:names,flags,bodyBytes:Buffer.byteLength(txt)}
+    menu
+  }
 }
 function sswConfig(){return{domain:process.env.SSW_DOMAIN||'',username:process.env.SSW_USERNAME||'',password:process.env.SSW_PASSWORD||'',cnpj:process.env.SSW_CNPJ_EDI||''}}
 function sswConfigured(){const x=sswConfig();return !!(x.domain&&x.username&&x.password&&x.cnpj)}
