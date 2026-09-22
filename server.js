@@ -164,6 +164,12 @@ async function fetchSsw38Rows(){
     const ajax=[...new Set([...html.matchAll(/ajaxEnvia\(["']([^"']+)/gi)].map(m=>m[1]))];
     const xhr=[...new Set([...html.matchAll(/(?:url|action|href)\s*[:=]\s*["']([^"']+)/gi)].map(m=>m[1]).filter(x=>/ssw|ajax|cgi|bin/i.test(x)))].slice(0,20);
     console.log('SSW38 estrutura: '+JSON.stringify({...structure,scripts,bins,ajax,xhr}));
+    try{
+      const jr=await fetch('https://sistema.ssw.inf.br/scripts/ssw0198_181124.js?v=18.11.24',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},signal:AbortSignal.timeout(15000)});
+      const js=await jr.text(),pos=js.indexOf('ROM_ALL');
+      if(pos>=0)console.log('SSW38 JS ROM_ALL: '+js.slice(Math.max(0,pos-900),pos+1800).replace(/\s+/g,' '));
+    }catch(e){console.log('SSW38 JS ERRO: '+e.message)}
+
   }
   const total=p.rows.reduce((a,x)=>a+x.qtdeCtrcs,0),motoristas=[...new Set(p.rows.map(x=>x.motorista))];
   return{ok:true,rows:p.rows,total,motoristas:motoristas.length,romaneios:p.rows.length};
