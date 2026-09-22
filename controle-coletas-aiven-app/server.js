@@ -190,6 +190,7 @@ async function start() {
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS data_recebimento DATE');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS previsao_pagamento_fatura DATE');
   await migrateLegacyBillsIfNeeded();
+  pool.query("SELECT column_name,data_type,is_nullable,column_default FROM information_schema.columns WHERE table_schema='public' AND table_name='coletas' ORDER BY ordinal_position").then(r=>console.log('SCHEMA COLETAS: '+JSON.stringify(r.rows))).catch(e=>console.error('SCHEMA COLETAS ERRO: '+e.message));
 
   http.createServer(async (req, res) => {
     try {
