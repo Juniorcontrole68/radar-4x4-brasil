@@ -223,6 +223,14 @@ async function fetchSsw38Rows(){
                   const murl=(dt.match(/(?:\/bin\/)?ssw014666[^"'<>\s]*/i)||[])[0]||'';
                   const skeleton=String(murl).replace(/\d{3,}/g,'#').replace(/AMR\d+-\d+/gi,'ROM');
                   console.log('SSW014666 link: '+JSON.stringify({found:!!murl,skeleton}));
+                  try{
+                    const sr=await fetch('https://sistema.ssw.inf.br/scripts/ssw_020926.js?version=1',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},signal:AbortSignal.timeout(15000)});
+                    const sj=await sr.text(),di=sj.search(/function\s+downloadArquivo\s*\(/i);
+                    if(di>=0){
+                      const sk=sj.slice(di,di+2600).replace(/https?:\/\/[^"'\s)]+/g,'URL').replace(/\s+/g,' ');
+                      console.log('SSW downloadArquivo fn: '+sk);
+                    }
+                  }catch(e){console.log('SSW downloadArquivo ERRO: '+e.message)}
                   if(murl){
                     const clean=murl.replace(/&amp;/g,'&');
                     const u66=new URL(clean.startsWith('/')?clean:('/bin/'+clean),'https://sistema.ssw.inf.br');
