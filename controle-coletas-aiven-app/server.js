@@ -216,18 +216,26 @@ async function start() {
 
       if (req.method === 'GET' && u.pathname === '/api/painel/coletas-status-resumo') {
         try {
-          const r = await pool.query(`
-            SELECT
-              COUNT(*)::int AS total,
-              COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,'')))='programada')::int AS programadas,
-              COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,'')))='carregando')::int AS carregando,
-              COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,''))) IN ('em trânsito','em transito'))::int AS em_transito,
-              COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,'')))='entregue')::int AS entregues,
-              COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,'')))='cancelada')::int AS canceladas,
-              MAX(updated_at) AS ultima_atualizacao
-            FROM coletas
-          `);
-          return sendJson(res, 200, { ok: true, ...r.rows[0] });
+          const from = String(u.searchParams.get('from') || '').trim();
+          const to = String(u.searchParams.get('to') || '').trim();
+          const params = [];
+          const where = [];
+          if (/^\d{4}-\d{2}-\d{2}$/.test(from)) { params.push(from); where.push('data_carregamento >= $' + params.length); }
+          if (/^\d{4}-\d{2}-\d{2}$/.test(to)) { params.push(to); where.push('data_carregamento <= $' + params.length); }
+          const sql = 'SELECT ' +
+            "COUNT(*)::int AS total, " +
+            "COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,'')))='programada')::int AS programadas, " +
+            "COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,'')))='carregando')::int AS carregando, " +
+            "COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,''))) IN ('em trânsito','em transito'))::int AS em_transito, " +
+            "COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,'')))='entregue')::int AS entregues, " +
+            "COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,'')))='cancelada')::int AS canceladas, " +
+            'MAX(updated_at) AS ultima_atualizacao FROM coletas ' +
+            (where.length ? 'WHERE ' + where.join(' AND ') : '');
+          const r = await pool.query(sql, params);
+          const row = r.rows[0] || {};
+          row.ativas = Math.max(0, Number(row.total || 0) - Number(row.canceladas || 0));
+          row.pendentes = Number(row.programadas || 0) + Number(row.carregando || 0) + Number(row.em_transito || 0);
+          return sendJson(res, 200, { ok: true, from: from || null, to: to || null, ...row });
         } catch (e) {
           return sendJson(res, 500, { ok: false, error: e.message || 'Não foi possível resumir as coletas.' });
         }
