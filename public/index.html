@@ -3,130 +3,229 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <meta name="theme-color" content="#b85f1d" />
-  <meta name="description" content="Agenda nacional de encontros, trilhas, expedições 4x4 e overland." />
-  <title>Radar 4x4 Brasil</title>
-  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#173f2a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>Diário de Bordo</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="/icons/icon.svg" />
+  <link rel="apple-touch-icon" href="/icons/icon.svg" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+  <div id="loginOverlay" class="login-overlay hidden">
+    <div class="login-card">
+      <div class="brand-mark">DB</div>
+      <h2>Diário de Bordo</h2>
+      <p>Informe o PIN do aplicativo para sincronizar seus dados.</p>
+      <input id="pinInput" type="password" inputmode="numeric" placeholder="PIN" />
+      <button id="pinBtn" class="primary wide">Entrar</button>
+      <small>O PIN é definido no servidor pela variável <b>APP_PIN</b>.</small>
+    </div>
+  </div>
+
   <header class="topbar">
-    <button class="brand brandButton" data-go="agenda" aria-label="Ir para a agenda"><span class="mark">4×4</span><span><strong>Radar 4x4 Brasil</strong><small>Encontros · Trilhas · Expedições · Overland</small></span></button>
-    <button id="installBtn" class="ghost" hidden>Instalar app</button>
+    <div class="brand">
+      <div class="brand-mark mini">DB</div>
+      <div>
+        <div class="eyebrow">VIAGENS • EXPEDIÇÕES • 4x4</div>
+        <h1>Diário de Bordo</h1>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span id="syncBadge" class="sync-badge offline">Offline</span>
+      <button id="syncBtn" class="ghost compact">Sincronizar</button>
+      <button id="installBtn" class="ghost compact hidden">Instalar</button>
+    </div>
   </header>
 
-  <main class="shell">
-    <section class="hero">
-      <div>
-        <span class="eyebrow">AGENDA NACIONAL COLABORATIVA</span>
-        <h1>Descubra sua próxima aventura fora do asfalto.</h1>
-        <p>Eventos por região e categoria, com fonte original, contato, inscrição e informações práticas para o seu 4x4.</p>
-        <div class="expeditionStrip"><span>Brasil inteiro</span><span>4x4 &amp; Overland</span><span>Fontes verificadas</span></div>
-        <div class="heroActions"><button class="primary" data-go="enviar">+ Cadastrar evento</button><button class="secondary" data-go="fontes">Ver fontes</button></div>
+  <main class="container">
+    <section id="home" class="view active">
+      <div class="card hero">
+        <div>
+          <span id="tripStatusPill" class="pill">Nenhuma viagem ativa</span>
+          <h2 id="tripTitle">Comece uma nova viagem</h2>
+          <p id="tripSubtitle">GPS, fotos, gastos, combustível e diário em um só lugar.</p>
+        </div>
+        <div class="hero-actions">
+          <button id="newTripBtn" class="primary">Nova viagem</button>
+          <button id="finishTripBtn" class="danger hidden">Encerrar viagem</button>
+        </div>
       </div>
-      <div class="heroStat"><strong id="eventCount">0</strong><span>eventos na agenda</span><small id="nextEventText">Carregando próximos eventos…</small></div>
-    </section>
 
-    <nav class="tabs" aria-label="Seções">
-      <button class="tab active" data-tab="agenda">Agenda</button>
-      <button class="tab" data-tab="favoritos">Quero ir</button>
-      <button class="tab" data-tab="enviar">Cadastrar evento</button>
-      <button class="tab" data-tab="fontes">Fontes</button>
-      <button class="tab" data-tab="admin">Admin</button>
-    </nav>
-
-    <section id="agenda" class="panel active">
-      <div class="filters card">
-        <input id="search" type="search" placeholder="Buscar evento, cidade, estado ou organizador…" />
-        <select id="category"><option value="">Todas as categorias</option></select>
-        <select id="region"><option value="">Todas as regiões</option></select>
-        <select id="month"><option value="">Qualquer mês</option></select>
-        <select id="difficulty"><option value="">Qualquer dificuldade</option><option>Leve</option><option>Moderada</option><option>Difícil</option><option>Extrema</option></select>
-        <select id="sort"><option value="date">Mais próximos</option><option value="title">Nome A–Z</option></select>
-        <button id="clearFilters" class="secondary">Limpar</button>
+      <div class="card trip-history-card">
+        <label>Visualizar viagem
+          <select id="tripSelector"></select>
+        </label>
       </div>
-      <div id="chips" class="chips"></div>
-      <div id="events" class="eventGrid"></div>
-      <div id="empty" class="empty" hidden>Nenhum evento encontrado com esses filtros.</div>
-    </section>
 
-    <section id="favoritos" class="panel">
-      <div class="sectionHead"><div><span class="eyebrow">MINHA LISTA</span><h2>Eventos que quero acompanhar</h2><p>Os favoritos ficam salvos neste aparelho.</p></div></div>
-      <div id="favorites" class="eventGrid"></div>
-      <div id="favoritesEmpty" class="empty">Toque em “☆” em qualquer evento para salvá-lo aqui.</div>
-    </section>
-
-    <section id="enviar" class="panel">
-      <div class="sectionHead"><div><span class="eyebrow">PARA ORGANIZADORES E CLUBES</span><h2>Cadastre um encontro, passeio ou expedição</h2><p>O envio passa por revisão antes de aparecer na agenda pública.</p></div></div>
-      <form id="eventForm" class="card formGrid">
-        <label class="span2">Nome do evento<input name="title" required maxlength="140" placeholder="Ex.: Encontro Troller Serra Azul" /></label>
-        <label>Categoria<select name="category" required></select></label>
-        <label>Região<select name="region" required></select></label>
-        <label>Cidade / localidade<input name="city" required /></label>
-        <label>Estado<input name="state" maxlength="2" placeholder="SP" /></label>
-        <label>País<input name="country" value="Brasil" /></label>
-        <label>Data inicial<input name="start" type="date" required /></label>
-        <label>Data final<input name="end" type="date" /></label>
-        <label>Organizador / clube<input name="organizer" required /></label>
-        <label>WhatsApp<input name="whatsapp" inputmode="tel" placeholder="5511999999999" /></label>
-        <label>Valor / inscrição<input name="price" placeholder="Grátis, R$ 150 por carro…" /></label>
-        <label>Dificuldade<select name="difficulty"><option value="">Não informado</option><option>Leve</option><option>Moderada</option><option>Difícil</option><option>Extrema</option></select></label>
-        <fieldset class="span2"><legend>Veículos aceitos</legend><div class="checks"><label><input type="checkbox" name="vehicles" value="4x4 original" /> 4x4 original</label><label><input type="checkbox" name="vehicles" value="4x4 preparado" /> 4x4 preparado</label><label><input type="checkbox" name="vehicles" value="SUV AWD" /> SUV AWD</label><label><input type="checkbox" name="vehicles" value="Overlander" /> Overlander</label><label><input type="checkbox" name="vehicles" value="UTV" /> UTV</label></div></fieldset>
-        <label class="span2">Descrição<textarea name="summary" required maxlength="800" rows="4" placeholder="Roteiro, perfil do passeio, estrutura, principais atrações…"></textarea></label>
-        <label>Ponto de encontro<input name="meetingPoint" placeholder="Local ou endereço" /></label>
-        <label>Camping<input name="camping" placeholder="Disponível / não / nome do camping" /></label>
-        <label>Hospedagem<input name="lodging" placeholder="Hotel/pousada indicada" /></label>
-        <label>Tags<input name="tags" placeholder="família, lama, serra, camping" /></label>
-        <label class="span2">Link público do evento / Instagram / Facebook<input name="sourceUrl" type="url" required placeholder="https://…" /></label>
-        <label class="span2">Link de inscrição<input name="registrationUrl" type="url" placeholder="https://…" /></label>
-        <label class="span2">URL do cartaz ou foto<input name="photoUrl" type="url" placeholder="https://…" /></label>
-        <details class="span2 optionalFields"><summary>Localização exata e contato de revisão (opcional)</summary><div class="nestedGrid"><label>Latitude<input name="latitude" type="number" step="any" /></label><label>Longitude<input name="longitude" type="number" step="any" /></label><label>Seu nome<input name="contactName" /></label><label>Seu e-mail<input name="contactEmail" type="email" /></label></div></details>
-        <div class="span2 formActions"><button class="primary" type="submit">Enviar para revisão</button><span id="submitStatus" class="muted"></span></div>
-      </form>
-      <div class="sectionHead compact"><div><h3>Meus envios neste aparelho</h3></div><button id="refreshMySubmissions" class="secondary">Atualizar status</button></div>
-      <div id="mySubmissions" class="submissionList"></div>
-    </section>
-
-    <section id="fontes" class="panel">
-      <div class="sectionHead"><div><span class="eyebrow">MONITORAMENTO</span><h2>Fontes da agenda</h2><p>Sites, organizadores e páginas públicas usadas como referência.</p></div></div>
-      <div id="sources" class="sourceGrid"></div>
-      <div class="card sourceAdd">
-        <h3>Adicionar uma fonte sua</h3>
-        <p>Guarde páginas de Instagram, Facebook, Jeep Clubes e organizadores para acompanhar manualmente.</p>
-        <div class="row"><input id="customSourceName" placeholder="Nome da página / grupo"/><input id="customSourceUrl" placeholder="https://…"/><button id="addSource">Adicionar</button></div>
-        <div id="customSources" class="customSources"></div>
+      <div class="stats-grid">
+        <div class="stat card"><span>Distância GPS</span><strong id="distanceStat">0,0 km</strong><small id="gpsAccuracy">GPS parado</small></div>
+        <div class="stat card"><span>Hodômetro estimado</span><strong id="odometerStat">—</strong><small>KM inicial + GPS</small></div>
+        <div class="stat card"><span>Total gasto</span><strong id="spentStat">R$ 0,00</strong><small id="expenseCount">0 lançamentos</small></div>
+        <div class="stat card"><span>Combustível</span><strong id="fuelStat">0,00 L</strong><small id="fuelValueStat">R$ 0,00</small></div>
+        <div class="stat card"><span>Média da viagem</span><strong id="avgStat">— km/L</strong><small>GPS ÷ litros</small></div>
+        <div class="stat card"><span>Custo por km</span><strong id="costPerKmStat">R$ 0,00</strong><small>Todos os gastos</small></div>
       </div>
-      <div class="notice card"><strong>Instagram e Facebook</strong><p>Essas plataformas podem exigir login e bloquear leitura automatizada. O Radar usa somente informações públicas verificáveis e mantém a fonte original; dados não confirmados não são publicados automaticamente.</p></div>
+
+      <div class="card">
+        <div class="section-head">
+          <div><h3>Rastreamento GPS</h3><p>Deixe ativo durante o deslocamento para registrar a rota.</p></div>
+          <span id="trackingBadge" class="status off">Parado</span>
+        </div>
+        <div class="action-row">
+          <button id="startGpsBtn" class="primary">Iniciar GPS</button>
+          <button id="stopGpsBtn" class="secondary" disabled>Parar GPS</button>
+          <button id="addPlaceFromGpsBtn" class="ghost">Registrar lugar atual</button>
+        </div>
+        <div class="map-mini">
+          <div>Última posição</div>
+          <strong id="lastPosition">Ainda não registrada</strong>
+          <a id="mapLink" class="hidden" target="_blank" rel="noopener">Abrir no mapa</a>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Resumo rápido</h3>
+        <div id="tripSummary" class="summary-empty">Nenhuma viagem iniciada.</div>
+      </div>
     </section>
 
-    <section id="admin" class="panel">
-      <div class="sectionHead"><div><span class="eyebrow">MODERAÇÃO</span><h2>Revisar eventos enviados</h2><p>Defina <code>ADMIN_TOKEN</code> no servidor. O token não é armazenado no backend.</p></div></div>
-      <div class="card adminLogin"><input id="adminToken" type="password" placeholder="Token de administrador"/><button id="loadAdmin" class="primary">Carregar envios</button><span id="adminStatus" class="muted"></span></div>
-      <div id="adminSubmissions" class="submissionList"></div>
+    <section id="route" class="view">
+      <div class="section-head standalone">
+        <div><h2>Mapa da rota</h2><p>Trajeto registrado pelo GPS e paradas do diário.</p></div>
+        <button id="fitMapBtn" class="secondary">Enquadrar rota</button>
+      </div>
+      <div id="routeMap" class="route-map"></div>
+      <div class="card route-info">
+        <strong id="routeInfoKm">0,0 km</strong>
+        <span id="routeInfoPoints">0 pontos de GPS</span>
+      </div>
+    </section>
+
+    <section id="diary" class="view">
+      <div class="section-head standalone">
+        <div><h2>Diário de lugares</h2><p>Fotos, localização, avaliação e detalhes de cada parada.</p></div>
+        <button id="addPlaceBtn" class="primary">+ Novo lugar</button>
+      </div>
+      <div id="placesList" class="cards-list"></div>
+    </section>
+
+    <section id="gallery" class="view">
+      <div class="section-head standalone">
+        <div><h2>Álbum da viagem</h2><p>Todas as fotos dos lugares registrados.</p></div>
+      </div>
+      <div id="galleryGrid" class="gallery-grid"></div>
+    </section>
+
+    <section id="expenses" class="view">
+      <div class="section-head standalone">
+        <div><h2>Gastos</h2><p>Controle completo dos custos da viagem.</p></div>
+        <button id="addExpenseBtn" class="primary">+ Novo gasto</button>
+      </div>
+      <select id="expenseFilter" class="filter-select">
+        <option value="all">Todas as categorias</option>
+        <option value="combustivel">Combustível</option>
+        <option value="alimentacao">Alimentação</option>
+        <option value="pedagio">Pedágio</option>
+        <option value="hospedagem">Hospedagem</option>
+        <option value="manutencao">Manutenção</option>
+        <option value="passeio">Passeio / ingresso</option>
+        <option value="outros">Outros</option>
+      </select>
+      <div id="expensesList" class="cards-list"></div>
+    </section>
+
+    <section id="summary" class="view">
+      <div class="section-head standalone">
+        <div><h2>Resumo e relatório</h2><p>Indicadores, exportação e PDF da viagem.</p></div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat card"><span>Km percorridos</span><strong id="sumKm">0,0 km</strong></div>
+        <div class="stat card"><span>Gasto total</span><strong id="sumTotal">R$ 0,00</strong></div>
+        <div class="stat card"><span>Total abastecido</span><strong id="sumLiters">0,00 L</strong></div>
+        <div class="stat card"><span>Lugares</span><strong id="sumPlaces">0</strong></div>
+      </div>
+
+      <div class="card"><h3>Gastos por categoria</h3><div id="categoryBreakdown" class="breakdown"></div></div>
+
+      <div class="card">
+        <h3>Relatório da viagem</h3>
+        <p>Gere um PDF com capa, resumo financeiro, rota, lugares e fotos.</p>
+        <div class="action-row">
+          <button id="pdfBtn" class="primary">Gerar PDF</button>
+          <button id="exportJsonBtn" class="secondary">Backup JSON</button>
+          <button id="exportCsvBtn" class="secondary">Gastos CSV</button>
+          <label class="file-label">Importar backup<input id="importJsonInput" type="file" accept=".json,application/json"></label>
+        </div>
+      </div>
     </section>
   </main>
 
-  <dialog id="eventDialog" class="eventDialog">
-    <button class="dialogClose" aria-label="Fechar">×</button>
-    <div id="eventDialogBody"></div>
+  <nav class="bottom-nav">
+    <button class="nav-btn active" data-view="home"><span>⌂</span>Viagem</button>
+    <button class="nav-btn" data-view="route"><span>⌖</span>Mapa</button>
+    <button class="nav-btn" data-view="diary"><span>◫</span>Diário</button>
+    <button class="nav-btn" data-view="gallery"><span>▦</span>Fotos</button>
+    <button class="nav-btn" data-view="expenses"><span>R$</span>Gastos</button>
+    <button class="nav-btn" data-view="summary"><span>≡</span>Resumo</button>
+  </nav>
+
+  <dialog id="tripDialog">
+    <form method="dialog" id="tripForm">
+      <div class="dialog-head"><h3>Nova viagem</h3><button value="cancel" class="icon-btn">×</button></div>
+      <label>Nome da viagem<input id="tripName" required placeholder="Ex.: Serra da Canastra 2026"></label>
+      <label>Veículo<input id="tripVehicle" placeholder="Ex.: Pajero Dakar"></label>
+      <label>KM inicial do hodômetro<input id="tripStartKm" type="number" inputmode="decimal" step="0.1" min="0" placeholder="Ex.: 148520"></label>
+      <label>Observações<textarea id="tripNotes" rows="3" placeholder="Roteiro planejado, comboio, observações..."></textarea></label>
+      <div class="dialog-actions"><button value="cancel" class="ghost">Cancelar</button><button id="saveTripBtn" class="primary">Iniciar viagem</button></div>
+    </form>
   </dialog>
 
-  <template id="eventTemplate">
-    <article class="eventCard">
-      <div class="eventImageWrap"><img class="eventImage" alt="" loading="lazy" /><div class="imageFallback">RADAR 4×4</div></div>
-      <div class="eventContent">
-        <div class="eventTop"><span class="category"></span><button class="favorite" aria-label="Salvar evento">☆</button></div>
-        <div class="dateLine"><span class="dateBadge"></span><span class="status"></span></div>
-        <h3 class="title"></h3>
-        <div class="location"></div>
-        <p class="summary"></p>
-        <div class="metaPills"></div>
-        <div class="tags"></div>
-        <div class="eventFoot"><span class="source"></span><button class="details secondary">Detalhes</button></div>
+  <dialog id="placeDialog">
+    <form method="dialog" id="placeForm">
+      <div class="dialog-head"><h3>Registrar lugar</h3><button value="cancel" class="icon-btn">×</button></div>
+      <label>Nome do lugar<input id="placeName" required placeholder="Ex.: Cachoeira do Fundão"></label>
+      <div class="two-cols">
+        <label>Data<input id="placeDate" type="date" required></label>
+        <label>Hora<input id="placeTime" type="time"></label>
       </div>
-    </article>
-  </template>
+      <label>Detalhes<textarea id="placeNotes" rows="4" placeholder="Como chegar, estrada, estrutura, impressão do local..."></textarea></label>
+      <label>Avaliação<select id="placeRating"><option value="">Sem avaliação</option><option value="5">★★★★★</option><option value="4">★★★★☆</option><option value="3">★★★☆☆</option><option value="2">★★☆☆☆</option><option value="1">★☆☆☆☆</option></select></label>
+      <label>Fotos<input id="placePhotos" type="file" accept="image/*" capture="environment" multiple></label>
+      <div class="location-box"><button type="button" id="capturePlaceLocation" class="secondary">Usar GPS atual</button><span id="placeLocationText">Sem localização</span></div>
+      <div class="dialog-actions"><button value="cancel" class="ghost">Cancelar</button><button id="savePlaceBtn" class="primary">Salvar lugar</button></div>
+    </form>
+  </dialog>
 
-  <script src="/app.js" type="module"></script>
+  <dialog id="expenseDialog">
+    <form method="dialog" id="expenseForm">
+      <div class="dialog-head"><h3>Novo gasto</h3><button value="cancel" class="icon-btn">×</button></div>
+      <label>Categoria<select id="expenseCategory" required>
+        <option value="combustivel">Combustível</option><option value="alimentacao">Alimentação</option>
+        <option value="pedagio">Pedágio</option><option value="hospedagem">Hospedagem</option>
+        <option value="manutencao">Manutenção</option><option value="passeio">Passeio / ingresso</option><option value="outros">Outros</option>
+      </select></label>
+      <label>Descrição<input id="expenseDescription" placeholder="Ex.: Diesel S10 - Posto..."></label>
+      <div class="two-cols"><label>Valor (R$)<input id="expenseAmount" type="number" inputmode="decimal" step="0.01" min="0" required></label><label>Data<input id="expenseDate" type="date" required></label></div>
+      <div id="fuelFields">
+        <div class="two-cols"><label>Litros<input id="fuelLiters" type="number" inputmode="decimal" step="0.001" min="0"></label><label>Preço por litro<input id="fuelUnitPrice" type="number" inputmode="decimal" step="0.001" min="0"></label></div>
+        <div class="current-odometer">Hodômetro estimado no momento: <strong id="fuelEstimatedKm">—</strong></div>
+      </div>
+      <label>Foto do comprovante / nota<input id="receiptPhoto" type="file" accept="image/*" capture="environment"></label>
+      <div id="ocrBox" class="ocr-box hidden"><div class="ocr-top"><strong>Leitura automática</strong><span id="ocrStatus">Aguardando</span></div><progress id="ocrProgress" max="1" value="0"></progress><small id="ocrHint">Tentarei identificar valor, litros e preço por litro.</small></div>
+      <label>Observações<textarea id="expenseNotes" rows="3"></textarea></label>
+      <div class="dialog-actions"><button value="cancel" class="ghost">Cancelar</button><button id="saveExpenseBtn" class="primary">Salvar gasto</button></div>
+    </form>
+  </dialog>
+
+  <div id="photoViewer" class="photo-viewer hidden"><button id="closePhotoViewer">×</button><img id="photoViewerImg" alt="Foto ampliada"></div>
+  <div id="toast" class="toast"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+  <script src="/app.js"></script>
 </body>
 </html>
