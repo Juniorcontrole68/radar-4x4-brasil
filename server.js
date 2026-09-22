@@ -198,6 +198,15 @@ async function fetchSsw38Rows(){
             attrs['f'+n]={attrNames:[...new Set(names)],programs,params,funcs:funcs.slice(0,12),ajaxActs,actAssignments,actionPrograms,openPrograms,textLen:htmlText38(inner).length};
           }
           console.log('SSW38 controles romaneio: '+JSON.stringify(attrs));
+          try{
+            const f0m=(fr.match(/<f0\b[^>]*>([\s\S]*?)<\/f0>/i)||[])[1]||'';
+            const d0=String(f0m).replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#39;/gi,"'").replace(/&amp;/gi,'&');
+            const href0=(d0.match(/href=["']([^"']+)["']/i)||[])[1]||'';
+            const quoted=[...new Set([...d0.matchAll(/["']([A-Z][A-Z0-9_:-]{1,14})["']/g)].map(x=>x[1]).filter(x=>!/^AMR/i.test(x)))].slice(0,20);
+            const actVals=[...new Set([...d0.matchAll(/(?:act(?:\.value)?|["']act["'])\s*(?:=|,|:)\s*["']([A-Za-z0-9_:-]+)["']/gi)].map(x=>x[1]))];
+            let hrefInfo=null;try{if(href0){const u0=new URL(href0,'https://sistema.ssw.inf.br/bin/'+prog);hrefInfo={path:u0.pathname,paramNames:[...u0.searchParams.keys()],act:u0.searchParams.get('act')||''}}}catch{}
+            console.log('SSW38 romaneio link f0: '+JSON.stringify({hrefInfo,quoted,actVals,hasAjax:/ajaxEnvia/i.test(d0),hasSsw0146:/ssw0146/i.test(d0)}));
+          }catch{}
           const f13m=(fr.match(/<f13\b[^>]*>([\s\S]*?)<\/f13>/i)||[])[1]||'';
           const d13=String(f13m).replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#39;/gi,"'").replace(/&amp;/gi,'&');
           const href13=(d13.match(/href=["']([^"']+)["']/i)||[])[1]||'';
