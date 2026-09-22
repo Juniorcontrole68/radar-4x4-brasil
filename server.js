@@ -240,7 +240,23 @@ async function fetchSsw38Rows(){
                         const tm=setTimeout(()=>{p.kill('SIGKILL');resolve({ok:false,error:'timeout'})},10000);
                         p.stdout.on('data',d=>out+=d);p.stderr.on('data',d=>err+=d);
                         p.on('error',e=>{clearTimeout(tm);resolve({ok:false,error:e.code||e.message})});
-                        p.on('close',code=>{clearTimeout(tm);resolve({ok:code===0,code,chars:out.length,lines:out.split(/\r?\n/).filter(Boolean).length,hasCtrc:/CTRC|CT-E|CTE/i.test(out),hasNf:/\bNF\b|NOTA/i.test(out),error:code===0?'':err.slice(0,120)})});
+                        p.on('close',code=>{
+                          clearTimeout(tm);
+                          const non=out.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+                          const known=new Set(['CTRC','CT-E','CTE','NF','NOTA','FISCAL','ROMANEIO','VEICULO','VEÍCULO','MOTORISTA','DESTINATARIO','DESTINATÁRIO','REMETENTE','CIDADE','UF','VOLUMES','PESO','ENTREGA','PEDIDO','SERIE','SÉRIE']);
+                          const shape=non.slice(0,100).map((line,idx)=>{
+                            const toks=line.split(/\s+/).slice(0,14).map(t=>{
+                              const up=t.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9-]/g,'');
+                              if(known.has(up))return up;
+                              if(/^\d+$/.test(t))return'N'+t.length;
+                              if(/^[A-Za-zÀ-ÿ]+$/.test(t))return'A'+t.length;
+                              if(/^[A-Za-zÀ-ÿ0-9.-]+$/.test(t))return'X'+t.length;
+                              return'P'+t.length;
+                            });
+                            return(idx+1)+':'+toks.join(' ');
+                          });
+                          resolve({ok:code===0,code,chars:out.length,lines:non.length,hasCtrc:/CTRC|CT-E|CTE/i.test(out),hasNf:/\bNF\b|NOTA/i.test(out),shape,error:code===0?'':err.slice(0,120)})
+                        });
                       });
                       try{fs.unlinkSync(tmp)}catch{}
                     }
