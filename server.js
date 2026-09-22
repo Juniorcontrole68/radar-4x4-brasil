@@ -223,6 +223,18 @@ async function fetchSsw38Rows(){
                 let respSkel=String(dt).replace(/ssw[^"'<>\s]*?\.pdf/gi,'FILE.pdf').replace(/\b\d{2,}\b/g,'#').replace(/\s+/g,' ').slice(0,600);
                 console.log('SSW0146 resposta: '+JSON.stringify({functions:fnNames,skeleton:respSkel}));
                 try{
+                  const sr=await fetch('https://sistema.ssw.inf.br/scripts/ssw_020926.js?version=1',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},signal:AbortSignal.timeout(15000)});
+                  const sj=await sr.text();
+                  const ai=sj.search(/function\s+abrir\s*\(/i);
+                  if(ai>=0){
+                    const sk=sj.slice(ai,ai+3200).replace(/https?:\/\/[^"'\s)]+/g,'URL').replace(/\s+/g,' ');
+                    console.log('SSW abrir fn: '+sk);
+                  }else{
+                    const refs=[...sj.matchAll(/\babrir\s*=\s*function\s*\(/gi)].map(x=>x.index).slice(0,3);
+                    console.log('SSW abrir refs: '+JSON.stringify({count:refs.length}));
+                  }
+                }catch(e){console.log('SSW abrir ERRO: '+e.message)}
+                try{
                   const murl=(dt.match(/(?:\/bin\/)?ssw014666[^"'<>\s]*/i)||[])[0]||'';
                   const skeleton=String(murl).replace(/\d{3,}/g,'#').replace(/AMR\d+-\d+/gi,'ROM');
                   console.log('SSW014666 link: '+JSON.stringify({found:!!murl,skeleton}));
