@@ -41,6 +41,16 @@ try{
       .recebido-date{min-width:145px}
       .previsao-date{min-width:145px}
       .recebido-inline{display:flex;align-items:center;gap:9px;min-height:42px}
+      #modal{width:min(1180px,96vw)!important;max-width:1180px!important}
+      #formColeta{max-width:none!important}
+      .coleta-form-groups{display:grid;gap:16px;margin:14px 0}
+      .coleta-form-card{border:1px solid #dbe4ee;border-radius:14px;background:#f8fafc;padding:16px}
+      .coleta-form-card h3{margin:0 0 13px;font-size:15px;color:#0f172a;font-weight:700}
+      .coleta-form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+      .coleta-form-grid label{margin:0!important}
+      .coleta-form-grid label.form-wide{grid-column:1/-1}
+      .coleta-form-grid input,.coleta-form-grid select,.coleta-form-grid textarea{width:100%;box-sizing:border-box}
+      @media(max-width:850px){.coleta-form-grid{grid-template-columns:1fr}.coleta-form-grid label.form-wide{grid-column:auto}}
       </style>
       <script id="financeiro-recebimento-script">
       (() => {
@@ -239,6 +249,91 @@ try{
           });
         }
 
+        function rotuloCampo(id,texto){
+          const el=document.getElementById(id);
+          const label=el?.closest('label');
+          if(!label) return;
+          const span=label.querySelector(':scope > span');
+          if(span) span.textContent=texto;
+          else{
+            const nodes=[...label.childNodes];
+            const firstText=nodes.find(n=>n.nodeType===Node.TEXT_NODE&&n.textContent.trim());
+            if(firstText) firstText.textContent=texto;
+            else label.insertAdjacentText('afterbegin',texto);
+          }
+        }
+
+        function organizarFormularioColeta(){
+          const form=document.getElementById('formColeta');
+          if(!form) return;
+          let wrap=document.getElementById('coletaFormGroups');
+          if(!wrap){
+            wrap=document.createElement('div');
+            wrap.id='coletaFormGroups';
+            wrap.className='coleta-form-groups';
+            const primeiro=form.querySelector('.section-title');
+            if(primeiro) form.insertBefore(wrap,primeiro);
+            else form.appendChild(wrap);
+          }
+          wrap.innerHTML='';
+
+          const make=(title,ids)=>{
+            const card=document.createElement('section');
+            card.className='coleta-form-card';
+            const h=document.createElement('h3');h.textContent=title;card.appendChild(h);
+            const grid=document.createElement('div');grid.className='coleta-form-grid';card.appendChild(grid);
+            ids.forEach(id=>{
+              const el=document.getElementById(id),label=el?.closest('label');
+              if(label){
+                label.classList.toggle('form-wide',['endereco_coleta','endereco_entrega','comprovante','observacoes','lucro'].includes(id));
+                grid.appendChild(label);
+              }
+            });
+            if(grid.children.length) wrap.appendChild(card);
+          };
+
+          rotuloCampo('os_numero','Nº da coleta');
+          rotuloCampo('cliente','Cliente Remetente *');
+          rotuloCampo('endereco_coleta','Endereço da coleta');
+          rotuloCampo('data_carregamento','Data da coleta');
+          rotuloCampo('hora_carregamento','Hora da coleta');
+
+          rotuloCampo('destinatario','Destinatário *');
+          rotuloCampo('endereco_entrega','Endereço da entrega *');
+          rotuloCampo('previsao_entrega','Previsão de entrega');
+          rotuloCampo('data_descarga','Data da descarga');
+          rotuloCampo('status','Status');
+          rotuloCampo('comprovante','Comprovante de entrega');
+
+          rotuloCampo('motorista','Nome do motorista');
+          rotuloCampo('telefone_motorista','Telefone / WhatsApp');
+          rotuloCampo('transportadora_agregado','Transportadora / Agregado');
+
+          rotuloCampo('placa','Placa');
+          rotuloCampo('tipo_caminhao','Tipo de caminhão');
+          rotuloCampo('implemento','Implemento');
+          rotuloCampo('eixos','Quantidade de eixos');
+
+          rotuloCampo('quantidade_paletes','Quantidade de paletes');
+          rotuloCampo('peso_total','Peso total (kg)');
+          rotuloCampo('observacoes','Observações');
+
+          make('Coleta',['os_numero','cliente','endereco_coleta','data_carregamento','hora_carregamento']);
+          make('Entrega',['destinatario','endereco_entrega','previsao_entrega','data_descarga','status','comprovante']);
+          make('Dados do Motorista',['motorista','telefone_motorista','transportadora_agregado']);
+          make('Dados do Caminhão',['placa','tipo_caminhao','implemento','eixos']);
+          make('Dados da Carga',['quantidade_paletes','peso_total','observacoes']);
+          make('Financeiro',['frete_cobrado','frete_pago','percentual_adiantamento','valor_adiantamento','tarifa_rota_por_eixo','pedagio','lucro','recebido_financeiro','data_recebimento_financeiro','previsao_pagamento_fatura']);
+
+          [...form.querySelectorAll(':scope > .section-title')].forEach(x=>x.style.display='none');
+          [...form.querySelectorAll(':scope > .grid')].forEach(g=>{if(g.id!=='coletaFormGroups')g.style.display='none'});
+          const hint=[...form.querySelectorAll(':scope > .hint')].find(x=>/pedágio|lucro|adiantamento/i.test(x.textContent||''));
+          if(hint){
+            const fin=[...wrap.querySelectorAll('.coleta-form-card')].find(x=>x.querySelector('h3')?.textContent==='Financeiro');
+            if(fin){hint.style.display='block';hint.style.marginTop='10px';fin.appendChild(hint)}
+          }
+        }
+
         function garantirCamposFormulario(){
           const cliente=document.getElementById('cliente');
           if(cliente && !document.getElementById('destinatario')){
@@ -276,6 +371,7 @@ try{
             lblPrev.innerHTML='<span>Previsão de pagamento da fatura</span><input id="previsao_pagamento_fatura" type="date" class="previsao-date">';
             grid.appendChild(lblPrev);
           }
+          organizarFormularioColeta();
         }
 
         async function carregarCamposFormulario(){
@@ -342,7 +438,7 @@ try{
           }
           const modal=document.getElementById('modal');
           if(modal){
-            const obsModal=new MutationObserver(()=>setTimeout(carregarCamposFormulario,30));
+            const obsModal=new MutationObserver(()=>setTimeout(()=>{garantirCamposFormulario();carregarCamposFormulario()},30));
             obsModal.observe(modal,{attributes:true,attributeFilter:['open']});
           }
           setTimeout(decorarFinanceiro,250);setTimeout(decorarOperacional,250);
