@@ -1,15 +1,10 @@
 {
-  "name": "radar-4x4-brasil",
+  "name": "diario-de-bordo-viagens",
   "version": "2.0.0",
   "private": true,
-  "type": "module",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "engines": {
-    "node": ">=20"
-  },
-  "dependencies": {
-    "express": "^4.21.2"
-  }
+  "description": "Diário de bordo de viagens com GPS, gastos, OCR de combustível, fotos, mapa, PDF e sincronização PostgreSQL.",
+  "main": "server.js",
+  "scripts": {"start":"node server.js","dev":"node server.js"},
+  "engines":{"node":">=18"},
+  "dependencies":{"dotenv":"^16.4.5","express":"^4.21.0","pg":"^8.13.0"}
 }
