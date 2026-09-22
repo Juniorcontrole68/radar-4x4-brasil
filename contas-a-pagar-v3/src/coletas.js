@@ -8,9 +8,10 @@ try{
 
     html=html.replace(
       'Cliente *<input id="cliente" required placeholder="Nome do cliente" />',
-      'Nome do Cliente da Entrega *<input id="cliente" required placeholder="Nome do cliente que receberá a entrega" />'
+      'Cliente Remetente *<input id="cliente" required placeholder="Nome do cliente remetente" />'
     );
-    html=html.replaceAll('Cliente / Entrega','Cliente da Entrega / Endereço');
+    html=html.replaceAll('Nome do Cliente da Entrega','Cliente Remetente');
+    html=html.replaceAll('Cliente / Entrega','Cliente Remetente / Endereço');
 
     if(!html.includes('font-light-override')){
       const fontCss=`<style id="font-light-override">
@@ -37,6 +38,7 @@ try{
       (() => {
         const API_STATUS='/api/painel/coletas-financeiro/';
         const API_PREVISAO='/api/painel/coletas-previsao/';
+        const API_DESTINATARIO='/api/painel/coletas-destinatario/';
         const today=()=>new Date().toISOString().slice(0,10);
         const originalFetch=window.fetch.bind(window);
         let dadosCache=[];
@@ -80,6 +82,19 @@ try{
           if(!r.ok){
             const e=await r.json().catch(()=>({}));
             throw new Error(e.error||'Não foi possível salvar a previsão de pagamento.');
+          }
+          return r.json();
+        }
+
+        async function salvarDestinatario(id, destinatario){
+          const r=await originalFetch(API_DESTINATARIO+encodeURIComponent(id),{
+            method:'PATCH',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({destinatario:destinatario||''})
+          });
+          if(!r.ok){
+            const e=await r.json().catch(()=>({}));
+            throw new Error(e.error||'Não foi possível salvar o destinatário.');
           }
           return r.json();
         }
@@ -176,6 +191,14 @@ try{
         }
 
         function garantirCamposFormulario(){
+          const cliente=document.getElementById('cliente');
+          if(cliente && !document.getElementById('destinatario')){
+            const clienteLabel=cliente.closest('label');
+            const lblDest=document.createElement('label');
+            lblDest.innerHTML='<span>Destinatário *</span><input id="destinatario" type="text" required placeholder="Nome do destinatário">';
+            if(clienteLabel?.parentElement) clienteLabel.insertAdjacentElement('afterend',lblDest);
+          }
+
           const frete=document.getElementById('frete_cobrado');
           if(!frete) return;
           const grid=frete.closest('.grid');
@@ -214,13 +237,15 @@ try{
           const check=document.getElementById('recebido_financeiro');
           const date=document.getElementById('data_recebimento_financeiro');
           const prev=document.getElementById('previsao_pagamento_fatura');
-          if(!check || !date || !prev) return;
+          const dest=document.getElementById('destinatario');
+          if(!check || !date || !prev || !dest) return;
 
           if(!id){
             check.checked=false;
             date.value='';
             date.disabled=true;
             prev.value='';
+            dest.value='';
             return;
           }
           await carregarDados();
@@ -229,6 +254,7 @@ try{
           date.value=coleta?.data_recebimento?String(coleta.data_recebimento).slice(0,10):'';
           date.disabled=!check.checked;
           prev.value=coleta?.previsao_pagamento_fatura?String(coleta.previsao_pagamento_fatura).slice(0,10):'';
+          dest.value=coleta?.destinatario||'';
         }
 
         window.fetch=async function(input,init={}){
@@ -241,9 +267,11 @@ try{
               const check=document.getElementById('recebido_financeiro');
               const date=document.getElementById('data_recebimento_financeiro');
               const prev=document.getElementById('previsao_pagamento_fatura');
+              const dest=document.getElementById('destinatario');
               if(data?.id){
                 if(check) await salvarStatus(data.id,check.checked,date?.value||'');
                 if(prev) await salvarPrevisao(data.id,prev.value||'');
+                if(dest) await salvarDestinatario(data.id,dest.value||'');
                 setTimeout(decorarFinanceiro,150);
               }
             }
@@ -277,7 +305,8 @@ try{
     src=src.replace(fm[0],"const FRONTEND_B64='"+newFront+"'");
   }
 
-  src=src.replaceAll("['Cliente',c.cliente||'-']","['Cliente da entrega',c.cliente||'-']");
+  src=src.replaceAll("['Cliente',c.cliente||'-']","['Cliente Remetente',c.cliente||'-']");
+  src=src.replaceAll("Cliente da entrega","Cliente Remetente");
 }catch(e){
   console.error('Ajuste visual do módulo de coletas não aplicado:',e.message);
 }
