@@ -156,7 +156,15 @@ async function fetchSsw38Rows(){
       const rr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/'+prog,'Cookie':cookie()},body:params.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});
       apply(rr.headers);const body38=await rr.text();
       p=parseSsw38Table(body38);
-      if(!p.rows.length)console.log('SSW38 ROM_ALL estrutura: '+JSON.stringify({status:rr.status,bytes:Buffer.byteLength(body38),tr:(body38.match(/<tr\b/gi)||[]).length,td:(body38.match(/<td\b/gi)||[]).length,xml:(body38.match(/<xml\b/gi)||[]).length,r:(body38.match(/<r\b/gi)||[]).length,programas:[...new Set([...body38.matchAll(/ssw\d{3,6}/gi)].map(x=>x[0]))].slice(0,12)}));
+      if(!p.rows.length){
+        const first=(body38.match(/<r\b[^>]*>([\s\S]*?)<\/r>/i)||[])[1]||'';
+        const shape={};
+        for(const fm of first.matchAll(/<f(\d+)\b[^>]*>([\s\S]*?)<\/f\1>/gi)){
+          const v=htmlText38(fm[2]),n=fm[1];
+          shape['f'+n]=/^AMR\d/i.test(v)?'ROM':(/^[A-Z]{3}[A-Z0-9]\d[A-Z0-9]\d{2}$/i.test(v)?'PLACA':(/\d{2}\/\d{2}\/\d{2}/.test(v)?'DATA':(/^\d+$/.test(v)?'NUM':'TXT'+v.length)));
+        }
+        console.log('SSW38 ROM_ALL estrutura: '+JSON.stringify({status:rr.status,bytes:Buffer.byteLength(body38),xml:(body38.match(/<xml\b/gi)||[]).length,r:(body38.match(/<r\b/gi)||[]).length,shape}));
+      }
     }catch(e){console.log('SSW38 ROM_ALL ERRO: '+e.message)}
   }
   if(!p.rows.length){
