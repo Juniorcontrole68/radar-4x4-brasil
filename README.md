@@ -1,38 +1,29 @@
-# Radar 4x4 Brasil — v2 colaborativa
+# Diário de Bordo de Viagens V2
 
-Portal/PWA em Node.js + Express para reunir encontros, trilhas, expedições 4x4, overlanding, treinamentos, provas e feiras por categoria e região.
+Aplicativo PWA para celular e notebook com armazenamento local + sincronização PostgreSQL.
 
-## O que esta versão inclui
-
-- Agenda nacional com filtros por categoria, região, mês, dificuldade e busca livre.
-- Favoritos (“Quero ir”) salvos no aparelho.
-- Tela de detalhes com inscrição, WhatsApp, mapa, camping, hospedagem, nível de dificuldade, veículos aceitos e fonte original.
-- Cadastro colaborativo de eventos por organizadores e Jeep Clubes.
-- Moderação: enviados ficam `pending` e só aparecem na agenda depois de `approved`.
-- Área Admin protegida por `ADMIN_TOKEN`.
-- Acompanhamento do status dos próprios envios no aparelho.
-- Cadastro local de novas fontes (Instagram, Facebook, sites e grupos).
-- PWA instalável no celular.
-
-## Rodar localmente
-
-```bash
-npm install
-ADMIN_TOKEN="crie-um-token-forte" npm start
-```
-
-Abra `http://localhost:3000`.
+## Recursos
+- Viagem ativa e histórico de viagens.
+- KM inicial e hodômetro estimado pelo GPS.
+- Distância percorrida usando GPS do celular.
+- Lugares com descrição, avaliação, localização e fotos.
+- Álbum de fotos da viagem.
+- Mapa completo da rota com OpenStreetMap/Leaflet.
+- Gastos por categoria.
+- OCR da foto do comprovante de combustível.
+- Média km/L e custo por km.
+- PDF da viagem.
+- Backup JSON e CSV.
+- Funcionamento offline com IndexedDB.
+- Sincronização PostgreSQL.
+- Proteção por PIN.
+- Instalação como PWA.
 
 ## Render
+Build: npm install
+Start: npm start
 
-O `render.yaml` já está incluído. Para habilitar a área de moderação, crie no serviço uma variável de ambiente:
-
-- `ADMIN_TOKEN` = um token longo e privado.
-
-### Importante sobre persistência
-
-Nesta versão, os envios colaborativos ficam em `data/submissions.json`. Isso funciona em servidor Node tradicional, porém o filesystem de instâncias web do Render pode ser efêmero. Para uso público permanente, a próxima etapa recomendada é migrar os envios para PostgreSQL/Supabase/Neon ou outro banco persistente.
-
-## Fontes sociais
-
-Instagram e Facebook podem exigir login ou bloquear leitura automatizada. O projeto não contorna esses bloqueios. A agenda só publica dados verificáveis e mantém links para a fonte original.
+Variáveis:
+DATABASE_URL
+APP_PIN
+NODE_ENV=production
