@@ -232,6 +232,22 @@ async function fetchSsw38Rows(){
                   }else{
                     const refs=[...sj.matchAll(/\babrir\s*=\s*function\s*\(/gi)].map(x=>x.index).slice(0,3);
                     console.log('SSW abrir refs: '+JSON.stringify({count:refs.length}));
+                    const scriptList=[
+                      '/scripts/weblocalstorage.js',
+                      '/scripts/ssw0198_181124.js?v=18.11.24',
+                      '/scripts/sswroteiro_230819.js?v=23.08.19',
+                      '/scripts/lookup_150926.js?v=15.09.26'
+                    ];
+                    const found=[];
+                    for(const sp of scriptList){
+                      try{
+                        const xr=await fetch('https://sistema.ssw.inf.br'+sp,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},signal:AbortSignal.timeout(15000)});
+                        const xt=await xr.text();
+                        const ix=xt.search(/(?:function\s+abrir\s*\(|\babrir\s*=\s*function\s*\()/i);
+                        if(ix>=0)found.push({script:sp.split('?')[0],snippet:xt.slice(ix,ix+2200).replace(/https?:\/\/[^"'\s)]+/g,'URL').replace(/\s+/g,' ')});
+                      }catch{}
+                    }
+                    console.log('SSW abrir scripts: '+JSON.stringify(found));
                   }
                 }catch(e){console.log('SSW abrir ERRO: '+e.message)}
                 try{
