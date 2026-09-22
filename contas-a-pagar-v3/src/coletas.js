@@ -267,6 +267,7 @@ try{
           const form=document.getElementById('formColeta');
           if(!form) return;
           let wrap=document.getElementById('coletaFormGroups');
+          if(wrap?.dataset?.ready==='1') return;
           if(!wrap){
             wrap=document.createElement('div');
             wrap.id='coletaFormGroups';
@@ -275,7 +276,6 @@ try{
             if(primeiro) form.insertBefore(wrap,primeiro);
             else form.appendChild(wrap);
           }
-          wrap.innerHTML='';
 
           const make=(title,ids)=>{
             const card=document.createElement('section');
@@ -332,6 +332,7 @@ try{
             const fin=[...wrap.querySelectorAll('.coleta-form-card')].find(x=>x.querySelector('h3')?.textContent==='Financeiro');
             if(fin){hint.style.display='block';hint.style.marginTop='10px';fin.appendChild(hint)}
           }
+          wrap.dataset.ready='1';
         }
 
         function garantirCamposFormulario(){
