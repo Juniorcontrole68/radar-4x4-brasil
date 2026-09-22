@@ -212,9 +212,33 @@
       <div id="fuelFields">
         <div class="two-cols"><label>Litros<input id="fuelLiters" type="number" inputmode="decimal" step="0.001" min="0"></label><label>Preço por litro<input id="fuelUnitPrice" type="number" inputmode="decimal" step="0.001" min="0"></label></div>
         <div class="current-odometer">Hodômetro estimado no momento: <strong id="fuelEstimatedKm">—</strong></div>
+
+        <div class="nf-reader">
+          <div class="nf-reader-head">
+            <div>
+              <strong>📷 Ler NF / comprovante do abastecimento</strong>
+              <small>Tire uma foto nítida e o app tenta preencher valor total, litros e preço por litro.</small>
+            </div>
+          </div>
+
+          <input id="receiptPhoto" class="camera-input" type="file" accept="image/*" capture="environment">
+          <div class="nf-actions">
+            <label for="receiptPhoto" class="primary camera-label">📷 Tirar foto da NF</label>
+            <button type="button" id="readReceiptBtn" class="secondary" disabled>🔎 Ler foto novamente</button>
+          </div>
+
+          <div id="receiptPreviewBox" class="receipt-preview hidden">
+            <img id="receiptPreview" alt="Prévia da nota fiscal">
+            <span id="receiptFileName"></span>
+          </div>
+
+          <div id="ocrBox" class="ocr-box hidden">
+            <div class="ocr-top"><strong>Leitura da NF</strong><span id="ocrStatus">Aguardando</span></div>
+            <progress id="ocrProgress" max="1" value="0"></progress>
+            <small id="ocrHint">Tentarei identificar valor total, litros e preço por litro.</small>
+          </div>
+        </div>
       </div>
-      <label>Foto do comprovante / nota<input id="receiptPhoto" type="file" accept="image/*" capture="environment"></label>
-      <div id="ocrBox" class="ocr-box hidden"><div class="ocr-top"><strong>Leitura automática</strong><span id="ocrStatus">Aguardando</span></div><progress id="ocrProgress" max="1" value="0"></progress><small id="ocrHint">Tentarei identificar valor, litros e preço por litro.</small></div>
       <label>Observações<textarea id="expenseNotes" rows="3"></textarea></label>
       <div class="dialog-actions"><button value="cancel" class="ghost">Cancelar</button><button id="saveExpenseBtn" class="primary">Salvar gasto</button></div>
     </form>
