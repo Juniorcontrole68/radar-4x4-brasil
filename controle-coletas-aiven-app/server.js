@@ -214,6 +214,25 @@ async function start() {
         return sendHtml(res, ACCOUNTS_INDEX);
       }
 
+      if (req.method === 'GET' && u.pathname === '/api/painel/coletas-status-resumo') {
+        try {
+          const r = await pool.query(`
+            SELECT
+              COUNT(*)::int AS total,
+              COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,'')))='programada')::int AS programadas,
+              COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,'')))='carregando')::int AS carregando,
+              COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,''))) IN ('em trânsito','em transito'))::int AS em_transito,
+              COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,'')))='entregue')::int AS entregues,
+              COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,'')))='cancelada')::int AS canceladas,
+              MAX(updated_at) AS ultima_atualizacao
+            FROM coletas
+          `);
+          return sendJson(res, 200, { ok: true, ...r.rows[0] });
+        } catch (e) {
+          return sendJson(res, 500, { ok: false, error: e.message || 'Não foi possível resumir as coletas.' });
+        }
+      }
+
       if (req.method === 'GET' && u.pathname === '/api/painel/coletas-resumo') {
         const result = await pool.query(`
           SELECT
