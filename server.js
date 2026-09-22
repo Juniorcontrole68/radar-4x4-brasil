@@ -906,4 +906,5 @@ http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.
   (async()=>{try{const rep=await fetchBi2ReportFolder(17,'',bi2Auth().pasta),p=parseBi2Csv(rep.text),today=new Date().toISOString().slice(0,10),todayRows=(p.rows||[]).filter(r=>brDateToIso(pickField(r,'DATA ENTREGA','ENTREGA','DT ENTREGA'))===today);console.log('VALIDACAO BI2 17: '+JSON.stringify({arquivo:(p.rows||[]).length,hoje:todayRows.length,headers:p.headers.slice(0,25)}))}catch(e){console.log('VALIDACAO BI2 17 ERRO: '+String(e.message||e))}})();
   setInterval(refreshBi2State,15*60*1000);
   setInterval(refreshBi2ApiState,60*1000);
+  if(internalSswConfigured())setTimeout(()=>fetchSsw38Rows().then(x=>console.log('VALIDACAO SSW38 STARTUP: '+JSON.stringify({total:x.total,romaneios:x.romaneios,motoristas:x.motoristas}))).catch(e=>console.log('VALIDACAO SSW38 STARTUP ERRO: '+String(e.message||e))),2500);
 });
