@@ -186,6 +186,17 @@ async function fetchSsw38Rows(){
             attrs['f'+n]={attrNames:[...new Set(names)],programs,params,funcs:funcs.slice(0,12),textLen:htmlText38(inner).length};
           }
           console.log('SSW38 controles romaneio: '+JSON.stringify(attrs));
+          const f13m=(fr.match(/<f13\b[^>]*>([\s\S]*?)<\/f13>/i)||[])[1]||'';
+          const d13=String(f13m).replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#39;/gi,"'").replace(/&amp;/gi,'&');
+          const href13=(d13.match(/href=["']([^"']+)["']/i)||[])[1]||'';
+          if(href13){
+            const url13=new URL(href13,'https://sistema.ssw.inf.br/bin/'+prog);
+            const pr=await fetch(url13,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/'+prog},redirect:'manual',signal:AbortSignal.timeout(15000)});
+            apply(pr.headers);const pt=await pr.text();
+            const headings=[...pt.matchAll(/<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>/gi)].map(x=>htmlText38(x[1])).filter(x=>x&&x.length<80).slice(0,40);
+            const inputs13=[...pt.matchAll(/<input\b([^>]*)>/gi)].map(m=>{const a=m[1]||'';return{name:(a.match(/\bname=["']?([^"'\s>]+)/i)||[])[1]||'',id:(a.match(/\bid=["']?([^"'\s>]+)/i)||[])[1]||''}}).filter(x=>x.name||x.id).slice(0,30);
+            console.log('SSW38 imprimir estrutura: '+JSON.stringify({status:pr.status,bytes:Buffer.byteLength(pt),program:url13.pathname.split('/').pop(),paramNames:[...url13.searchParams.keys()],xml:(pt.match(/<xml\b/gi)||[]).length,rows:(pt.match(/<tr\b/gi)||[]).length,cells:(pt.match(/<td\b/gi)||[]).length,r:(pt.match(/<r\b/gi)||[]).length,headings,inputs:inputs13,programs:[...new Set([...pt.matchAll(/ssw\d{3,6}/gi)].map(x=>x[0]))].slice(0,15)}));
+          }
         }catch(e){console.log('SSW38 controles ERRO: '+e.message)}
       }
       if(p.rows.length){
