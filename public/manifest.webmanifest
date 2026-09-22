@@ -1,0 +1,10 @@
+{
+  "name":"Diário de Bordo de Viagens",
+  "short_name":"Diário Bordo",
+  "start_url":"/",
+  "display":"standalone",
+  "background_color":"#f3f4ef",
+  "theme_color":"#173f2a",
+  "description":"GPS, gastos, combustível, fotos, mapa, PDF e sincronização online para viagens.",
+  "icons":[{"src":"/icons/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
+}
