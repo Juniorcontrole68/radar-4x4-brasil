@@ -219,6 +219,20 @@ async function fetchSsw38Rows(){
                 const headings=[...dt.matchAll(/<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>/gi)].map(x=>htmlText38(x[1])).filter(x=>x&&x.length<80).slice(0,50);
                 const firstR=(dt.match(/<r\b[^>]*>([\s\S]*?)<\/r>/i)||[])[1]||'',fields=[...firstR.matchAll(/<f(\d+)\b/gi)].map(x=>Number(x[1]));
                 console.log('SSW0146 estrutura: '+JSON.stringify({status:dr.status,bytes:Buffer.byteLength(dt),xml:(dt.match(/<xml\b/gi)||[]).length,r:(dt.match(/<r\b/gi)||[]).length,tr:(dt.match(/<tr\b/gi)||[]).length,td:(dt.match(/<td\b/gi)||[]).length,fields,headings,programs:[...new Set([...dt.matchAll(/ssw\d{3,6}/gi)].map(x=>x[0]))].slice(0,20)}));
+                try{
+                  const murl=(dt.match(/(?:\/bin\/)?ssw014666[^"'<>\s]*/i)||[])[0]||'';
+                  const skeleton=String(murl).replace(/\d{3,}/g,'#').replace(/AMR\d+-\d+/gi,'ROM');
+                  console.log('SSW014666 link: '+JSON.stringify({found:!!murl,skeleton}));
+                  if(murl){
+                    const clean=murl.replace(/&amp;/g,'&');
+                    const u66=new URL(clean.startsWith('/')?clean:('/bin/'+clean),'https://sistema.ssw.inf.br');
+                    const r66=await fetch(u66,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':du},redirect:'manual',signal:AbortSignal.timeout(15000)});
+                    apply(r66.headers);const t66=await r66.text();
+                    const fr66=(t66.match(/<r\b[^>]*>([\s\S]*?)<\/r>/i)||[])[1]||'',f66=[...fr66.matchAll(/<f(\d+)\b/gi)].map(x=>Number(x[1]));
+                    const h66=[...t66.matchAll(/<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>/gi)].map(x=>htmlText38(x[1])).filter(x=>x&&x.length<80).slice(0,50);
+                    console.log('SSW014666 estrutura: '+JSON.stringify({status:r66.status,bytes:Buffer.byteLength(t66),xml:(t66.match(/<xml\b/gi)||[]).length,r:(t66.match(/<r\b/gi)||[]).length,tr:(t66.match(/<tr\b/gi)||[]).length,td:(t66.match(/<td\b/gi)||[]).length,fields:f66,headings:h66,programs:[...new Set([...t66.matchAll(/ssw\d{3,6}/gi)].map(x=>x[0]))].slice(0,20)}));
+                  }
+                }catch(e){console.log('SSW014666 ERRO: '+e.message)}
               }
             }catch(e){console.log('SSW0146 estrutura ERRO: '+e.message)}
           }catch{}
