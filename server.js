@@ -210,6 +210,10 @@ async function fetchSsw38Rows(){
                 const roms=p.rows.map(x=>String(x.romaneio||'').toUpperCase()),plates=p.rows.map(x=>normPlate(x.veiculo)),drivers=p.rows.map(x=>norm38(x.motorista));
                 const rr=[...at.matchAll(/<r\b[^>]*>([\s\S]*?)<\/r>/gi)].map(m=>{const o={};for(const fm of m[1].matchAll(/<f(\d+)\b[^>]*>([\s\S]*?)<\/f\1>/gi))o[fm[1]]=htmlText38(fm[2]);return o});
                 const maxField=Math.max(0,...rr.flatMap(o=>Object.keys(o).map(Number)));
+                const codeCounts={};for(const o of rr){const v=String(o['5']||'').trim();if(/^\d{1,3}$/.test(v))codeCounts[v]=(codeCounts[v]||0)+1}
+                const classifyText=v=>{const s=norm38(v);if(/ENTREG/.test(s))return'ENTREGA';if(/TEMPO/.test(s))return'TEMPO';if(/RECUS/.test(s))return'RECUSA';if(/AUSENT|NAO ENCONTR/.test(s))return'AUSENTE';if(/ENDERE/.test(s))return'ENDERECO';if(/AGEND/.test(s))return'AGENDAMENTO';if(/DEVOL/.test(s))return'DEVOLUCAO';if(/AVARIA/.test(s))return'AVARIA';return'OUTRO'};
+                const textCats={};for(const o of rr){const k=classifyText(o['10']||'');textCats[k]=(textCats[k]||0)+1}
+                console.log('SSW38 PEN status: '+JSON.stringify({codeCounts,textCats}));
                 mapStats=[];
                 for(let n=0;n<=maxField;n++){
                   const vals=rr.map(o=>String(o[n]||'').trim()).filter(Boolean),up=vals.map(v=>v.toUpperCase()),norms=vals.map(norm38);
