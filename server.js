@@ -287,6 +287,19 @@ async function fetchSsw38Rows(){
               }
             }
             console.log('SSW38 ROM direto: '+JSON.stringify(direct));
+            const navTests=[];
+            const x=p.rows[0];
+            for(const act of ['ROM_INT','CTE','CTR','PEN']){
+              for(const val of [x.romaneio,String(x.romaneio||'').replace(/[^0-9]/g,'')]){
+                try{
+                  const pp=new URLSearchParams({act,a_romaneio:val,nro_romaneio:val});
+                  const rr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/'+prog,'Cookie':cookie()},body:pp.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});
+                  const tt=await rr.text();
+                  navTests.push({act,mode:val===x.romaneio?'codigo':'digitos',bytes:Buffer.byteLength(tt),xml:(tt.match(/<xml\b/gi)||[]).length,rows:(tt.match(/<r\b/gi)||[]).length,title:htmlText38((tt.match(/<title[^>]*>([\s\S]*?)<\/title>/i)||[])[1]||''),hasRom:/romaneio/i.test(tt),hasCte:/ctrc|cte/i.test(tt)});
+                }catch(e){navTests.push({act,error:String(e.message||e)})}
+              }
+            }
+            console.log('SSW38 ROM navegação: '+JSON.stringify(navTests));
           }catch(e){console.log('SSW38 ROM direto ERRO: '+e.message)}
         }
       }
