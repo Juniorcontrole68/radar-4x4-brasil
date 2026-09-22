@@ -193,7 +193,11 @@ async function fetchSsw38Rows(){
               const ar=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/'+prog,'Cookie':cookie()},body:pp.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});
               apply(ar.headers);const at=await ar.text();
               const firstR=(at.match(/<r\b[^>]*>([\s\S]*?)<\/r>/i)||[])[1]||'',fields=[...firstR.matchAll(/<f(\d+)\b/gi)].map(x=>Number(x[1]));
-              probes.push({act,status:ar.status,bytes:Buffer.byteLength(at),xml:(at.match(/<xml\b/gi)||[]).length,rows:(at.match(/<r\b/gi)||[]).length,fields:fields.slice(0,30)});
+              const inps=[...at.matchAll(/<input\b([^>]*)>/gi)].map(m=>{const a=m[1]||'';return{name:(a.match(/\bname=["']?([^"'\s>]+)/i)||[])[1]||'',id:(a.match(/\bid=["']?([^"'\s>]+)/i)||[])[1]||'',type:(a.match(/\btype=["']?([^"'\s>]+)/i)||[])[1]||''}}).filter(x=>x.name||x.id).slice(0,30);
+              const acts=[...new Set([...at.matchAll(/ajaxEnvia\(["']([^"']+)/gi)].map(x=>x[1]))].slice(0,30);
+              const progs=[...new Set([...at.matchAll(/ssw\d{3,6}/gi)].map(x=>x[0]))].slice(0,20);
+              const title=htmlText38((at.match(/<title[^>]*>([\s\S]*?)<\/title>/i)||[])[1]||'');
+              probes.push({act,status:ar.status,bytes:Buffer.byteLength(at),xml:(at.match(/<xml\b/gi)||[]).length,rows:(at.match(/<r\b/gi)||[]).length,fields:fields.slice(0,30),title,inputs:inps,actions:acts,programs:progs});
             }catch(e){probes.push({act,error:String(e.message||e)})}
           }
           console.log('SSW38 probe detalhe: '+JSON.stringify(probes));
