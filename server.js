@@ -708,7 +708,17 @@ async function buildSswMotoristas(from='',to=''){
     if(k)ctrcMap.set(k,r);
   }
 
-  let candidates=[...ctrcMap.values()].filter(r=>{
+  const ownerByCtrc=new Map(),officialCtrcs=new Set();
+  if(base38&&base38.ok){
+    for(const x of (base38.rows||[])){
+      for(const raw of (x.ctrcs||[])){
+        const k=normCtrc(raw);if(!k)continue;
+        officialCtrcs.add(k);
+        ownerByCtrc.set(k,{motorista:x.motorista||'',veiculo:normPlate(x.veiculo),romaneio:x.romaneio||'',qtdeCtrcs:Number(x.qtdeCtrcs||0)});
+      }
+    }
+  }
+  let candidates=officialCtrcs.size?[...ctrcMap.values()].filter(r=>officialCtrcs.has(normCtrc(r.numero_ctrc||r.CTRC))):[...ctrcMap.values()].filter(r=>{
     const d=brDateToIso(r.prev_ent||r['PREV ENTREGA']||r['PREVISAO ENTREGA']);
     return d&&d>=from&&d<=to;
   });
@@ -744,12 +754,13 @@ async function buildSswMotoristas(from='',to=''){
     const occ=String(last.ocorrencia||'').trim();
     const codeMatch=occ.match(/\((\d{1,3})\)/);
     const rawCode=codeMatch?codeMatch[1]:'';
-    const plate=normPlate(r.veiculo_entrega),vehicle=vehicleMap.get(plate)||{};
+    const ctrcKey=normCtrc(r.numero_ctrc||r.CTRC),owner=ownerByCtrc.get(ctrcKey)||null;
+    const plate=owner?.veiculo||normPlate(r.veiculo_entrega),vehicle=vehicleMap.get(plate)||{};
     const saida=!!tr.saiu,entregue=!!tr.entregue;
     rows.push({
       ctrc:r.numero_ctrc||'',nf:r.numero_nf||'',remetente:r.remetente_nome||'',destinatario:r.destinatario_nome||'',
       cidade:r.cidade_destino||r.dest_cidade||'',uf:r.uf_destino||r.dest_uf||'',veiculo:plate||String(r.veiculo_entrega||'').trim(),
-      motorista:driverMap.get(plate)||'',relacionamento:vehicle.RELACIONAMENTO||'',saida,entregue,
+      motorista:owner?.motorista||driverMap.get(plate)||'',romaneio:owner?.romaneio||'',relacionamento:vehicle.RELACIONAMENTO||'',saida,entregue,
       ocorrenciaCodigo:rawCode,ocorrencia:occ||r.ult_ocorr_descricao||'',
       dataOcorrencia:String(last.data_hora||'').slice(0,10)||r.ult_ocorr_data||'',
       horaOcorrencia:String(last.data_hora||'').slice(11,16)||r.ult_ocorr_hora||'',
@@ -773,30 +784,48 @@ async function buildSswMotoristas(from='',to=''){
   const deliveredMap=new Map();
   snaps17.filter(x=>x.ok).forEach(s=>(s.rows||[]).forEach(r=>{const k=normCtrc(r.CTRC||r.numero_ctrc);if(k)deliveredMap.set(k,r)}));
 
-  let motoristas38=[],totalRomaneado=0,romaneios38=[];
+  let motoristas38=[],totalRomaneado=0,romaneios38=[],entregues38=0,pendentes38=0,ocorrencias38=0;
   if(base38&&base38.ok){
     romaneios38=base38.rows||[];totalRomaneado=base38.total||0;
+    const byCtrc=new Map(rows.map(r=>[normCtrc(r.ctrc),r]));
     const gm=new Map();
+    const pendingText=/SA[IÍ]DA PARA ENTREGA|EM ROTA|EM TR[ÂA]NSITO|PRE[- ]?ENTREG|AGUARD|CARREG|MANIFEST|TRANSFER/i;
     for(const x of romaneios38){
       const k=String(x.motorista||x.veiculo||'Não identificado').trim();
-      if(!gm.has(k))gm.set(k,{motorista:x.motorista||'Não identificado',veiculo:x.veiculo||'',total:0,romaneios:[]});
+      if(!gm.has(k))gm.set(k,{motorista:x.motorista||'Não identificado',veiculo:x.veiculo||'',total:0,entregues:0,pendentes:0,ocorrencias:0,romaneios:[],vinculados:0});
       const g=gm.get(k);g.total+=Number(x.qtdeCtrcs||0);if(x.romaneio)g.romaneios.push(x.romaneio);if(!g.veiculo&&x.veiculo)g.veiculo=x.veiculo;
+      let accounted=0;
+      for(const raw of (x.ctrcs||[])){
+        const r=byCtrc.get(normCtrc(raw));if(!r)continue;
+        g.vinculados++;accounted++;
+        if(r.entregue)g.entregues++;
+        else{
+          const t=String((r.ocorrenciaCodigo||'')+' '+(r.ocorrencia||'')).trim();
+          if(!t||pendingText.test(t)||String(r.ocorrenciaCodigo||'')==='085'||String(r.ocorrenciaCodigo||'')==='85')g.pendentes++;
+          else g.ocorrencias++;
+        }
+      }
+      const missing=Math.max(0,Number(x.qtdeCtrcs||0)-accounted);
+      g.pendentes+=missing;
     }
-    motoristas38=[...gm.values()].sort((a,b)=>b.total-a.total||a.motorista.localeCompare(b.motorista,'pt-BR'));
+    motoristas38=[...gm.values()].map(g=>({...g,taxa:g.total?g.entregues/g.total*100:0})).sort((a,b)=>b.total-a.total||a.motorista.localeCompare(b.motorista,'pt-BR'));
+    entregues38=motoristas38.reduce((a,x)=>a+x.entregues,0);
+    pendentes38=motoristas38.reduce((a,x)=>a+x.pendentes,0);
+    ocorrencias38=motoristas38.reduce((a,x)=>a+x.ocorrencias,0);
   }
 
   const value={
     ok:true,source:'SSW Tracking Online + BI2',from,to,daysRequested:dates.length,
     days174:snaps174.filter(x=>x.ok).length,days17:snaps17.filter(x=>x.ok).length,
     candidatos:unique.length,trackingConsultados:trackingResults.length,trackingOk,
-    totalRomaneado,motoristas38,romaneios38,
-    saidas,baixadas,baixasSsw:baixadas,baixasBi2:deliveredMap.size,pendentes,taxa:saidas?baixadas/saidas*100:0,
+    totalRomaneado,motoristas38,romaneios38,entregues38,pendentes38,ocorrencias38,
+    saidas:totalRomaneado||saidas,baixadas:totalRomaneado?entregues38:baixadas,baixasSsw:totalRomaneado?entregues38:baixadas,baixasBi2:deliveredMap.size,pendentes:totalRomaneado?pendentes38:pendentes,taxa:totalRomaneado?(entregues38/totalRomaneado*100):(saidas?baixadas/saidas*100:0),
     veiculos:new Set(saiuRows.map(x=>x.veiculo).filter(Boolean)).size,
     motoristasIdentificados:new Set(saiuRows.map(x=>x.motorista).filter(Boolean)).size,
     motoristas,
     ocorrencias:Object.entries(occ).sort((a,b)=>b[1]-a[1]).slice(0,15).map(([label,value])=>({label,value})),
     rows:rows.sort((a,b)=>Number(b.entregue)-Number(a.entregue)||String(b.dataOcorrencia).localeCompare(String(a.dataOcorrencia))).slice(0,1000),
-    note:(totalRomaneado?'Opção 38: '+totalRomaneado+' CT-e(s) em '+romaneios38.length+' romaneio(s) • '+motoristas38.length+' motorista(s). ':'')+'Rastreamento on-line consultado para '+trackingOk+' de '+unique.length+' NF(s); status individual ainda depende da vinculação do CT-e ao romaneio.'
+    note:(totalRomaneado?'Opção 38: '+totalRomaneado+' CT-e(s) em '+romaneios38.length+' romaneio(s) • '+motoristas38.length+' motorista(s). ':'')+'CT-es vinculados aos romaneios: '+officialCtrcs.size+'; rastreamento on-line consultado em '+trackingOk+' de '+unique.length+'.'
   };
   SSW_DRIVER_CACHE.set(cacheKey,{at:Date.now(),value});return value
 }
@@ -810,7 +839,7 @@ function fetchText(url,n=0){return new Promise((ok,no)=>{if(n>5)return no(new Er
 function csv(t){const a=[];let r=[],f='',q=false;for(let i=0;i<t.length;i++){const c=t[i];if(q){if(c==='"'&&t[i+1]==='"'){f+='"';i++}else if(c==='"')q=false;else f+=c}else{if(c==='"')q=true;else if(c===','){r.push(f);f=''}else if(c==='\n'){r.push(f.replace(/\r$/,''));a.push(r);r=[];f=''}else f+=c}}if(f.length||r.length){r.push(f.replace(/\r$/,''));a.push(r)}if(!a.length)return[];const h=a.shift().map((x,i)=>(x||('COL_'+(i+1))).trim());return a.filter(x=>x.some(v=>String(v).trim())).map(x=>Object.fromEntries(h.map((k,i)=>[k,x[i]??''])))}
 async function rows(gid){let e;const cb=Date.now();for(const u of [`https://docs.google.com/spreadsheets/d/${ID}/export?format=csv&gid=${gid}&cacheBust=${cb}`,`https://docs.google.com/spreadsheets/d/${ID}/gviz/tq?tqx=out:csv&gid=${gid}&cacheBust=${cb}`]){try{const x=csv(await fetchText(u));if(x.length)return x;e=new Error('Aba sem linhas')}catch(err){e=err}}throw e}
 http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.pathname==='/health'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:true}))}if(u.pathname==='/api/coletas/status'){try{const x=await fetchColetasStatus(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/baixas'){try{const x=await buildBi2Baixas(u.searchParams.get('date')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/saidas-baixas'){try{const x=await buildSswMotoristas(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/remetentes'){try{const x=await buildBi2Remetentes(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/atrasos'){try{const x=await buildBi2Atrasos(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/api-status'){if(!BI2_API_STATE.lastCheck||Date.now()-new Date(BI2_API_STATE.lastCheck).getTime()>60*1000)await refreshBi2ApiState();res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify(BI2_API_STATE))}if(u.pathname==='/api/bi2/status'){if(!BI2_STATE.lastCheck||Date.now()-new Date(BI2_STATE.lastCheck).getTime()>5*60*1000)await refreshBi2State();res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});const x=BI2_STATE,pub={configured:x.configured,connected:x.connected,fileCount:x.fileCount||0,lastCheck:x.lastCheck,message:x.message,error:x.error||''};return res.end(JSON.stringify(pub))}if(u.pathname==='/api/ssw/status'){const configured=sswConfigured();if(!configured){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:false,connected:false,source:'google-sheets',message:'SSW aguardando credenciais'}))}try{await getSswToken(false);res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:true,connected:true,source:'ssw',message:'SSW conectado'}))}catch(e){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:true,connected:false,source:'google-sheets',message:'SSW configurado, mas a autenticação falhou',error:String(e.message||e)}))}}if(u.pathname.startsWith('/api/sheet/')){const n=u.pathname.split('/').pop(),gid=GIDS[n];if(!gid){res.writeHead(404);return res.end()}try{const x=await rows(gid);res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,rows:x,count:x.length}))}catch(e){res.writeHead(502,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:false,error:e.message}))}}let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.join(PUB,p));if(!p.startsWith(PUB)){res.writeHead(403);return res.end()}fs.readFile(p,(e,d)=>{if(e){res.writeHead(404);return res.end('Not found')}const ext=path.extname(p);res.writeHead(200,{'Content-Type':ext==='.js'?'application/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate','Pragma':'no-cache','Expires':'0'});res.end(d)})}catch(e){res.writeHead(500);res.end(e.message)}}).listen(PORT,'0.0.0.0',()=>{
-  console.log('CONSTRULOG em '+PORT);probeSswAbrirScripts().then(x=>console.log('SSW abrir probe isolado: '+JSON.stringify(x))).catch(()=>{});if(internalSswConfigured())fetchSsw38Rows().then(x=>console.log('SSW38 validação: '+JSON.stringify({romaneios:x.romaneios,motoristas:x.motoristas,total:x.total}))).catch(e=>console.error('SSW38 validação ERRO: '+e.message));console.log('SSW interno configurado: '+(internalSswConfigured()?'SIM':'NAO'));
+  console.log('CONSTRULOG em '+PORT);probeSswAbrirScripts().then(x=>console.log('SSW abrir probe isolado: '+JSON.stringify(x))).catch(()=>{});
 
   refreshBi2State().catch(e=>console.error('BI2 SFTP monitor ERRO: '+e.message));
   refreshBi2ApiState().catch(e=>console.error('BI2 WebAPI monitor ERRO: '+e.message));
