@@ -121,7 +121,9 @@ function norm38(s){return htmlText38(s).normalize('NFD').replace(/[\u0300-\u036f
 function parseSsw38Xml(xml){
   const rows=[];
   for(const rm of String(xml||'').matchAll(/<r\b[^>]*>([\s\S]*?)<\/r>/gi)){
-    const raw=rm[1],get=n=>htmlText38((raw.match(new RegExp('<f'+n+'\\\\b[^>]*>([\\\\s\\\\S]*?)<\\\\/f'+n+'>','i'))||[])[1]||'');
+    const raw=rm[1],fields={};
+    for(const fm of raw.matchAll(/<f(\d+)\b[^>]*>([\s\S]*?)<\/f\1>/gi))fields[fm[1]]=htmlText38(fm[2]);
+    const get=n=>fields[String(n)]||'';
     const romaneio=get(0),veiculo=get(1),carreta=get(2),inclusao=get(3),modelo=get(4),motorista=get(5),qtde=Number(get(6).replace(/\D/g,''))||0,falta=Number(get(7).replace(/\D/g,''))||0;
     if(romaneio&&motorista&&qtde)rows.push({romaneio,veiculo,carreta,inclusao,modelo,motorista,qtdeCtrcs:qtde,faltaOcorr:falta});
   }
