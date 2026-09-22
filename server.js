@@ -183,7 +183,9 @@ async function fetchSsw38Rows(){
             const programs=[...new Set([...a.matchAll(/ssw\d{3,6}/gi),...inner.matchAll(/ssw\d{3,6}/gi)].map(x=>x[0]))];
             const params=[...new Set([...a.matchAll(/\b(nro_romaneio|seq_romaneio|nro_ctrc|seq_ctrc|placa|act|origem)\b/gi),...inner.matchAll(/\b(nro_romaneio|seq_romaneio|nro_ctrc|seq_ctrc|placa|act|origem)\b/gi)].map(x=>x[1]))];
             const funcs=[...new Set([...a.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*)\s*\(/g),...inner.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)].map(x=>x[1]).filter(x=>!['Number','String'].includes(x)))];
-            attrs['f'+n]={attrNames:[...new Set(names)],programs,params,funcs:funcs.slice(0,12),textLen:htmlText38(inner).length};
+            const ajaxActs=[...new Set([...a.matchAll(/ajaxEnvia\(\s*["']([^"']+)/gi),...inner.matchAll(/ajaxEnvia\(\s*["']([^"']+)/gi)].map(x=>x[1]))];
+            const openPrograms=[...new Set([...a.matchAll(/(?:window\.open|open)\s*\(\s*["'][^"']*(ssw\d{3,6})/gi),...inner.matchAll(/(?:window\.open|open)\s*\(\s*["'][^"']*(ssw\d{3,6})/gi)].map(x=>x[1]))];
+            attrs['f'+n]={attrNames:[...new Set(names)],programs,params,funcs:funcs.slice(0,12),ajaxActs,openPrograms,textLen:htmlText38(inner).length};
           }
           console.log('SSW38 controles romaneio: '+JSON.stringify(attrs));
           const f13m=(fr.match(/<f13\b[^>]*>([\s\S]*?)<\/f13>/i)||[])[1]||'';
