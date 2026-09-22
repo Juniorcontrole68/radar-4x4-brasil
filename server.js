@@ -423,8 +423,15 @@ async function fetchSsw38Rows(){
                 }
                 console.log('SSW38 PEN grouping: '+JSON.stringify({expectedSizes,candidates:groupCandidates.slice(0,30)}));
                 const classifyText=v=>{const s=norm38(v);if(/ENTREG/.test(s))return'ENTREGA';if(/TEMPO/.test(s))return'TEMPO';if(/RECUS/.test(s))return'RECUSA';if(/AUSENT|NAO ENCONTR/.test(s))return'AUSENTE';if(/ENDERE/.test(s))return'ENDERECO';if(/AGEND/.test(s))return'AGENDAMENTO';if(/DEVOL/.test(s))return'DEVOLUCAO';if(/AVARIA/.test(s))return'AVARIA';return'OUTRO'};
-                const textCats={};for(const o of rr){const k=classifyText(o['10']||'');textCats[k]=(textCats[k]||0)+1}
+                const textCats={},statusCounts={},codeStatusCounts={};
+                for(const o of rr){
+                  const rawStatus=String(o['10']||'').trim(),k=classifyText(rawStatus);
+                  textCats[k]=(textCats[k]||0)+1;
+                  const sk=rawStatus||'(vazio)';statusCounts[sk]=(statusCounts[sk]||0)+1;
+                  const ck=String(o['5']||'').trim()||'(vazio)',combo=ck+' | '+sk;codeStatusCounts[combo]=(codeStatusCounts[combo]||0)+1;
+                }
                 console.log('SSW38 PEN status: '+JSON.stringify({codeCounts,textCats}));
+                console.log('SSW38 PEN status detalhes: '+JSON.stringify({statusCounts,codeStatusCounts}));
                 mapStats=[];
                 for(let n=0;n<=maxField;n++){
                   const vals=rr.map(o=>String(o[n]||'').trim()).filter(Boolean),up=vals.map(v=>v.toUpperCase()),norms=vals.map(norm38);
