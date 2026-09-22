@@ -355,6 +355,18 @@ async function fetchSsw38Rows(){
   }
   const total=p.rows.reduce((a,x)=>a+x.qtdeCtrcs,0),motoristas=[...new Set(p.rows.map(x=>x.motorista))];
   console.log('SSW38 sequências: '+JSON.stringify({extraidas:p.rows.filter(x=>x.seqRomaneio).length,total:p.rows.length,unicas:new Set(p.rows.map(x=>x.seqRomaneio).filter(Boolean)).size}));
+  try{
+    const checks=[];
+    for(const x of p.rows){
+      if(!x.seqRomaneio)continue;
+      const mm=String(x.romaneio||'').match(/^[A-Z]{3}0*(\d+)-/i),nro=mm?mm[1]:'';
+      const pp=new URLSearchParams({act:'PEN',seq_romaneio:String(x.seqRomaneio),nro_romaneio:nro});
+      const rr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/'+prog,'Cookie':cookie()},body:pp.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});
+      const tt=await rr.text();
+      checks.push({esperado:Number(x.qtdeCtrcs||0),retornado:(tt.match(/<r\b/gi)||[]).length});
+    }
+    console.log('SSW38 PEN por romaneio: '+JSON.stringify(checks));
+  }catch(e){console.log('SSW38 PEN por romaneio ERRO: '+e.message)}
   return{ok:true,rows:p.rows,total,motoristas:motoristas.length,romaneios:p.rows.length};
 }
 function sswConfig(){return{domain:process.env.SSW_DOMAIN||'',username:process.env.SSW_USERNAME||'',password:process.env.SSW_PASSWORD||'',cnpj:process.env.SSW_CNPJ_EDI||''}}
