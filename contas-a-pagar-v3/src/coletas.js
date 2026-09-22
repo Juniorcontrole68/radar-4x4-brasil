@@ -49,6 +49,7 @@ try{
         const API_DESTINATARIO='/api/painel/coletas-destinatario/';
         const today=()=>new Date().toISOString().slice(0,10);
         const originalFetch=window.fetch.bind(window);
+        const escLocal=(v)=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
         let dadosCache=[];
 
         async function carregarDados(){
@@ -105,6 +106,36 @@ try{
             throw new Error(e.error||'Não foi possível salvar o destinatário.');
           }
           return r.json();
+        }
+
+        async function decorarOperacional(){
+          const tbody=document.getElementById('tbodyOperacional');
+          if(!tbody) return;
+          await carregarDados();
+
+          const table=tbody.closest('table');
+          const headRow=table?.querySelector('thead tr');
+          if(headRow && headRow.children.length>=2){
+            headRow.children[0].textContent='Coleta / Remetente';
+            headRow.children[1].textContent='Coleta / Destinatário / Entrega';
+          }
+
+          [...tbody.querySelectorAll('tr')].forEach(tr=>{
+            const coleta=acharPorLinha(tr);
+            if(!coleta || !tr.cells || tr.cells.length<2) return;
+
+            tr.cells[0].innerHTML=
+              '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+              '<div class="os">'+escLocal(coleta.os_numero||String(coleta.id))+'</div>'+
+              '<strong>'+escLocal(coleta.cliente||'-')+'</strong>'+
+              '</div>'+
+              '<div class="muted">#'+escLocal(coleta.id)+'</div>';
+
+            tr.cells[1].innerHTML=
+              '<div><strong>Coleta:</strong> '+escLocal(coleta.endereco_coleta||'-')+'</div>'+
+              '<div style="margin-top:5px"><strong>Destinatário:</strong> '+escLocal(coleta.destinatario||'-')+'</div>'+
+              '<div class="muted" style="margin-top:3px"><strong>Entrega:</strong> '+escLocal(coleta.endereco_entrega||'-')+'</div>';
+          });
         }
 
         async function decorarFinanceiro(){
@@ -294,12 +325,17 @@ try{
             const obs=new MutationObserver(()=>setTimeout(decorarFinanceiro,30));
             obs.observe(tbody,{childList:true,subtree:true});
           }
+          const tbodyOp=document.getElementById('tbodyOperacional');
+          if(tbodyOp){
+            const obsOp=new MutationObserver(()=>setTimeout(decorarOperacional,30));
+            obsOp.observe(tbodyOp,{childList:true,subtree:true});
+          }
           const modal=document.getElementById('modal');
           if(modal){
             const obsModal=new MutationObserver(()=>setTimeout(carregarCamposFormulario,30));
             obsModal.observe(modal,{attributes:true,attributeFilter:['open']});
           }
-          setTimeout(decorarFinanceiro,250);
+          setTimeout(decorarFinanceiro,250);setTimeout(decorarOperacional,250);
         });
       })();
       <\/script>`;
