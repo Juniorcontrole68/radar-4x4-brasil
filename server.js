@@ -521,7 +521,8 @@ async function fetchSsw38Rows(){
   const total=p.rows.reduce((a,x)=>a+x.qtdeCtrcs,0),motoristas=[...new Set(p.rows.map(x=>x.motorista))];
   console.log('SSW38 sequências: '+JSON.stringify({extraidas:p.rows.filter(x=>x.seqRomaneio).length,total:p.rows.length,unicas:new Set(p.rows.map(x=>x.seqRomaneio).filter(Boolean)).size}));
   try{
-    const checks=[];
+    const checks=[],officialNow=[...new Set(p.rows.flatMap(x=>x.ctrcs||[]).map(normCtrc).filter(Boolean))],officialSet=new Set(officialNow);
+    let inspected=false;
     for(const x of p.rows){
       if(!x.seqRomaneio)continue;
       const mm=String(x.romaneio||'').match(/^[A-Z]{3}0*(\d+)-/i),nro=mm?mm[1]:'';
@@ -529,6 +530,17 @@ async function fetchSsw38Rows(){
       const rr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/'+prog,'Cookie':cookie()},body:pp.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});
       const tt=await rr.text();
       checks.push({esperado:Number(x.qtdeCtrcs||0),retornado:(tt.match(/<r\b/gi)||[]).length});
+      if(!inspected){
+        inspected=true;
+        const parsed=[...tt.matchAll(/<r\b[^>]*>([\s\S]*?)<\/r>/gi)].map(m=>{const o={};for(const fm of m[1].matchAll(/<f(\d+)\b[^>]*>([\s\S]*?)<\/f\1>/gi))o[fm[1]]=htmlText38(fm[2]);return o});
+        const stats={};
+        for(let n=0;n<=12;n++){
+          const vals=parsed.map(o=>normCtrc(o[String(n)]||'')).filter(Boolean);
+          stats['f'+n]={exact:vals.filter(v=>officialSet.has(v)).length,suffix:vals.filter(v=>officialNow.some(k=>k.endsWith(v)||v.endsWith(k))).length,sample:vals.slice(0,3)};
+        }
+        const compact=parsed.slice(0,8).map(o=>({f0:o['0']||'',f1:o['1']||'',f4:o['4']||'',f5:o['5']||'',f8:o['8']||'',f10:o['10']||'',f12:o['12']||''}));
+        console.log('SSW38 PEN x CTRCs: '+JSON.stringify({officialCount:officialNow.length,officialSample:officialNow.slice(0,8),stats,rows:compact}));
+      }
     }
     console.log('SSW38 PEN por romaneio: '+JSON.stringify(checks));
   }catch(e){console.log('SSW38 PEN por romaneio ERRO: '+e.message)}
