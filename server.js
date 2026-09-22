@@ -185,7 +185,7 @@ async function fetchSsw38Rows(){
         try{
           const fr=(body38.match(/<r\b[^>]*>([\s\S]*?)<\/r>/i)||[])[1]||'',attrs={};
           for(const fm of fr.matchAll(/<f(\d+)\b([^>]*)>([\s\S]*?)<\/f\1>/gi)){
-            const n=Number(fm[1]);if(n<8||n>17)continue;
+            const n=Number(fm[1]);if(n<0||n>17)continue;
             const a=fm[2]||'',inner=String(fm[3]||'').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#39;/gi,"'").replace(/&amp;/gi,'&');
             const names=[...a.matchAll(/\b([A-Za-z_:][-A-Za-z0-9_:.]*)\s*=/g)].map(x=>x[1]);
             const programs=[...new Set([...a.matchAll(/ssw\d{3,6}/gi),...inner.matchAll(/ssw\d{3,6}/gi)].map(x=>x[0]))];
