@@ -3,6 +3,7 @@ const { loadEnv } = require('./src/utils');
 loadEnv();
 const { initDb } = require('./src/db');
 const { initColetasDb } = require('./src/coletas');
+const { initDiarioDb } = require('./src/diario');
 const { handler } = require('./src/handler');
 
 const PORT = process.env.PORT || 3000;
@@ -11,7 +12,7 @@ if (!process.env.DATABASE_URL) {
   process.exit(1);
 }
 
-Promise.all([initDb(), initColetasDb()]).then(() => {
+Promise.all([initDb(), initColetasDb(), initDiarioDb()]).then(() => {
   http.createServer(handler).listen(PORT, '0.0.0.0', () => {
     console.log(`Contas A Pagar v3 + Controle de Coletas ativo na porta ${PORT}`);
   });
