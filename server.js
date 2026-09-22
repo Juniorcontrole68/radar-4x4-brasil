@@ -145,6 +145,21 @@ async function fetchSsw38Rows(){
   r=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);const html=await r.text();
   let p=parseSsw38Table(html);
   if(!p.rows.length){
+    try{
+      const params=new URLSearchParams();
+      const inputs=[...html.matchAll(/<input\b([^>]*)>/gi)];
+      for(const m of inputs){
+        const a=m[1]||'',nm=(a.match(/\bname=["']?([^"'\s>]+)/i)||[])[1],val=(a.match(/\bvalue=["']([^"']*)["']/i)||a.match(/\bvalue=([^\s>]+)/i)||[])[1]||'';
+        if(nm&&!/^(?:button|submit)$/i.test((a.match(/\btype=["']?([^"'\s>]+)/i)||[])[1]||''))params.set(nm,htmlText38(val));
+      }
+      params.set('act','ROM_ALL');
+      const rr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/'+prog,'Cookie':cookie()},body:params.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});
+      apply(rr.headers);const body38=await rr.text();
+      p=parseSsw38Table(body38);
+      if(!p.rows.length)console.log('SSW38 ROM_ALL estrutura: '+JSON.stringify({status:rr.status,bytes:Buffer.byteLength(body38),tr:(body38.match(/<tr\b/gi)||[]).length,td:(body38.match(/<td\b/gi)||[]).length,xml:(body38.match(/<xml\b/gi)||[]).length,r:(body38.match(/<r\b/gi)||[]).length,programas:[...new Set([...body38.matchAll(/ssw\d{3,6}/gi)].map(x=>x[0]))].slice(0,12)}));
+    }catch(e){console.log('SSW38 ROM_ALL ERRO: '+e.message)}
+  }
+  if(!p.rows.length){
     const structure={
       bytes:Buffer.byteLength(html),
       xml:(html.match(/<xml\b/gi)||[]).length,
