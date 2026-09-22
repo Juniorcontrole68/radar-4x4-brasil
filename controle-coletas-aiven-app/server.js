@@ -189,6 +189,7 @@ async function start() {
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS recebido BOOLEAN NOT NULL DEFAULT FALSE');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS data_recebimento DATE');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS previsao_pagamento_fatura DATE');
+  await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS destinatario TEXT');
   await migrateLegacyBillsIfNeeded();
   
 
@@ -219,6 +220,7 @@ async function start() {
             id::text AS id,
             COALESCE(to_jsonb(c)->>'numero_os', to_jsonb(c)->>'os', to_jsonb(c)->>'numero_coleta', to_jsonb(c)->>'collection_number', '') AS os,
             COALESCE(to_jsonb(c)->>'cliente', to_jsonb(c)->>'client', to_jsonb(c)->>'nome_cliente', to_jsonb(c)->>'customer', '') AS cliente,
+            COALESCE(to_jsonb(c)->>'destinatario', '') AS destinatario,
             COALESCE(to_jsonb(c)->>'destino', to_jsonb(c)->>'cidade_entrega', to_jsonb(c)->>'endereco_entrega', to_jsonb(c)->>'delivery_address', '') AS destino,
             COALESCE(to_jsonb(c)->>'placa', to_jsonb(c)->>'plate', '') AS placa,
             COALESCE(to_jsonb(c)->>'data_coleta', to_jsonb(c)->>'collection_date', to_jsonb(c)->>'created_at', '') AS data,
@@ -240,6 +242,19 @@ async function start() {
         } catch (e) {
           return sendJson(res, e.status || 500, { error: e.message || 'Não foi possível duplicar a coleta.' });
         }
+      }
+
+      const destinatarioMatch = u.pathname.match(/^\/api\/painel\/coletas-destinatario\/([^/]+)$/);
+      if (req.method === 'PATCH' && destinatarioMatch) {
+        const id = decodeURIComponent(destinatarioMatch[1]);
+        const body = await readJsonBody(req);
+        const destinatario = String(body.destinatario || '').trim();
+        const result = await pool.query(
+          'UPDATE coletas SET destinatario=$1, updated_at=NOW() WHERE id::text=$2 RETURNING id::text AS id, destinatario',
+          [destinatario, id]
+        );
+        if (!result.rowCount) return sendJson(res, 404, { error: 'Coleta não encontrada.' });
+        return sendJson(res, 200, { ok: true, ...result.rows[0] });
       }
 
       const recebimentoMatch = u.pathname.match(/^\/api\/painel\/coletas-financeiro\/([^/]+)$/);
