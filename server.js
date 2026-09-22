@@ -192,7 +192,7 @@ async function fetchSsw38Rows(){
         const first=p.rows[0],mm=String(first.romaneio||'').match(/^[A-Z]{3}0*(\d+)-(\d+)$/i);
         if(mm){
           const probes=[];
-          for(const act of ['ROM','CTE','CTR','ROM_INT']){
+          for(const act of ['ROM','CTE','CTR','ROM_INT','PEN','DIS','CSV']){
             try{
               const pp=new URLSearchParams();
               const ims=[...html.matchAll(/<input\b([^>]*)>/gi)];
