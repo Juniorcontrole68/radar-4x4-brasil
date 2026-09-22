@@ -180,6 +180,12 @@ async function fetchSsw38Rows(){
           const href=(dec.match(/href=["']([^"']+)/i)||[])[1]||'',onclick=(dec.match(/onclick=["']([\s\S]*?)["']/i)||[])[1]||'';
           const sets=[...dec.matchAll(/(?:nro_romaneio|seq_romaneio|act|qtde_ctrc)[^=]{0,15}=\s*["']?([^"' ;<]+)/gi)].map(m=>({field:(m[0].match(/nro_romaneio|seq_romaneio|act|qtde_ctrc/i)||[])[0]||'',kind:/^\d+$/.test(m[1])?'NUM':(/^[A-Z_]+$/i.test(m[1])?'CODE':'OTHER')}));
           console.log('SSW38 detalhe link: '+JSON.stringify({hasHref:!!href,hasOnclick:!!onclick,sets,actions:[...new Set([...dec.matchAll(/ajaxEnvia\(["']([^"']+)/gi)].map(x=>x[1]))]}));
+          const f6=(fr.match(/<f6\b[^>]*>([\s\S]*?)<\/f6>/i)||[])[1]||'';
+          const d6=String(f6).replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#39;/gi,"'").replace(/&amp;/gi,'&');
+          const f6Acts=[...new Set([...d6.matchAll(/ajaxEnvia\(["']([^"']+)/gi)].map(x=>x[1]))];
+          const f6Fns=[...new Set([...d6.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)].map(x=>x[1]).filter(x=>!['Number','String'].includes(x)))];
+          const f6Fields=[...new Set([...d6.matchAll(/\b(nro_romaneio|seq_romaneio|a_romaneio|act|qtde_ctrc)\b/gi)].map(x=>x[1]))];
+          console.log('SSW38 qtde link: '+JSON.stringify({acts:f6Acts,fns:f6Fns,fields:f6Fields,hasHref:/href=/i.test(d6),hasOnclick:/onclick=/i.test(d6)}));
         }catch{}
       }
       if(p.rows.length){
