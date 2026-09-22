@@ -9,6 +9,12 @@ const DIARIO_API_BASE = String(process.env.DIARIO_API_BASE || "").replace(/\/$/,
 const DIARIO_API_KEY = String(process.env.DIARIO_API_KEY || "").trim();
 
 app.use(express.json({ limit: "35mb" }));
+app.use((req,res,next)=>{
+  if(req.path==="/" || req.path==="/index.html" || req.path==="/sw.js" || req.path.endsWith(".js") || req.path.endsWith(".css")){
+    res.setHeader("Cache-Control","no-store, no-cache, must-revalidate");
+  }
+  next();
+});
 app.use(express.static(path.join(__dirname, "public")));
 
 function requirePin(req,res,next){
