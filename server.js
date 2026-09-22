@@ -156,6 +156,8 @@ async function fetchSsw38Rows(){
   r=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);const html=await r.text();
   const inputDefs=[...html.matchAll(/<input\b([^>]*)>/gi)].map(m=>{const a=m[1]||'';return{name:(a.match(/\bname=["']?([^"'\s>]+)/i)||[])[1]||'',id:(a.match(/\bid=["']?([^"'\s>]+)/i)||[])[1]||'',type:(a.match(/\btype=["']?([^"'\s>]+)/i)||[])[1]||'',max:(a.match(/\bmaxlength=["']?([^"'\s>]+)/i)||[])[1]||''}}).filter(x=>x.name||x.id);
   console.log('SSW38 inputs: '+JSON.stringify(inputDefs));
+  const ax=html.search(/function\s+ajaxEnvia\s*\(/i);
+  if(ax>=0)console.log('SSW38 ajaxEnvia fn: '+html.slice(ax,ax+5200).replace(/\s+/g,' '));
 
   let p=parseSsw38Table(html);
   if(!p.rows.length){
