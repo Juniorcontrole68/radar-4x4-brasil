@@ -112,12 +112,21 @@ async function testInternalSswLogin(){
 }
 
 function htmlText38(s){
-  return String(s||'').replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ')
-    .replace(/<br\s*\/?>/gi,' ').replace(/<[^>]+>/g,' ')
-    .replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/&quot;/gi,'"').replace(/&#39;/gi,"'")
-    .replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(Number(n))).replace(/\s+/g,' ').trim();
+  let x=String(s||'').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&apos;/gi,"'").replace(/&#39;/gi,"'");
+  x=x.replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(Number(n))).replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ')
+    .replace(/<br\s*\/?>/gi,' ').replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&');
+  return x.replace(/\s+/g,' ').trim();
 }
 function norm38(s){return htmlText38(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase()}
+function parseSsw38Xml(xml){
+  const rows=[];
+  for(const rm of String(xml||'').matchAll(/<r\b[^>]*>([\s\S]*?)<\/r>/gi)){
+    const raw=rm[1],get=n=>htmlText38((raw.match(new RegExp('<f'+n+'\\\\b[^>]*>([\\\\s\\\\S]*?)<\\\\/f'+n+'>','i'))||[])[1]||'');
+    const romaneio=get(0),veiculo=get(1),carreta=get(2),inclusao=get(3),modelo=get(4),motorista=get(5),qtde=Number(get(6).replace(/\D/g,''))||0,falta=Number(get(7).replace(/\D/g,''))||0;
+    if(romaneio&&motorista&&qtde)rows.push({romaneio,veiculo,carreta,inclusao,modelo,motorista,qtdeCtrcs:qtde,faltaOcorr:falta});
+  }
+  return{rows};
+}
 function parseSsw38Table(html){
   const trs=[...String(html||'').matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(m=>m[1]);
   const parsed=trs.map(row=>[...row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(m=>htmlText38(m[1])));
@@ -156,6 +165,7 @@ async function fetchSsw38Rows(){
       const rr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/'+prog,'Cookie':cookie()},body:params.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});
       apply(rr.headers);const body38=await rr.text();
       p=parseSsw38Table(body38);
+      if(!p.rows.length)p=parseSsw38Xml(body38);
       if(!p.rows.length){
         const first=(body38.match(/<r\b[^>]*>([\s\S]*?)<\/r>/i)||[])[1]||'';
         const shape={};
