@@ -174,11 +174,10 @@ async function fetchSsw38Rows(){
       if(p.rows.length){
         try{
           const fr=(body38.match(/<r\b[^>]*>([\s\S]*?)<\/r>/i)||[])[1]||'',f0=(fr.match(/<f0\b[^>]*>([\s\S]*?)<\/f0>/i)||[])[1]||'';
-          const dec=String(f0).replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&amp;/gi,'&');
-          const href=(dec.match(/href=["']([^"']+)/i)||[])[1]||'',onclick=(dec.match(/onclick=["']([^"']+)/i)||[])[1]||'';
-          const prog=(href.match(/ssw\d+/i)||onclick.match(/ssw\d+/i)||[])[0]||'';
-          const params=[...new Set([...(href.matchAll(/[?&]([A-Za-z0-9_]+)=/g)),...(onclick.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*)\s*=/g))].map(x=>x[1]))];
-          console.log('SSW38 detalhe link: '+JSON.stringify({programa:prog,parametros:params,onclickFn:(onclick.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)/)||[])[1]||''}));
+          const dec=String(f0).replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#39;/gi,"'").replace(/&amp;/gi,'&');
+          const href=(dec.match(/href=["']([^"']+)/i)||[])[1]||'',onclick=(dec.match(/onclick=["']([\s\S]*?)["']/i)||[])[1]||'';
+          const sets=[...dec.matchAll(/(?:nro_romaneio|seq_romaneio|act|qtde_ctrc)[^=]{0,15}=\s*["']?([^"' ;<]+)/gi)].map(m=>({field:(m[0].match(/nro_romaneio|seq_romaneio|act|qtde_ctrc/i)||[])[0]||'',kind:/^\d+$/.test(m[1])?'NUM':(/^[A-Z_]+$/i.test(m[1])?'CODE':'OTHER')}));
+          console.log('SSW38 detalhe link: '+JSON.stringify({hasHref:!!href,hasOnclick:!!onclick,sets,actions:[...new Set([...dec.matchAll(/ajaxEnvia\(["']([^"']+)/gi)].map(x=>x[1]))]}));
         }catch{}
       }
       if(!p.rows.length){
