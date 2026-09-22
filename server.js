@@ -789,29 +789,49 @@ async function buildSswMotoristas(from='',to=''){
     romaneios38=base38.rows||[];totalRomaneado=base38.total||0;
     const byCtrc=new Map(rows.map(r=>[normCtrc(r.ctrc),r]));
     const gm=new Map();
-    const pendingText=/SA[IÍ]DA PARA ENTREGA|EM ROTA|EM TR[ÂA]NSITO|PRE[- ]?ENTREG|AGUARD|CARREG|MANIFEST|TRANSFER/i;
     for(const x of romaneios38){
       const k=String(x.motorista||x.veiculo||'Não identificado').trim();
-      if(!gm.has(k))gm.set(k,{motorista:x.motorista||'Não identificado',veiculo:x.veiculo||'',total:0,entregues:0,pendentes:0,ocorrencias:0,romaneios:[],vinculados:0});
-      const g=gm.get(k);g.total+=Number(x.qtdeCtrcs||0);if(x.romaneio)g.romaneios.push(x.romaneio);if(!g.veiculo&&x.veiculo)g.veiculo=x.veiculo;
-      let accounted=0;
-      for(const raw of (x.ctrcs||[])){
-        const r=byCtrc.get(normCtrc(raw));if(!r)continue;
-        g.vinculados++;accounted++;
-        if(r.entregue)g.entregues++;
-        else{
-          const t=String((r.ocorrenciaCodigo||'')+' '+(r.ocorrencia||'')).trim();
-          if(!t||pendingText.test(t)||String(r.ocorrenciaCodigo||'')==='085'||String(r.ocorrenciaCodigo||'')==='85')g.pendentes++;
-          else g.ocorrencias++;
-        }
+      if(!gm.has(k))gm.set(k,{motorista:x.motorista||'Não identificado',veiculo:x.veiculo||'',total:0,entregues:0,pendentes:0,ocorrencias:0,romaneios:[],vinculados:0,missingCtrcs:0});
+      const g=gm.get(k),totalX=Number(x.qtdeCtrcs||0);
+      g.total+=totalX;if(x.romaneio)g.romaneios.push(x.romaneio);if(!g.veiculo&&x.veiculo)g.veiculo=x.veiculo;
+
+      // Na opção 38, "Falta Ocorr." é a fonte oficial do que ainda NÃO recebeu baixa.
+      // Não usamos mais falha de vínculo/rastreamento como sinônimo de pendência.
+      const pendX=Math.max(0,Math.min(totalX,Number(x.faltaOcorr||0)));
+      g.pendentes+=pendX;
+
+      const ctrcs=[...new Set((x.ctrcs||[]).map(normCtrc).filter(Boolean))];
+      g.vinculados+=ctrcs.length;
+      g.missingCtrcs+=Math.max(0,totalX-ctrcs.length);
+      for(const ck of ctrcs){
+        const r=byCtrc.get(ck);
+        if(deliveredMap.has(ck)||r?.entregue)g.entregues++;
       }
-      const missing=Math.max(0,Number(x.qtdeCtrcs||0)-accounted);
-      g.pendentes+=missing;
     }
-    motoristas38=[...gm.values()].map(g=>({...g,taxa:g.total?g.entregues/g.total*100:0})).sort((a,b)=>b.total-a.total||a.motorista.localeCompare(b.motorista,'pt-BR'));
+
+    // Quando um PDF de romaneio não entrega todos os CT-es, usamos o total diário
+    // do BI2 apenas para reconciliar a pequena diferença que cabe exatamente nos CT-es ausentes.
+    let matchedDelivered=[...gm.values()].reduce((a,g)=>a+g.entregues,0);
+    let missingPdf=[...gm.values()].reduce((a,g)=>a+g.missingCtrcs,0);
+    let extraDelivered=Math.max(0,deliveredMap.size-matchedDelivered);
+    if(extraDelivered>0&&extraDelivered<=missingPdf){
+      for(const g of gm.values()){
+        if(extraDelivered<=0)break;
+        const closed=Math.max(0,g.total-g.pendentes);
+        const room=Math.max(0,Math.min(g.missingCtrcs,closed-g.entregues));
+        const add=Math.min(room,extraDelivered);
+        g.entregues+=add;extraDelivered-=add;
+      }
+    }
+
+    motoristas38=[...gm.values()].map(g=>{
+      const ocorrencias=Math.max(0,g.total-g.pendentes-g.entregues);
+      return{...g,ocorrencias,baixadas:g.entregues+ocorrencias,taxa:g.total?(g.entregues+ocorrencias)/g.total*100:0};
+    }).sort((a,b)=>b.total-a.total||a.motorista.localeCompare(b.motorista,'pt-BR'));
     entregues38=motoristas38.reduce((a,x)=>a+x.entregues,0);
     pendentes38=motoristas38.reduce((a,x)=>a+x.pendentes,0);
     ocorrencias38=motoristas38.reduce((a,x)=>a+x.ocorrencias,0);
+    console.log('SSW38 resumo final: '+JSON.stringify({total:totalRomaneado,entregues:entregues38,pendentes:pendentes38,ocorrencias:ocorrencias38,motoristas:motoristas38.map(x=>({motorista:x.motorista,total:x.total,entregues:x.entregues,pendentes:x.pendentes,ocorrencias:x.ocorrencias,faltaPdf:x.missingCtrcs}))}));
   }
 
   const value={
@@ -819,7 +839,7 @@ async function buildSswMotoristas(from='',to=''){
     days174:snaps174.filter(x=>x.ok).length,days17:snaps17.filter(x=>x.ok).length,
     candidatos:unique.length,trackingConsultados:trackingResults.length,trackingOk,
     totalRomaneado,motoristas38,romaneios38,entregues38,pendentes38,ocorrencias38,
-    saidas:totalRomaneado||saidas,baixadas:totalRomaneado?entregues38:baixadas,baixasSsw:totalRomaneado?entregues38:baixadas,baixasBi2:deliveredMap.size,pendentes:totalRomaneado?pendentes38:pendentes,taxa:totalRomaneado?(entregues38/totalRomaneado*100):(saidas?baixadas/saidas*100:0),
+    saidas:totalRomaneado||saidas,baixadas:totalRomaneado?entregues38:baixadas,baixasSsw:totalRomaneado?entregues38:baixadas,baixasBi2:deliveredMap.size,pendentes:totalRomaneado?pendentes38:pendentes,taxa:totalRomaneado?((entregues38+ocorrencias38)/totalRomaneado*100):(saidas?baixadas/saidas*100:0),
     veiculos:new Set(saiuRows.map(x=>x.veiculo).filter(Boolean)).size,
     motoristasIdentificados:new Set(saiuRows.map(x=>x.motorista).filter(Boolean)).size,
     motoristas,
