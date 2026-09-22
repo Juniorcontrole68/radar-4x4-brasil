@@ -211,6 +211,15 @@ async function fetchSsw38Rows(){
                 const rr=[...at.matchAll(/<r\b[^>]*>([\s\S]*?)<\/r>/gi)].map(m=>{const o={};for(const fm of m[1].matchAll(/<f(\d+)\b[^>]*>([\s\S]*?)<\/f\1>/gi))o[fm[1]]=htmlText38(fm[2]);return o});
                 const maxField=Math.max(0,...rr.flatMap(o=>Object.keys(o).map(Number)));
                 const codeCounts={};for(const o of rr){const v=String(o['5']||'').trim();if(/^\d{1,3}$/.test(v))codeCounts[v]=(codeCounts[v]||0)+1}
+                const rawFieldRefs={};
+                for(const rm of at.matchAll(/<r\b[^>]*>([\s\S]*?)<\/r>/gi)){
+                  for(const fm of rm[1].matchAll(/<f(\d+)\b[^>]*>([\s\S]*?)<\/f\1>/gi)){
+                    const n=fm[1],raw=String(fm[2]||'').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#39;/gi,"'").replace(/&amp;/gi,'&');
+                    if(!rawFieldRefs[n])rawFieldRefs[n]={nro:0,seq:0,placa:0,motorista:0,codigo:0,seqOcor:0,href:0,onclick:0};
+                    const z=rawFieldRefs[n];if(/nro_romaneio/i.test(raw))z.nro++;if(/seq_romaneio/i.test(raw))z.seq++;if(/\bplaca\b/i.test(raw))z.placa++;if(/motorista/i.test(raw))z.motorista++;if(/\bcodigo\b/i.test(raw))z.codigo++;if(/seq_ocor_entrega/i.test(raw))z.seqOcor++;if(/href=/i.test(raw))z.href++;if(/onclick=/i.test(raw))z.onclick++;
+                  }
+                }
+                console.log('SSW38 PEN refs: '+JSON.stringify(rawFieldRefs));
                 const classifyText=v=>{const s=norm38(v);if(/ENTREG/.test(s))return'ENTREGA';if(/TEMPO/.test(s))return'TEMPO';if(/RECUS/.test(s))return'RECUSA';if(/AUSENT|NAO ENCONTR/.test(s))return'AUSENTE';if(/ENDERE/.test(s))return'ENDERECO';if(/AGEND/.test(s))return'AGENDAMENTO';if(/DEVOL/.test(s))return'DEVOLUCAO';if(/AVARIA/.test(s))return'AVARIA';return'OUTRO'};
                 const textCats={};for(const o of rr){const k=classifyText(o['10']||'');textCats[k]=(textCats[k]||0)+1}
                 console.log('SSW38 PEN status: '+JSON.stringify({codeCounts,textCats}));
