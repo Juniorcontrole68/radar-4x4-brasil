@@ -219,6 +219,9 @@ async function fetchSsw38Rows(){
                 const headings=[...dt.matchAll(/<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>/gi)].map(x=>htmlText38(x[1])).filter(x=>x&&x.length<80).slice(0,50);
                 const firstR=(dt.match(/<r\b[^>]*>([\s\S]*?)<\/r>/i)||[])[1]||'',fields=[...firstR.matchAll(/<f(\d+)\b/gi)].map(x=>Number(x[1]));
                 console.log('SSW0146 estrutura: '+JSON.stringify({status:dr.status,bytes:Buffer.byteLength(dt),xml:(dt.match(/<xml\b/gi)||[]).length,r:(dt.match(/<r\b/gi)||[]).length,tr:(dt.match(/<tr\b/gi)||[]).length,td:(dt.match(/<td\b/gi)||[]).length,fields,headings,programs:[...new Set([...dt.matchAll(/ssw\d{3,6}/gi)].map(x=>x[0]))].slice(0,20)}));
+                const fnNames=[...new Set([...dt.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)].map(x=>x[1]).filter(x=>!['if','for','while'].includes(x)))];
+                let respSkel=String(dt).replace(/ssw[^"'<>\s]*?\.pdf/gi,'FILE.pdf').replace(/\b\d{2,}\b/g,'#').replace(/\s+/g,' ').slice(0,600);
+                console.log('SSW0146 resposta: '+JSON.stringify({functions:fnNames,skeleton:respSkel}));
                 try{
                   const murl=(dt.match(/(?:\/bin\/)?ssw014666[^"'<>\s]*/i)||[])[0]||'';
                   const skeleton=String(murl).replace(/\d{3,}/g,'#').replace(/AMR\d+-\d+/gi,'ROM');
