@@ -357,6 +357,11 @@ async function buildSswMotoristas(from='',to=''){
   const cacheKey='online|'+from+'|'+to,hit=SSW_DRIVER_CACHE.get(cacheKey);
   if(hit&&Date.now()-hit.at<90000)return hit.value;
 
+  let base38=null;
+  if(internalSswConfigured()&&to===today){
+    try{base38=await fetchSsw38Rows()}catch{}
+  }
+
   const dates=bi2DateRange(from,to,31),snaps174=[],snaps17=[];
   for(let i=0;i<dates.length;i+=4){
     const ds=dates.slice(i,i+4);
@@ -444,17 +449,30 @@ async function buildSswMotoristas(from='',to=''){
   const deliveredMap=new Map();
   snaps17.filter(x=>x.ok).forEach(s=>(s.rows||[]).forEach(r=>{const k=normCtrc(r.CTRC||r.numero_ctrc);if(k)deliveredMap.set(k,r)}));
 
+  let motoristas38=[],totalRomaneado=0,romaneios38=[];
+  if(base38&&base38.ok){
+    romaneios38=base38.rows||[];totalRomaneado=base38.total||0;
+    const gm=new Map();
+    for(const x of romaneios38){
+      const k=String(x.motorista||x.veiculo||'Não identificado').trim();
+      if(!gm.has(k))gm.set(k,{motorista:x.motorista||'Não identificado',veiculo:x.veiculo||'',total:0,romaneios:[]});
+      const g=gm.get(k);g.total+=Number(x.qtdeCtrcs||0);if(x.romaneio)g.romaneios.push(x.romaneio);if(!g.veiculo&&x.veiculo)g.veiculo=x.veiculo;
+    }
+    motoristas38=[...gm.values()].sort((a,b)=>b.total-a.total||a.motorista.localeCompare(b.motorista,'pt-BR'));
+  }
+
   const value={
     ok:true,source:'SSW Tracking Online + BI2',from,to,daysRequested:dates.length,
     days174:snaps174.filter(x=>x.ok).length,days17:snaps17.filter(x=>x.ok).length,
     candidatos:unique.length,trackingConsultados:trackingResults.length,trackingOk,
+    totalRomaneado,motoristas38,romaneios38,
     saidas,baixadas,baixasSsw:baixadas,baixasBi2:deliveredMap.size,pendentes,taxa:saidas?baixadas/saidas*100:0,
     veiculos:new Set(saiuRows.map(x=>x.veiculo).filter(Boolean)).size,
     motoristasIdentificados:new Set(saiuRows.map(x=>x.motorista).filter(Boolean)).size,
     motoristas,
     ocorrencias:Object.entries(occ).sort((a,b)=>b[1]-a[1]).slice(0,15).map(([label,value])=>({label,value})),
     rows:rows.sort((a,b)=>Number(b.entregue)-Number(a.entregue)||String(b.dataOcorrencia).localeCompare(String(a.dataOcorrencia))).slice(0,1000),
-    note:'Rastreamento on-line consultado para '+trackingOk+' de '+unique.length+' NF(s) previstas no período. O BI2 é usado apenas para localizar as NFs; o status de saída/entrega vem do rastreamento atual do SSW.'
+    note:(totalRomaneado?'Opção 38: '+totalRomaneado+' CT-e(s) em '+romaneios38.length+' romaneio(s) • '+motoristas38.length+' motorista(s). ':'')+'Rastreamento on-line consultado para '+trackingOk+' de '+unique.length+' NF(s); status individual ainda depende da vinculação do CT-e ao romaneio.'
   };
   SSW_DRIVER_CACHE.set(cacheKey,{at:Date.now(),value});return value
 }
