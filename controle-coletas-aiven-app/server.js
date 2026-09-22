@@ -68,7 +68,7 @@ async function duplicateColetaMinimal(id, novaData) {
   const first=(arr)=>arr.find(x=>names.has(x));
   const like=(patterns)=>{const hit=meta.rows.find(m=>patterns.some(re=>re.test(String(m.column_name||'').toLowerCase())));return hit?.column_name||null;};
 
-  let dateCol=first(['data_coleta','data_agendada','data_agendamento','data_solicitacao','data_programada','collection_date','pickup_date','data','date']);
+  let dateCol=first(['data_carregamento','data_coleta','data_agendada','data_agendamento','data_solicitacao','data_programada','collection_date','pickup_date','data','date']);
   if(!dateCol) dateCol=like([/data.*colet/,/colet.*data/,/data.*agend/,/agend.*data/,/data.*program/,/program.*data/,/collection.*date/,/pickup.*date/]);
   if(!dateCol){
     const candidates=meta.rows.filter(m=>
@@ -190,7 +190,7 @@ async function start() {
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS data_recebimento DATE');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS previsao_pagamento_fatura DATE');
   await migrateLegacyBillsIfNeeded();
-  pool.query("SELECT column_name,data_type,is_nullable,column_default FROM information_schema.columns WHERE table_schema='public' AND table_name='coletas' ORDER BY ordinal_position").then(r=>console.log('SCHEMA COLETAS: '+JSON.stringify(r.rows))).catch(e=>console.error('SCHEMA COLETAS ERRO: '+e.message));
+  
 
   http.createServer(async (req, res) => {
     try {
