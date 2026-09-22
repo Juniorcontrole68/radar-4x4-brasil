@@ -214,6 +214,23 @@ async function start() {
         return sendHtml(res, ACCOUNTS_INDEX);
       }
 
+      if (req.method === 'GET' && u.pathname === '/api/painel/motoristas-veiculos') {
+        try {
+          const r = await pool.query(`
+            SELECT DISTINCT ON (upper(trim(placa)))
+              upper(trim(placa)) AS placa,
+              trim(COALESCE(motorista,'')) AS motorista
+            FROM coletas
+            WHERE trim(COALESCE(placa,'')) <> ''
+              AND trim(COALESCE(motorista,'')) <> ''
+            ORDER BY upper(trim(placa)), updated_at DESC NULLS LAST, id DESC
+          `);
+          return sendJson(res, 200, { ok: true, rows: r.rows });
+        } catch (e) {
+          return sendJson(res, 500, { ok: false, error: e.message || 'Não foi possível carregar motoristas e veículos.' });
+        }
+      }
+
       if (req.method === 'GET' && u.pathname === '/api/painel/coletas-status-resumo') {
         try {
           const from = String(u.searchParams.get('from') || '').trim();
