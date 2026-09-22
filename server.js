@@ -87,7 +87,18 @@ async function testInternalSswLogin(){
         });
         apply(rr.headers);
         const ot=await rr.text();
-        option38[unidade]={status:rr.status,location:rr.headers.get('location')||'',bytes:Buffer.byteLength(ot),baixa:/baixa/i.test(ot),entrega:/entrega/i.test(ot),romaneio:/romaneio/i.test(ot)};
+        let page=null;
+        const pm=(ot.match(/ssw\d+/i)||[])[0]||'';
+        if(pm){
+          const pr=await fetch('https://sistema.ssw.inf.br/bin/'+pm,{
+            headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},
+            redirect:'manual',signal:AbortSignal.timeout(15000)
+          });
+          apply(pr.headers);
+          const pt=await pr.text();
+          page={status:pr.status,bytes:Buffer.byteLength(pt),baixa:/baixa/i.test(pt),entrega:/entrega/i.test(pt),romaneio:/romaneio/i.test(pt),motorista:/motorista/i.test(pt),manifesto:/manifesto/i.test(pt)};
+        }
+        option38[unidade]={status:rr.status,bytes:Buffer.byteLength(ot),page};
       }catch(e){option38[unidade]={error:String(e.message||e)}}
     }
     menu={status:mr.status,hints:[...new Set(hints)],option38};
