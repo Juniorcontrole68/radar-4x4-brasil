@@ -1,4 +1,4 @@
-const CACHE="diario-bordo-v2-shell-2";
+const CACHE="diario-bordo-v2-shell-3";
 const CORE=["/","/index.html","/styles.css","/app-core.js","/app-actions.js","/manifest.webmanifest","/icons/icon.svg"];
 self.addEventListener("install",e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(CORE))));
 self.addEventListener("activate",e=>e.waitUntil(
