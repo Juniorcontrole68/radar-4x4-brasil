@@ -183,9 +183,25 @@ async function fetchRomaneioCtrcs38(x,jar,apply,cookie){
   apply(pr.headers);const buf=Buffer.from(await pr.arrayBuffer());
   if(!buf.subarray(0,5).toString('latin1').startsWith('%PDF'))throw new Error('Resposta do romaneio não é PDF');
   const text=await pdfTextFromBuffer38(buf,x.romaneio);
+  const expected=Number(x.qtdeCtrcs||0),rom=String(x.romaneio||'').toUpperCase();
+
+  // O primeiro campo das linhas do PDF é o CTRC/CT-e no formato AMR008212-1.
+  // Antes o parser pegava a NF de 6 dígitos, o que impedia o cruzamento com as baixas.
+  const ctrcTokens=[...text.matchAll(/\b([A-Z]{3}\d{5,7}-\d)\b/gi)]
+    .map(m=>m[1].toUpperCase())
+    .filter(v=>v!==rom);
+  const ctrcs=[...new Set(ctrcTokens)];
+  if(ctrcs.length){
+    console.log('SSW38 PDF CTRCs: '+JSON.stringify({romaneio:x.romaneio,esperado:expected,encontrado:ctrcs.length,amostra:ctrcs.slice(0,5)}));
+    if(!expected||ctrcs.length===expected)return ctrcs;
+    // Se houver repetição/cabeçalho extra já removido, mantemos apenas códigos CTRC reais.
+    if(ctrcs.length<=expected+2)return ctrcs.slice(0,expected);
+  }
+
+  // Fallback legado apenas se o PDF não trouxer os códigos CTRC no padrão esperado.
   const tokens=[...text.matchAll(/\b(\d{6})\b/g)].map(m=>m[1]);
   const unique=[...new Set(tokens)];
-  if(unique.length===Number(x.qtdeCtrcs||0))return unique;
+  if(unique.length===expected)return unique;
   const rows=[...text.matchAll(/^\s*\S{8,14}\s+(\d{6})\b/gm)].map(m=>m[1]);
   return[...new Set(rows)];
 }
