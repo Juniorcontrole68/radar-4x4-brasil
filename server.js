@@ -159,7 +159,11 @@ async function fetchSsw38Rows(){
       td:(html.match(/<td\b/gi)||[]).length,
       table:(html.match(/<table\b/gi)||[]).length
     };
-    console.log('SSW38 estrutura: '+JSON.stringify(structure));
+    const scripts=[...html.matchAll(/<script\b[^>]*src=["']([^"']+)["']/gi)].map(m=>m[1]);
+    const bins=[...new Set([...html.matchAll(/(?:\/bin\/)?(ssw\d{3,6})/gi)].map(m=>m[1]))];
+    const ajax=[...new Set([...html.matchAll(/ajaxEnvia\(["']([^"']+)/gi)].map(m=>m[1]))];
+    const xhr=[...new Set([...html.matchAll(/(?:url|action|href)\s*[:=]\s*["']([^"']+)/gi)].map(m=>m[1]).filter(x=>/ssw|ajax|cgi|bin/i.test(x)))].slice(0,20);
+    console.log('SSW38 estrutura: '+JSON.stringify({...structure,scripts,bins,ajax,xhr}));
   }
   const total=p.rows.reduce((a,x)=>a+x.qtdeCtrcs,0),motoristas=[...new Set(p.rows.map(x=>x.motorista))];
   return{ok:true,rows:p.rows,total,motoristas:motoristas.length,romaneios:p.rows.length};
