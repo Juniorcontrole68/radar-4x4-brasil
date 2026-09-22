@@ -8,14 +8,14 @@ try{
 
     html=html.replace(
       'Cliente *<input id="cliente" required placeholder="Nome do cliente" />',
-      'Cliente Remetente *<input id="cliente" required placeholder="Nome do cliente remetente" />'
+      'Remetente *<input id="cliente" required placeholder="Nome do remetente" />'
     );
-    html=html.replaceAll('Nome do Cliente da Entrega','Cliente Remetente');
-    html=html.replaceAll('Cliente / Entrega','Cliente Remetente / Endereço');
+    html=html.replaceAll('Nome do Cliente da Entrega','Remetente');
+    html=html.replaceAll('Cliente / Entrega','Remetente / Endereço');
 
 
     html=html.replace("<td><div class=\"os\">${esc(c.os_numero||String(c.id))}</div><div class=\"muted\">#${c.id}</div></td>\n    <td><strong>${esc(c.cliente||'-')}</strong><div class=\"muted\">${esc(c.endereco_entrega||'-')}</div></td>","<td><div style=\"display:flex;align-items:center;gap:10px;flex-wrap:wrap\"><div class=\"os\">${esc(c.os_numero||String(c.id))}</div><strong>${esc(c.cliente||'-')}</strong></div><div class=\"muted\">#${c.id}</div></td>\n    <td><div><strong>Coleta:</strong> ${esc(c.endereco_coleta||'-')}</div><div style=\"margin-top:5px\"><strong>Destinatário:</strong> ${esc(c.destinatario||'-')}</div><div class=\"muted\" style=\"margin-top:3px\"><strong>Entrega:</strong> ${esc(c.endereco_entrega||'-')}</div></td>");
-    html=html.replace('<th>OS</th><th>Cliente Remetente / Endereço</th>','<th>Coleta / Remetente</th><th>Coleta / Destinatário / Entrega</th>');
+    html=html.replace('<th>OS</th><th>Remetente / Endereço</th>','<th>Coleta / Remetente</th><th>Coleta / Destinatário / Entrega</th>');
     html=html.replace(
       "${c.id} ${c.os_numero||''} ${c.cliente||''} ${c.endereco_entrega||''}",
       "${c.id} ${c.os_numero||''} ${c.cliente||''} ${c.destinatario||''} ${c.endereco_coleta||''} ${c.endereco_entrega||''}"
@@ -293,7 +293,7 @@ try{
           };
 
           rotuloCampo('os_numero','Nº da coleta');
-          rotuloCampo('cliente','Cliente Remetente *');
+          rotuloCampo('cliente','Remetente *');
           rotuloCampo('endereco_coleta','Endereço da coleta');
           rotuloCampo('data_carregamento','Data da coleta');
           rotuloCampo('hora_carregamento','Hora da coleta');
@@ -456,8 +456,8 @@ try{
     src=src.replace(fm[0],"const FRONTEND_B64='"+newFront+"'");
   }
 
-  src=src.replaceAll("['Cliente',c.cliente||'-']","['Cliente Remetente',c.cliente||'-']");
-  src=src.replaceAll("Cliente da entrega","Cliente Remetente");
+  src=src.replaceAll("['Cliente',c.cliente||'-']","['Remetente',c.cliente||'-']");
+  src=src.replaceAll("Cliente da entrega","Remetente");
 }catch(e){
   console.error('Ajuste visual do módulo de coletas não aplicado:',e.message);
 }
