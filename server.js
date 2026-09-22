@@ -52,4 +52,13 @@ app.post("/api/sync",async(req,res)=>{
 
 app.get("*",(req,res)=>res.sendFile(path.join(__dirname,"public","index.html")));
 
-app.listen(PORT,()=>console.log("Diário de Bordo V2 rodando na porta "+PORT));
+app.listen(PORT,async()=>{
+  console.log("Diário de Bordo V2 rodando na porta "+PORT);
+  try{
+    const h=await remote("/health");
+    const s=await remote("/state");
+    console.log("DIARIO_SYNC_OK database="+String(!!h.database)+" trips="+String((s.trips||[]).length));
+  }catch(e){
+    console.error("DIARIO_SYNC_FAIL "+e.message);
+  }
+});
