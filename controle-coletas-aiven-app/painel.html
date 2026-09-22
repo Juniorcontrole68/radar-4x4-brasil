@@ -16,14 +16,14 @@
 .tab.active{background:#fff;color:var(--nav)}
 .open{color:#fff;text-decoration:none;border:1px solid #ffffff28;border-radius:9px;padding:9px 12px;font-size:13px}
 .bar{background:#fff;border-bottom:1px solid var(--border);padding:8px 16px;display:flex;gap:9px;align-items:center;font-size:13px;color:var(--muted)}
-.delete-btn{margin-left:auto;border:0;border-radius:8px;background:#b91c1c;color:#fff;padding:8px 12px;font-weight:600;cursor:pointer}
+.duplicate-btn{margin-left:auto;border:0;border-radius:8px;background:#2563eb;color:#fff;padding:8px 12px;font-weight:600;cursor:pointer}.duplicate-btn:hover{background:#1d4ed8}.delete-btn{margin-left:0;border:0;border-radius:8px;background:#b91c1c;color:#fff;padding:8px 12px;font-weight:600;cursor:pointer}
 .delete-btn:hover{background:#991b1b}
 .modal{display:none;position:fixed;inset:0;z-index:50;background:#0f172acc;align-items:center;justify-content:center;padding:18px}
 .modal.show{display:flex}.modal-box{width:min(560px,100%);background:#fff;border-radius:14px;padding:20px;box-shadow:0 18px 60px #0005}
 .modal-box h3{margin:0 0 8px;color:#991b1b}.modal-box p{margin:0 0 14px;color:#475569;line-height:1.4}
-.modal-box select{width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;margin-bottom:14px}
+.modal-box select,.modal-box input[type=date]{width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;margin-bottom:14px}.modal-box label{display:block;font-size:12px;font-weight:600;color:#475569;margin:4px 0 6px}.modal-box.duplicate h3{color:#1d4ed8}
 .modal-actions{display:flex;gap:10px;justify-content:flex-end}.modal-actions button{border:0;border-radius:9px;padding:10px 14px;font-weight:600;cursor:pointer}
-.cancel{background:#e2e8f0;color:#0f172a}.confirm-delete{background:#b91c1c;color:#fff}.confirm-delete:disabled{opacity:.5;cursor:not-allowed}
+.cancel{background:#e2e8f0;color:#0f172a}.confirm-duplicate{background:#2563eb;color:#fff}.confirm-duplicate:disabled{opacity:.5;cursor:not-allowed}.confirm-delete{background:#b91c1c;color:#fff}.confirm-delete:disabled{opacity:.5;cursor:not-allowed}
 .dot{width:9px;height:9px;border-radius:50%;background:#22c55e}
 .body{position:relative;flex:1;min-height:0;padding:8px}.module-loading{display:none;position:absolute;inset:8px;z-index:10;background:#ffffffee;align-items:center;justify-content:center;border-radius:12px;font-weight:700;color:#334155}.module-loading.show{display:flex}
 iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 2px 12px #0000000b}
@@ -41,7 +41,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
  .tab[data-module="contas"]:before{content:"🧾"}
  .bar{padding:6px 9px;font-size:11px;min-height:35px}
  .bar>span:nth-of-type(3){display:none}
- .delete-btn{padding:6px 8px;font-size:11px}
+ .duplicate-btn,.delete-btn{padding:6px 8px;font-size:11px}
  .body{padding:3px 3px 72px}
  .module-loading{inset:3px 3px 72px;border-radius:7px}
  iframe{border-radius:7px;border:0}
@@ -60,8 +60,23 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
       <button class="tab" data-module="contas" data-src="/contas?embed=1" data-name="Contas a Pagar">Contas a Pagar</button>
     </div>
   </div>
-  <div class="bar"><span class="dot"></span><span id="module">Controle de Coletas</span><span>• Banco Aiven conectado</span><button id="deleteColeta" class="delete-btn" type="button">🗑 Excluir coleta</button></div>
+  <div class="bar"><span class="dot"></span><span id="module">Controle de Coletas</span><span>• Banco Aiven conectado</span><button id="duplicateColeta" class="duplicate-btn" type="button">⧉ Duplicar coleta</button><button id="deleteColeta" class="delete-btn" type="button">🗑 Excluir coleta</button></div>
   <div class="body"><div id="moduleLoading" class="module-loading">Abrindo módulo…</div><iframe id="frame" src="/coletas?embed=1" title="Módulo CONSTRULOG"></iframe></div>
+</div>
+
+<div id="duplicateModal" class="modal" aria-hidden="true">
+  <div class="modal-box duplicate">
+    <h3>Duplicar coleta</h3>
+    <p>Selecione a coleta que deseja copiar e informe a nova data. A coleta original não será alterada.</p>
+    <label for="duplicateSelect">Coleta original</label>
+    <select id="duplicateSelect"><option value="">Carregando coletas...</option></select>
+    <label for="duplicateDate">Nova data da coleta</label>
+    <input id="duplicateDate" type="date">
+    <div class="modal-actions">
+      <button id="cancelDuplicate" class="cancel" type="button">Cancelar</button>
+      <button id="confirmDuplicate" class="confirm-duplicate" type="button" disabled>Duplicar coleta</button>
+    </div>
+  </div>
 </div>
 
 <div id="deleteModal" class="modal" aria-hidden="true">
@@ -78,6 +93,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
 
 <script>
 const frame=document.getElementById('frame'), moduleName=document.getElementById('module'), moduleLoading=document.getElementById('moduleLoading');
+const duplicateBtn=document.getElementById('duplicateColeta'), duplicateModal=document.getElementById('duplicateModal'), duplicateSelect=document.getElementById('duplicateSelect'), duplicateDate=document.getElementById('duplicateDate'), cancelDuplicate=document.getElementById('cancelDuplicate'), confirmDuplicate=document.getElementById('confirmDuplicate');
 const deleteBtn=document.getElementById('deleteColeta'), deleteModal=document.getElementById('deleteModal'), deleteSelect=document.getElementById('deleteSelect'), cancelDelete=document.getElementById('cancelDelete'), confirmDelete=document.getElementById('confirmDelete');
 function abrirModulo(btn){
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
@@ -91,6 +107,7 @@ function abrirModulo(btn){
   else src += sep+'refresh='+Date.now();
   frame.src=src;
   moduleName.textContent=btn.dataset.name;
+  duplicateBtn.style.display=mod==='coletas'?'inline-block':'none';
   deleteBtn.style.display=mod==='coletas'?'inline-block':'none';
   try{history.replaceState(null,'','#'+mod)}catch(e){}
 }
@@ -108,6 +125,79 @@ function coletaLabel(c){
   if(c.data) parts.push(String(c.data).slice(0,10));
   return parts.length?parts.join(' • '):('ID '+c.id);
 }
+
+async function carregarListaColetas(select, placeholder='Selecione uma coleta'){
+  select.innerHTML='<option value="">Carregando coletas...</option>';
+  const r=await fetch('/api/painel/coletas-resumo',{cache:'no-store'});
+  if(!r.ok) throw new Error('Não foi possível carregar as coletas.');
+  const list=await r.json();
+  list.sort((a,b)=>String(b.data||'').localeCompare(String(a.data||'')));
+  select.innerHTML='<option value="">'+placeholder+'</option>';
+  list.forEach(c=>{
+    const opt=document.createElement('option');
+    opt.value=c.id;
+    opt.textContent=coletaLabel(c);
+    opt.dataset.data=String(c.data||'').slice(0,10);
+    select.appendChild(opt);
+  });
+  if(!list.length) select.innerHTML='<option value="">Nenhuma coleta cadastrada</option>';
+  return list;
+}
+
+async function abrirDuplicacao(){
+  duplicateModal.classList.add('show');
+  duplicateModal.setAttribute('aria-hidden','false');
+  duplicateDate.value='';
+  confirmDuplicate.disabled=true;
+  try{
+    await carregarListaColetas(duplicateSelect,'Selecione a coleta que deseja duplicar');
+  }catch(e){
+    duplicateSelect.innerHTML='<option value="">Erro ao carregar coletas</option>';
+    alert(e.message);
+  }
+}
+function fecharDuplicacao(){
+  duplicateModal.classList.remove('show');
+  duplicateModal.setAttribute('aria-hidden','true');
+}
+function atualizarDuplicacao(){
+  confirmDuplicate.disabled=!(duplicateSelect.value && /^\d{4}-\d{2}-\d{2}$/.test(duplicateDate.value));
+}
+duplicateBtn.addEventListener('click',abrirDuplicacao);
+cancelDuplicate.addEventListener('click',fecharDuplicacao);
+duplicateModal.addEventListener('click',e=>{if(e.target===duplicateModal)fecharDuplicacao();});
+duplicateSelect.addEventListener('change',()=>{
+  const opt=duplicateSelect.options[duplicateSelect.selectedIndex];
+  if(opt?.dataset?.data && !duplicateDate.value) duplicateDate.value=opt.dataset.data;
+  atualizarDuplicacao();
+});
+duplicateDate.addEventListener('change',atualizarDuplicacao);
+confirmDuplicate.addEventListener('click',async()=>{
+  const id=duplicateSelect.value, data=duplicateDate.value;
+  if(!id || !data) return;
+  const descricao=duplicateSelect.options[duplicateSelect.selectedIndex]?.textContent||'coleta selecionada';
+  if(!confirm('Duplicar esta coleta para '+data.split('-').reverse().join('/')+'?\n\n'+descricao)) return;
+  confirmDuplicate.disabled=true;
+  const oldText=confirmDuplicate.textContent;
+  confirmDuplicate.textContent='Duplicando...';
+  try{
+    const r=await fetch('/api/painel/coletas-duplicar/'+encodeURIComponent(id),{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({data})
+    });
+    const body=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(body.error||'Não foi possível duplicar a coleta.');
+    fecharDuplicacao();
+    frame.src='/coletas?embed=1&refresh='+Date.now();
+    alert('Coleta duplicada com sucesso para '+data.split('-').reverse().join('/')+'.');
+  }catch(e){
+    alert(e.message);
+  }finally{
+    confirmDuplicate.textContent=oldText;
+    atualizarDuplicacao();
+  }
+});
 
 async function abrirExclusao(){
   deleteModal.classList.add('show');
