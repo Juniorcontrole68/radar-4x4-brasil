@@ -30,7 +30,7 @@ function requirePin(req, res, next) {
 async function initDb() {
   if (!pool) return;
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS trips (
+    CREATE TABLE IF NOT EXISTS diario_trips (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       vehicle TEXT,
@@ -41,9 +41,9 @@ async function initDb() {
       updated_at BIGINT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS places (
+    CREATE TABLE IF NOT EXISTS diario_places (
       id TEXT PRIMARY KEY,
-      trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      trip_id TEXT NOT NULL REFERENCES diario_trips(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       date TEXT,
       time TEXT,
@@ -56,9 +56,9 @@ async function initDb() {
       updated_at BIGINT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS expenses (
+    CREATE TABLE IF NOT EXISTS diario_expenses (
       id TEXT PRIMARY KEY,
-      trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      trip_id TEXT NOT NULL REFERENCES diario_trips(id) ON DELETE CASCADE,
       category TEXT NOT NULL,
       description TEXT,
       amount NUMERIC NOT NULL DEFAULT 0,
@@ -71,9 +71,9 @@ async function initDb() {
       updated_at BIGINT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS gps_points (
+    CREATE TABLE IF NOT EXISTS diario_gps_points (
       id TEXT PRIMARY KEY,
-      trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      trip_id TEXT NOT NULL REFERENCES diario_trips(id) ON DELETE CASCADE,
       lat DOUBLE PRECISION NOT NULL,
       lon DOUBLE PRECISION NOT NULL,
       accuracy DOUBLE PRECISION,
@@ -81,9 +81,9 @@ async function initDb() {
       updated_at BIGINT NOT NULL
     );
 
-    CREATE INDEX IF NOT EXISTS idx_places_trip ON places(trip_id);
-    CREATE INDEX IF NOT EXISTS idx_expenses_trip ON expenses(trip_id);
-    CREATE INDEX IF NOT EXISTS idx_gps_trip ON gps_points(trip_id);
+    CREATE INDEX IF NOT EXISTS idx_diario_places_trip ON diario_places(trip_id);
+    CREATE INDEX IF NOT EXISTS idx_diario_expenses_trip ON diario_expenses(trip_id);
+    CREATE INDEX IF NOT EXISTS idx_diario_gps_trip ON diario_gps_points(trip_id);
   `);
 }
 
@@ -111,10 +111,10 @@ function normalizeState(rows) {
 
 async function readState(client=pool) {
   const [trips, places, expenses, gps] = await Promise.all([
-    client.query("SELECT * FROM trips ORDER BY started_at DESC"),
-    client.query("SELECT * FROM places ORDER BY created_at DESC"),
-    client.query("SELECT * FROM expenses ORDER BY created_at DESC"),
-    client.query("SELECT * FROM gps_points ORDER BY ts ASC")
+    client.query("SELECT * FROM diario_trips ORDER BY started_at DESC"),
+    client.query("SELECT * FROM diario_places ORDER BY created_at DESC"),
+    client.query("SELECT * FROM diario_expenses ORDER BY created_at DESC"),
+    client.query("SELECT * FROM diario_gps_points ORDER BY ts ASC")
   ]);
   return normalizeState({ trips:trips.rows, places:places.rows, expenses:expenses.rows, gps:gps.rows });
 }
@@ -152,55 +152,55 @@ app.post("/api/sync", async (req,res) => {
 
     for (const t of trips) {
       await c.query(`
-        INSERT INTO trips(id,name,vehicle,start_km,notes,started_at,finished_at,updated_at)
+        INSERT INTO diario_trips(id,name,vehicle,start_km,notes,started_at,finished_at,updated_at)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8)
         ON CONFLICT(id) DO UPDATE SET
           name=EXCLUDED.name, vehicle=EXCLUDED.vehicle, start_km=EXCLUDED.start_km,
           notes=EXCLUDED.notes, started_at=EXCLUDED.started_at, finished_at=EXCLUDED.finished_at,
           updated_at=EXCLUDED.updated_at
-        WHERE EXCLUDED.updated_at >= trips.updated_at
+        WHERE EXCLUDED.updated_at >= diario_trips.updated_at
       `,[t.id,t.name,t.vehicle||null,t.startKm||null,t.notes||null,t.startedAt,t.finishedAt||null,t.updatedAt||Date.now()]);
     }
 
     for (const p of places) {
       await c.query(`
-        INSERT INTO places(id,trip_id,name,date,time,notes,rating,photos,lat,lon,created_at,updated_at)
+        INSERT INTO diario_places(id,trip_id,name,date,time,notes,rating,photos,lat,lon,created_at,updated_at)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12)
         ON CONFLICT(id) DO UPDATE SET
           trip_id=EXCLUDED.trip_id,name=EXCLUDED.name,date=EXCLUDED.date,time=EXCLUDED.time,
           notes=EXCLUDED.notes,rating=EXCLUDED.rating,photos=EXCLUDED.photos,lat=EXCLUDED.lat,lon=EXCLUDED.lon,
           created_at=EXCLUDED.created_at,updated_at=EXCLUDED.updated_at
-        WHERE EXCLUDED.updated_at >= places.updated_at
+        WHERE EXCLUDED.updated_at >= diario_places.updated_at
       `,[p.id,p.tripId,p.name,p.date||null,p.time||null,p.notes||null,p.rating||null,JSON.stringify(p.photos||[]),
          p.lat||null,p.lon||null,p.createdAt,p.updatedAt||Date.now()]);
     }
 
     for (const e of expenses) {
       await c.query(`
-        INSERT INTO expenses(id,trip_id,category,description,amount,date,liters,unit_price,notes,receipt,created_at,updated_at)
+        INSERT INTO diario_expenses(id,trip_id,category,description,amount,date,liters,unit_price,notes,receipt,created_at,updated_at)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
         ON CONFLICT(id) DO UPDATE SET
           trip_id=EXCLUDED.trip_id,category=EXCLUDED.category,description=EXCLUDED.description,
           amount=EXCLUDED.amount,date=EXCLUDED.date,liters=EXCLUDED.liters,unit_price=EXCLUDED.unit_price,
           notes=EXCLUDED.notes,receipt=EXCLUDED.receipt,created_at=EXCLUDED.created_at,updated_at=EXCLUDED.updated_at
-        WHERE EXCLUDED.updated_at >= expenses.updated_at
+        WHERE EXCLUDED.updated_at >= diario_expenses.updated_at
       `,[e.id,e.tripId,e.category,e.description||null,e.amount||0,e.date||null,e.liters||null,e.unitPrice||null,
          e.notes||null,e.receipt||null,e.createdAt,e.updatedAt||Date.now()]);
     }
 
     for (const g of gps) {
       await c.query(`
-        INSERT INTO gps_points(id,trip_id,lat,lon,accuracy,ts,updated_at)
+        INSERT INTO diario_gps_points(id,trip_id,lat,lon,accuracy,ts,updated_at)
         VALUES($1,$2,$3,$4,$5,$6,$7)
         ON CONFLICT(id) DO UPDATE SET
           trip_id=EXCLUDED.trip_id,lat=EXCLUDED.lat,lon=EXCLUDED.lon,accuracy=EXCLUDED.accuracy,
           ts=EXCLUDED.ts,updated_at=EXCLUDED.updated_at
-        WHERE EXCLUDED.updated_at >= gps_points.updated_at
+        WHERE EXCLUDED.updated_at >= diario_gps_points.updated_at
       `,[g.id,g.tripId,g.lat,g.lon,g.accuracy||null,g.ts,g.updatedAt||Date.now()]);
     }
 
     for (const d of deletes) {
-      const table = ({trip:"trips",place:"places",expense:"expenses",gps:"gps_points"})[d.entity];
+      const table = ({trip:"diario_trips",place:"diario_places",expense:"diario_expenses",gps:"diario_gps_points"})[d.entity];
       if (table && d.entityId) await c.query(`DELETE FROM ${table} WHERE id=$1`,[d.entityId]);
     }
 
