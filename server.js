@@ -96,7 +96,7 @@ async function testInternalSswLogin(){
           });
           apply(pr.headers);
           const pt=await pr.text();
-          page={status:pr.status,bytes:Buffer.byteLength(pt),baixa:/baixa/i.test(pt),entrega:/entrega/i.test(pt),romaneio:/romaneio/i.test(pt),motorista:/motorista/i.test(pt),manifesto:/manifesto/i.test(pt)};
+          page={status:pr.status,bytes:Buffer.byteLength(pt),baixa:/baixa/i.test(pt),entrega:/entrega/i.test(pt),romaneio:/romaneio/i.test(pt),linhas:Math.max(0,pt.toLowerCase().split('<tr').length-1),celulas:Math.max(0,pt.toLowerCase().split('<td').length-1)};
         }
         option38[unidade]={status:rr.status,bytes:Buffer.byteLength(ot),page};
       }catch(e){option38[unidade]={error:String(e.message||e)}}
