@@ -782,7 +782,28 @@ async function buildSswMotoristas(from='',to=''){
   const occ={};saiuRows.filter(x=>!x.entregue).forEach(x=>{const k=(x.ocorrenciaCodigo?x.ocorrenciaCodigo+' - ':'')+(x.ocorrencia||'Sem ocorrência');occ[k]=(occ[k]||0)+1});
 
   const deliveredMap=new Map();
-  snaps17.filter(x=>x.ok).forEach(s=>(s.rows||[]).forEach(r=>{const k=normCtrc(r.CTRC||r.numero_ctrc);if(k)deliveredMap.set(k,r)}));
+  const addDeliveredRows=arr=>{
+    for(const r of (arr||[])){
+      const k=normCtrc(pickField(r,'CTRC','NUMERO CTRC','NUMERO_CTRC','NRO CTRC','NRO_CTRC')||r.CTRC||r.numero_ctrc);
+      if(k)deliveredMap.set(k,r);
+    }
+  };
+  snaps17.filter(x=>x.ok).forEach(s=>addDeliveredRows(s.rows));
+
+  // A opção 38 representa a operação atual. Para hoje, o relatório 17 corrente
+  // é a fonte mais confiável das baixas de entrega já processadas.
+  // Alguns dias não possuem snapshot datado do BI2, por isso mesclamos o arquivo corrente.
+  if(base38&&base38.ok&&to===today){
+    try{
+      const current17=parseBi2Csv((await fetchBi2ReportFolder(17,'',bi2Auth().pasta)).text);
+      const rows17=current17.rows||[];
+      const today17=rows17.filter(r=>brDateToIso(pickField(r,'DATA ENTREGA','ENTREGA','DT ENTREGA'))===today);
+      addDeliveredRows(today17.length?today17:rows17);
+      console.log('BI2 17 baixas atuais: '+JSON.stringify({arquivo:rows17.length,hoje:today17.length,ctrcs:deliveredMap.size,headers:current17.headers.slice(0,20)}));
+    }catch(e){
+      console.log('BI2 17 baixas atuais ERRO: '+String(e.message||e));
+    }
+  }
 
   let motoristas38=[],totalRomaneado=0,romaneios38=[],entregues38=0,pendentes38=0,ocorrencias38=0;
   if(base38&&base38.ok){
