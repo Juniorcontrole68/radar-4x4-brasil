@@ -5,6 +5,12 @@ try{
   const fm=src.match(/const FRONTEND_B64='([^']+)'/);
   if(fm){
     let html=zlib.gunzipSync(Buffer.from(fm[1],'base64')).toString('utf8');
+    try{
+      const probes=['tbodyColetas','tbody','os_numero','endereco_coleta','endereco_entrega','cliente'];
+      const found=[];
+      for(const p of probes){let pos=0,n=0;while((pos=html.indexOf(p,pos))>=0&&n<4){found.push('--- '+p+' @'+pos+' ---\n'+html.slice(Math.max(0,pos-700),Math.min(html.length,pos+1800)));pos+=p.length;n++;}}
+      console.log('COLETAS FRONT DIAG:\n'+found.join('\n'));
+    }catch(e){}
 
     html=html.replace(
       'Cliente *<input id="cliente" required placeholder="Nome do cliente" />',
