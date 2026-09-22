@@ -163,12 +163,12 @@ async function fetchBi2FolderDayParsed(codigo,folder,ymd){
 async function buildSswMotoristas(from='',to=''){
   const today=new Date().toISOString().slice(0,10);
   from=from||today;to=to||today;
-  const dates=bi2DateRange(from,to,31),cacheKey=from+'|'+to,hit=SSW_DRIVER_CACHE.get(cacheKey);
-  if(hit&&Date.now()-hit.at<300000)return hit.value;
+  const cacheKey='online|'+from+'|'+to,hit=SSW_DRIVER_CACHE.get(cacheKey);
+  if(hit&&Date.now()-hit.at<90000)return hit.value;
 
-  const snaps174=[],snaps17=[];
-  for(let i=0;i<dates.length;i+=3){
-    const ds=dates.slice(i,i+3);
+  const dates=bi2DateRange(from,to,31),snaps174=[],snaps17=[];
+  for(let i=0;i<dates.length;i+=4){
+    const ds=dates.slice(i,i+4);
     const pair=await Promise.all([
       Promise.all(ds.map(d=>fetchBi2FolderDayParsed(174,'ctrc',d))),
       Promise.all(ds.map(d=>fetchBi2FolderDayParsed(17,bi2Auth().pasta,d)))
@@ -176,48 +176,94 @@ async function buildSswMotoristas(from='',to=''){
     snaps174.push(...pair[0]);snaps17.push(...pair[1]);
   }
 
-  const ctrcMap=new Map(),deliveredMap=new Map();
-  snaps174.filter(x=>x.ok).forEach(s=>(s.rows||[]).forEach(r=>{const k=normCtrc(r.numero_ctrc||r.CTRC);if(k)ctrcMap.set(k,r)}));
-  snaps17.filter(x=>x.ok).forEach(s=>(s.rows||[]).forEach(r=>{const k=normCtrc(r.CTRC||r.numero_ctrc);if(k)deliveredMap.set(k,r)}));
+  let baseRows=[];
+  snaps174.filter(x=>x.ok).forEach(s=>baseRows.push(...(s.rows||[])));
+  if(!baseRows.length){
+    try{baseRows=parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text).rows||[]}catch{}
+  }
+
+  const ctrcMap=new Map();
+  for(const r of baseRows){
+    const k=normCtrc(r.numero_ctrc||r.CTRC);
+    if(k)ctrcMap.set(k,r);
+  }
+
+  let candidates=[...ctrcMap.values()].filter(r=>{
+    const d=brDateToIso(r.prev_ent||r['PREV ENTREGA']||r['PREVISAO ENTREGA']);
+    return d&&d>=from&&d<=to;
+  });
+  if(!candidates.length&&from===today&&to===today){
+    candidates=[...ctrcMap.values()].filter(r=>brDateToIso(r.prev_ent||'')===today);
+  }
+
+  const unique=[];
+  const seen=new Set();
+  for(const r of candidates){
+    const doc=String(r.dest_cnpj||r['CNPJ DESTINATARIO']||'').replace(/\D/g,'');
+    const nf=String(r.numero_nf||r.NF||'').trim();
+    const k=doc+'|'+nf;
+    if(doc.length===14&&nf&&!seen.has(k)){seen.add(k);unique.push(r)}
+  }
+
+  const trackingResults=await mapLimit(unique,8,async r=>{
+    const tr=await trackingDestQuery(r.dest_cnpj||r['CNPJ DESTINATARIO'],r.numero_nf||r.NF);
+    return{r,tr}
+  });
 
   let driverRows=[];try{driverRows=await fetchMotoristasVeiculos()}catch{}
   const driverMap=new Map(driverRows.map(x=>[normPlate(x.placa),String(x.motorista||'').trim()]));
-
   let vehicleRows=[];try{vehicleRows=parseBi2Csv((await fetchBi2ReportFolder(245,'','tabelas')).text).rows||[]}catch{}
   const vehicleMap=new Map(vehicleRows.map(x=>[normPlate(x.PLACA),x]));
-  const deliveredCodes=new Set(['1','37']);
 
   const rows=[];
-  for(const [key,r] of ctrcMap){
-    const plate=normPlate(r.veiculo_entrega),rawCode=String(r.ult_ocorr_codigo||'').trim(),code=rawCode.replace(/^0+/,'')||'0';
-    if(!plate&&code!=='85')continue;
-    const deliveredRow=deliveredMap.get(key),delivered=!!deliveredRow||deliveredCodes.has(code),vehicle=vehicleMap.get(plate)||{};
+  let trackingOk=0;
+  for(const item of trackingResults){
+    const r=item.r,tr=item.tr||{};
+    if(tr.ok)trackingOk++;
+    const last=tr.last||{};
+    const occ=String(last.ocorrencia||'').trim();
+    const codeMatch=occ.match(/\((\d{1,3})\)/);
+    const rawCode=codeMatch?codeMatch[1]:'';
+    const plate=normPlate(r.veiculo_entrega),vehicle=vehicleMap.get(plate)||{};
+    const saida=!!tr.saiu,entregue=!!tr.entregue;
     rows.push({
       ctrc:r.numero_ctrc||'',nf:r.numero_nf||'',remetente:r.remetente_nome||'',destinatario:r.destinatario_nome||'',
       cidade:r.cidade_destino||r.dest_cidade||'',uf:r.uf_destino||r.dest_uf||'',veiculo:plate||String(r.veiculo_entrega||'').trim(),
-      motorista:driverMap.get(plate)||'',relacionamento:vehicle.RELACIONAMENTO||'',saida:code==='85',entregue:delivered,
-      ocorrenciaCodigo:rawCode,ocorrencia:r.ult_ocorr_descricao||'',dataOcorrencia:r.ult_ocorr_data||'',horaOcorrencia:r.ult_ocorr_hora||'',
-      previsao:r.prev_ent||'',dataEntrega:deliveredRow?(deliveredRow['DATA ENTREGA']||''):(delivered?(r.ult_ocorr_data||''):'')
+      motorista:driverMap.get(plate)||'',relacionamento:vehicle.RELACIONAMENTO||'',saida,entregue,
+      ocorrenciaCodigo:rawCode,ocorrencia:occ||r.ult_ocorr_descricao||'',
+      dataOcorrencia:String(last.data_hora||'').slice(0,10)||r.ult_ocorr_data||'',
+      horaOcorrencia:String(last.data_hora||'').slice(11,16)||r.ult_ocorr_hora||'',
+      previsao:r.prev_ent||'',dataEntrega:entregue?(String(last.data_hora||'').slice(0,10)||''):'',
+      trackingOk:!!tr.ok
     });
   }
 
+  const saiuRows=rows.filter(x=>x.saida||x.entregue);
   const groups=new Map();
-  rows.forEach(r=>{
+  saiuRows.forEach(r=>{
     const k=r.motorista||r.veiculo||'Sem identificação';
     if(!groups.has(k))groups.set(k,{motorista:r.motorista||'',veiculo:r.veiculo||'',saidas:0,baixadas:0,pendentes:0,ocorrencias:0});
     const g=groups.get(k);g.saidas++;if(r.entregue)g.baixadas++;else{g.pendentes++;g.ocorrencias++}
   });
+
   const motoristas=[...groups.values()].map(g=>({...g,taxa:g.saidas?g.baixadas/g.saidas*100:0})).sort((a,b)=>b.saidas-a.saidas);
-  const baixasSsw=deliveredMap.size,baixadas=rows.filter(x=>x.entregue).length,saidas=rows.length,pendentes=rows.filter(x=>!x.entregue).length;
-  const occ={};rows.filter(x=>!x.entregue).forEach(x=>{const k=(x.ocorrenciaCodigo?x.ocorrenciaCodigo+' - ':'')+(x.ocorrencia||'Sem ocorrência');occ[k]=(occ[k]||0)+1});
+  const saidas=saiuRows.length,baixadas=rows.filter(x=>x.entregue).length,pendentes=saiuRows.filter(x=>!x.entregue).length;
+  const occ={};saiuRows.filter(x=>!x.entregue).forEach(x=>{const k=(x.ocorrenciaCodigo?x.ocorrenciaCodigo+' - ':'')+(x.ocorrencia||'Sem ocorrência');occ[k]=(occ[k]||0)+1});
+
+  const deliveredMap=new Map();
+  snaps17.filter(x=>x.ok).forEach(s=>(s.rows||[]).forEach(r=>{const k=normCtrc(r.CTRC||r.numero_ctrc);if(k)deliveredMap.set(k,r)}));
 
   const value={
-    ok:true,source:'SSW BI2',from,to,daysRequested:dates.length,days174:snaps174.filter(x=>x.ok).length,days17:snaps17.filter(x=>x.ok).length,
-    saidas,baixadas,baixasSsw,pendentes,taxa:saidas?baixadas/saidas*100:0,
-    veiculos:new Set(rows.map(x=>x.veiculo).filter(Boolean)).size,motoristasIdentificados:new Set(rows.map(x=>x.motorista).filter(Boolean)).size,
-    motoristas,ocorrencias:Object.entries(occ).sort((a,b)=>b[1]-a[1]).slice(0,15).map(([label,value])=>({label,value})),
-    rows:rows.sort((a,b)=>String(b.dataOcorrencia).localeCompare(String(a.dataOcorrencia))).slice(0,1000),
-    note:baixasSsw>baixadas?'O relatório 017 possui '+baixasSsw+' baixas no período; '+baixadas+' foram vinculadas aos CT-es/veículos presentes no relatório 174.':''
+    ok:true,source:'SSW Tracking Online + BI2',from,to,daysRequested:dates.length,
+    days174:snaps174.filter(x=>x.ok).length,days17:snaps17.filter(x=>x.ok).length,
+    candidatos:unique.length,trackingConsultados:trackingResults.length,trackingOk,
+    saidas,baixadas,baixasSsw:baixadas,baixasBi2:deliveredMap.size,pendentes,taxa:saidas?baixadas/saidas*100:0,
+    veiculos:new Set(saiuRows.map(x=>x.veiculo).filter(Boolean)).size,
+    motoristasIdentificados:new Set(saiuRows.map(x=>x.motorista).filter(Boolean)).size,
+    motoristas,
+    ocorrencias:Object.entries(occ).sort((a,b)=>b[1]-a[1]).slice(0,15).map(([label,value])=>({label,value})),
+    rows:rows.sort((a,b)=>Number(b.entregue)-Number(a.entregue)||String(b.dataOcorrencia).localeCompare(String(a.dataOcorrencia))).slice(0,1000),
+    note:'Rastreamento on-line consultado para '+trackingOk+' de '+unique.length+' NF(s) previstas no período. O BI2 é usado apenas para localizar as NFs; o status de saída/entrega vem do rastreamento atual do SSW.'
   };
   SSW_DRIVER_CACHE.set(cacheKey,{at:Date.now(),value});return value
 }
