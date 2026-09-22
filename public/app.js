@@ -52,28 +52,25 @@ function driverProgressStatus(r){
   return'ocorrencia'
 }
 function buildDriverProgress(d){
-  const rows=Array.isArray(d?.rows)?d.rows:[],base=Array.isArray(d?.motoristas38)?d.motoristas38:[];
-  const key=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\s+/g,' ').trim();
-  if(base.length){
-    return base.map(x=>{
-      const total=Number(x.total||0),nk=key(x.motorista),pk=key(x.veiculo);
-      const matched=rows.filter(r=>(nk&&key(r.motorista)===nk)||(pk&&key(r.veiculo)===pk));
-      let entregues=0,ocorrencias=0,pendentesConhecidos=0;
-      matched.forEach(r=>{const st=driverProgressStatus(r);if(st==='entregue')entregues++;else if(st==='ocorrencia')ocorrencias++;else pendentesConhecidos++});
-      const known=Math.min(total,entregues+ocorrencias+pendentesConhecidos),pendentes=Math.max(0,total-entregues-ocorrencias);
-      return{motorista:x.motorista||'Não identificado',veiculo:x.veiculo||'',total,entregues:Math.min(entregues,total),ocorrencias:Math.min(ocorrencias,Math.max(0,total-entregues)),pendentes,romaneios:x.romaneios||[],vinculados:known}
-    }).filter(x=>x.total>0).sort((a,b)=>b.total-a.total||String(a.motorista).localeCompare(String(b.motorista),'pt-BR'))
+  const official=Array.isArray(d?.motoristas38)?d.motoristas38:[];
+  if(official.length){
+    return official.map(x=>({
+      motorista:x.motorista||'Não identificado',
+      veiculo:x.veiculo||'',
+      total:Number(x.total||0),
+      entregues:Number(x.entregues||0),
+      pendentes:Number(x.pendentes||0),
+      ocorrencias:Number(x.ocorrencias||0),
+      romaneios:Array.isArray(x.romaneios)?x.romaneios:[],
+      vinculados:Number(x.vinculados||0)
+    })).filter(x=>x.total>0).sort((a,b)=>b.total-a.total||String(a.motorista).localeCompare(String(b.motorista),'pt-BR'))
   }
-  const groups=new Map();
-  if(rows.length){
-    rows.forEach(r=>{
-      const k=(r.motorista||r.veiculo||'Não identificado').trim();
-      if(!groups.has(k))groups.set(k,{motorista:r.motorista||'Não identificado',veiculo:r.veiculo||'',total:0,entregues:0,pendentes:0,ocorrencias:0});
-      const g=groups.get(k),st=driverProgressStatus(r);g.total++;if(st==='entregue')g.entregues++;else if(st==='ocorrencia')g.ocorrencias++;else g.pendentes++;
-    });
-  }else{
-    (d?.motoristas||[]).forEach(x=>{const total=Number(x.saidas||0),entregues=Number(x.baixadas||0),ocorrencias=Number(x.ocorrencias||0),pendentes=Math.max(0,total-entregues-ocorrencias);groups.set((x.motorista||x.veiculo||'Não identificado').trim(),{motorista:x.motorista||'Não identificado',veiculo:x.veiculo||'',total,entregues,pendentes,ocorrencias})});
-  }
+  const groups=new Map(),rows=Array.isArray(d?.rows)?d.rows:[];
+  rows.forEach(r=>{
+    const k=(r.motorista||r.veiculo||'Não identificado').trim();
+    if(!groups.has(k))groups.set(k,{motorista:r.motorista||'Não identificado',veiculo:r.veiculo||'',total:0,entregues:0,pendentes:0,ocorrencias:0});
+    const g=groups.get(k),st=driverProgressStatus(r);g.total++;if(st==='entregue')g.entregues++;else if(st==='ocorrencia')g.ocorrencias++;else g.pendentes++;
+  });
   return[...groups.values()].filter(x=>x.total>0).sort((a,b)=>b.total-a.total||String(a.motorista).localeCompare(String(b.motorista),'pt-BR'))
 }
 function renderDriverProgress(){
@@ -83,7 +80,7 @@ function renderDriverProgress(){
   const G=buildDriverProgress(d),tot=G.reduce((a,x)=>a+x.total,0),del=G.reduce((a,x)=>a+x.entregues,0),pen=G.reduce((a,x)=>a+x.pendentes,0),occ=G.reduce((a,x)=>a+x.ocorrencias,0);
   set('#driverProgTotal',nf(tot));set('#driverProgDelivered',nf(del));set('#driverProgPending',nf(pen));set('#driverProgOcc',nf(occ));
   set('#hubDriverProgDrivers',nf(G.length));set('#hubDriverProgDelivered',nf(del));set('#hubDriverProgPending',nf(pen));set('#hubDriverProgOcc',nf(occ));
-  set('#driverProgressMeta','Período '+(d.from||'—')+' a '+(d.to||'—')+' • atualização automática a partir do SSW');
+  set('#driverProgressMeta','Período '+(d.from||'—')+' a '+(d.to||'—')+' • base oficial da opção 38 • '+nf((d.motoristas38||[]).reduce((a,x)=>a+Number(x.vinculados||0),0))+' CT-es vinculados ao rastreamento');
   if(!G.length){list.innerHTML='<div class="card muted">Nenhum motorista disponível para o período selecionado.</div>';return}
   list.innerHTML=G.map(x=>{
     const t=Math.max(1,x.total),pg=x.entregues/t*100,py=x.pendentes/t*100,pr=x.ocorrencias/t*100,processed=(x.entregues+x.ocorrencias)/t*100,truck=Math.max(2,Math.min(98,processed));
@@ -98,7 +95,7 @@ function renderSswMotoristas(){
   set('#hubSswOut',nf(Number(d.totalRomaneado||0)||d.saidas||0));set('#hubSswDown',nf(d.baixasSsw||0));set('#hubSswPend',nf(d.pendentes||0));set('#hubSswRate',(d.taxa||0).toFixed(1).replace('.',',')+'%');
   const meta='Período '+d.from+' a '+d.to+' • status on-line SSW consultado em '+nf(d.trackingOk||0)+' de '+nf(d.trackingConsultados||0)+' NF(s)';
   set('#sswDriverMeta',meta);set('#hubSswDriverMeta',meta);
-  const note=$('#sswDriverNote');if(note){note.textContent=(d.totalRomaneado?'BASE OFICIAL DA OPÇÃO 38: '+nf(d.totalRomaneado)+' CT-es em '+nf((d.romaneios38||[]).length)+' romaneios e '+nf((d.motoristas38||[]).length)+' motoristas. ':'')+'As cores individuais usam somente CT-es já vinculados ao rastreamento; os ainda não vinculados permanecem amarelos.';note.style.display='block'}
+  const note=$('#sswDriverNote');if(note){note.textContent=(d.totalRomaneado?'BASE OFICIAL DA OPÇÃO 38: '+nf(d.totalRomaneado)+' CT-es em '+nf((d.romaneios38||[]).length)+' romaneios e '+nf((d.motoristas38||[]).length)+' motoristas. ':'')+'Verde = entregue, amarelo = pendente, vermelho = ocorrência. CT-es ainda sem vínculo confirmado permanecem amarelos.';note.style.display='block'}
   const M=(d.motoristas||[]).slice(0,12),labels=M.map(x=>x.motorista||x.veiculo||'Sem identificação');
   lines('#sswDriverChart',labels,M.map(x=>x.saidas||0),M.map(x=>x.baixadas||0));
   const O=(d.ocorrencias||[]).slice(0,10);bars('#sswDriverOccChart',O.map(x=>x.label),O.map(x=>x.value));
