@@ -334,42 +334,25 @@ function ajustarCampoClienteEntrega(){
   try{
     const doc=frame.contentDocument;
     if(!doc) return;
+    const campo=doc.getElementById('cliente');
+    if(!campo) return;
 
-    const labels=[...doc.querySelectorAll('label')];
-    let encontrado=false;
+    campo.placeholder='Nome do remetente';
+    campo.setAttribute('aria-label','Remetente');
 
-    for(const label of labels){
-      const texto=(label.textContent||'').trim().toLocaleLowerCase('pt-BR');
-      if(texto==='cliente' || texto==='nome do cliente' || texto.startsWith('cliente ')){
-        label.textContent='Nome Do Cliente Da Entrega';
-        encontrado=true;
-        const alvo=label.htmlFor ? doc.getElementById(label.htmlFor) : label.querySelector('input,textarea,select');
-        if(alvo && (alvo.tagName==='INPUT' || alvo.tagName==='TEXTAREA')){
-          alvo.placeholder='Nome Do Cliente Onde Será Feita A Entrega';
-          alvo.setAttribute('aria-label','Nome Do Cliente Da Entrega');
-        }
-        break;
-      }
-    }
-
-    if(!encontrado){
-      const campos=[...doc.querySelectorAll('input,textarea')];
-      for(const campo of campos){
-        const ident=((campo.name||'')+' '+(campo.id||'')+' '+(campo.placeholder||'')).toLocaleLowerCase('pt-BR');
-        if(/(^|\s)(cliente|client)(\s|$)/.test(ident)){
-          campo.placeholder='Nome Do Cliente Onde Será Feita A Entrega';
-          campo.setAttribute('aria-label','Nome Do Cliente Da Entrega');
-          const parent=campo.parentElement;
-          if(parent){
-            const lab=parent.querySelector('label');
-            if(lab) lab.textContent='Nome Do Cliente Da Entrega';
-          }
-          break;
-        }
+    const label=campo.closest('label');
+    if(label){
+      const span=label.querySelector(':scope > span');
+      if(span){
+        span.textContent='Remetente *';
+      }else{
+        const textNode=[...label.childNodes].find(n=>n.nodeType===Node.TEXT_NODE && n.textContent.trim());
+        if(textNode) textNode.textContent='Remetente *';
+        else label.insertBefore(doc.createTextNode('Remetente *'),label.firstChild);
       }
     }
   }catch(e){
-    console.warn('Não foi possível ajustar o campo de cliente da entrega:',e);
+    console.warn('Não foi possível ajustar o campo de remetente:',e);
   }
 }
 
