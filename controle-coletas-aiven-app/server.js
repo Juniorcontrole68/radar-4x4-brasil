@@ -66,14 +66,30 @@ async function duplicateColetaMinimal(id, novaData) {
   if (!originalResult.rowCount) { const e=new Error('Coleta não encontrada.'); e.status=404; throw e; }
   const original=originalResult.rows[0], names=new Set(meta.rows.map(x=>x.column_name));
   const first=(arr)=>arr.find(x=>names.has(x));
-  const dateCol=first(['data_coleta','collection_date','data','date']);
-  if(!dateCol){const e=new Error('Campo de data da coleta não identificado.');e.status=500;throw e;}
-  const preserve=new Set([
-    first(['cliente_remetente','remetente','cliente','nome_cliente','client','customer']),
-    first(['destinatario','nome_destinatario','recipient','cliente_destinatario']),
-    first(['endereco_coleta','endereco_origem','origem','collection_address','pickup_address']),
-    first(['endereco_entrega','endereco_destino','destino','delivery_address'])
-  ].filter(Boolean));
+  const like=(patterns)=>{const hit=meta.rows.find(m=>patterns.some(re=>re.test(String(m.column_name||'').toLowerCase())));return hit?.column_name||null;};
+
+  let dateCol=first(['data_coleta','data_agendada','data_agendamento','data_solicitacao','data_programada','collection_date','pickup_date','data','date']);
+  if(!dateCol) dateCol=like([/data.*colet/,/colet.*data/,/data.*agend/,/agend.*data/,/data.*program/,/program.*data/,/collection.*date/,/pickup.*date/]);
+  if(!dateCol){
+    const candidates=meta.rows.filter(m=>
+      /date|timestamp/.test(String(m.data_type||'')) &&
+      !['created_at','updated_at','data_recebimento','previsao_pagamento_fatura','payment_date','due_date'].includes(m.column_name)
+    );
+    if(candidates.length===1) dateCol=candidates[0].column_name;
+  }
+  if(!dateCol){
+    console.error('Duplicação: coluna de data não localizada. Colunas disponíveis:',meta.rows.map(x=>x.column_name).join(', '));
+    const e=new Error('Não consegui localizar automaticamente a data da coleta. Tente novamente após atualizar a página.');
+    e.status=500;
+    throw e;
+  }
+
+  const remetente=first(['cliente_remetente','remetente','nome_remetente','shipper']) || like([/remetente/,/cliente.*origem/]);
+  const destinatario=first(['destinatario','nome_destinatario','recipient','cliente_destinatario']) || like([/destinat/,/recipient/]);
+  const enderecoColeta=first(['endereco_coleta','endereco_origem','collection_address','pickup_address','origem']) || like([/endereco.*colet/,/colet.*endereco/,/endereco.*origem/,/pickup.*address/]);
+  const enderecoEntrega=first(['endereco_entrega','endereco_destino','delivery_address','destino']) || like([/endereco.*entreg/,/entreg.*endereco/,/endereco.*destino/,/delivery.*address/]);
+
+  const preserve=new Set([remetente,destinatario,enderecoColeta,enderecoEntrega].filter(Boolean));
 
   const cols=[], vals=[];
   for(const m of meta.rows){
