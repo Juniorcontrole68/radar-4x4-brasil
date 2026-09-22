@@ -143,7 +143,25 @@ async function fetchSsw38Rows(){
   r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/ssw0422','Cookie':cookie()},body:body.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);await r.text();if(!jar.has('token'))throw new Error('Login interno SSW não aceito');
   r=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2=AMR&f3=38',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);const nav=await r.text();const prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0198';
   r=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);const html=await r.text();
-  const p=parseSsw38Table(html),total=p.rows.reduce((a,x)=>a+x.qtdeCtrcs,0),motoristas=[...new Set(p.rows.map(x=>x.motorista))];
+  let p=parseSsw38Table(html);
+  if(!p.rows.length){
+    const structure={
+      bytes:Buffer.byteLength(html),
+      xml:(html.match(/<xml\b/gi)||[]).length,
+      rs:(html.match(/<rs\b/gi)||[]).length,
+      r:(html.match(/<r\b/gi)||[]).length,
+      f1:(html.match(/<f1\b/gi)||[]).length,
+      f2:(html.match(/<f2\b/gi)||[]).length,
+      f3:(html.match(/<f3\b/gi)||[]).length,
+      f4:(html.match(/<f4\b/gi)||[]).length,
+      f5:(html.match(/<f5\b/gi)||[]).length,
+      tr:(html.match(/<tr\b/gi)||[]).length,
+      td:(html.match(/<td\b/gi)||[]).length,
+      table:(html.match(/<table\b/gi)||[]).length
+    };
+    console.log('SSW38 estrutura: '+JSON.stringify(structure));
+  }
+  const total=p.rows.reduce((a,x)=>a+x.qtdeCtrcs,0),motoristas=[...new Set(p.rows.map(x=>x.motorista))];
   return{ok:true,rows:p.rows,total,motoristas:motoristas.length,romaneios:p.rows.length};
 }
 function sswConfig(){return{domain:process.env.SSW_DOMAIN||'',username:process.env.SSW_USERNAME||'',password:process.env.SSW_PASSWORD||'',cnpj:process.env.SSW_CNPJ_EDI||''}}
