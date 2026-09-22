@@ -12,6 +12,7 @@ let BI2_API_STATE={connected:false,lastCheck:null,reports:[],message:'WebAPI BI2
 const BI2_DAY_CACHE=new Map();
 const BI2_DAY_INFLIGHT=new Map();
 const SSW_DRIVER_CACHE=new Map();
+const SSW_TRACK_CACHE=new Map();
 async function fetchMotoristasVeiculos(){
   const u=new URL('/api/painel/motoristas-veiculos',COLETAS_PORTAL_URL);
   const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Dashboard/1.0','Cache-Control':'no-cache'},signal:AbortSignal.timeout(15000)});
@@ -86,6 +87,67 @@ async function buildBi2Baixas(date=''){
       previsao:r['DATA PREVENTR']||'',entrega:r['DATA ENTREGA']||'',performance:r.PERFORMANCE||''
     }))
   }
+}
+function xmlDecode(v){return String(v||'').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&amp;/g,'&')}
+function xmlTag(block,tag){const m=String(block||'').match(new RegExp('<'+tag+'[^>]*>([\\s\\S]*?)<\\/'+tag+'>','i'));return m?xmlDecode(m[1].replace(/<[^>]+>/g,'').trim()):''}
+function parseTrackingPayload(text){
+  const raw=String(text||'').trim();
+  if(!raw)return{success:false,items:[]};
+  if(raw[0]==='{'||raw[0]==='['){
+    try{
+      const j=JSON.parse(raw),doc=j.documento||j.tracking||j;
+      let items=doc.tracking||doc.items?.item||j.tracking?.items?.item||[];
+      if(!Array.isArray(items))items=items?[items]:[];
+      return{success:j.success!==false,items:items.map(x=>({data_hora:x.data_hora||x.data||'',ocorrencia:x.ocorrencia||x.descricao_ocorrencia||'',descricao:x.descricao||x.complemento||'',cidade:x.cidade||''}))}
+    }catch{return{success:false,items:[]}}
+  }
+  const success=/<(?:success)>\s*true\s*<\/(?:success)>/i.test(raw);
+  const items=[];
+  const re=/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi;let m;
+  while((m=re.exec(raw)))items.push({data_hora:xmlTag(m[1],'data_hora'),ocorrencia:xmlTag(m[1],'ocorrencia'),descricao:xmlTag(m[1],'descricao'),cidade:xmlTag(m[1],'cidade')});
+  if(!items.length){
+    const re2=/<tracking(?:\s[^>]*)?>([\s\S]*?)<\/tracking>/gi;while((m=re2.exec(raw)))items.push({data_hora:xmlTag(m[1],'data_hora'),ocorrencia:xmlTag(m[1],'ocorrencia'),descricao:xmlTag(m[1],'descricao'),cidade:xmlTag(m[1],'cidade')});
+  }
+  return{success,items}
+}
+function trackingFlags(items){
+  let saiu=false,entregue=false,last=null;
+  for(const it of items||[]){
+    const txt=(String(it.ocorrencia||'')+' '+String(it.descricao||'')).toUpperCase();
+    if(/SA[IÍ]DA PARA ENTREGA|\(0?85\)|\b085\b/.test(txt))saiu=true;
+    if(/MERCADORIA ENTREGUE|ENTREGA REALIZADA COM RESSALVA|\(0?1\)|\(0?37\)|\b001\b|\b037\b/.test(txt)){entregue=true;saiu=true}
+    last=it;
+  }
+  return{saiu,entregue,last}
+}
+function postForm(url,params){
+  return new Promise((ok,no)=>{
+    const u=new URL(url),body=params.toString();
+    const q=https.request({protocol:u.protocol,hostname:u.hostname,port:u.port||443,path:u.pathname+u.search,method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8','Accept':'application/xml,text/xml,application/json,*/*','Content-Length':Buffer.byteLength(body),'User-Agent':'CONSTRULOG-SSW-Tracking/1.0'}},r=>{
+      let b='';r.setEncoding('utf8');r.on('data',d=>b+=d);r.on('end',()=>{if(r.statusCode>=200&&r.statusCode<300)return ok(b);no(new Error('SSW tracking HTTP '+r.statusCode))})
+    });
+    q.setTimeout(15000,()=>q.destroy(new Error('Tempo esgotado no rastreamento SSW')));q.on('error',no);q.write(body);q.end()
+  })
+}
+async function trackingDestQuery(cnpj,nf){
+  const doc=String(cnpj||'').replace(/\D/g,''),n=String(nf||'').trim();
+  if(doc.length!==14||!n)return{ok:false,items:[],saiu:false,entregue:false};
+  const key=doc+'|'+n,hit=SSW_TRACK_CACHE.get(key),ttl=hit?.value?.entregue?10*60*1000:90*1000;
+  if(hit&&Date.now()-hit.at<ttl)return hit.value;
+  const body=new URLSearchParams();body.append('cnpjdest',doc);body.append('cnpj',doc);body.append('NR',n);body.append('nro_nf',n);body.append('urlori','https://ssw.inf.br/ajuda/rastreamentodestnf.html');
+  try{
+    const raw=await postForm('https://ssw.inf.br/api/trackingdest',body),p=parseTrackingPayload(raw),f=trackingFlags(p.items);
+    const value={ok:p.success!==false,items:p.items,saiu:f.saiu,entregue:f.entregue,last:f.last||null};
+    SSW_TRACK_CACHE.set(key,{at:Date.now(),value});return value
+  }catch(e){
+    const value={ok:false,items:[],saiu:false,entregue:false,error:String(e.message||e)};
+    SSW_TRACK_CACHE.set(key,{at:Date.now(),value});return value
+  }
+}
+async function mapLimit(items,limit,fn){
+  const out=new Array(items.length);let next=0;
+  async function worker(){while(true){const i=next++;if(i>=items.length)return;out[i]=await fn(items[i],i)}}
+  await Promise.all(Array.from({length:Math.min(limit,items.length)},worker));return out
 }
 function normCtrc(v){return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'')}
 function normPlate(v){return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'')}
