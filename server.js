@@ -1,220 +1,224 @@
-import express from 'express';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import fs from 'fs/promises';
-import crypto from 'crypto';
+require("dotenv").config();
+const express = require("express");
+const path = require("path");
+const { Pool } = require("pg");
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
-const DATA_DIR = path.join(__dirname, 'data');
+const DATABASE_URL = process.env.DATABASE_URL || "";
+const APP_PIN = String(process.env.APP_PIN || "").trim();
 
-app.use(express.json({ limit: '350kb' }));
-app.use(express.static(path.join(__dirname, 'public')));
-
-async function readJson(name, fallback = []) {
-  try {
-    const raw = await fs.readFile(path.join(DATA_DIR, name), 'utf8');
-    return JSON.parse(raw);
-  } catch (error) {
-    if (error?.code === 'ENOENT') return fallback;
-    throw error;
-  }
+if (!DATABASE_URL) {
+  console.warn("ATENÇÃO: DATABASE_URL não configurada. A sincronização online não funcionará.");
 }
 
-async function writeJson(name, value) {
-  const file = path.join(DATA_DIR, name);
-  const temp = `${file}.tmp`;
-  await fs.writeFile(temp, JSON.stringify(value, null, 2) + '\n', 'utf8');
-  await fs.rename(temp, file);
-}
+const pool = DATABASE_URL ? new Pool({
+  connectionString: DATABASE_URL,
+  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+}) : null;
 
-const text = (value, max = 160) => String(value ?? '').trim().slice(0, max);
-const maybeUrl = value => {
-  const v = text(value, 600);
-  if (!v) return '';
-  try {
-    const u = new URL(v);
-    return ['http:', 'https:'].includes(u.protocol) ? u.href : '';
-  } catch { return ''; }
-};
-const maybeDate = value => /^\d{4}-\d{2}-\d{2}$/.test(String(value ?? '')) ? String(value) : '';
-const maybeNumber = value => {
-  if (value === '' || value === null || value === undefined) return null;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
-};
+app.use(express.json({ limit: "35mb" }));
+app.use(express.static(path.join(__dirname, "public")));
 
-function normalizeSubmission(body = {}) {
-  const tags = Array.isArray(body.tags)
-    ? body.tags.map(v => text(v, 30)).filter(Boolean).slice(0, 8)
-    : text(body.tags, 240).split(',').map(v => v.trim()).filter(Boolean).slice(0, 8);
-  const vehicles = Array.isArray(body.vehicles)
-    ? body.vehicles.map(v => text(v, 40)).filter(Boolean).slice(0, 8)
-    : [];
-  return {
-    title: text(body.title, 140),
-    category: text(body.category, 60),
-    region: text(body.region, 40),
-    state: text(body.state, 30).toUpperCase(),
-    city: text(body.city, 80),
-    country: text(body.country || 'Brasil', 80),
-    start: maybeDate(body.start),
-    end: maybeDate(body.end) || maybeDate(body.start),
-    organizer: text(body.organizer, 120),
-    source: text(body.organizer || body.source, 120),
-    sourceUrl: maybeUrl(body.sourceUrl),
-    registrationUrl: maybeUrl(body.registrationUrl),
-    photoUrl: maybeUrl(body.photoUrl),
-    summary: text(body.summary, 800),
-    whatsapp: text(body.whatsapp, 30).replace(/[^0-9+]/g, ''),
-    price: text(body.price, 60),
-    difficulty: text(body.difficulty, 40),
-    meetingPoint: text(body.meetingPoint, 180),
-    camping: text(body.camping, 140),
-    lodging: text(body.lodging, 140),
-    vehicles,
-    tags,
-    latitude: maybeNumber(body.latitude),
-    longitude: maybeNumber(body.longitude),
-    statusLabel: text(body.statusLabel || 'Aguardando confirmação', 60),
-    contactName: text(body.contactName, 120),
-    contactEmail: text(body.contactEmail, 160),
-  };
-}
-
-function validateSubmission(s) {
-  const errors = [];
-  if (!s.title) errors.push('Informe o nome do evento.');
-  if (!s.category) errors.push('Informe a categoria.');
-  if (!s.region) errors.push('Informe a região.');
-  if (!s.city) errors.push('Informe a cidade/localidade.');
-  if (!s.start) errors.push('Informe a data inicial.');
-  if (!s.organizer) errors.push('Informe o organizador.');
-  if (!s.summary) errors.push('Inclua uma descrição curta.');
-  if (!s.sourceUrl && !s.registrationUrl) errors.push('Inclua ao menos um link público do evento ou da inscrição.');
-  if (s.end && s.start && s.end < s.start) errors.push('A data final não pode ser anterior à inicial.');
-  return errors;
-}
-
-function publicEventFromSubmission(s) {
-  return {
-    id: `community-${s.id}`,
-    title: s.title,
-    category: s.category,
-    region: s.region,
-    state: s.state || '—',
-    city: s.city,
-    country: s.country,
-    start: s.start,
-    end: s.end,
-    status: s.statusLabel || 'Programado',
-    source: s.organizer,
-    sourceUrl: s.sourceUrl || s.registrationUrl,
-    registrationUrl: s.registrationUrl,
-    photoUrl: s.photoUrl,
-    summary: s.summary,
-    tags: s.tags,
-    difficulty: s.difficulty,
-    price: s.price,
-    whatsapp: s.whatsapp,
-    meetingPoint: s.meetingPoint,
-    camping: s.camping,
-    lodging: s.lodging,
-    vehicles: s.vehicles,
-    latitude: s.latitude,
-    longitude: s.longitude,
-    community: true
-  };
-}
-
-function requireAdmin(req, res, next) {
-  if (!ADMIN_TOKEN) return res.status(503).json({ error: 'Administração não configurada. Defina ADMIN_TOKEN no servidor.' });
-  const token = req.get('x-admin-token') || '';
-  if (!crypto.timingSafeEqual(Buffer.from(token.padEnd(ADMIN_TOKEN.length, '\0').slice(0, ADMIN_TOKEN.length)), Buffer.from(ADMIN_TOKEN))) {
-    return res.status(401).json({ error: 'Token de administrador inválido.' });
-  }
+function requirePin(req, res, next) {
+  if (!APP_PIN) return next();
+  const pin = String(req.header("x-app-pin") || "");
+  if (pin !== APP_PIN) return res.status(401).json({ error: "PIN inválido" });
   next();
 }
 
-app.get('/health', (_req, res) => res.json({ ok: true, app: 'Radar 4x4 Brasil', adminConfigured: Boolean(ADMIN_TOKEN) }));
+async function initDb() {
+  if (!pool) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS trips (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      vehicle TEXT,
+      start_km NUMERIC,
+      notes TEXT,
+      started_at BIGINT NOT NULL,
+      finished_at BIGINT,
+      updated_at BIGINT NOT NULL
+    );
 
-app.get('/api/events', async (_req, res) => {
+    CREATE TABLE IF NOT EXISTS places (
+      id TEXT PRIMARY KEY,
+      trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      date TEXT,
+      time TEXT,
+      notes TEXT,
+      rating INTEGER,
+      photos JSONB DEFAULT '[]'::jsonb,
+      lat DOUBLE PRECISION,
+      lon DOUBLE PRECISION,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS expenses (
+      id TEXT PRIMARY KEY,
+      trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      category TEXT NOT NULL,
+      description TEXT,
+      amount NUMERIC NOT NULL DEFAULT 0,
+      date TEXT,
+      liters NUMERIC,
+      unit_price NUMERIC,
+      notes TEXT,
+      receipt TEXT,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS gps_points (
+      id TEXT PRIMARY KEY,
+      trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      lat DOUBLE PRECISION NOT NULL,
+      lon DOUBLE PRECISION NOT NULL,
+      accuracy DOUBLE PRECISION,
+      ts BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_places_trip ON places(trip_id);
+    CREATE INDEX IF NOT EXISTS idx_expenses_trip ON expenses(trip_id);
+    CREATE INDEX IF NOT EXISTS idx_gps_trip ON gps_points(trip_id);
+  `);
+}
+
+function normalizeState(rows) {
+  return {
+    trips: rows.trips.map(r => ({
+      id:r.id,name:r.name,vehicle:r.vehicle,startKm:r.start_km===null?null:Number(r.start_km),
+      notes:r.notes,startedAt:Number(r.started_at),finishedAt:r.finished_at===null?null:Number(r.finished_at),
+      updatedAt:Number(r.updated_at)
+    })),
+    places: rows.places.map(r => ({
+      id:r.id,tripId:r.trip_id,name:r.name,date:r.date,time:r.time,notes:r.notes,rating:r.rating,
+      photos:r.photos||[],lat:r.lat,lon:r.lon,createdAt:Number(r.created_at),updatedAt:Number(r.updated_at)
+    })),
+    expenses: rows.expenses.map(r => ({
+      id:r.id,tripId:r.trip_id,category:r.category,description:r.description,amount:Number(r.amount||0),
+      date:r.date,liters:r.liters===null?null:Number(r.liters),unitPrice:r.unit_price===null?null:Number(r.unit_price),
+      notes:r.notes,receipt:r.receipt,createdAt:Number(r.created_at),updatedAt:Number(r.updated_at)
+    })),
+    gps: rows.gps.map(r => ({
+      id:r.id,tripId:r.trip_id,lat:r.lat,lon:r.lon,accuracy:r.accuracy,ts:Number(r.ts),updatedAt:Number(r.updated_at)
+    }))
+  };
+}
+
+async function readState(client=pool) {
+  const [trips, places, expenses, gps] = await Promise.all([
+    client.query("SELECT * FROM trips ORDER BY started_at DESC"),
+    client.query("SELECT * FROM places ORDER BY created_at DESC"),
+    client.query("SELECT * FROM expenses ORDER BY created_at DESC"),
+    client.query("SELECT * FROM gps_points ORDER BY ts ASC")
+  ]);
+  return normalizeState({ trips:trips.rows, places:places.rows, expenses:expenses.rows, gps:gps.rows });
+}
+
+app.get("/api/health", async (req,res) => {
   try {
-    const [base, submissions] = await Promise.all([
-      readJson('events.json', []),
-      readJson('submissions.json', [])
-    ]);
-    const approved = submissions.filter(x => x.reviewStatus === 'approved').map(publicEventFromSubmission);
-    res.json([...base, ...approved].sort((a, b) => a.start.localeCompare(b.start)));
-  } catch {
-    res.status(500).json({ error: 'Falha ao carregar eventos.' });
+    if (!pool) return res.json({ ok:true, database:false, pinRequired:!!APP_PIN });
+    await pool.query("SELECT 1");
+    res.json({ ok:true, database:true, pinRequired:!!APP_PIN });
+  } catch (e) {
+    res.status(500).json({ ok:false, error:e.message, pinRequired:!!APP_PIN });
   }
 });
 
-app.get('/api/sources', async (_req, res) => {
-  try { res.json(await readJson('sources.json', [])); }
-  catch { res.status(500).json({ error: 'Falha ao carregar fontes.' }); }
+app.use("/api", requirePin);
+
+app.get("/api/state", async (req,res) => {
+  if (!pool) return res.status(503).json({ error:"Banco online não configurado" });
+  try { res.json(await readState()); }
+  catch(e){ res.status(500).json({ error:e.message }); }
 });
 
-app.post('/api/submissions', async (req, res) => {
-  try {
-    const normalized = normalizeSubmission(req.body);
-    const errors = validateSubmission(normalized);
-    if (errors.length) return res.status(400).json({ error: errors.join(' ') });
+app.post("/api/sync", async (req,res) => {
+  if (!pool) return res.status(503).json({ error:"Banco online não configurado" });
+  const body = req.body || {};
+  const trips = Array.isArray(body.trips) ? body.trips : [];
+  const places = Array.isArray(body.places) ? body.places : [];
+  const expenses = Array.isArray(body.expenses) ? body.expenses : [];
+  const gps = Array.isArray(body.gps) ? body.gps : [];
+  const deletes = Array.isArray(body.deletes) ? body.deletes : [];
 
-    const submissions = await readJson('submissions.json', []);
-    const now = new Date().toISOString();
-    const item = {
-      id: crypto.randomUUID(),
-      ...normalized,
-      reviewStatus: 'pending',
-      createdAt: now,
-      updatedAt: now,
-      reviewNote: ''
-    };
-    submissions.unshift(item);
-    await writeJson('submissions.json', submissions);
-    res.status(201).json({ id: item.id, status: item.reviewStatus, message: 'Evento enviado para revisão.' });
-  } catch {
-    res.status(500).json({ error: 'Não foi possível salvar o envio.' });
+  const c = await pool.connect();
+  try {
+    await c.query("BEGIN");
+
+    for (const t of trips) {
+      await c.query(`
+        INSERT INTO trips(id,name,vehicle,start_km,notes,started_at,finished_at,updated_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+        ON CONFLICT(id) DO UPDATE SET
+          name=EXCLUDED.name, vehicle=EXCLUDED.vehicle, start_km=EXCLUDED.start_km,
+          notes=EXCLUDED.notes, started_at=EXCLUDED.started_at, finished_at=EXCLUDED.finished_at,
+          updated_at=EXCLUDED.updated_at
+        WHERE EXCLUDED.updated_at >= trips.updated_at
+      `,[t.id,t.name,t.vehicle||null,t.startKm||null,t.notes||null,t.startedAt,t.finishedAt||null,t.updatedAt||Date.now()]);
+    }
+
+    for (const p of places) {
+      await c.query(`
+        INSERT INTO places(id,trip_id,name,date,time,notes,rating,photos,lat,lon,created_at,updated_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12)
+        ON CONFLICT(id) DO UPDATE SET
+          trip_id=EXCLUDED.trip_id,name=EXCLUDED.name,date=EXCLUDED.date,time=EXCLUDED.time,
+          notes=EXCLUDED.notes,rating=EXCLUDED.rating,photos=EXCLUDED.photos,lat=EXCLUDED.lat,lon=EXCLUDED.lon,
+          created_at=EXCLUDED.created_at,updated_at=EXCLUDED.updated_at
+        WHERE EXCLUDED.updated_at >= places.updated_at
+      `,[p.id,p.tripId,p.name,p.date||null,p.time||null,p.notes||null,p.rating||null,JSON.stringify(p.photos||[]),
+         p.lat||null,p.lon||null,p.createdAt,p.updatedAt||Date.now()]);
+    }
+
+    for (const e of expenses) {
+      await c.query(`
+        INSERT INTO expenses(id,trip_id,category,description,amount,date,liters,unit_price,notes,receipt,created_at,updated_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        ON CONFLICT(id) DO UPDATE SET
+          trip_id=EXCLUDED.trip_id,category=EXCLUDED.category,description=EXCLUDED.description,
+          amount=EXCLUDED.amount,date=EXCLUDED.date,liters=EXCLUDED.liters,unit_price=EXCLUDED.unit_price,
+          notes=EXCLUDED.notes,receipt=EXCLUDED.receipt,created_at=EXCLUDED.created_at,updated_at=EXCLUDED.updated_at
+        WHERE EXCLUDED.updated_at >= expenses.updated_at
+      `,[e.id,e.tripId,e.category,e.description||null,e.amount||0,e.date||null,e.liters||null,e.unitPrice||null,
+         e.notes||null,e.receipt||null,e.createdAt,e.updatedAt||Date.now()]);
+    }
+
+    for (const g of gps) {
+      await c.query(`
+        INSERT INTO gps_points(id,trip_id,lat,lon,accuracy,ts,updated_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7)
+        ON CONFLICT(id) DO UPDATE SET
+          trip_id=EXCLUDED.trip_id,lat=EXCLUDED.lat,lon=EXCLUDED.lon,accuracy=EXCLUDED.accuracy,
+          ts=EXCLUDED.ts,updated_at=EXCLUDED.updated_at
+        WHERE EXCLUDED.updated_at >= gps_points.updated_at
+      `,[g.id,g.tripId,g.lat,g.lon,g.accuracy||null,g.ts,g.updatedAt||Date.now()]);
+    }
+
+    for (const d of deletes) {
+      const table = ({trip:"trips",place:"places",expense:"expenses",gps:"gps_points"})[d.entity];
+      if (table && d.entityId) await c.query(`DELETE FROM ${table} WHERE id=$1`,[d.entityId]);
+    }
+
+    await c.query("COMMIT");
+    res.json(await readState(c));
+  } catch(e) {
+    await c.query("ROLLBACK");
+    res.status(500).json({ error:e.message });
+  } finally {
+    c.release();
   }
 });
 
-app.get('/api/submissions/:id/status', async (req, res) => {
-  try {
-    const submissions = await readJson('submissions.json', []);
-    const item = submissions.find(x => x.id === req.params.id);
-    if (!item) return res.status(404).json({ error: 'Envio não encontrado.' });
-    res.json({ id: item.id, title: item.title, status: item.reviewStatus, reviewNote: item.reviewNote || '', updatedAt: item.updatedAt });
-  } catch {
-    res.status(500).json({ error: 'Falha ao consultar envio.' });
-  }
-});
+app.get("*", (req,res) => res.sendFile(path.join(__dirname,"public","index.html")));
 
-app.get('/api/admin/submissions', requireAdmin, async (_req, res) => {
-  try { res.json(await readJson('submissions.json', [])); }
-  catch { res.status(500).json({ error: 'Falha ao carregar envios.' }); }
-});
-
-app.patch('/api/admin/submissions/:id', requireAdmin, async (req, res) => {
-  try {
-    const action = text(req.body.action, 20);
-    if (!['approved', 'rejected', 'pending'].includes(action)) return res.status(400).json({ error: 'Ação inválida.' });
-    const submissions = await readJson('submissions.json', []);
-    const index = submissions.findIndex(x => x.id === req.params.id);
-    if (index < 0) return res.status(404).json({ error: 'Envio não encontrado.' });
-    submissions[index].reviewStatus = action;
-    submissions[index].reviewNote = text(req.body.note, 300);
-    submissions[index].updatedAt = new Date().toISOString();
-    await writeJson('submissions.json', submissions);
-    res.json({ ok: true, id: submissions[index].id, status: action });
-  } catch {
-    res.status(500).json({ error: 'Falha ao atualizar envio.' });
-  }
-});
-
-app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-app.listen(PORT, '0.0.0.0', () => console.log(`Radar 4x4 Brasil em http://0.0.0.0:${PORT}`));
+initDb()
+  .then(() => app.listen(PORT, () => console.log(`Diário de Bordo V2 rodando na porta ${PORT}`)))
+  .catch(err => {
+    console.error("Falha ao inicializar banco:", err);
+    process.exit(1);
+  });
