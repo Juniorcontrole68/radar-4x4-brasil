@@ -41,24 +41,181 @@ async function savePlace(){
   await put("places",p);$("placeForm").reset();placeLocation=null;$("placeLocationText").textContent="Sem localização";$("placeDialog").close();selectedTripId=trip.id;await refresh();syncNow(true);toast("Lugar salvo.")
 }
 
-function brNumber(s){s=String(s||"").replace(/[^\d,.\-]/g,"");if(!s)return null;if(s.includes(",")&&s.includes(".")){s=s.lastIndexOf(",")>s.lastIndexOf(".")?s.replace(/\./g,"").replace(",","."):s.replace(/,/g,"")}else if(s.includes(","))s=s.replace(",",".");const n=Number(s);return Number.isFinite(n)?n:null}
-function parseReceipt(text){
-  const t=text.replace(/\s+/g," "),out={amount:null,liters:null,unitPrice:null};
-  const aps=[/(?:valor\s*total|total\s*(?:r\$)?|vl\.?\s*total|a\s*pagar|total\s*geral)\s*[:\-]?\s*(?:r\$)?\s*([\d.,]+)/i,/(?:r\$)\s*([\d.,]+)/i];
-  for(const re of aps){const m=t.match(re);if(m){const n=brNumber(m[1]);if(n&&n>1){out.amount=n;break}}}
-  const lps=[/(?:litros?|quantidade|qtd\.?)\s*[:\-]?\s*([\d.,]+)\s*(?:l|lt|litros?)?/i,/([\d.,]+)\s*(?:l|lt|litros?)\b/i];
-  for(const re of lps){const m=t.match(re);if(m){const n=brNumber(m[1]);if(n&&n>.5&&n<500){out.liters=n;break}}}
-  const ups=[/(?:pre[cç]o\s*(?:unit[aá]rio)?|valor\s*(?:unit[aá]rio)?|r\$\/l|pre[cç]o\/l)\s*[:\-]?\s*(?:r\$)?\s*([\d.,]+)/i];
-  for(const re of ups){const m=t.match(re);if(m){const n=brNumber(m[1]);if(n&&n>1&&n<20){out.unitPrice=n;break}}}
-  if(!out.unitPrice&&out.amount&&out.liters)out.unitPrice=out.amount/out.liters;if(!out.amount&&out.liters&&out.unitPrice)out.amount=out.liters*out.unitPrice;return out
+function brNumber(s){
+  s=String(s||"").replace(/[^\d,.\-]/g,"");
+  if(!s)return null;
+  if(s.includes(",")&&s.includes(".")){
+    s=s.lastIndexOf(",")>s.lastIndexOf(".")?s.replace(/\./g,"").replace(",","."):s.replace(/,/g,"");
+  }else if(s.includes(","))s=s.replace(",",".");
+  const n=Number(s);
+  return Number.isFinite(n)?n:null;
 }
+
+function parseReceipt(text){
+  const raw=String(text||"");
+  const t=raw.replace(/\s+/g," ");
+  const out={amount:null,liters:null,unitPrice:null,date:null,fuelType:null};
+
+  const totalPatterns=[
+    /(?:valor\s*total|total\s*a\s*pagar|valor\s*a\s*pagar|total\s*geral|vl\.?\s*total)\s*[:\-]?\s*(?:r\$)?\s*([\d.,]+)/i,
+    /(?:total)\s*(?:r\$)?\s*[:\-]?\s*([\d.,]+)/i,
+    /(?:r\$)\s*([\d.,]+)\s*(?:total|a\s*pagar)?/i
+  ];
+  for(const re of totalPatterns){
+    const m=t.match(re);
+    if(m){
+      const n=brNumber(m[1]);
+      if(n&&n>1&&n<10000){out.amount=n;break;}
+    }
+  }
+
+  const literPatterns=[
+    /(?:litros?|volume|quantidade\s*(?:de\s*combust[ií]vel)?|qtd\.?|qtde\.?)\s*[:\-]?\s*([\d.,]+)\s*(?:l|lt|litros?)?/i,
+    /([\d.,]+)\s*(?:l|lt|litros?)\b/i
+  ];
+  for(const re of literPatterns){
+    const m=t.match(re);
+    if(m){
+      const n=brNumber(m[1]);
+      if(n&&n>=0.5&&n<500){out.liters=n;break;}
+    }
+  }
+
+  const unitPatterns=[
+    /(?:pre[cç]o\s*(?:unit[aá]rio)?|valor\s*(?:unit[aá]rio)?|vl\.?\s*unit[aá]rio|r\$\s*\/\s*l|pre[cç]o\s*\/\s*l)\s*[:\-]?\s*(?:r\$)?\s*([\d.,]+)/i,
+    /(?:unit[aá]rio)\s*(?:r\$)?\s*([\d.,]+)/i
+  ];
+  for(const re of unitPatterns){
+    const m=t.match(re);
+    if(m){
+      const n=brNumber(m[1]);
+      if(n&&n>1&&n<30){out.unitPrice=n;break;}
+    }
+  }
+
+  // Formato comum em abastecimentos: 42,350 X 5,899
+  const mult=t.match(/([\d]{1,3}[.,][\d]{2,3})\s*[xX*]\s*(?:r\$\s*)?([\d]{1,2}[.,][\d]{2,3})/);
+  if(mult){
+    const q=brNumber(mult[1]), u=brNumber(mult[2]);
+    if(!out.liters&&q>=0.5&&q<500)out.liters=q;
+    if(!out.unitPrice&&u>1&&u<30)out.unitPrice=u;
+    if(!out.amount&&q&&u){
+      const product=q*u;
+      if(product>1&&product<10000)out.amount=product;
+    }
+  }
+
+  const dateMatch=t.match(/\b([0-3]\d)[\/\-.]([01]\d)[\/\-.](20\d{2})\b/);
+  if(dateMatch)out.date=`${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}`;
+
+  const fuelMatch=t.match(/\b(DIESEL\s*S\s*-?\s*10|DIESEL\s*S\s*-?\s*500|GASOLINA\s*COMUM|GASOLINA\s*ADITIVADA|ETANOL(?:\s*HIDRATADO)?)\b/i);
+  if(fuelMatch)out.fuelType=fuelMatch[1].replace(/\s+/g," ").toUpperCase();
+
+  if(!out.unitPrice&&out.amount&&out.liters)out.unitPrice=out.amount/out.liters;
+  if(!out.amount&&out.liters&&out.unitPrice)out.amount=out.liters*out.unitPrice;
+
+  return out;
+}
+
+async function prepareOcrSource(file){
+  const data=await new Promise((resolve,reject)=>{
+    const r=new FileReader();
+    r.onload=()=>resolve(r.result);
+    r.onerror=reject;
+    r.readAsDataURL(file);
+  });
+  const img=await new Promise((resolve,reject)=>{
+    const i=new Image();
+    i.onload=()=>resolve(i);
+    i.onerror=reject;
+    i.src=data;
+  });
+
+  const max=1900;
+  const scale=Math.min(1,max/Math.max(img.width,img.height));
+  const canvas=document.createElement("canvas");
+  canvas.width=Math.max(1,Math.round(img.width*scale));
+  canvas.height=Math.max(1,Math.round(img.height*scale));
+  const ctx=canvas.getContext("2d");
+  ctx.drawImage(img,0,0,canvas.width,canvas.height);
+
+  const image=ctx.getImageData(0,0,canvas.width,canvas.height);
+  const d=image.data;
+  for(let i=0;i<d.length;i+=4){
+    const gray=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+    const contrast=Math.max(0,Math.min(255,(gray-128)*1.35+128));
+    d[i]=d[i+1]=d[i+2]=contrast;
+  }
+  ctx.putImageData(image,0,0);
+  return canvas;
+}
+
 async function runOCR(file){
-  $("ocrBox").classList.remove("hidden");$("ocrProgress").value=0;$("ocrStatus").textContent="Lendo...";
+  if(!file)return toast("Tire ou selecione uma foto da NF primeiro.");
+  $("ocrBox").classList.remove("hidden");
+  $("ocrProgress").value=0;
+  $("ocrStatus").textContent="Preparando...";
+  $("readReceiptBtn").disabled=true;
+
   try{
-    const r=await Tesseract.recognize(file,"por",{logger:m=>{if(m.status==="recognizing text"){$("ocrProgress").value=m.progress||0;$("ocrStatus").textContent=`${Math.round((m.progress||0)*100)}%`}}});
-    const p=parseReceipt(r.data.text||"");if(p.amount)$("expenseAmount").value=p.amount.toFixed(2);if(p.liters)$("fuelLiters").value=p.liters.toFixed(3);if(p.unitPrice)$("fuelUnitPrice").value=p.unitPrice.toFixed(3);
-    $("ocrStatus").textContent="Concluído";$("ocrHint").textContent=(p.amount||p.liters)?"Confira os valores encontrados antes de salvar.":"Não consegui identificar com segurança. Preencha manualmente."
-  }catch{$("ocrStatus").textContent="Falha";$("ocrHint").textContent="Preencha os valores manualmente."}
+    if(!window.Tesseract)throw new Error("Leitor OCR indisponível");
+    const source=await prepareOcrSource(file);
+    $("ocrStatus").textContent="Lendo...";
+    const r=await Tesseract.recognize(source,"por",{
+      logger:m=>{
+        if(m.status==="recognizing text"){
+          $("ocrProgress").value=m.progress||0;
+          $("ocrStatus").textContent=`${Math.round((m.progress||0)*100)}%`;
+        }
+      }
+    });
+
+    const p=parseReceipt(r.data.text||"");
+    if(p.amount)$("expenseAmount").value=p.amount.toFixed(2);
+    if(p.liters)$("fuelLiters").value=p.liters.toFixed(3);
+    if(p.unitPrice)$("fuelUnitPrice").value=p.unitPrice.toFixed(3);
+    if(p.date)$("expenseDate").value=p.date;
+    if(p.fuelType&&!$("expenseDescription").value.trim())$("expenseDescription").value=p.fuelType;
+
+    const found=[];
+    if(p.amount)found.push("valor "+money(p.amount));
+    if(p.liters)found.push(num(p.liters,3)+" L");
+    if(p.unitPrice)found.push(money(p.unitPrice)+"/L");
+
+    $("ocrStatus").textContent="Concluído";
+    $("ocrProgress").value=1;
+    $("ocrHint").textContent=found.length
+      ? "Encontrado: "+found.join(" • ")+". Confira os campos antes de salvar."
+      : "Não consegui identificar os valores com segurança. Tente outra foto mais próxima e bem iluminada.";
+    toast(found.length?"NF lida. Confira os valores preenchidos.":"Não consegui ler os valores da NF.");
+  }catch(e){
+    $("ocrStatus").textContent="Falha";
+    $("ocrHint").textContent="Não foi possível ler a foto. Tente novamente com a nota inteira, sem sombra e com boa luz.";
+    toast("Falha ao ler a NF.");
+  }finally{
+    $("readReceiptBtn").disabled=!$("receiptPhoto").files[0];
+  }
+}
+
+function resetReceiptReader(){
+  $("ocrBox").classList.add("hidden");
+  $("ocrProgress").value=0;
+  $("ocrStatus").textContent="Aguardando";
+  $("ocrHint").textContent="Tentarei identificar valor total, litros e preço por litro.";
+  $("receiptPreviewBox").classList.add("hidden");
+  $("receiptPreview").removeAttribute("src");
+  $("receiptFileName").textContent="";
+  $("readReceiptBtn").disabled=true;
+}
+
+function showReceiptPreview(file){
+  if(!file)return resetReceiptReader();
+  const url=URL.createObjectURL(file);
+  $("receiptPreview").src=url;
+  $("receiptPreview").onload=()=>URL.revokeObjectURL(url);
+  $("receiptFileName").textContent=file.name||"Foto da NF";
+  $("receiptPreviewBox").classList.remove("hidden");
+  $("readReceiptBtn").disabled=false;
 }
 async function saveExpense(){
   const trip=currentActiveTripOrWarn();if(!trip)return;const amount=Number($("expenseAmount").value||0);if(amount<0)return;
@@ -119,9 +276,14 @@ $("addPlaceBtn").onclick=()=>{if(!currentActiveTripOrWarn())return;$("placeDate"
 $("addPlaceFromGpsBtn").onclick=async()=>{if(!currentActiveTripOrWarn())return;$("addPlaceBtn").click();try{placeLocation=await capturePosition();$("placeLocationText").textContent=`${placeLocation.lat.toFixed(5)}, ${placeLocation.lon.toFixed(5)}`}catch(e){toast(e.message)}};
 $("capturePlaceLocation").onclick=async()=>{try{placeLocation=await capturePosition();$("placeLocationText").textContent=`${placeLocation.lat.toFixed(5)}, ${placeLocation.lon.toFixed(5)} • ±${Math.round(placeLocation.accuracy)}m`}catch(e){toast(e.message)}};
 $("savePlaceBtn").onclick=e=>{e.preventDefault();savePlace()};
-$("addExpenseBtn").onclick=async()=>{const t=currentActiveTripOrWarn();if(!t)return;$("expenseForm").reset();$("expenseCategory").value="combustivel";$("expenseDate").value=today();$("fuelFields").style.display="block";$("ocrBox").classList.add("hidden");const d=calcDistance(gpsPoints);$("fuelEstimatedKm").textContent=t.startKm?`${num(Number(t.startKm)+d,1)} km`:"KM inicial não informado";$("expenseDialog").showModal()};
+$("addExpenseBtn").onclick=async()=>{const t=currentActiveTripOrWarn();if(!t)return;$("expenseForm").reset();$("expenseCategory").value="combustivel";$("expenseDate").value=today();$("fuelFields").style.display="block";resetReceiptReader();const d=calcDistance(gpsPoints);$("fuelEstimatedKm").textContent=t.startKm?`${num(Number(t.startKm)+d,1)} km`:"KM inicial não informado";$("expenseDialog").showModal()};
 $("expenseCategory").onchange=e=>{$("fuelFields").style.display=e.target.value==="combustivel"?"block":"none"};
-$("receiptPhoto").onchange=e=>{if(e.target.files[0]&&$("expenseCategory").value==="combustivel")runOCR(e.target.files[0])};
+$("receiptPhoto").onchange=e=>{
+  const file=e.target.files[0];
+  showReceiptPreview(file);
+  if(file&&$("expenseCategory").value==="combustivel")runOCR(file);
+};
+$("readReceiptBtn").onclick=()=>runOCR($("receiptPhoto").files[0]);
 $("saveExpenseBtn").onclick=e=>{e.preventDefault();saveExpense()};
 $("expenseFilter").onchange=()=>refresh(false);
 $("exportJsonBtn").onclick=exportJSON;$("exportCsvBtn").onclick=exportCSV;$("importJsonInput").onchange=e=>e.target.files[0]&&importJSON(e.target.files[0]);$("pdfBtn").onclick=generatePDF;
