@@ -223,6 +223,31 @@ async function fetchSsw38Rows(){
                 let respSkel=String(dt).replace(/ssw[^"'<>\s]*?\.pdf/gi,'FILE.pdf').replace(/\b\d{2,}\b/g,'#').replace(/\s+/g,' ').slice(0,600);
                 console.log('SSW0146 resposta: '+JSON.stringify({functions:fnNames,skeleton:respSkel}));
                 try{
+                  const wm=(dt.match(/name=web_body[^>]*value=["']([^"']+)["']/i)||[])[1]||'';
+                  const decoded=decodeURIComponent(wm.replace(/&amp;/g,'&'));
+                  const am=decoded.match(/abrir\(['"]([^'"]+)['"],['"]([^'"]+)['"],(\d+),(\d+),['"]([^'"]+)['"]/i);
+                  if(am){
+                    const pdfUrl=new URL('/bin/ssw0424','https://sistema.ssw.inf.br');
+                    pdfUrl.searchParams.set('act',am[1]);pdfUrl.searchParams.set('filename',am[2]);pdfUrl.searchParams.set('path',am[5]);pdfUrl.searchParams.set('down',am[3]);pdfUrl.searchParams.set('nw',am[4]);
+                    const pr=await fetch(pdfUrl,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':du},redirect:'manual',signal:AbortSignal.timeout(20000)});
+                    apply(pr.headers);const buf=Buffer.from(await pr.arrayBuffer());
+                    const magic=buf.subarray(0,5).toString('latin1');
+                    let pdftotext={ok:false};
+                    if(magic.startsWith('%PDF')){
+                      const tmp='/tmp/construlog-romaneio-test.pdf';fs.writeFileSync(tmp,buf);
+                      pdftotext=await new Promise(resolve=>{
+                        const p=spawn('pdftotext',[tmp,'-']);let out='',err='';
+                        const tm=setTimeout(()=>{p.kill('SIGKILL');resolve({ok:false,error:'timeout'})},10000);
+                        p.stdout.on('data',d=>out+=d);p.stderr.on('data',d=>err+=d);
+                        p.on('error',e=>{clearTimeout(tm);resolve({ok:false,error:e.code||e.message})});
+                        p.on('close',code=>{clearTimeout(tm);resolve({ok:code===0,code,chars:out.length,lines:out.split(/\r?\n/).filter(Boolean).length,hasCtrc:/CTRC|CT-E|CTE/i.test(out),hasNf:/\bNF\b|NOTA/i.test(out),error:code===0?'':err.slice(0,120)})});
+                      });
+                      try{fs.unlinkSync(tmp)}catch{}
+                    }
+                    console.log('SSW PDF teste: '+JSON.stringify({status:pr.status,type:pr.headers.get('content-type')||'',bytes:buf.length,magic,pdftotext}));
+                  }
+                }catch(e){console.log('SSW PDF teste ERRO: '+e.message)}
+                try{
                   const sr=await fetch('https://sistema.ssw.inf.br/scripts/ssw_020926.js?version=1',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},signal:AbortSignal.timeout(15000)});
                   const sj=await sr.text();
                   const ai=sj.search(/function\s+abrir\s*\(/i);
