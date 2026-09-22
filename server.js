@@ -236,7 +236,7 @@ async function fetchSsw38Rows(){
                     if(magic.startsWith('%PDF')){
                       const tmp='/tmp/construlog-romaneio-test.pdf';fs.writeFileSync(tmp,buf);
                       pdftotext=await new Promise(resolve=>{
-                        const p=spawn('pdftotext',[tmp,'-']);let out='',err='';
+                        const p=spawn('pdftotext',['-layout',tmp,'-']);let out='',err='';
                         const tm=setTimeout(()=>{p.kill('SIGKILL');resolve({ok:false,error:'timeout'})},10000);
                         p.stdout.on('data',d=>out+=d);p.stderr.on('data',d=>err+=d);
                         p.on('error',e=>{clearTimeout(tm);resolve({ok:false,error:e.code||e.message})});
