@@ -175,6 +175,21 @@ async function fetchSsw38Rows(){
       if(!p.rows.length)p=parseSsw38Xml(body38);
       if(p.rows.length){
         try{
+          const fr=(body38.match(/<r\b[^>]*>([\s\S]*?)<\/r>/i)||[])[1]||'',attrs={};
+          for(const fm of fr.matchAll(/<f(\d+)\b([^>]*)>([\s\S]*?)<\/f\1>/gi)){
+            const n=Number(fm[1]);if(n<8||n>17)continue;
+            const a=fm[2]||'',inner=String(fm[3]||'').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#39;/gi,"'").replace(/&amp;/gi,'&');
+            const names=[...a.matchAll(/\b([A-Za-z_:][-A-Za-z0-9_:.]*)\s*=/g)].map(x=>x[1]);
+            const programs=[...new Set([...a.matchAll(/ssw\d{3,6}/gi),...inner.matchAll(/ssw\d{3,6}/gi)].map(x=>x[0]))];
+            const params=[...new Set([...a.matchAll(/\b(nro_romaneio|seq_romaneio|nro_ctrc|seq_ctrc|placa|act|origem)\b/gi),...inner.matchAll(/\b(nro_romaneio|seq_romaneio|nro_ctrc|seq_ctrc|placa|act|origem)\b/gi)].map(x=>x[1]))];
+            const funcs=[...new Set([...a.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*)\s*\(/g),...inner.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)].map(x=>x[1]).filter(x=>!['Number','String'].includes(x)))];
+            attrs['f'+n]={attrNames:[...new Set(names)],programs,params,funcs:funcs.slice(0,12),textLen:htmlText38(inner).length};
+          }
+          console.log('SSW38 controles romaneio: '+JSON.stringify(attrs));
+        }catch(e){console.log('SSW38 controles ERRO: '+e.message)}
+      }
+      if(p.rows.length){
+        try{
           const fr=(body38.match(/<r\b[^>]*>([\s\S]*?)<\/r>/i)||[])[1]||'',f0=(fr.match(/<f0\b[^>]*>([\s\S]*?)<\/f0>/i)||[])[1]||'';
           const dec=String(f0).replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#39;/gi,"'").replace(/&amp;/gi,'&');
           const href=(dec.match(/href=["']([^"']+)/i)||[])[1]||'',onclick=(dec.match(/onclick=["']([\s\S]*?)["']/i)||[])[1]||'';
