@@ -210,6 +210,17 @@ async function fetchSsw38Rows(){
             const pc=d0.toLowerCase().indexOf('ssw0146'),ctx=pc>=0?d0.slice(Math.max(0,pc-180),pc+260):'';
             const cleanSkel=s=>String(s||'').replace(/AMR\d+-\d+/gi,'ROM').replace(/\b\d{2,}\b/g,'#').replace(/\s+/g,' ').slice(0,500);
             console.log('SSW38 f0 chamada: '+JSON.stringify({ajax:cleanSkel(call),contexto:cleanSkel(ctx)}));
+            try{
+              const mm0=String(p.rows[0]?.romaneio||'').match(/^([A-Z]{3})0*(\d+)-(\d+)$/i);
+              if(mm0){
+                const du='https://sistema.ssw.inf.br/bin/ssw0146?act=PES&f1='+encodeURIComponent(mm0[1])+'&f2='+encodeURIComponent(mm0[2])+'&f3='+encodeURIComponent(mm0[3]);
+                const dr=await fetch(du,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/'+prog},redirect:'manual',signal:AbortSignal.timeout(15000)});
+                apply(dr.headers);const dt=await dr.text();
+                const headings=[...dt.matchAll(/<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>/gi)].map(x=>htmlText38(x[1])).filter(x=>x&&x.length<80).slice(0,50);
+                const firstR=(dt.match(/<r\b[^>]*>([\s\S]*?)<\/r>/i)||[])[1]||'',fields=[...firstR.matchAll(/<f(\d+)\b/gi)].map(x=>Number(x[1]));
+                console.log('SSW0146 estrutura: '+JSON.stringify({status:dr.status,bytes:Buffer.byteLength(dt),xml:(dt.match(/<xml\b/gi)||[]).length,r:(dt.match(/<r\b/gi)||[]).length,tr:(dt.match(/<tr\b/gi)||[]).length,td:(dt.match(/<td\b/gi)||[]).length,fields,headings,programs:[...new Set([...dt.matchAll(/ssw\d{3,6}/gi)].map(x=>x[0]))].slice(0,20)}));
+              }
+            }catch(e){console.log('SSW0146 estrutura ERRO: '+e.message)}
           }catch{}
           const f13m=(fr.match(/<f13\b[^>]*>([\s\S]*?)<\/f13>/i)||[])[1]||'';
           const d13=String(f13m).replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#39;/gi,"'").replace(/&amp;/gi,'&');
