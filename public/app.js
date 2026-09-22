@@ -95,7 +95,7 @@ function renderSswMotoristas(){
   set('#hubSswOut',nf(Number(d.totalRomaneado||0)||d.saidas||0));set('#hubSswDown',nf(d.baixasSsw||0));set('#hubSswPend',nf(d.pendentes||0));set('#hubSswRate',(d.taxa||0).toFixed(1).replace('.',',')+'%');
   const meta='Período '+d.from+' a '+d.to+' • status on-line SSW consultado em '+nf(d.trackingOk||0)+' de '+nf(d.trackingConsultados||0)+' NF(s)';
   set('#sswDriverMeta',meta);set('#hubSswDriverMeta',meta);
-  const note=$('#sswDriverNote');if(note){note.textContent=(d.totalRomaneado?'BASE OFICIAL DA OPÇÃO 38: '+nf(d.totalRomaneado)+' CT-es em '+nf((d.romaneios38||[]).length)+' romaneios e '+nf((d.motoristas38||[]).length)+' motoristas. ':'')+'Verde = entregue, amarelo = pendente, vermelho = ocorrência. CT-es ainda sem vínculo confirmado permanecem amarelos.';note.style.display='block'}
+  const note=$('#sswDriverNote');if(note){note.textContent=(d.totalRomaneado?'BASE OFICIAL DA OPÇÃO 38: '+nf(d.totalRomaneado)+' CT-es em '+nf((d.romaneios38||[]).length)+' romaneios e '+nf((d.motoristas38||[]).length)+' motoristas. ':'')+'Verde = entregue, amarelo = pendente real na coluna Falta Ocorr. da opção 38, vermelho = baixa com ocorrência.';note.style.display='block'}
   const M=(d.motoristas||[]).slice(0,12),labels=M.map(x=>x.motorista||x.veiculo||'Sem identificação');
   lines('#sswDriverChart',labels,M.map(x=>x.saidas||0),M.map(x=>x.baixadas||0));
   const O=(d.ocorrencias||[]).slice(0,10);bars('#sswDriverOccChart',O.map(x=>x.label),O.map(x=>x.value));
