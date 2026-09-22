@@ -124,8 +124,16 @@ function parseSsw38Xml(xml){
     const raw=rm[1],fields={};
     for(const fm of raw.matchAll(/<f(\d+)\b[^>]*>([\s\S]*?)<\/f\1>/gi))fields[fm[1]]=htmlText38(fm[2]);
     const get=n=>fields[String(n)]||'';
+    const rawAll=[...raw.matchAll(/<f\d+\b[^>]*>([\s\S]*?)<\/f\d+>/gi)].map(m=>String(m[1]||'').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#39;/gi,"'").replace(/&amp;/gi,'&')).join(' ');
+    let seqRomaneio='';
+    const pats=[
+      /seq_romaneio(?:\.value)?\s*=\s*["']?(\d+)/i,
+      /[?&]seq_romaneio=(\d+)/i,
+      /getElementById\(["']seq_romaneio["']\)\.value\s*=\s*["']?(\d+)/i
+    ];
+    for(const re of pats){const m=rawAll.match(re);if(m){seqRomaneio=m[1];break}}
     const romaneio=get(0),veiculo=get(1),carreta=get(2),inclusao=get(3),modelo=get(4),motorista=get(5),qtde=Number(get(6).replace(/\D/g,''))||0,falta=Number(get(7).replace(/\D/g,''))||0;
-    if(romaneio&&motorista&&qtde)rows.push({romaneio,veiculo,carreta,inclusao,modelo,motorista,qtdeCtrcs:qtde,faltaOcorr:falta});
+    if(romaneio&&motorista&&qtde)rows.push({romaneio,veiculo,carreta,inclusao,modelo,motorista,qtdeCtrcs:qtde,faltaOcorr:falta,seqRomaneio});
   }
   return{rows};
 }
@@ -346,6 +354,7 @@ async function fetchSsw38Rows(){
 
   }
   const total=p.rows.reduce((a,x)=>a+x.qtdeCtrcs,0),motoristas=[...new Set(p.rows.map(x=>x.motorista))];
+  console.log('SSW38 sequências: '+JSON.stringify({extraidas:p.rows.filter(x=>x.seqRomaneio).length,total:p.rows.length,unicas:new Set(p.rows.map(x=>x.seqRomaneio).filter(Boolean)).size}));
   return{ok:true,rows:p.rows,total,motoristas:motoristas.length,romaneios:p.rows.length};
 }
 function sswConfig(){return{domain:process.env.SSW_DOMAIN||'',username:process.env.SSW_USERNAME||'',password:process.env.SSW_PASSWORD||'',cnpj:process.env.SSW_CNPJ_EDI||''}}
