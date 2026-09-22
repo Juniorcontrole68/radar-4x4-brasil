@@ -46,8 +46,16 @@ async function testInternalSswLogin(){
     signal:AbortSignal.timeout(15000)
   });
   const cookies=typeof r.headers.getSetCookie==='function'?r.headers.getSetCookie():[];
-  const ok=cookies.some(x=>/^token=|^login=|^ssw_dom=/i.test(x))||/menu01/i.test(r.headers.get('location')||'');
-  return{ok,status:r.status,redirect:!!r.headers.get('location'),cookies:cookies.length}
+  const txt=await r.text();
+  const names=cookies.map(x=>String(x).split('=')[0].trim()).filter(Boolean);
+  const flags={
+    menu01:/menu01/i.test(txt),
+    loginForm:/ssw0422|name=["']f4["']/i.test(txt),
+    credError:/senha.{0,20}(inv[aá]lid|incorret)|usu[aá]rio.{0,20}(inv[aá]lid|incorret)|acesso.{0,20}negad/i.test(txt),
+    scriptRedirect:/location.{0,80}menu01/i.test(txt)
+  };
+  const ok=flags.menu01||flags.scriptRedirect||names.some(x=>/token|login|ssw_dom|chave/i.test(x));
+  return{ok,status:r.status,redirect:!!r.headers.get('location'),cookieNames:names,flags,bodyBytes:Buffer.byteLength(txt)}
 }
 function sswConfig(){return{domain:process.env.SSW_DOMAIN||'',username:process.env.SSW_USERNAME||'',password:process.env.SSW_PASSWORD||'',cnpj:process.env.SSW_CNPJ_EDI||''}}
 function sswConfigured(){const x=sswConfig();return !!(x.domain&&x.username&&x.password&&x.cnpj)}
