@@ -78,7 +78,19 @@ async function testInternalSswLogin(){
     let m;while((m=re.exec(html))&&hints.length<10)hints.push(m[2].replace(/\s+/g,' ').slice(0,220));
     const textHit=html.match(/.{0,120}(?:38\s*[-–:]?\s*BAIXA DE ENTREGAS|BAIXA DE ENTREGAS).{0,220}/i);
     if(textHit)hints.push(textHit[0].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,320));
-    menu={status:mr.status,hints:[...new Set(hints)]};
+    const option38={};
+    for(const unidade of ['AMR','MTZ']){
+      try{
+        const rr=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2='+unidade+'&f3=38',{
+          headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},
+          redirect:'manual',signal:AbortSignal.timeout(15000)
+        });
+        apply(rr.headers);
+        const ot=await rr.text();
+        option38[unidade]={status:rr.status,location:rr.headers.get('location')||'',bytes:Buffer.byteLength(ot),baixa:/baixa/i.test(ot),entrega:/entrega/i.test(ot),romaneio:/romaneio/i.test(ot)};
+      }catch(e){option38[unidade]={error:String(e.message||e)}}
+    }
+    menu={status:mr.status,hints:[...new Set(hints)],option38};
   }
   return{
     ok,status:r.status,cookieNames:names,
