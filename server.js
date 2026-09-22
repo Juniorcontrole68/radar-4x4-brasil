@@ -205,7 +205,20 @@ async function fetchSsw38Rows(){
               const acts=[...new Set([...at.matchAll(/ajaxEnvia\(["']([^"']+)/gi)].map(x=>x[1]))].slice(0,30);
               const progs=[...new Set([...at.matchAll(/ssw\d{3,6}/gi)].map(x=>x[0]))].slice(0,20);
               const title=htmlText38((at.match(/<title[^>]*>([\s\S]*?)<\/title>/i)||[])[1]||'');
-              probes.push({act,status:ar.status,bytes:Buffer.byteLength(at),xml:(at.match(/<xml\b/gi)||[]).length,rows:(at.match(/<r\b/gi)||[]).length,fields:fields.slice(0,30),title,inputs:inps,actions:acts,programs:progs});
+              let mapStats=null;
+              if(act==='PEN'){
+                const roms=p.rows.map(x=>String(x.romaneio||'').toUpperCase()),plates=p.rows.map(x=>normPlate(x.veiculo)),drivers=p.rows.map(x=>norm38(x.motorista));
+                const rr=[...at.matchAll(/<r\b[^>]*>([\s\S]*?)<\/r>/gi)].map(m=>{const o={};for(const fm of m[1].matchAll(/<f(\d+)\b[^>]*>([\s\S]*?)<\/f\1>/gi))o[fm[1]]=htmlText38(fm[2]);return o});
+                const maxField=Math.max(0,...rr.flatMap(o=>Object.keys(o).map(Number)));
+                mapStats=[];
+                for(let n=0;n<=maxField;n++){
+                  const vals=rr.map(o=>String(o[n]||'').trim()).filter(Boolean),up=vals.map(v=>v.toUpperCase()),norms=vals.map(norm38);
+                  const numVals=vals.filter(v=>/^\d{1,4}$/.test(v));
+                  const smallDistinct=[...new Set(numVals.map(v=>Number(v)).filter(v=>v<=999))].sort((a,b)=>a-b).slice(0,25);
+                  mapStats.push({f:n,nonempty:vals.length,unique:new Set(vals).size,rom:up.filter(v=>roms.some(r=>r&&(v===r||v.includes(r)||r.includes(v)))).length,plate:vals.filter(v=>plates.includes(normPlate(v))).length,driver:norms.filter(v=>drivers.includes(v)).length,date:vals.filter(v=>/^\d{2}\/\d{2}\/\d{2,4}/.test(v)).length,time:vals.filter(v=>/^\d{1,2}:\d{2}/.test(v)).length,numeric:numVals.length,smallDistinct,avgLen:vals.length?Math.round(vals.reduce((a,v)=>a+v.length,0)/vals.length):0,maxLen:vals.reduce((a,v)=>Math.max(a,v.length),0)});
+                }
+              }
+              probes.push({act,status:ar.status,bytes:Buffer.byteLength(at),xml:(at.match(/<xml\b/gi)||[]).length,rows:(at.match(/<r\b/gi)||[]).length,fields:fields.slice(0,30),title,inputs:inps,actions:acts,programs:progs,mapStats});
             }catch(e){probes.push({act,error:String(e.message||e)})}
           }
           console.log('SSW38 probe detalhe: '+JSON.stringify(probes));
