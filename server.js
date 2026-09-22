@@ -206,6 +206,10 @@ async function fetchSsw38Rows(){
             const actVals=[...new Set([...d0.matchAll(/(?:act(?:\.value)?|["']act["'])\s*(?:=|,|:)\s*["']([A-Za-z0-9_:-]+)["']/gi)].map(x=>x[1]))];
             let hrefInfo=null;try{if(href0){const u0=new URL(href0,'https://sistema.ssw.inf.br/bin/'+prog);hrefInfo={path:u0.pathname,paramNames:[...u0.searchParams.keys()],act:u0.searchParams.get('act')||''}}}catch{}
             console.log('SSW38 romaneio link f0: '+JSON.stringify({hrefInfo,quoted,actVals,hasAjax:/ajaxEnvia/i.test(d0),hasSsw0146:/ssw0146/i.test(d0)}));
+            const call=(d0.match(/ajaxEnvia\(([^)]{0,320})\)/i)||[])[1]||'';
+            const pc=d0.toLowerCase().indexOf('ssw0146'),ctx=pc>=0?d0.slice(Math.max(0,pc-180),pc+260):'';
+            const cleanSkel=s=>String(s||'').replace(/AMR\d+-\d+/gi,'ROM').replace(/\b\d{2,}\b/g,'#').replace(/\s+/g,' ').slice(0,500);
+            console.log('SSW38 f0 chamada: '+JSON.stringify({ajax:cleanSkel(call),contexto:cleanSkel(ctx)}));
           }catch{}
           const f13m=(fr.match(/<f13\b[^>]*>([\s\S]*?)<\/f13>/i)||[])[1]||'';
           const d13=String(f13m).replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#39;/gi,"'").replace(/&amp;/gi,'&');
