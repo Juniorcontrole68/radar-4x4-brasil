@@ -5,12 +5,6 @@ try{
   const fm=src.match(/const FRONTEND_B64='([^']+)'/);
   if(fm){
     let html=zlib.gunzipSync(Buffer.from(fm[1],'base64')).toString('utf8');
-    try{
-      const probes=['tbodyColetas','tbody','os_numero','endereco_coleta','endereco_entrega','cliente'];
-      const found=[];
-      for(const p of probes){let pos=0,n=0;while((pos=html.indexOf(p,pos))>=0&&n<4){found.push('--- '+p+' @'+pos+' ---\n'+html.slice(Math.max(0,pos-700),Math.min(html.length,pos+1800)));pos+=p.length;n++;}}
-      console.log('COLETAS FRONT DIAG:\n'+found.join('\n'));
-    }catch(e){}
 
     html=html.replace(
       'Cliente *<input id="cliente" required placeholder="Nome do cliente" />',
@@ -18,6 +12,14 @@ try{
     );
     html=html.replaceAll('Nome do Cliente da Entrega','Cliente Remetente');
     html=html.replaceAll('Cliente / Entrega','Cliente Remetente / Endereço');
+
+
+    html=html.replace("<td><div class=\"os\">${esc(c.os_numero||String(c.id))}</div><div class=\"muted\">#${c.id}</div></td>\n    <td><strong>${esc(c.cliente||'-')}</strong><div class=\"muted\">${esc(c.endereco_entrega||'-')}</div></td>","<td><div style=\"display:flex;align-items:center;gap:10px;flex-wrap:wrap\"><div class=\"os\">${esc(c.os_numero||String(c.id))}</div><strong>${esc(c.cliente||'-')}</strong></div><div class=\"muted\">#${c.id}</div></td>\n    <td><div><strong>Coleta:</strong> ${esc(c.endereco_coleta||'-')}</div><div style=\"margin-top:5px\"><strong>Destinatário:</strong> ${esc(c.destinatario||'-')}</div><div class=\"muted\" style=\"margin-top:3px\"><strong>Entrega:</strong> ${esc(c.endereco_entrega||'-')}</div></td>");
+    html=html.replace('<th>OS</th><th>Cliente Remetente / Endereço</th>','<th>Coleta / Remetente</th><th>Coleta / Destinatário / Entrega</th>');
+    html=html.replace(
+      "${c.id} ${c.os_numero||''} ${c.cliente||''} ${c.endereco_entrega||''}",
+      "${c.id} ${c.os_numero||''} ${c.cliente||''} ${c.destinatario||''} ${c.endereco_coleta||''} ${c.endereco_entrega||''}"
+    );
 
     if(!html.includes('font-light-override')){
       const fontCss=`<style id="font-light-override">
