@@ -210,6 +210,9 @@ async function fetchSsw38Rows(){
     const ajax=[...new Set([...html.matchAll(/ajaxEnvia\(["']([^"']+)/gi)].map(m=>m[1]))];
     const xhr=[...new Set([...html.matchAll(/(?:url|action|href)\s*[:=]\s*["']([^"']+)/gi)].map(m=>m[1]).filter(x=>/ssw|ajax|cgi|bin/i.test(x)))].slice(0,20);
     console.log('SSW38 estrutura: '+JSON.stringify({...structure,inputs,scripts,bins,ajax,xhr}));
+    const pRom=html.indexOf('ROM_ALL'),pRomOne=html.indexOf("ajaxEnvia('ROM'");
+    if(pRom>=0)console.log('SSW38 FORM ROM_ALL: '+html.slice(Math.max(0,pRom-1400),pRom+2200).replace(/\s+/g,' '));
+    if(pRomOne>=0)console.log('SSW38 FORM ROM: '+html.slice(Math.max(0,pRomOne-1200),pRomOne+1800).replace(/\s+/g,' '));
     try{
       const jr=await fetch('https://sistema.ssw.inf.br/scripts/ssw0198_181124.js?v=18.11.24',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},signal:AbortSignal.timeout(15000)});
       const js=await jr.text(),pos=js.indexOf('ROM_ALL');
