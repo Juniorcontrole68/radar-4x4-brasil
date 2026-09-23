@@ -205,7 +205,7 @@ function renderForecast(){
   list.innerHTML=F.map(x=>{
     const delta=x.margin>=0?Math.round(x.margin)+' min de folga':Math.abs(Math.round(x.margin))+' min após 18h';
     const city=x.lastCity?' • última cidade: '+safe(x.lastCity):'';
-    return '<div style="margin:0 0 7px"><b>'+x.icon+' '+safe(x.motorista)+'</b> — '+nf(x.remaining)+' restante(s) • previsão <b>'+x.etaText+'</b> • '+delta+' • confiança '+x.confidence+city+'</div>'
+    return '<div style="margin:0 0 8px"><b>'+x.icon+' '+safe(x.motorista)+'</b> — '+nf(x.entregues)+' entregues • '+nf(x.remaining)+' pendentes • previsão <b>'+x.etaText+'</b> • '+delta+' • confiança '+x.confidence+city+'</div>'
   }).join('');
 }
 
@@ -324,7 +324,7 @@ async function start(){
   setInterval(()=>{if(!document.hidden)checkSsw()},60000);
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&['ssw-atrasos','dashboards'].includes(t))refreshSswAtrasos()},120000);
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&['ssw-remetentes','ssw-remetentes-comparativo','dashboards'].includes(t))refreshSswRemetentes()},120000);
-  setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&['ssw-motoristas','motoristas-evolucao','dashboards'].includes(t))refreshSswMotoristas()},30000);
+  setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&['ssw-motoristas','motoristas-evolucao','dashboards'].includes(t))refreshSswMotoristas()},120000);
   window.addEventListener('focus',()=>refreshData(false));
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshData(false)})
 }
