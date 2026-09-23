@@ -845,6 +845,30 @@ async function buildSswMotoristas(from='',to=''){
     candidates=[...ctrcMap.values()].filter(r=>brDateToIso(r.prev_ent||'')===today);
   }
 
+  // Completa a base com CT-es extraídos diretamente dos PDFs dos romaneios.
+  // A posição do CNPJ destinatário é inferida pela calibração contra o BI2 174.
+  if(base38&&base38.ok){
+    const d0=Number(pdfCnpjCalibration.dest[0]||0),d1=Number(pdfCnpjCalibration.dest[1]||0);
+    const destIdx=d1>d0?1:0;
+    const knownKeys=new Set();
+    for(const r of candidates){
+      const lk=normCtrcLoose(r.numero_ctrc||r.CTRC),nf=normNf(r.numero_nf||r.NF);
+      if(lk)knownKeys.add('C'+lk);if(nf)knownKeys.add('N'+nf);
+    }
+    let addedPdf=0;
+    for(const x of (base38.rows||[]))for(const m of (x.ctrcMeta||[])){
+      const lk=normCtrcLoose(m.ctrc),nf=normNf(m.nf),doc=String((m.cnpjs||[])[destIdx]||'').replace(/\D/g,'');
+      if(doc.length!==14||!nf)continue;
+      if((lk&&knownKeys.has('C'+lk))||knownKeys.has('N'+nf))continue;
+      candidates.push({
+        numero_ctrc:m.ctrc,numero_nf:nf,dest_cnpj:doc,
+        veiculo_entrega:x.veiculo||'',__pdf:true,__romaneio:x.romaneio||''
+      });
+      if(lk)knownKeys.add('C'+lk);knownKeys.add('N'+nf);addedPdf++;
+    }
+    console.log('CANDIDATOS PDF COMPLEMENTARES: '+JSON.stringify({destIdx,calibracao:pdfCnpjCalibration.dest,adicionados:addedPdf,totalCandidatos:candidates.length}));
+  }
+
   const unique=[];
   const seen=new Set();
   for(const r of candidates){
