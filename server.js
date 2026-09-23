@@ -1029,13 +1029,14 @@ async function buildSswMotoristas(from='',to=''){
     const gm=new Map();
     for(const x of romaneios38){
       const k=String(x.motorista||x.veiculo||'Não identificado').trim();
-      if(!gm.has(k))gm.set(k,{motorista:x.motorista||'Não identificado',veiculo:x.veiculo||'',total:0,entregues:0,pendentes:0,ocorrencias:0,romaneios:[],vinculados:0,missingCtrcs:0,explicitOccurrences:0});
+      if(!gm.has(k))gm.set(k,{motorista:x.motorista||'Não identificado',veiculo:x.veiculo||'',total:0,entregues:0,pendentes:0,ocorrencias:0,romaneios:[],vinculados:0,missingCtrcs:0,explicitOccurrences:0,pendingOfficial:0});
       const g=gm.get(k),totalX=Number(x.qtdeCtrcs||0);
       g.total+=totalX;if(x.romaneio)g.romaneios.push(x.romaneio);if(!g.veiculo&&x.veiculo)g.veiculo=x.veiculo;
 
-      // "Falta Ocorr." continua sendo uma referência do SSW, mas não pode ser
-      // usada para transformar automaticamente a diferença em ocorrência.
-      // Ocorrência só será vermelha quando houver uma ocorrência explícita no tracking.
+      // Na opção 38, "Falta Ocorr." informa quantos CT-es do romaneio ainda
+      // não receberam baixa/ocorrência. Esta passa a ser a fonte principal do progresso.
+      const pendingX=Math.max(0,Math.min(totalX,Number(x.faltaOcorr||0)));
+      g.pendingOfficial+=pendingX;
       const ctrcs=[...new Set((x.ctrcs||[]).map(normCtrc).filter(Boolean))];
       const nfByLoose=new Map((x.ctrcNfs||[]).map(p=>[normCtrcLoose(p.ctrc),normNf(p.nf)]));
       g.vinculados+=ctrcs.length;
@@ -1084,6 +1085,21 @@ async function buildSswMotoristas(from='',to=''){
       }
     }
 
+    // Progresso oficial da opção 38:
+    // processados = total - Falta Ocorr.; destes, somente ocorrências explícitas ficam vermelhas.
+    // O restante é entrega realizada.
+    for(const g of gm.values()){
+      const explicitOcc=Math.max(0,Math.min(g.explicitOccurrences,g.total-g.pendingOfficial));
+      const deliveredBy38=Math.max(0,g.total-g.pendingOfficial-explicitOcc);
+      g.entregues=Math.max(g.entregues,deliveredBy38);
+      g.explicitOccurrences=explicitOcc;
+    }
+
+    console.log('SSW38 PROGRESSO OFICIAL: '+JSON.stringify([...gm.values()].map(g=>({
+      motorista:g.motorista,total:g.total,faltaOcorr:g.pendingOfficial,
+      entreguesCalculadas:g.entregues,ocorrenciasExplicitas:g.explicitOccurrences
+    }))));
+
     // Uma entrega confirmada não pode voltar a pendente numa leitura seguinte.
     // Mantemos o maior total confirmado do motorista no dia, protegendo contra
     // oscilações temporárias/rate limit do endpoint de rastreamento.
@@ -1096,11 +1112,13 @@ async function buildSswMotoristas(from='',to=''){
     }
 
     motoristas38=[...gm.values()].map(g=>{
-      // Regra segura: vermelho somente para ocorrência explicitamente identificada.
-      // Todo CT-e não entregue e sem ocorrência confirmada permanece pendente.
+      // Vermelho somente para ocorrência explicitamente identificada.
+      // A coluna "Falta Ocorr." orienta o amarelo; uma entrega confirmada mais recente
+      // pode reduzir esse pendente caso o tracking esteja à frente da tela 38.
       const ocorrencias=Math.max(0,Math.min(g.explicitOccurrences,g.total-g.entregues));
-      const pendentes=Math.max(0,g.total-g.entregues-ocorrencias);
-      return{...g,pendentes,ocorrencias,baixadas:g.entregues+ocorrencias,taxa:g.total?(g.entregues+ocorrencias)/g.total*100:0};
+      const pendentes=Math.max(0,Math.min(g.pendingOfficial,g.total-g.entregues-ocorrencias));
+      const entregues=Math.max(0,g.total-pendentes-ocorrencias);
+      return{...g,entregues,pendentes,ocorrencias,baixadas:entregues+ocorrencias,taxa:g.total?(entregues+ocorrencias)/g.total*100:0};
     }).sort((a,b)=>b.total-a.total||a.motorista.localeCompare(b.motorista,'pt-BR'));
 
     // Reconciliação operacional confirmada pelo usuário para o lote fechado de 22/09:
