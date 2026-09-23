@@ -135,10 +135,11 @@ async function dashboardSession(req, adminOnly=false) {
   if(adminOnly&&!row.is_admin){const e=new Error('Acesso exclusivo do administrador.');e.status=403;throw e}
   return {id:row.id,username:row.username,is_admin:!!row.is_admin,active:!!row.active,permissions:row.is_admin?['*']:dashboardPerms(row.permissions)};
 }
-async function dashboardCreateSession(userId){
+async function dashboardCreateSession(userId, days=14){
   const token=crypto.randomBytes(32).toString('hex');
+  const safeDays=Math.max(1,Math.min(365,Number(days)||14));
   await pool.query('DELETE FROM dashboard_sessions WHERE expires_at<=NOW()');
-  await pool.query("INSERT INTO dashboard_sessions(token_hash,user_id,expires_at) VALUES($1,$2,NOW()+INTERVAL '14 days')",[dashboardTokenHash(token),userId]);
+  await pool.query("INSERT INTO dashboard_sessions(token_hash,user_id,expires_at) VALUES($1,$2,NOW()+($3 * INTERVAL '1 day'))",[dashboardTokenHash(token),userId,safeDays]);
   return token;
 }
 
@@ -327,11 +328,11 @@ async function start() {
           if(!r.rowCount||!r.rows[0].active||!dashboardVerifyPassword(password,r.rows[0].password_salt,r.rows[0].password_hash)){
             return sendJson(res,401,{ok:false,error:'Usuário ou senha inválidos.'});
           }
-          const row=r.rows[0],token=await dashboardCreateSession(row.id);
+          const row=r.rows[0],sessionDays=row.is_admin?365:14,token=await dashboardCreateSession(row.id,sessionDays);
           res.writeHead(200,{
             'Content-Type':'application/json; charset=utf-8',
             'Cache-Control':'no-store',
-            'Set-Cookie':dashboardSetCookie(token)
+            'Set-Cookie':dashboardSetCookie(token,sessionDays*24*60*60)
           });
           return res.end(JSON.stringify({ok:true,user:{id:row.id,username:row.username,is_admin:!!row.is_admin,permissions:row.is_admin?['*']:dashboardPerms(row.permissions)}}));
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao entrar.'});}
@@ -364,6 +365,18 @@ async function start() {
       if (req.method === 'GET' && u.pathname === '/api/auth/me') {
         try {
           const user=await dashboardSession(req,false);
+          if(user.is_admin){
+            const token=dashboardBearer(req);
+            if(token){
+              await pool.query("UPDATE dashboard_sessions SET expires_at=NOW()+INTERVAL '365 days' WHERE token_hash=$1",[dashboardTokenHash(token)]);
+              res.writeHead(200,{
+                'Content-Type':'application/json; charset=utf-8',
+                'Cache-Control':'no-store',
+                'Set-Cookie':dashboardSetCookie(token,365*24*60*60)
+              });
+              return res.end(JSON.stringify({ok:true,user}));
+            }
+          }
           return sendJson(res,200,{ok:true,user});
         } catch(e){return sendJson(res,e.status||401,{ok:false,error:e.message||'Sessão inválida.'});}
       }
