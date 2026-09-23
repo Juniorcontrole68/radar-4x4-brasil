@@ -120,6 +120,27 @@ function renderSswMotoristas(){
   const set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
   const official=Number(d.totalRomaneado||0),driverN=Array.isArray(d.motoristas38)&&d.motoristas38.length?d.motoristas38.length:(d.motoristasIdentificados||0);set('#sswPlannedOnline',nf(d.candidatos||0));set('#sswOut',nf(official||d.saidas||0));set('#sswDown',nf(d.baixadas||0));set('#sswPend',nf(d.pendentes||0));set('#sswRate',(d.taxa||0).toFixed(1).replace('.',',')+'%');set('#sswTrackingOk',nf(d.trackingOk||0)+' / '+nf(d.trackingConsultados||0));set('#sswDriversCount',nf(driverN));
   set('#hubSswOut',nf(Number(d.totalRomaneado||0)||d.saidas||0));set('#hubSswDown',nf(d.baixasSsw||0));set('#hubSswPend',nf(d.pendentes||0));set('#hubSswRate',(d.taxa||0).toFixed(1).replace('.',',')+'%');
+
+  // Card "Entregas por Cidade Destino" — usa a mesma carga já obtida do SSW,
+  // sem disparar uma nova consulta pesada.
+  const cityMap=new Map(),citySeen=new Set();
+  for(const r of (d.rows||[])){
+    const cidade=String(r.cidade||'').trim(),uf=String(r.uf||'').trim();
+    if(!cidade)continue;
+    const rowKey=String(r.ctrcOficial||r.ctrc||r.nf||cidade+'|'+citySeen.size).trim();
+    if(rowKey&&citySeen.has(rowKey))continue;
+    if(rowKey)citySeen.add(rowKey);
+    const label=cidade+(uf?' / '+uf:'');
+    cityMap.set(label,(cityMap.get(label)||0)+1);
+  }
+  const cityRank=[...cityMap.entries()].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],'pt-BR'));
+  const cityMapped=cityRank.reduce((a,x)=>a+x[1],0),cityTotal=Number(d.totalRomaneado||0)||Number(d.saidas||0)||cityMapped;
+  set('#hubCityDestCities',nf(cityRank.length));
+  set('#hubCityDestMapped',nf(cityMapped));
+  set('#hubCityDestTotal',nf(cityTotal));
+  set('#hubCityDestList',cityRank.length
+    ?cityRank.slice(0,10).map((x,i)=>(i+1)+'. '+x[0]+' — '+nf(x[1])).join(' • ')
+    :(d.refreshing?'Atualizando cidades de destino do SSW…':'Nenhuma cidade de destino identificada no período.'));
   const meta=d.refreshing
     ? 'Atualizando Saídas x Baixas em segundo plano… exibindo o último resultado disponível.'
     : 'Período '+d.from+' a '+d.to+' • status on-line SSW consultado em '+nf(d.trackingOk||0)+' de '+nf(d.trackingConsultados||0)+' NF(s)';
