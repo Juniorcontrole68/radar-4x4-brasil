@@ -332,14 +332,32 @@ async function start() {
       if (req.method === 'GET' && u.pathname === '/api/painel/carregamentos-finais') {
         try {
           const limit = Math.max(1, Math.min(100, Number(u.searchParams.get('limit') || 30)));
-          const r = await pool.query(`
-            SELECT id::text AS id, conferente, motorista, quantidade_entregas,
-                   capturada_em, criado_em, foto_mime, foto_bytes
-            FROM carregamentos_finais
-            ORDER BY capturada_em DESC, id DESC
-            LIMIT $1
-          `, [limit]);
-          return sendJson(res, 200, { ok: true, rows: r.rows });
+          const motorista = String(u.searchParams.get('motorista') || '').trim();
+          const data = String(u.searchParams.get('data') || '').trim();
+          const where = [];
+          const params = [];
+
+          if (motorista) {
+            params.push('%' + motorista + '%');
+            where.push('motorista ILIKE $' + params.length);
+          }
+          if (data) {
+            if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(data)) {
+              return sendJson(res, 400, { ok: false, error: 'Data de consulta inválida.' });
+            }
+            params.push(data);
+            where.push("(capturada_em AT TIME ZONE 'America/Sao_Paulo')::date = $" + params.length + '::date');
+          }
+
+          params.push(limit);
+          const sql =
+            'SELECT id::text AS id, conferente, motorista, quantidade_entregas, ' +
+            'capturada_em, criado_em, foto_mime, foto_bytes ' +
+            'FROM carregamentos_finais ' +
+            (where.length ? 'WHERE ' + where.join(' AND ') + ' ' : '') +
+            'ORDER BY capturada_em DESC, id DESC LIMIT $' + params.length;
+          const r = await pool.query(sql, params);
+          return sendJson(res, 200, { ok: true, motorista: motorista || null, data: data || null, rows: r.rows });
         } catch (e) {
           return sendJson(res, 500, { ok: false, error: e.message || 'Não foi possível carregar os registros de carregamento.' });
         }
