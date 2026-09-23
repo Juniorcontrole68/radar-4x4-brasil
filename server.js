@@ -1429,6 +1429,214 @@ async function getSswMotoristasFast(from='',to=''){
     note:'Atualizando Saídas x Baixas em segundo plano. O painel será preenchido automaticamente.'
   }
 }
+
+const ROUTE_BASE_ADDRESS='Av. do Algodão, 316, Americana, SP, Brasil';
+const ROUTE_GEO_CACHE=new Map();
+const ROUTE_PLAN_CACHE=new Map();
+let ROUTE_GEOCODE_LAST=0;
+function routeKeyNorm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'')}
+function routeField(row,patterns){
+  const entries=Object.entries(row||{});
+  for(const p of patterns){
+    for(const [k,v] of entries){
+      if(v==null||String(v).trim()==='')continue;
+      if(p.test(routeKeyNorm(k)))return String(v).trim()
+    }
+  }
+  return''
+}
+function routeAddressParts(row,meta={}){
+  const endereco=routeField(row,[/(dest|destinat).*(end|logradouro|rua|avenida)/,/(end|logradouro).*(dest|destinat)/,/^endereco$/,/^logradouro$/])||meta.endereco||'';
+  const numero=routeField(row,[/(dest|destinat).*(numero|nro)/,/(numero|nro).*(dest|destinat)/,/^numero$/,/^nro$/])||'';
+  const bairro=routeField(row,[/(dest|destinat).*bairro/,/bairro.*(dest|destinat)/,/^bairro$/])||'';
+  let cep=routeField(row,[/(dest|destinat).*cep/,/cep.*(dest|destinat)/,/^cep$/])||meta.cep||'';
+  cep=String(cep).replace(/\D/g,'');
+  if(cep.length===8)cep=cep.slice(0,5)+'-'+cep.slice(5);
+  return{endereco,numero,bairro,cep}
+}
+function routeHaversine(a,b){
+  const R=6371e3,rad=x=>x*Math.PI/180,dlat=rad(b.lat-a.lat),dlon=rad(b.lon-a.lon),la1=rad(a.lat),la2=rad(b.lat);
+  const h=Math.sin(dlat/2)**2+Math.cos(la1)*Math.cos(la2)*Math.sin(dlon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h))
+}
+async function routeGeocode(query){
+  const q=String(query||'').trim();
+  if(!q)return null;
+  const key=routeKeyNorm(q),hit=ROUTE_GEO_CACHE.get(key);
+  if(hit)return hit;
+  const wait=Math.max(0,1050-(Date.now()-ROUTE_GEOCODE_LAST));
+  if(wait)await new Promise(r=>setTimeout(r,wait));
+  ROUTE_GEOCODE_LAST=Date.now();
+  const u=new URL('https://nominatim.openstreetmap.org/search');
+  u.searchParams.set('format','jsonv2');u.searchParams.set('limit','1');u.searchParams.set('countrycodes','br');u.searchParams.set('q',q);
+  try{
+    const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Roteirizador/1.0 (operacao interna)','Accept-Language':'pt-BR,pt;q=0.9'},signal:AbortSignal.timeout(12000)});
+    const j=await r.json().catch(()=>[]);
+    if(r.ok&&Array.isArray(j)&&j[0]){
+      const v={lat:Number(j[0].lat),lon:Number(j[0].lon),displayName:j[0].display_name||q};
+      if(Number.isFinite(v.lat)&&Number.isFinite(v.lon)){ROUTE_GEO_CACHE.set(key,v);return v}
+    }
+  }catch{}
+  ROUTE_GEO_CACHE.set(key,null);
+  return null
+}
+async function routeOsrmTable(points){
+  if(points.length<2)return{matrix:[[0]],source:'single'};
+  try{
+    const coords=points.map(p=>p.lon+','+p.lat).join(';');
+    const u='https://router.project-osrm.org/table/v1/driving/'+coords+'?annotations=distance';
+    const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Roteirizador/1.0'},signal:AbortSignal.timeout(20000)});
+    const j=await r.json();
+    if(!r.ok||j.code!=='Ok'||!Array.isArray(j.distances))throw new Error('OSRM table');
+    return{matrix:j.distances.map(row=>row.map(v=>Number.isFinite(v)?v:Infinity)),source:'OSRM'}
+  }catch{
+    const matrix=points.map(a=>points.map(b=>routeHaversine(a,b)*1.25));
+    return{matrix,source:'estimada'}
+  }
+}
+function routeCycleDistance(order,m){
+  if(!order.length)return 0;
+  let d=m[0][order[0]]||0;
+  for(let i=1;i<order.length;i++)d+=(m[order[i-1]][order[i]]||0);
+  d+=(m[order[order.length-1]][0]||0);
+  return d
+}
+function routeNearest(m,n){
+  const left=new Set(Array.from({length:n},(_,i)=>i+1)),out=[];let cur=0;
+  while(left.size){
+    let best=null,bd=Infinity;
+    for(const x of left){const d=m[cur]?.[x];if(Number.isFinite(d)&&d<bd){bd=d;best=x}}
+    if(best==null)best=[...left][0];
+    out.push(best);left.delete(best);cur=best
+  }
+  return out
+}
+function routeTwoOpt(order,m){
+  let best=order.slice(),bestD=routeCycleDistance(best,m),changed=true,loops=0;
+  while(changed&&loops++<8){
+    changed=false;
+    for(let i=0;i<best.length-1;i++)for(let k=i+1;k<best.length;k++){
+      const cand=best.slice(0,i).concat(best.slice(i,k+1).reverse(),best.slice(k+1));
+      const d=routeCycleDistance(cand,m);
+      if(d+1<bestD){best=cand;bestD=d;changed=true}
+    }
+  }
+  return best
+}
+function routeExact(m,n){
+  if(n===0)return[];
+  if(n>12)return null;
+  const size=1<<n,dp=Array.from({length:size},()=>new Float64Array(n).fill(Infinity)),par=Array.from({length:size},()=>new Int16Array(n).fill(-1));
+  for(let j=0;j<n;j++)dp[1<<j][j]=m[0][j+1];
+  for(let mask=1;mask<size;mask++){
+    for(let j=0;j<n;j++){
+      if(!(mask&(1<<j)))continue;
+      const prevMask=mask^(1<<j);if(!prevMask)continue;
+      for(let k=0;k<n;k++){
+        if(!(prevMask&(1<<k)))continue;
+        const v=dp[prevMask][k]+m[k+1][j+1];
+        if(v<dp[mask][j]){dp[mask][j]=v;par[mask][j]=k}
+      }
+    }
+  }
+  const full=size-1;let end=0,best=Infinity;
+  for(let j=0;j<n;j++){const v=dp[full][j]+m[j+1][0];if(v<best){best=v;end=j}}
+  const rev=[];let mask=full,j=end;
+  while(j>=0){rev.push(j+1);const pj=par[mask][j];mask^=1<<j;j=pj}
+  return rev.reverse()
+}
+function routeLegs(order,m,points){
+  const seq=[0,...order,0],legs=[];
+  for(let i=1;i<seq.length;i++){
+    const a=seq[i-1],b=seq[i],meters=Number(m[a]?.[b]||0);
+    legs.push({fromIndex:a,toIndex:b,from:points[a]?.label||'',to:points[b]?.label||'',distanceMeters:meters,distanceKm:meters/1000})
+  }
+  return legs
+}
+async function routeGeometry(points,order){
+  try{
+    const seq=[0,...order,0],coords=seq.map(i=>points[i].lon+','+points[i].lat).join(';');
+    const u='https://router.project-osrm.org/route/v1/driving/'+coords+'?overview=full&geometries=geojson&steps=false';
+    const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Roteirizador/1.0'},signal:AbortSignal.timeout(20000)});
+    const j=await r.json();
+    if(r.ok&&j.code==='Ok'&&j.routes?.[0])return{geometry:j.routes[0].geometry,distanceMeters:j.routes[0].distance,durationSeconds:j.routes[0].duration}
+  }catch{}
+  return{geometry:{type:'LineString',coordinates:[0,...order,0].map(i=>[points[i].lon,points[i].lat])},distanceMeters:null,durationSeconds:null}
+}
+async function buildRoutePlan(date='',romaneio=''){
+  const target=date||spDateISO(),cacheKey=target+'|'+String(romaneio||'').trim();
+  const cached=ROUTE_PLAN_CACHE.get(cacheKey);
+  if(cached&&Date.now()-cached.at<10*60*1000)return cached.value;
+
+  let data;
+  if(target===spDateISO()){
+    try{data=await fetchSsw38Quick()}catch{data=null}
+  }
+  if(!data||!Array.isArray(data.rows)||!data.rows.length){
+    const full=await buildSswMotoristas(target,target);
+    data={rows:full.romaneios38||[]}
+  }
+  const manifests=data.rows||[];
+  const selected=manifests.find(x=>String(x.romaneio||'')===String(romaneio||''))||manifests[0];
+  if(!selected)throw new Error('Nenhum romaneio encontrado no SSW para a data selecionada.');
+
+  let biRows=[];
+  try{biRows=parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text).rows||[]}catch{}
+  const byLoose=new Map(),byNf=new Map();
+  for(const r of biRows){
+    const lk=normCtrcLoose(r.numero_ctrc||r.CTRC),nf=normNf(r.numero_nf||r.NF);
+    if(lk)byLoose.set(lk,r);if(nf)byNf.set(nf,r)
+  }
+  const metas=(selected.ctrcMeta&&selected.ctrcMeta.length?selected.ctrcMeta:(selected.ctrcNfs||[]).map(p=>({ctrc:p.ctrc,nf:p.nf,cnpjs:[]})));
+  const stops=[];
+  for(let idx=0;idx<metas.length;idx++){
+    const meta=metas[idx],lk=normCtrcLoose(meta.ctrc),nf=normNf(meta.nf),r=byLoose.get(lk)||byNf.get(nf)||{};
+    const destinatario=r.destinatario_nome||routeField(r,[/(destinatario|destinat)_?nome/,/^destinatario$/])||('Entrega '+(idx+1));
+    const cidade=r.cidade_destino||r.dest_cidade||routeField(r,[/(cidade).*(dest|destinat)/,/(dest|destinat).*cidade/,/^cidade_destino$/])||'';
+    const uf=r.uf_destino||r.dest_uf||routeField(r,[/(uf).*(dest|destinat)/,/(dest|destinat).*uf/,/^uf_destino$/])||'SP';
+    const parts=routeAddressParts(r,meta);
+    let query='',precision='cidade';
+    if(parts.cep){query=parts.cep+', Brasil';precision='cep'}
+    else if(parts.endereco){query=[parts.endereco,parts.numero,parts.bairro,cidade,uf,'Brasil'].filter(Boolean).join(', ');precision='endereco'}
+    else if(destinatario&&cidade){query=destinatario+', '+cidade+', '+uf+', Brasil';precision='cliente'}
+    else query=[cidade,uf,'Brasil'].filter(Boolean).join(', ');
+    let geo=await routeGeocode(query);
+    if(!geo&&cidade){geo=await routeGeocode(cidade+', '+uf+', Brasil');precision='cidade'}
+    if(!geo)continue;
+    stops.push({
+      originalOrder:idx+1,ctrc:meta.ctrc||'',nf:meta.nf||'',destinatario,cidade,uf,
+      endereco:parts.endereco,numero:parts.numero,bairro:parts.bairro,cep:parts.cep,
+      precision,query,lat:geo.lat,lon:geo.lon,label:destinatario+(cidade?' • '+cidade:'')
+    })
+  }
+  if(!stops.length)throw new Error('Não foi possível localizar geograficamente as entregas deste romaneio.');
+
+  const baseGeo=await routeGeocode(ROUTE_BASE_ADDRESS);
+  if(!baseGeo)throw new Error('Não foi possível localizar a base de Americana.');
+  const points=[{label:'Base Americana',address:ROUTE_BASE_ADDRESS,lat:baseGeo.lat,lon:baseGeo.lon,precision:'base'},...stops];
+  const mt=await routeOsrmTable(points),m=mt.matrix,n=stops.length;
+  let optimized=routeExact(m,n);
+  let method='exata';
+  if(!optimized){optimized=routeTwoOpt(routeNearest(m,n),m);method='heurística otimizada'}
+  const original=Array.from({length:n},(_,i)=>i+1);
+  const optMeters=routeCycleDistance(optimized,m),origMeters=routeCycleDistance(original,m);
+  const geo=await routeGeometry(points,optimized);
+  const value={
+    ok:true,date:target,baseAddress:ROUTE_BASE_ADDRESS,
+    romaneio:selected.romaneio||'',motorista:selected.motorista||'',veiculo:selected.veiculo||'',
+    deliveries:n,method,matrixSource:mt.source,
+    optimizedOrder:optimized,originalOrder:original,
+    optimizedDistanceMeters:Number.isFinite(optMeters)?optMeters:0,
+    originalDistanceMeters:Number.isFinite(origMeters)?origMeters:0,
+    optimizedLegs:routeLegs(optimized,m,points),
+    originalLegs:routeLegs(original,m,points),
+    points,stops,matrix:m,geometry:geo.geometry,
+    approximateStops:stops.filter(x=>x.precision==='cidade'||x.precision==='cliente').length
+  };
+  ROUTE_PLAN_CACHE.set(cacheKey,{at:Date.now(),value});
+  return value
+}
+
 async function buildBi2Remetentes(from='',to=''){let rows=[],meta={},period=null;if(from&&to){const snaps=await fetchBi2RangeParsed(13,from,to);rows=mergeUniqueBi2Rows(snaps);period=bi2PeriodInfo(snaps,from,to);const latest=[...snaps].reverse().find(x=>x.ok);meta=latest?latest.meta:{}}else{const rep=await fetchBi2Report(13),p=parseBi2Csv(rep.text);rows=p.rows;meta=p.meta}const groups=new Map();for(const r of rows){const nome=pickField(r,'REMETENTE')||'Não informado';if(!groups.has(nome))groups.set(nome,{remetente:nome,ctrcs:0,frete:0,valorMercadoria:0,volumes:0,peso:0,m3:0,atrasoTotal:0,atrasoN:0,cidades:new Set(),destinatarios:new Set()});const g=groups.get(nome);g.ctrcs++;g.frete+=bi2Number(pickField(r,'FRETE'));g.valorMercadoria+=bi2Number(pickField(r,'VAL MERC'));g.volumes+=bi2Number(pickField(r,'QTD VOLUMES'));g.peso+=bi2Number(pickField(r,'PESO'));g.m3+=bi2Number(pickField(r,'M3'));const av=bi2Number(pickField(r,'ATRASO'));if(av||String(pickField(r,'ATRASO')).trim()==='0'){g.atrasoTotal+=av;g.atrasoN++}const cid=pickField(r,'CIDADE DESTINO');if(cid)g.cidades.add(cid);const dst=pickField(r,'DESTINATARIO');if(dst)g.destinatarios.add(dst)}const clientes=[...groups.values()].map(g=>({remetente:g.remetente,ctrcs:g.ctrcs,frete:g.frete,valorMercadoria:g.valorMercadoria,volumes:g.volumes,peso:g.peso,m3:g.m3,atrasoMedio:g.atrasoN?g.atrasoTotal/g.atrasoN:0,cidades:g.cidades.size,destinatarios:g.destinatarios.size})).sort((a,b)=>b.ctrcs-a.ctrcs);const hist=period?' • '+period.daysAvailable+'/'+period.daysRequested+' dia(s) com arquivo BI2':'';return{ok:true,sourceCode:13,sourceName:meta.relatorio||'CT-es atrasados',limited:true,note:'Base atual do BI2: CT-es atrasados únicos observados no período. O relatório 083 de performance por cliente emitente ainda não está disponível.'+hist,meta,period,totalClientes:clientes.length,totalCtrcs:rows.length,totalFrete:sumField(rows,['FRETE']),totalMercadoria:sumField(rows,['VAL MERC']),totalVolumes:sumField(rows,['QTD VOLUMES']),clientes}}
 async function buildBi2Atrasos(from='',to=''){let rows=[],meta={},bytes=0,headers=[],period=null;if(from&&to){const snaps=await fetchBi2RangeParsed(13,from,to);rows=mergeUniqueBi2Rows(snaps);period=bi2PeriodInfo(snaps,from,to);const latest=[...snaps].reverse().find(x=>x.ok);meta=latest?latest.meta:{};bytes=snaps.filter(x=>x.ok).reduce((a,x)=>a+(x.bytes||0),0);headers=latest?latest.headers:[]}else{const rep=await fetchBi2Report(13),p=parseBi2Csv(rep.text);rows=p.rows;meta=p.meta;bytes=rep.bytes;headers=p.headers}const clean=rows.slice(0,1000).map(r=>({filial:pickField(r,'FILIAL'),ctrc:pickField(r,'CTRC'),nf:pickField(r,'NF'),remetente:pickField(r,'REMETENTE'),pagador:pickField(r,'PAGADOR'),destinatario:pickField(r,'DESTINATARIO'),uf:pickField(r,'UF DESTINO','UF'),cidade:pickField(r,'CIDADE DESTINO','CIDADE'),entregaAgendada:pickField(r,'ENTREGA AGENDADA'),previsao:pickField(r,'PREVISAO ENTREGA','PREVISAO','DATA PREVISAO'),diasAtraso:pickField(r,'DIAS ATRASO','ATRASO'),unidadeAtual:pickField(r,'UNIDADE ATUAL'),localizacaoAtual:pickField(r,'LOCALIZACAO ATUAL'),ultimaOcorrencia:pickField(r,'COD ULTIMA OCORRENCIA'),instrucaoOcorrencia:pickField(r,'INSTRUCAO/COMPLEMENTO ULTIMA OCORRENCIA'),dataUltimaOcorrencia:pickField(r,'DATA ULTIMA OCORRENCIA'),responsabilidadeCliente:pickField(r,'RESPONSABILIDADE CLIENTE'),valorMercadoria:pickField(r,'VAL MERC'),frete:pickField(r,'FRETE'),volumes:pickField(r,'QTD VOLUMES'),peso:pickField(r,'PESO'),m3:pickField(r,'M3'),tipoDocumento:pickField(r,'TIPO DOCUMENTO')}));return{ok:true,codigo:13,bytes,meta,period,total:rows.length,filiaisCount:distinctCount(rows,['FILIAL']),cidadesCount:distinctCount(rows,['CIDADE DESTINO','CIDADE']),destinatariosCount:distinctCount(rows,['DESTINATARIO']),remetentesCount:distinctCount(rows,['REMETENTE']),valorMercadoria:sumField(rows,['VAL MERC']),freteTotal:sumField(rows,['FRETE']),volumesTotal:sumField(rows,['QTD VOLUMES']),pesoTotal:sumField(rows,['PESO']),m3Total:sumField(rows,['M3']),headers,filiais:topCounts(rows,['FILIAL'],12),cidades:topCounts(rows,['CIDADE DESTINO','CIDADE'],12),destinatarios:topCounts(rows,['DESTINATARIO'],12),remetentes:topCounts(rows,['REMETENTE'],12),localizacoes:topCounts(rows,['LOCALIZACAO ATUAL','UNIDADE ATUAL'],12),ocorrencias:topCounts(rows,['COD ULTIMA OCORRENCIA'],12),rows:clean}}
 async function refreshBi2ApiState(){const now=new Date().toISOString();const x=await testBi2WebApi();if(x.ok&&Array.isArray(x.reports)){const good=x.reports.filter(r=>r.status===200&&/text\/csv/i.test(r.type));BI2_API_STATE={connected:good.length>0,lastCheck:now,reports:x.reports.map(r=>({codigo:r.codigo,status:r.status,bytes:r.bytes,type:r.type})),message:good.length?'WebAPI BI2 conectada':'WebAPI BI2 sem relatórios disponíveis'};}else{BI2_API_STATE={connected:false,lastCheck:now,reports:[],message:'Falha na WebAPI BI2',error:x.error||''}}return BI2_API_STATE}
@@ -1536,6 +1744,24 @@ if(carregamentoFoto&&req.method==='GET'){try{if(!dashboardHas(authUser,'final_ca
   res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
+
+if(u.pathname==='/api/roteirizador/lista'){try{
+  if(!dashboardHasAny(authUser,['dashboard','roteirizador','ssw_saidas','evolucao']))return dashboardDeny(res);
+  const date=u.searchParams.get('date')||spDateISO();
+  let rows=[];
+  if(date===spDateISO()){try{rows=(await fetchSsw38Quick()).rows||[]}catch{}}
+  if(!rows.length){const x=await getSswMotoristasFast(date,date);rows=x.romaneios38||[]}
+  const clean=rows.map(x=>({romaneio:x.romaneio||'',motorista:x.motorista||'',veiculo:x.veiculo||'',entregas:Number(x.qtdeCtrcs||0)}))
+    .filter(x=>x.romaneio).sort((a,b)=>String(a.motorista).localeCompare(String(b.motorista),'pt-BR')||String(a.romaneio).localeCompare(String(b.romaneio),'pt-BR'));
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:true,date,baseAddress:ROUTE_BASE_ADDRESS,rows:clean}))
+}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+if(u.pathname==='/api/roteirizador/rota'){try{
+  if(!dashboardHasAny(authUser,['dashboard','roteirizador','ssw_saidas','evolucao']))return dashboardDeny(res);
+  const x=await buildRoutePlan(u.searchParams.get('date')||'',u.searchParams.get('romaneio')||'');
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas','evolucao','cidade_destino']))return dashboardDeny(res);const x=await buildBi2Baixas(u.searchParams.get('date')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/saidas-baixas'){try{
   if(!dashboardHasAny(authUser,['ssw_saidas','evolucao','cidade_destino']))return dashboardDeny(res);
   const x=await getSswMotoristasFast(u.searchParams.get('from')||'',u.searchParams.get('to')||'');
