@@ -125,6 +125,7 @@ function dashboardPerms(v) {
   if (typeof v === 'string') { try { const p=JSON.parse(v); return Array.isArray(p)?p.map(String):[]; } catch { return []; } }
   return [];
 }
+function dashboardHas(user,perm){return !!(user&&(user.is_admin||user.permissions?.includes('*')||user.permissions?.includes(perm)))}
 async function dashboardSession(req, adminOnly=false) {
   const token=dashboardBearer(req);
   if(!token){const e=new Error('Sessão não informada.');e.status=401;throw e}
@@ -315,8 +316,88 @@ async function start() {
   http.createServer(async (req, res) => {
     try {
       const u = new URL(req.url, 'http://localhost');
+
+      if (req.method === 'POST' && u.pathname === '/api/auth/login') {
+        try {
+          const body=await readJsonBodyLimited(req,64*1024);
+          const username=String(body.username||'').trim();
+          const password=String(body.password||'');
+          if(!username||!password)return sendJson(res,400,{ok:false,error:'Informe usuário e senha.'});
+          const r=await pool.query('SELECT id::text AS id,username,password_salt,password_hash,is_admin,active,permissions FROM dashboard_users WHERE lower(username)=lower($1) LIMIT 1',[username]);
+          if(!r.rowCount||!r.rows[0].active||!dashboardVerifyPassword(password,r.rows[0].password_salt,r.rows[0].password_hash)){
+            return sendJson(res,401,{ok:false,error:'Usuário ou senha inválidos.'});
+          }
+          const row=r.rows[0],token=await dashboardCreateSession(row.id);
+          res.writeHead(200,{
+            'Content-Type':'application/json; charset=utf-8',
+            'Cache-Control':'no-store',
+            'Set-Cookie':dashboardSetCookie(token)
+          });
+          return res.end(JSON.stringify({ok:true,user:{id:row.id,username:row.username,is_admin:!!row.is_admin,permissions:row.is_admin?['*']:dashboardPerms(row.permissions)}}));
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao entrar.'});}
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/auth/me') {
+        try {
+          const user=await dashboardSession(req,false);
+          return sendJson(res,200,{ok:true,user});
+        } catch(e){return sendJson(res,e.status||401,{ok:false,error:e.message||'Sessão inválida.'});}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/auth/logout') {
+        try {
+          const token=dashboardBearer(req);
+          if(token)await pool.query('DELETE FROM dashboard_sessions WHERE token_hash=$1',[dashboardTokenHash(token)]);
+        } catch {}
+        res.writeHead(200,{
+          'Content-Type':'application/json; charset=utf-8',
+          'Cache-Control':'no-store',
+          'Set-Cookie':dashboardSetCookie('',0)
+        });
+        return res.end(JSON.stringify({ok:true}));
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/auth/embed-ticket') {
+        try {
+          const user=await dashboardSession(req,false);
+          const ticket=crypto.randomBytes(24).toString('hex');
+          await pool.query('DELETE FROM dashboard_embed_tickets WHERE expires_at<=NOW() OR used_at IS NOT NULL');
+          await pool.query("INSERT INTO dashboard_embed_tickets(ticket_hash,user_id,expires_at) VALUES($1,$2,NOW()+INTERVAL '2 minutes')",[dashboardTokenHash(ticket),user.id]);
+          return sendJson(res,200,{ok:true,ticket});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Não foi possível abrir o módulo.'});}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/painel/auth/embed-exchange') {
+        try {
+          const body=await readJsonBodyLimited(req,32*1024);
+          const ticket=String(body.ticket||'').trim();
+          if(!ticket)return sendJson(res,400,{ok:false,error:'Ticket não informado.'});
+          const r=await pool.query("UPDATE dashboard_embed_tickets SET used_at=NOW() WHERE ticket_hash=$1 AND used_at IS NULL AND expires_at>NOW() RETURNING user_id",[dashboardTokenHash(ticket)]);
+          if(!r.rowCount)return sendJson(res,401,{ok:false,error:'Ticket expirado ou já utilizado.'});
+          const ur=await pool.query('SELECT id::text AS id,username,is_admin,active,permissions FROM dashboard_users WHERE id=$1 AND active=TRUE LIMIT 1',[r.rows[0].user_id]);
+          if(!ur.rowCount)return sendJson(res,401,{ok:false,error:'Usuário inativo.'});
+          const row=ur.rows[0],token=await dashboardCreateSession(row.id);
+          return sendJson(res,200,{ok:true,token,user:{id:row.id,username:row.username,is_admin:!!row.is_admin,permissions:row.is_admin?['*']:dashboardPerms(row.permissions)}});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao autorizar módulo.'});}
+      }
       if (req.method === 'GET' && (u.pathname === '/' || u.pathname === '/painel')) {
         return sendHtml(res, PANEL);
+      }
+
+      if (req.method === 'GET' && (u.pathname === '/coletas' || u.pathname === '/coletas/' || u.pathname === '/contas' || u.pathname === '/contas/')) {
+        try {
+          const user=await dashboardSession(req,false);
+          const isContas=u.pathname.startsWith('/contas');
+          const isFinanceiro=!isContas&&u.searchParams.get('view')==='financeiro';
+          const allowed=isContas?dashboardHas(user,'contas_pagar'):(isFinanceiro?dashboardHas(user,'financeiro'):dashboardHas(user,'coletas'));
+          if(!allowed){
+            res.writeHead(403,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+            return res.end('<!doctype html><meta charset="utf-8"><style>body{font-family:Segoe UI,Arial;padding:30px;color:#334155}h2{color:#991b1b}</style><h2>Acesso não autorizado</h2><p>Este usuário não possui permissão para este módulo.</p>');
+          }
+        } catch(e){
+          res.writeHead(302,{Location:'/?login=1'+(u.pathname.startsWith('/contas')?'#contas':'#coletas'),'Cache-Control':'no-store'});
+          return res.end();
+        }
       }
 
       if (req.method === 'GET' && (u.pathname === '/coletas' || u.pathname === '/coletas/') && u.searchParams.get('embed') !== '1') {
@@ -634,6 +715,18 @@ async function start() {
         return sendJson(res, 200, { ok: true, id: result.rows[0].id });
       }
 
+      if (u.pathname.startsWith('/api/') && !u.pathname.startsWith('/api/painel/')) {
+        try {
+          const user=await dashboardSession(req,false);
+          const p=u.pathname;
+          const allowed=p.startsWith('/api/bills')||p==='/api/export.csv'
+            ? dashboardHas(user,'contas_pagar')
+            : (dashboardHas(user,'coletas')||dashboardHas(user,'financeiro'));
+          if(!allowed)return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+        } catch(e){
+          return sendJson(res,e.status||401,{ok:false,error:e.message||'Sessão inválida.'});
+        }
+      }
       return handler(req, res);
     } catch (e) {
       console.error(e);
