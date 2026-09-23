@@ -120,6 +120,8 @@ function applyPermissions(){
 
   const cu=document.querySelector('#currentUser');
   if(cu)cu.textContent=AUTH?(AUTH.username+(AUTH.is_admin?' • Administrador':'')):'';
+  const ub=document.querySelector('#usersTopBtn');
+  if(ub)ub.style.display=AUTH?.is_admin?'':'none';
 }
 function firstAllowedTab(){
   const btn=[...document.querySelectorAll('.nav button')].find(b=>b.style.display!=='none'&&tabAllowed(b.dataset.tab));
@@ -859,5 +861,6 @@ if($('#remClientB'))$('#remClientB').onchange=renderRemCompare;
 window.onresize=()=>{clearTimeout(window.rz);window.rz=setTimeout(update,150)};
 $('#mobile').onclick=()=>alert(/iphone|ipad|ipod/i.test(navigator.userAgent)?'No Safari: toque em Compartilhar e depois em Adicionar à Tela de Início.':'No Chrome: toque no menu ⋮ e escolha Adicionar à tela inicial.');
 if($('#shareWhatsapp'))$('#shareWhatsapp').onclick=()=>whatsappShare();
+if($('#usersTopBtn'))$('#usersTopBtn').onclick=()=>{if(AUTH?.is_admin)openTab('usuarios')};
 if($('#logoutBtn'))$('#logoutBtn').onclick=async()=>{try{await fetch('/api/auth/logout',{method:'POST'})}catch{}setDashboardSessionToken('');location.reload()};
 if(DASH_EMBEDDED)bootstrapEmbeddedAuth();else bootstrapAuth();
