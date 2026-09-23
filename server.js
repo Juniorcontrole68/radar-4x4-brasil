@@ -1405,7 +1405,12 @@ async function rows(gid){
 }
 http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.pathname==='/health'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:true}))}if(u.pathname==='/api/coletas/status'){try{const x=await fetchColetasStatus(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/carregamentos-finais'&&req.method==='GET'){try{
   const limit=Math.max(1,Math.min(100,Number(u.searchParams.get('limit')||30)));
-  const x=await portalJson('/api/painel/carregamentos-finais?limit='+limit);
+  const q=new URLSearchParams({limit:String(limit)});
+  const motorista=String(u.searchParams.get('motorista')||'').trim();
+  const data=String(u.searchParams.get('data')||'').trim();
+  if(motorista)q.set('motorista',motorista);
+  if(data)q.set('data',data);
+  const x=await portalJson('/api/painel/carregamentos-finais?'+q.toString());
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){
