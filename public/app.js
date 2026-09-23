@@ -832,7 +832,7 @@ function setupLoadingForm(){
 }
 
 
-let ROUTE_MANIFESTS=[],ROUTE_PLAN=null,ROUTE_MANUAL_ORDER=[],ROUTE_MAP=null,ROUTE_LAYER=null;
+let ROUTE_MANIFESTS=[],ROUTE_PLAN=null,ROUTE_MANUAL_ORDER=[],ROUTE_EXTRA_STOPS=[],ROUTE_MAP=null,ROUTE_LAYER=null;
 function routeFmtKm(m){return Number.isFinite(Number(m))?(Number(m)/1000).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})+' km':'—'}
 function routeDistance(order,m){
   if(!order?.length||!m?.length)return 0;
@@ -952,12 +952,75 @@ function routeRenderPlan(){
   if($('#routeMethod'))$('#routeMethod').textContent=(ROUTE_PLAN.method||'otimizada').toUpperCase()+' • '+(ROUTE_PLAN.matrixSource||'');
   const w=$('#routeWarning');
   if(w){
-    const n=Number(ROUTE_PLAN.approximateStops||0);
-    w.style.display=n?'':'none';
-    w.textContent=n?n+' parada(s) não possuem rua/CEP confirmado no dado atual do SSW. Elas foram localizadas por cliente/cidade; a tela sinaliza isso para não tratar a distância como exata.':''
+    const n=Number(ROUTE_PLAN.approximateStops||0),rej=(ROUTE_PLAN.rejectedStops||[]);
+    const msgs=[];
+    if(n)msgs.push(n+' parada(s) estão aproximadas por cidade/endereço incompleto.');
+    if(rej.length)msgs.push(rej.length+' parada(s) foram rejeitadas por falta de localização ou por ultrapassarem o raio máximo de 300 km.');
+    w.style.display=msgs.length?'':'none';
+    w.textContent=msgs.join(' ')
   }
   routeRenderBest();routeRenderManual();routeRenderMap()
 }
+
+async function routeRecalculateWithStops(stops){
+  const status=$('#routeStatus');
+  const meta={
+    date:$('#routeDate')?.value||'',romaneio:ROUTE_PLAN?.romaneio||$('#routeManifest')?.value||'',
+    motorista:ROUTE_PLAN?.motorista||$('#routeDriver')?.value||'',veiculo:ROUTE_PLAN?.veiculo||''
+  };
+  const r=await fetch('/api/roteirizador/recalcular',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...meta,stops})});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível recalcular a rota.');
+  ROUTE_PLAN=j;ROUTE_MANUAL_ORDER=(j.originalOrder||[]).slice();
+  if(status)status.textContent=(j.motorista||'Rota manual')+' • '+nf(j.deliveries||0)+' parada(s) válidas • limite de 300 km aplicado.';
+  routeRenderPlan();
+  return j
+}
+function routeMergedStops(){
+  const base=(ROUTE_PLAN?.stops||[]).filter(x=>x.source!=='manual'&&x.source!=='cte');
+  const seen=new Set(),out=[];
+  for(const s of [...base,...ROUTE_EXTRA_STOPS]){
+    const key=(s.barcode?'B'+s.barcode:'')||(s.ctrc?'C'+s.ctrc:'')||('A'+String(s.endereco||s.label||'').toLowerCase());
+    if(key&&seen.has(key))continue;
+    if(key)seen.add(key);
+    out.push(s)
+  }
+  return out
+}
+async function routeAddManualAddress(){
+  const input=$('#routeManualAddress'),msg=$('#routeManualMsg'),raw=input?.value.trim()||'';
+  if(!raw){if(msg)msg.textContent='Digite o endereço da entrega.';return}
+  const btn=$('#routeAddAddress');if(btn){btn.disabled=true;btn.textContent='Localizando…'}
+  try{
+    const r=await fetch('/api/roteirizador/endereco?endereco='+encodeURIComponent(raw),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Endereço não localizado.');
+    ROUTE_EXTRA_STOPS.push(j.stop);
+    if(input)input.value='';
+    if(msg)msg.textContent='✓ Endereço aceito ('+Number(j.stop.radiusKm||0).toFixed(1).replace('.',',')+' km da base).';
+    if(ROUTE_PLAN)await routeRecalculateWithStops(routeMergedStops());
+  }catch(e){if(msg)msg.textContent='Erro: '+e.message}
+  finally{if(btn){btn.disabled=false;btn.textContent='Adicionar'}}
+}
+async function routeAddCteBarcode(){
+  const input=$('#routeCteBarcode'),msg=$('#routeCteMsg'),raw=input?.value.trim()||'';
+  if(!raw){if(msg)msg.textContent='Leia ou digite o código do CT-e.';return}
+  const btn=$('#routeAddCte');if(btn){btn.disabled=true;btn.textContent='Consultando…'}
+  try{
+    const date=$('#routeDate')?.value||'';
+    const r=await fetch('/api/roteirizador/cte?codigo='+encodeURIComponent(raw)+'&date='+encodeURIComponent(date),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'CT-e não localizado.');
+    const exists=ROUTE_EXTRA_STOPS.some(x=>x.barcode&&x.barcode===j.stop.barcode);
+    if(!exists)ROUTE_EXTRA_STOPS.push(j.stop);
+    if(input)input.value='';
+    if(msg)msg.textContent='✓ CT-e '+(j.stop.ctrc||'')+' • '+(j.stop.destinatario||'destinatário')+' adicionado.';
+    if(ROUTE_PLAN)await routeRecalculateWithStops(routeMergedStops());
+  }catch(e){
+    if(msg)msg.textContent='Erro: '+e.message;
+  }finally{if(btn){btn.disabled=false;btn.textContent='Consultar';if(input)input.focus()}}
+}
+
 async function calculateRoute(){
   const date=$('#routeDate')?.value||'',rom=$('#routeManifest')?.value||'',status=$('#routeStatus');
   if(!rom){if(status)status.textContent='Selecione um motorista e um romaneio.';return}
@@ -968,16 +1031,26 @@ async function calculateRoute(){
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível calcular a rota.');
     ROUTE_PLAN=j;ROUTE_MANUAL_ORDER=(j.originalOrder||[]).slice();
-    if(status)status.textContent=(j.motorista||'Motorista')+' • '+(j.romaneio||'')+' • '+nf(j.deliveries||0)+' entrega(s) • base fixa em Americana.';
-    routeRenderPlan()
+    if(ROUTE_EXTRA_STOPS.length){
+      await routeRecalculateWithStops(routeMergedStops());
+    }else{
+      if(status)status.textContent=(j.motorista||'Motorista')+' • '+(j.romaneio||'')+' • '+nf(j.deliveries||0)+' entrega(s) • base fixa em Americana • raio máximo 300 km.';
+      routeRenderPlan()
+    }
   }catch(e){if(status)status.textContent='Erro ao calcular rota: '+e.message}
   finally{if(btn){btn.disabled=false;btn.textContent='Otimizar rota'}}
 }
 function setupRoteirizador(){
   const d=$('#routeDate');if(d&&!d.value)d.value=iso(new Date());
-  if(d)d.onchange=()=>{ROUTE_PLAN=null;ROUTE_MANUAL_ORDER=[];loadRouteManifests(true)};
+  if(d)d.onchange=()=>{ROUTE_PLAN=null;ROUTE_MANUAL_ORDER=[];ROUTE_EXTRA_STOPS=[];loadRouteManifests(true)};
   if($('#routeDriver'))$('#routeDriver').onchange=routePopulateManifest;
   if($('#routeCalculate'))$('#routeCalculate').onclick=calculateRoute;
+  if($('#routeAddAddress'))$('#routeAddAddress').onclick=routeAddManualAddress;
+  if($('#routeAddCte'))$('#routeAddCte').onclick=routeAddCteBarcode;
+  if($('#routeManualAddress'))$('#routeManualAddress').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();routeAddManualAddress()}};
+  if($('#routeCteBarcode')){
+    $('#routeCteBarcode').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();routeAddCteBarcode()}};
+  }
   if($('#routeUseBest'))$('#routeUseBest').onclick=()=>{if(ROUTE_PLAN){ROUTE_MANUAL_ORDER=(ROUTE_PLAN.optimizedOrder||[]).slice();routeRenderManual()}};
   if($('#routeOpenGoogle'))$('#routeOpenGoogle').onclick=routeGoogleMaps
 }
