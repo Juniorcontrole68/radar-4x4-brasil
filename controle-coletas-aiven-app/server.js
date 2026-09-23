@@ -51,6 +51,45 @@ async function readJsonBody(req) {
   catch { throw new Error('JSON inválido'); }
 }
 
+async function readJsonBodyLimited(req, maxBytes = 2 * 1024 * 1024) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > maxBytes) {
+      const e = new Error('Arquivo muito grande. Tire a foto novamente.');
+      e.status = 413;
+      throw e;
+    }
+    chunks.push(Buffer.from(chunk));
+  }
+  if (!chunks.length) return {};
+  const raw = Buffer.concat(chunks).toString('utf8');
+  try { return JSON.parse(raw); }
+  catch {
+    const e = new Error('Dados inválidos.');
+    e.status = 400;
+    throw e;
+  }
+}
+
+function parseImageDataUrl(dataUrl) {
+  const m = String(dataUrl || '').match(/^data:(image\/(?:jpeg|jpg|png|webp));base64,([A-Za-z0-9+/=\r\n]+)$/i);
+  if (!m) {
+    const e = new Error('Foto inválida.');
+    e.status = 400;
+    throw e;
+  }
+  const mime = m[1].toLowerCase() === 'image/jpg' ? 'image/jpeg' : m[1].toLowerCase();
+  const buffer = Buffer.from(m[2].replace(/\s+/g, ''), 'base64');
+  if (!buffer.length || buffer.length > 900 * 1024) {
+    const e = new Error('A foto deve ter no máximo 900 KB após a compactação.');
+    e.status = 413;
+    throw e;
+  }
+  return { mime, buffer };
+}
+
 
 async function duplicateColetaMinimal(id, novaData) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(novaData || ''))) {
@@ -190,6 +229,20 @@ async function start() {
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS data_recebimento DATE');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS previsao_pagamento_fatura DATE');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS destinatario TEXT');
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS carregamentos_finais (
+      id BIGSERIAL PRIMARY KEY,
+      conferente TEXT NOT NULL,
+      motorista TEXT NOT NULL,
+      quantidade_entregas INTEGER NOT NULL CHECK (quantidade_entregas >= 0),
+      foto BYTEA NOT NULL,
+      foto_mime TEXT NOT NULL DEFAULT 'image/jpeg',
+      foto_bytes INTEGER NOT NULL DEFAULT 0,
+      capturada_em TIMESTAMPTZ NOT NULL,
+      criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_carregamentos_finais_capturada_em ON carregamentos_finais (capturada_em DESC)');
   await migrateLegacyBillsIfNeeded();
   
 
@@ -275,6 +328,74 @@ async function start() {
         return sendJson(res, 200, result.rows);
       }
 
+
+      if (req.method === 'GET' && u.pathname === '/api/painel/carregamentos-finais') {
+        try {
+          const limit = Math.max(1, Math.min(100, Number(u.searchParams.get('limit') || 30)));
+          const r = await pool.query(`
+            SELECT id::text AS id, conferente, motorista, quantidade_entregas,
+                   capturada_em, criado_em, foto_mime, foto_bytes
+            FROM carregamentos_finais
+            ORDER BY capturada_em DESC, id DESC
+            LIMIT $1
+          `, [limit]);
+          return sendJson(res, 200, { ok: true, rows: r.rows });
+        } catch (e) {
+          return sendJson(res, 500, { ok: false, error: e.message || 'Não foi possível carregar os registros de carregamento.' });
+        }
+      }
+
+      const carregamentoFotoMatch = u.pathname.match(/^\/api\/painel\/carregamentos-finais\/(\d+)\/foto$/);
+      if (req.method === 'GET' && carregamentoFotoMatch) {
+        try {
+          const r = await pool.query(
+            'SELECT foto, foto_mime FROM carregamentos_finais WHERE id=$1 LIMIT 1',
+            [carregamentoFotoMatch[1]]
+          );
+          if (!r.rowCount) return sendJson(res, 404, { ok: false, error: 'Foto não encontrada.' });
+          const row = r.rows[0];
+          res.writeHead(200, {
+            'Content-Type': row.foto_mime || 'image/jpeg',
+            'Content-Length': row.foto.length,
+            'Cache-Control': 'private, max-age=3600'
+          });
+          return res.end(row.foto);
+        } catch (e) {
+          return sendJson(res, 500, { ok: false, error: e.message || 'Não foi possível carregar a foto.' });
+        }
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/painel/carregamentos-finais') {
+        try {
+          const body = await readJsonBodyLimited(req, 2 * 1024 * 1024);
+          const conferente = String(body.conferente || '').trim();
+          const motorista = String(body.motorista || '').trim();
+          const quantidade = Number(body.quantidade_entregas);
+          const captured = new Date(body.capturada_em || Date.now());
+
+          if (!conferente) return sendJson(res, 400, { ok: false, error: 'Informe o nome do conferente.' });
+          if (!motorista) return sendJson(res, 400, { ok: false, error: 'Informe o nome do motorista.' });
+          if (!Number.isInteger(quantidade) || quantidade < 0 || quantidade > 1000) {
+            return sendJson(res, 400, { ok: false, error: 'Quantidade de entregas inválida.' });
+          }
+          if (!Number.isFinite(captured.getTime())) {
+            return sendJson(res, 400, { ok: false, error: 'Data/hora da foto inválida.' });
+          }
+
+          const photo = parseImageDataUrl(body.foto);
+          const r = await pool.query(`
+            INSERT INTO carregamentos_finais
+              (conferente, motorista, quantidade_entregas, foto, foto_mime, foto_bytes, capturada_em)
+            VALUES ($1,$2,$3,$4,$5,$6,$7)
+            RETURNING id::text AS id, conferente, motorista, quantidade_entregas, capturada_em, criado_em, foto_bytes
+          `, [
+            conferente, motorista, quantidade, photo.buffer, photo.mime, photo.buffer.length, captured.toISOString()
+          ]);
+          return sendJson(res, 201, { ok: true, ...r.rows[0] });
+        } catch (e) {
+          return sendJson(res, e.status || 500, { ok: false, error: e.message || 'Não foi possível salvar o final do carregamento.' });
+        }
+      }
 
       const duplicarMatch = u.pathname.match(/^\/api\/painel\/coletas-duplicar\/([^/]+)$/);
       if (req.method === 'POST' && duplicarMatch) {
