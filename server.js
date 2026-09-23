@@ -793,6 +793,27 @@ async function buildSswMotoristas(from='',to=''){
   }
   console.log('BI2 174 base final: '+JSON.stringify({linhas:baseRows.length,chaves:ctrcMap.size}));
 
+  // Calibra qual dos dois CNPJs do bloco do PDF é o destinatário,
+  // usando CT-es que também existem no BI2 174.
+  const pdfCnpjCalibration={dest:[0,0],rem:[0,0],known:0,noneDest:0};
+  if(base38&&base38.ok){
+    const rowsByLoose=new Map(),rowsByNf=new Map();
+    for(const r of baseRows){
+      const lk=normCtrcLoose(r.numero_ctrc||r.CTRC),nf=normNf(r.numero_nf||r.NF);
+      if(lk)rowsByLoose.set(lk,r);if(nf)rowsByNf.set(nf,r);
+    }
+    for(const x of (base38.rows||[]))for(const m of (x.ctrcMeta||[])){
+      const r=rowsByLoose.get(normCtrcLoose(m.ctrc))||rowsByNf.get(normNf(m.nf));if(!r)continue;
+      const dest=String(r.dest_cnpj||pickField(r,'CNPJ DESTINATARIO','DEST_CNPJ','CNPJ DEST')||'').replace(/\D/g,'');
+      const rem=String(r.remetente_cnpj||pickField(r,'CNPJ REMETENTE','REMETENTE_CNPJ')||'').replace(/\D/g,'');
+      pdfCnpjCalibration.known++;
+      let hit=false;
+      (m.cnpjs||[]).forEach((z,i)=>{if(z===dest){pdfCnpjCalibration.dest[i]=(pdfCnpjCalibration.dest[i]||0)+1;hit=true}if(z===rem)pdfCnpjCalibration.rem[i]=(pdfCnpjCalibration.rem[i]||0)+1});
+      if(dest&&!hit)pdfCnpjCalibration.noneDest++;
+    }
+  }
+  console.log('CALIBRACAO CNPJ PDF: '+JSON.stringify(pdfCnpjCalibration));
+
   const ownerByCtrc=new Map(),ownerByNf=new Map(),officialCtrcs=new Set(),officialLoose=new Set(),officialNfs=new Set();
   if(base38&&base38.ok){
     for(const x of (base38.rows||[])){
