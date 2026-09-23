@@ -370,6 +370,14 @@ async function start() {
         return res.end(JSON.stringify({ok:true}));
       }
 
+      if (req.method === 'POST' && u.pathname === '/api/auth/admin-dashboard-token') {
+        try {
+          const user=await dashboardSession(req,true);
+          const token=await dashboardCreateSession(user.id,365);
+          return sendJson(res,200,{ok:true,token});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Não foi possível abrir o dashboard do administrador.'});}
+      }
+
       if (req.method === 'POST' && u.pathname === '/api/auth/embed-ticket') {
         try {
           const user=await dashboardSession(req,false);
