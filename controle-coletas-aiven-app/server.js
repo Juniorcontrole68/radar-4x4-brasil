@@ -350,6 +350,58 @@ async function start() {
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Não foi possível carregar os usuários.'});}
       }
 
+      if (req.method === 'POST' && u.pathname === '/api/painel/auth/users') {
+        try {
+          await dashboardSession(req,true);
+          const body=await readJsonBodyLimited(req,128*1024);
+          const username=String(body.username||'').trim();
+          const password=String(body.password||'');
+          const permissions=Array.isArray(body.permissions)?Array.from(new Set(body.permissions.map(String))):[];
+          const active=body.active!==false;
+          if(username.length<2)return sendJson(res,400,{ok:false,error:'Informe um nome de usuário.'});
+          if(password.length<4)return sendJson(res,400,{ok:false,error:'A senha deve ter pelo menos 4 caracteres.'});
+          const ph=dashboardHashPassword(password);
+          const r=await pool.query('INSERT INTO dashboard_users(username,password_salt,password_hash,is_admin,active,permissions,updated_at) VALUES($1,$2,$3,FALSE,$4,$5::jsonb,NOW()) RETURNING id::text AS id,username,is_admin,active,permissions,created_at,updated_at',[username,ph.salt,ph.hash,active,JSON.stringify(permissions)]);
+          const user=Object.assign({},r.rows[0],{permissions:dashboardPerms(r.rows[0].permissions)});
+          return sendJson(res,201,{ok:true,user});
+        } catch(e){
+          const msg=e.code==='23505'?'Já existe um usuário com esse nome.':(e.message||'Não foi possível criar o usuário.');
+          return sendJson(res,e.code==='23505'?409:(e.status||500),{ok:false,error:msg});
+        }
+      }
+
+      if (req.method === 'PATCH' && u.pathname.startsWith('/api/painel/auth/users/')) {
+        try {
+          const admin=await dashboardSession(req,true);
+          const id=u.pathname.slice('/api/painel/auth/users/'.length);
+          if(!/^[0-9]+$/.test(id))return sendJson(res,404,{ok:false,error:'Usuário não encontrado.'});
+          const body=await readJsonBodyLimited(req,128*1024);
+          const current=await pool.query('SELECT id::text AS id,is_admin FROM dashboard_users WHERE id=$1 LIMIT 1',[id]);
+          if(!current.rowCount)return sendJson(res,404,{ok:false,error:'Usuário não encontrado.'});
+          const username=body.username==null?null:String(body.username).trim();
+          const active=body.active==null?null:!!body.active;
+          const permissions=Array.isArray(body.permissions)?Array.from(new Set(body.permissions.map(String))):null;
+          const password=body.password==null?'':String(body.password);
+          if(username!==null&&username.length<2)return sendJson(res,400,{ok:false,error:'Nome de usuário inválido.'});
+          if(password&&password.length<4)return sendJson(res,400,{ok:false,error:'A senha deve ter pelo menos 4 caracteres.'});
+          if(String(admin.id)===String(id)&&active===false)return sendJson(res,400,{ok:false,error:'O administrador não pode desativar a própria conta.'});
+          const sets=[];const vals=[];
+          const add=(expr,value)=>{vals.push(value);sets.push(expr.replace('?',String.fromCharCode(36)+vals.length));};
+          if(username!==null)add('username=?',username);
+          if(active!==null)add('active=?',active);
+          if(permissions!==null&&!current.rows[0].is_admin)add('permissions=?::jsonb',JSON.stringify(permissions));
+          if(password){const ph=dashboardHashPassword(password);add('password_salt=?',ph.salt);add('password_hash=?',ph.hash);}
+          sets.push('updated_at=NOW()');
+          vals.push(id);
+          const r=await pool.query('UPDATE dashboard_users SET '+sets.join(', ')+' WHERE id='+String.fromCharCode(36)+vals.length+' RETURNING id::text AS id,username,is_admin,active,permissions,created_at,updated_at',vals);
+          const user=Object.assign({},r.rows[0],{permissions:r.rows[0].is_admin?['*']:dashboardPerms(r.rows[0].permissions)});
+          return sendJson(res,200,{ok:true,user});
+        } catch(e){
+          const msg=e.code==='23505'?'Já existe um usuário com esse nome.':(e.message||'Não foi possível atualizar o usuário.');
+          return sendJson(res,e.code==='23505'?409:(e.status||500),{ok:false,error:msg});
+        }
+      }
+
       if (req.method === 'GET' && u.pathname === '/api/painel/motoristas-veiculos') {
         try {
           const r = await pool.query(`
