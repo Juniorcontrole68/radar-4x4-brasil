@@ -699,7 +699,12 @@ async function mapLimit(items,limit,fn){
   async function worker(){while(true){const i=next++;if(i>=items.length)return;out[i]=await fn(items[i],i)}}
   await Promise.all(Array.from({length:Math.min(limit,items.length)},worker));return out
 }
-function normCtrc(v){return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'')}
+function normCtrc(v){
+  const raw=String(v||'').toUpperCase().trim();
+  const m=raw.match(/\b([A-Z]{3})0*(\d{1,9})\s*-?\s*(\d)\b/);
+  if(m)return m[1]+String(Number(m[2]))+m[3];
+  return raw.replace(/[^A-Z0-9]/g,'');
+}
 function normPlate(v){return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'')}
 async function fetchBi2FolderDayParsed(codigo,folder,ymd){
   try{
@@ -834,7 +839,9 @@ async function buildSswMotoristas(from='',to=''){
       const rows17=current17.rows||[];
       const today17=rows17.filter(r=>brDateToIso(pickField(r,'DATA ENTREGA','ENTREGA','DT ENTREGA'))===today);
       addDeliveredRows(today17.length?today17:rows17);
-      console.log('BI2 17 baixas atuais: '+JSON.stringify({arquivo:rows17.length,hoje:today17.length,ctrcs:deliveredMap.size,headers:current17.headers.slice(0,20)}));
+      const officialDbg=new Set((base38.rows||[]).flatMap(x=>(x.ctrcs||[]).map(normCtrc)));
+      const deliveredDbg=[...deliveredMap.keys()];
+      console.log('BI2 17 baixas atuais: '+JSON.stringify({arquivo:rows17.length,hoje:today17.length,ctrcs:deliveredMap.size,intersecaoAtual:deliveredDbg.filter(k=>officialDbg.has(k)).length,amostraArquivo:rows17.slice(0,8).map(r=>pickField(r,'CTRC')),amostraNormalizada:deliveredDbg.slice(0,8),headers:current17.headers.slice(0,20)}));
     }catch(e){
       console.log('BI2 17 baixas atuais ERRO: '+String(e.message||e));
     }
