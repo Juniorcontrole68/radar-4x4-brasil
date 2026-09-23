@@ -120,6 +120,95 @@ function renderDriverProgress(){
     return'<div class="driver-progress-row"><div class="driver-progress-head"><div><div class="driver-progress-name">'+safe(x.motorista)+'</div><div class="driver-progress-meta">'+(x.veiculo?'Veículo '+safe(x.veiculo)+' • ':'')+nf(x.total)+' entregas no total'+(x.romaneios&&x.romaneios.length?' • Romaneio(s): '+safe(x.romaneios.join(', ')):'')+'</div></div><div class="driver-progress-stats"><b>'+nf(x.entregues)+'</b> entregues • <b>'+nf(x.pendentes)+'</b> pendentes • <b>'+nf(x.ocorrencias)+'</b> ocorrências • <b>'+pct.toFixed(1).replace('.',',')+'%</b></div></div><div class="driver-progress-track"><div class="driver-progress-fill"><div class="driver-seg-delivered" style="width:'+pg+'%"></div><div class="driver-seg-occurrence" style="width:'+pr+'%"></div><div class="driver-seg-pending" style="width:'+py+'%"></div></div><div class="driver-progress-truck" style="left:'+truck+'%">🚚</div></div></div>'
   }).join('')
 }
+function driverForecasts(d){
+  const G=buildDriverProgress(d),rows=Array.isArray(d?.rows)?d.rows:[],now=new Date(),deadline=new Date(now);
+  deadline.setHours(18,0,0,0);
+  const norm=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const fmt=t=>String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
+  const rank={red:0,yellow:1,green:2};
+
+  const out=G.map(g=>{
+    const dk=norm(g.motorista),R=rows.filter(r=>norm(r.motorista)===dk);
+
+    const deliveredTimes=R.filter(r=>r.entregue&&r.dataOcorrencia&&r.horaOcorrencia).map(r=>{
+      const z=new Date(r.dataOcorrencia+'T'+r.horaOcorrencia+':00');
+      return isNaN(z)?null:z
+    }).filter(Boolean).sort((a,b)=>a-b);
+
+    const intervals=[];
+    for(let i=1;i<deliveredTimes.length;i++){
+      const m=(deliveredTimes[i]-deliveredTimes[i-1])/60000;
+      if(m>=5&&m<=120)intervals.push(m)
+    }
+    intervals.sort((a,b)=>a-b);
+    const median=intervals.length?intervals[Math.floor(intervals.length/2)]:0;
+
+    const pendingRows=R.filter(r=>!r.entregue);
+    const pendingCities=[...new Set(pendingRows.map(r=>{
+      const city=String(r.cidade||'').trim(),uf=String(r.uf||'').trim();
+      return city+(uf?' / '+uf:'')
+    }).filter(Boolean))];
+
+    const deliveredRows=R.filter(r=>r.entregue&&r.dataOcorrencia&&r.horaOcorrencia).sort((a,b)=>{
+      return (a.dataOcorrencia+' '+a.horaOcorrencia).localeCompare(b.dataOcorrencia+' '+b.horaOcorrencia)
+    });
+    const lastDelivered=deliveredRows.length?deliveredRows[deliveredRows.length-1]:null;
+    const lastCity=lastDelivered?(String(lastDelivered.cidade||'').trim()+(lastDelivered.uf?' / '+String(lastDelivered.uf).trim():'')):'';
+
+    // 17,5 min por atendimento, conforme média operacional informada.
+    // O deslocamento é estimado pelo ritmo real das baixas; sem amostra suficiente,
+    // parte de 12 min por trecho e sobe quando há várias cidades pendentes.
+    let travelPerStop=median?Math.max(5,Math.min(45,median-17.5)):12;
+    if(pendingCities.length>1)travelPerStop+=Math.min(10,(pendingCities.length-1)*1.5);
+    if(lastCity&&pendingCities.length&&!pendingCities.includes(lastCity))travelPerStop+=3;
+
+    const perStop=17.5+travelPerStop;
+    const remaining=Math.max(0,Number(g.pendentes||0));
+    const eta=new Date(now.getTime()+remaining*perStop*60000);
+    const margin=(deadline-eta)/60000;
+
+    let level='green',label='Provável até 18h',icon='🟢';
+    if(remaining===0){
+      label='Rota concluída';icon='✅';
+    }else if(margin<0){
+      level='red';label='Risco após 18h';icon='🔴';
+    }else if(margin<45){
+      level='yellow';label='Atenção';icon='🟡';
+    }
+
+    const confidence=deliveredTimes.length>=3?'boa':(deliveredTimes.length?'média':'inicial');
+    return {
+      ...g,remaining,etaText:fmt(eta),margin,level,label,icon,confidence,
+      lastCity,pendingCities:pendingCities.length,perStop,deliveredSamples:deliveredTimes.length
+    }
+  });
+
+  out.sort((a,b)=>(rank[a.level]??9)-(rank[b.level]??9)||a.margin-b.margin);
+  return out;
+}
+
+function renderForecast(){
+  const d=S.sswMotoristas;if(!d||!d.ok)return;
+  const set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
+  const F=driverForecasts(d);
+
+  set('#hubForecastGreen',nf(F.filter(x=>x.level==='green').length));
+  set('#hubForecastYellow',nf(F.filter(x=>x.level==='yellow').length));
+  set('#hubForecastRed',nf(F.filter(x=>x.level==='red').length));
+
+  const list=$('#hubForecastList');if(!list)return;
+  if(!F.length){
+    list.textContent='Sem dados suficientes para calcular a previsão.';
+    return
+  }
+
+  list.innerHTML=F.map(x=>{
+    const delta=x.margin>=0?Math.round(x.margin)+' min de folga':Math.abs(Math.round(x.margin))+' min após 18h';
+    const city=x.lastCity?' • última cidade: '+safe(x.lastCity):'';
+    return '<div style="margin:0 0 7px"><b>'+x.icon+' '+safe(x.motorista)+'</b> — '+nf(x.remaining)+' restante(s) • previsão <b>'+x.etaText+'</b> • '+delta+' • confiança '+x.confidence+city+'</div>'
+  }).join('');
+}
+
 function renderSswMotoristas(){
   const d=S.sswMotoristas;if(!d||!d.ok)return;
   const set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
@@ -157,7 +246,7 @@ function renderSswMotoristas(){
   const mr=(d.motoristas||[]).map(x=>({motorista:x.motorista||'Não identificado',veiculo:x.veiculo||'—',saidas:nf(x.saidas||0),baixadas:nf(x.baixadas||0),pendentes:nf(x.pendentes||0),taxa:(x.taxa||0).toFixed(1).replace('.',',')+'%',ocorrencias:nf(x.ocorrencias||0)}));
   table('#sswDriverTable',[['Motorista','motorista'],['Veículo','veiculo'],['Saíram','saidas'],['Baixadas','baixadas'],['Pendentes','pendentes'],['Taxa','taxa'],['Ocorrências','ocorrencias']],mr);
   const dr=(d.rows||[]).map(x=>({ctrc:x.ctrc,nf:x.nf,remetente:x.remetente,destinatario:x.destinatario,cidade:(x.cidade||'')+(x.uf?' / '+x.uf:''),veiculo:x.veiculo||'—',motorista:x.motorista||'Não identificado',situacao:x.entregue?'BAIXADA':(x.ocorrenciaCodigo==='085'||x.ocorrenciaCodigo==='85'?'EM ROTA':'PENDENTE'),ocorrencia:(x.ocorrenciaCodigo?x.ocorrenciaCodigo+' - ':'')+(x.ocorrencia||''),data:(x.dataOcorrencia||'')+(x.horaOcorrencia?' '+x.horaOcorrencia:''),entrega:x.dataEntrega||''}));
-  table('#sswDriverDetail',[['CTRC','ctrc'],['NF','nf'],['Remetente','remetente'],['Destinatário','destinatario'],['Cidade','cidade'],['Veículo','veiculo'],['Motorista','motorista'],['Situação','situacao'],['Última ocorrência','ocorrencia'],['Data / hora','data'],['Baixa','entrega']],dr);renderDriverProgress();
+  table('#sswDriverDetail',[['CTRC','ctrc'],['NF','nf'],['Remetente','remetente'],['Destinatário','destinatario'],['Cidade','cidade'],['Veículo','veiculo'],['Motorista','motorista'],['Situação','situacao'],['Última ocorrência','ocorrencia'],['Data / hora','data'],['Baixa','entrega']],dr);renderDriverProgress();renderForecast();
 }
 async function refreshSswMotoristas(){
   if(window.__sswMotoristasLoading)return;
@@ -280,6 +369,7 @@ $$('.nav button').forEach(b=>b.onclick=()=>{
       renderRemetentes();
       renderSswMotoristas();
       renderDriverProgress();
+      renderForecast();
     }
     loadHeavyForTab(b.dataset.tab);
   },30)
