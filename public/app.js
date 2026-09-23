@@ -255,7 +255,7 @@ async function refreshSswMotoristas(){
     const q=sswRangeQuery(),sep=q?'&':'?';
     const r=await fetch('/api/bi2/saidas-baixas'+q+sep+'t='+Date.now(),{cache:'no-store'}),j=await r.json();
     if(!r.ok||!j.ok)throw Error(j.error||'Falha ao carregar saídas e baixas do SSW');
-    S.sswMotoristas=j;renderSswMotoristas();
+    S.sswMotoristas=j;renderSswMotoristas();loadingDriverOptions();
     clearTimeout(window.__sswMotoristasRetry);
     if(j.refreshing)window.__sswMotoristasRetry=setTimeout(refreshSswMotoristas,8000);
   }catch(e){
@@ -296,11 +296,125 @@ async function refreshData(first=false){
     if(first)$('#loading').classList.add('hide')
   }
 }
+function loadingDriverOptions(){
+  const names=new Set();
+  for(const x of (S.sswMotoristas?.motoristas38||[]))if(x.motorista)names.add(String(x.motorista).trim());
+  for(const x of (S.sswMotoristas?.rows||[]))if(x.motorista)names.add(String(x.motorista).trim());
+  const dl=$('#loadDriverList');
+  if(dl)dl.innerHTML=[...names].filter(Boolean).sort((a,b)=>a.localeCompare(b,'pt-BR')).map(n=>'<option value="'+safe(n)+'"></option>').join('');
+}
+function loadingDateTime(v){
+  const d=new Date(v);
+  if(isNaN(d))return'—';
+  return d.toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})
+}
+async function compressLoadingPhoto(file){
+  const dataUrl=await new Promise((resolve,reject)=>{
+    const fr=new FileReader();fr.onload=()=>resolve(fr.result);fr.onerror=()=>reject(new Error('Não foi possível ler a foto.'));fr.readAsDataURL(file)
+  });
+  const img=await new Promise((resolve,reject)=>{
+    const im=new Image();im.onload=()=>resolve(im);im.onerror=()=>reject(new Error('Foto inválida.'));im.src=dataUrl
+  });
+  let max=1280,quality=.72,result='';
+  for(let attempt=0;attempt<4;attempt++){
+    const scale=Math.min(1,max/Math.max(img.naturalWidth||img.width,img.naturalHeight||img.height));
+    const w=Math.max(1,Math.round((img.naturalWidth||img.width)*scale));
+    const h=Math.max(1,Math.round((img.naturalHeight||img.height)*scale));
+    const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;
+    const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0,w,h);
+    result=canvas.toDataURL('image/jpeg',quality);
+    const approx=Math.round((result.length-result.indexOf(',')-1)*.75);
+    if(approx<=850*1024)return result;
+    max=Math.round(max*.82);quality=Math.max(.52,quality-.08)
+  }
+  return result
+}
+function renderLoadingRecords(rows){
+  const box=$('#loadRecords');
+  if(box){
+    if(!rows.length)box.innerHTML='<div class="muted">Nenhum final de carregamento registrado ainda.</div>';
+    else box.innerHTML=rows.map(r=>{
+      const dt=loadingDateTime(r.capturada_em);
+      return '<div class="load-record"><a href="/api/carregamentos-finais/'+encodeURIComponent(r.id)+'/foto" target="_blank" rel="noopener"><img loading="lazy" src="/api/carregamentos-finais/'+encodeURIComponent(r.id)+'/foto" alt="Foto final do carregamento"></a><div><b>'+safe(r.motorista||'Motorista não informado')+'</b><div class="meta">Conferente: '+safe(r.conferente||'—')+'<br>Entregas: <b>'+nf(Number(r.quantidade_entregas||0))+'</b><br>Foto: '+safe(dt)+'</div></div></div>'
+    }).join('')
+  }
+  const today=iso(new Date()),todayRows=rows.filter(r=>{
+    const d=new Date(r.capturada_em);return !isNaN(d)&&iso(d)===today
+  });
+  const set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
+  set('#hubLoadCount',nf(todayRows.length));
+  set('#hubLoadLast',rows.length?new Date(rows[0].capturada_em).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'—');
+  const info=$('#hubLoadInfo');
+  if(info)info.textContent=rows.length?('Último: '+(rows[0].motorista||'—')+' • '+nf(Number(rows[0].quantidade_entregas||0))+' entregas • '+loadingDateTime(rows[0].capturada_em)):'Nenhum registro realizado ainda.';
+}
+async function refreshLoadingRecords(){
+  if(window.__loadingRecordsBusy)return;
+  window.__loadingRecordsBusy=true;
+  try{
+    const r=await fetch('/api/carregamentos-finais?limit=30&t='+Date.now(),{cache:'no-store'});
+    const j=await r.json();
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar registros.');
+    renderLoadingRecords(Array.isArray(j.rows)?j.rows:[])
+  }catch(e){
+    const box=$('#loadRecords');if(box)box.innerHTML='<div class="muted">Não foi possível carregar os registros: '+safe(e.message)+'</div>';
+    const info=$('#hubLoadInfo');if(info)info.textContent='Registros de carregamento indisponíveis no momento.'
+  }finally{window.__loadingRecordsBusy=false}
+}
+function setupLoadingForm(){
+  const photo=$('#loadPhoto'),form=$('#loadFinalForm'),refresh=$('#loadRefresh');
+  if(!photo||!form)return;
+  if(refresh)refresh.onclick=refreshLoadingRecords;
+  photo.onchange=async()=>{
+    const file=photo.files&&photo.files[0];
+    const msg=$('#loadMsg');
+    if(!file){window.__loadPhotoData='';return}
+    try{
+      if(msg){msg.style.color='#475569';msg.textContent='Preparando foto…'}
+      const captured=new Date(file.lastModified||Date.now());
+      window.__loadCapturedAt=captured.toISOString();
+      window.__loadPhotoData=await compressLoadingPhoto(file);
+      $('#loadPreviewImg').src=window.__loadPhotoData;
+      $('#loadPhotoTime').textContent='Foto registrada em '+captured.toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'medium'});
+      $('#loadPreview').style.display='block';
+      if(msg)msg.textContent='Foto pronta para salvar.'
+    }catch(e){
+      window.__loadPhotoData='';
+      if(msg){msg.style.color='#b91c1c';msg.textContent=e.message}
+    }
+  };
+  form.onsubmit=async ev=>{
+    ev.preventDefault();
+    const msg=$('#loadMsg'),btn=$('#loadSave');
+    const conferente=$('#loadChecker').value.trim(),motorista=$('#loadDriver').value.trim(),quantidade=Number($('#loadQty').value);
+    if(!window.__loadPhotoData){if(msg){msg.style.color='#b91c1c';msg.textContent='Tire a foto do final do carregamento antes de salvar.'}return}
+    btn.disabled=true;
+    if(msg){msg.style.color='#475569';msg.textContent='Salvando registro…'}
+    try{
+      const r=await fetch('/api/carregamentos-finais',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({conferente,motorista,quantidade_entregas:quantidade,capturada_em:window.__loadCapturedAt||new Date().toISOString(),foto:window.__loadPhotoData})
+      });
+      const j=await r.json();
+      if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível salvar.');
+      if(msg){msg.style.color='#15803d';msg.textContent='✓ Final do carregamento salvo com sucesso.'}
+      form.reset();window.__loadPhotoData='';window.__loadCapturedAt='';
+      $('#loadPreview').style.display='none';$('#loadPreviewImg').removeAttribute('src');
+      await refreshLoadingRecords()
+    }catch(e){
+      if(msg){msg.style.color='#b91c1c';msg.textContent=e.message}
+    }finally{btn.disabled=false}
+  }
+}
+
 function loadHeavyForTab(tab){
   if(tab==='dashboards'){
     setTimeout(()=>refreshSswMotoristas(),100);
     setTimeout(()=>refreshSswAtrasos(),450);
     setTimeout(()=>refreshSswRemetentes(),900);
+    setTimeout(()=>refreshLoadingRecords(),1200);
+  }else if(tab==='conferencia'){
+    loadingDriverOptions();
+    setTimeout(()=>refreshLoadingRecords(),50);
   }else if(tab==='ssw-motoristas'||tab==='motoristas-evolucao'){
     setTimeout(()=>refreshSswMotoristas(),80);
   }else if(tab==='ssw-atrasos'){
@@ -341,7 +455,8 @@ function openTab(tab){
     'ssw-remetentes':'Entregas por Cliente Remetente',
     'ssw-remetentes-comparativo':'Comparativo de Clientes Remetentes',
     'ssw-motoristas':'SSW • Saídas x Baixas',
-    'motoristas-evolucao':'Evolução por Motorista'
+    'motoristas-evolucao':'Evolução por Motorista',
+    'conferencia':'Final do Carregamento'
   };
   $('#pageTitle').textContent=titles[tab]||'Dashboards';
   if(tab==='ssw-atrasos')setTimeout(renderSswAtrasos,30);
@@ -383,4 +498,5 @@ if($('#remClientA'))$('#remClientA').onchange=renderRemCompare;
 if($('#remClientB'))$('#remClientB').onchange=renderRemCompare;
 window.onresize=()=>{clearTimeout(window.rz);window.rz=setTimeout(update,150)};
 $('#mobile').onclick=()=>alert(/iphone|ipad|ipod/i.test(navigator.userAgent)?'No Safari: toque em Compartilhar e depois em Adicionar à Tela de Início.':'No Chrome: toque no menu ⋮ e escolha Adicionar à tela inicial.');
+setupLoadingForm();
 start();
