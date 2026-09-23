@@ -58,6 +58,53 @@ async function portalJson(pathname,{method='GET',body=null,timeout=25000}={}){
   }
   return j
 }
+const DASH_AUTH_CACHE=new Map();
+function parseCookies(req){
+  const out={};
+  for(const part of String(req.headers.cookie||'').split(';')){
+    const i=part.indexOf('=');
+    if(i>0)out[part.slice(0,i).trim()]=decodeURIComponent(part.slice(i+1).trim());
+  }
+  return out;
+}
+function dashboardCookie(token,maxAge=14*24*60*60){
+  return 'cl_session='+encodeURIComponent(token||'')+'; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age='+maxAge;
+}
+async function portalAuth(pathname,{method='GET',body=null,token='',timeout=20000}={}){
+  const u=new URL(pathname,COLETAS_PORTAL_URL);
+  const headers={'User-Agent':'CONSTRULOG-Dashboard/1.0','Cache-Control':'no-cache'};
+  if(token)headers.Authorization='Bearer '+token;
+  let payload;
+  if(body!==null){headers['Content-Type']='application/json';payload=JSON.stringify(body)}
+  const r=await fetch(u,{method,headers,body:payload,signal:AbortSignal.timeout(timeout)});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok||j.ok===false){const e=new Error(j.error||('HTTP '+r.status));e.status=r.status;throw e}
+  return j;
+}
+async function dashboardUserFromReq(req){
+  const token=parseCookies(req).cl_session||'';
+  if(!token){const e=new Error('Não autenticado.');e.status=401;throw e}
+  const hit=DASH_AUTH_CACHE.get(token);
+  if(hit&&Date.now()-hit.at<30000)return Object.assign({token},hit.user);
+  const j=await portalAuth('/api/painel/auth/me',{token});
+  DASH_AUTH_CACHE.set(token,{at:Date.now(),user:j.user});
+  return Object.assign({token},j.user);
+}
+function dashboardHas(user,perm){return !!(user&&(user.is_admin||user.permissions?.includes('*')||user.permissions?.includes(perm)))}
+function dashboardHasAny(user,perms){return !!(user&&(user.is_admin||user.permissions?.includes('*')||perms.some(p=>user.permissions?.includes(p))))}
+function dashboardDeny(res,msg='Acesso não autorizado.'){res.writeHead(403,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:msg}))}
+function filterLancamentosForUser(rows,user){
+  if(user?.is_admin||dashboardHas(user,'dashboard'))return rows;
+  const allow=new Set(['Data','  Data']);
+  const add=(arr)=>arr.forEach(x=>allow.add(x));
+  if(dashboardHas(user,'operacional'))add(['Motorista','Filial','Entregas','Realizadas','KM','Retorno','Rota']);
+  if(dashboardHas(user,'financeiro'))add(['Frete Vialog Liq',' Frete Vialog Liq','Frete Mot Liq',' Frete Mot Liq']);
+  if(dashboardHas(user,'motoristas'))add(['Motorista','Realizadas']);
+  if(dashboardHas(user,'filiais'))add(['Filial','Entregas','Realizadas']);
+  if(dashboardHas(user,'rotas'))add(['Rota','Realizadas','KM']);
+  if(dashboardHas(user,'ocorrencias'))add(['Retorno','Entregas','Realizadas']);
+  return rows.map(r=>Object.fromEntries(Object.entries(r).filter(([k])=>allow.has(k))));
+}
 function internalSswConfigured(){return !!(process.env.SSW_INTERNAL_DOMINIO&&process.env.SSW_INTERNAL_CPF&&process.env.SSW_INTERNAL_USUARIO&&process.env.SSW_INTERNAL_SENHA)}
 async function testInternalSswLogin(){
   const jar=new Map();
