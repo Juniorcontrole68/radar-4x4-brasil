@@ -59,7 +59,6 @@ const PERMISSION_OPTIONS=[
   ['motoristas','Motoristas'],
   ['filiais','Filiais'],
   ['agendamentos','Agendamentos'],
-  ['agendamentos_copia','Consulta de Agendamentos'],
   ['ajudantes','Ajudantes e Conferentes'],
   ['rotas','Rotas e Produtividade'],
   ['ocorrencias','Ocorrências e SLA'],
@@ -74,17 +73,18 @@ function hasAnyPerm(list){return list.some(hasPerm)}
 function tabAllowed(tab){
   const map={
     dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',
-    agendamentos:'agendamentos','agendamentos-copia':'agendamentos_copia',ajudantes:'ajudantes',
+    agendamentos:'agendamentos',ajudantes:'ajudantes',
     'ssw-motoristas':'ssw_saidas','motoristas-evolucao':'evolucao',
     'ssw-atrasos':'ssw_atrasos','ssw-remetentes':'remetentes',
     'ssw-remetentes-comparativo':'remetentes_comparativo'
   };
   if(tab==='usuarios')return !!AUTH?.is_admin;
+  if(tab==='agendamentos-copia')return hasAnyPerm(['agendamentos','agendamentos_copia']);
   if(tab==='dashboards')return AUTH?.is_admin||PERMISSION_OPTIONS.some(([p])=>hasPerm(p)&&p!=='dashboard');
   return map[tab]?hasPerm(map[tab]):false
 }
 function applyPermissions(){
-  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',agendamentos:'agendamentos','agendamentos-copia':'agendamentos_copia',ajudantes:'ajudantes'};
+  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',agendamentos:'agendamentos',ajudantes:'ajudantes'};
   document.querySelectorAll('.nav button').forEach(b=>{
     let show=true;
     if(b.dataset.adminOnly==='1')show=!!AUTH?.is_admin;
@@ -103,7 +103,6 @@ function applyPermissions(){
     'Motoristas':'motoristas',
     'Filiais':'filiais',
     'Agendamentos':'agendamentos',
-    'Consulta de Agendamentos':'agendamentos_copia',
     'Ajudantes e Conferentes':'ajudantes',
     'Rotas e Produtividade':'rotas',
     'Ocorrências e SLA':'ocorrencias',
@@ -116,14 +115,13 @@ function applyPermissions(){
     const title=card.querySelector('h3')?.textContent.trim()||'';
     const perm=cardMap[title];
     card.style.display=!perm||hasPerm(perm)?'':'none';
-    const btn=card.querySelector('.dash-open[data-open]');
-    if(btn&&!tabAllowed(btn.dataset.open))btn.style.display='none';
+    card.querySelectorAll('.dash-open[data-open]').forEach(btn=>{
+      btn.style.display=tabAllowed(btn.dataset.open)?'':'none';
+    });
   });
 
   const cu=document.querySelector('#currentUser');
   if(cu)cu.textContent=AUTH?(AUTH.username+(AUTH.is_admin?' • Administrador':'')):'';
-  const ab=document.querySelector('#agCopyTopBtn');
-  if(ab)ab.style.display=hasPerm('agendamentos_copia')?'':'none';
   const ub=document.querySelector('#usersTopBtn');
   if(ub)ub.style.display=AUTH?.is_admin?'':'none';
 }
@@ -347,36 +345,19 @@ function agCopyFillSelect(id,key,label){
   if(values.includes(current))el.value=current
 }
 function agCopyPopulateFilters(){
-  agCopyFillSelect('#agcCity','CIDADE','Todas as cidades');
-  agCopyFillSelect('#agcDriver','MOTORISTA','Todos os motoristas');
-  agCopyFillSelect('#agcStatus','STATUS','Todos os status');
-  agCopyFillSelect('#agcSituation','SITUAÇÃO','Todas as situações');
-  agCopyFillSelect('#agcSac','RESPONSÁVEL SAC','Todos os responsáveis')
+  agCopyFillSelect('#agcCity','CIDADE','Todas as cidades')
 }
 function agCopyFiltered(){
-  const q=agCopyNorm($('#agcSearch')?.value||'');
-  const city=$('#agcCity')?.value||'',driver=$('#agcDriver')?.value||'',status=$('#agcStatus')?.value||'',situation=$('#agcSituation')?.value||'',sac=$('#agcSac')?.value||'';
-  const from=$('#agcFrom')?.value?new Date($('#agcFrom').value+'T00:00:00'):null;
-  const to=$('#agcTo')?.value?new Date($('#agcTo').value+'T23:59:59'):null;
+  const city=$('#agcCity')?.value||'';
+  const selected=$('#agcDate')?.value||'';
   return (S.agCopy||[]).filter(o=>{
     if(city&&String(g(o,'CIDADE')||'').trim()!==city)return false;
-    if(driver&&String(g(o,'MOTORISTA')||'').trim()!==driver)return false;
-    if(status&&String(g(o,'STATUS')||'').trim()!==status)return false;
-    if(situation&&String(g(o,'SITUAÇÃO')||'').trim()!==situation)return false;
-    if(sac&&String(g(o,'RESPONSÁVEL SAC')||'').trim()!==sac)return false;
-    const dt=pd(g(o,'DATA AGENDADA'));
-    if(from&&(!dt||dt<from))return false;
-    if(to&&(!dt||dt>to))return false;
-    if(q){
-      const hay=agCopyNorm([
-        g(o,'COL_1'),g(o,'CIDADE'),g(o,'DIA DE ROTA'),g(o,'NOME CLIENTE'),g(o,'TELEFONE CLIENTE'),
-        g(o,'STATUS'),g(o,'SITUAÇÃO'),g(o,'RESPONSÁVEL SAC'),g(o,'OBSERVAÇÃO'),g(o,'MOTORISTA'),g(o,'MERCADORIA')
-      ].join(' | '));
-      if(!hay.includes(q))return false
+    if(selected){
+      const dt=pd(g(o,'DATA AGENDADA'));
+      if(!dt||iso(dt)!==selected)return false
     }
     return true
   })
-}
 function renderAgCopy(){
   const rows=agCopyFiltered(),set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
   const scheduled=rows.filter(o=>agCopyNorm(g(o,'STATUS')).includes('agendado')).length;
@@ -401,7 +382,7 @@ function renderAgCopyHub(){
   set('#hubAgCopyInfo',rows.length?'Dados atualizados da aba Cópia de AGENDAMENTOS.':'Sem registros disponíveis.')
 }
 async function refreshAgCopy(force=false){
-  if(!hasPerm('agendamentos_copia'))return;
+  if(!hasAnyPerm(['agendamentos','agendamentos_copia']))return;
   if(window.__agCopyLoading)return;
   if(!force&&S.agCopy.length&&Date.now()-(window.__agCopyLoadedAt||0)<60000){agCopyPopulateFilters();renderAgCopy();renderAgCopyHub();return}
   window.__agCopyLoading=true;
@@ -418,13 +399,13 @@ async function refreshAgCopy(force=false){
   }finally{window.__agCopyLoading=false}
 }
 function setupAgCopy(){
-  const apply=$('#agcApply'),today=$('#agcToday'),clear=$('#agcClear'),refresh=$('#agcRefresh'),search=$('#agcSearch');
+  const apply=$('#agcApply'),today=$('#agcToday'),clear=$('#agcClear'),refresh=$('#agcRefresh');
   if(apply)apply.onclick=renderAgCopy;
-  if(today)today.onclick=()=>{const d=iso(new Date());if($('#agcFrom'))$('#agcFrom').value=d;if($('#agcTo'))$('#agcTo').value=d;renderAgCopy()};
-  if(clear)clear.onclick=()=>{['#agcSearch','#agcCity','#agcDriver','#agcStatus','#agcSituation','#agcSac','#agcFrom','#agcTo'].forEach(id=>{const e=$(id);if(e)e.value=''});renderAgCopy()};
+  if(today)today.onclick=()=>{const d=iso(new Date());if($('#agcDate'))$('#agcDate').value=d;renderAgCopy()};
+  if(clear)clear.onclick=()=>{if($('#agcDate'))$('#agcDate').value='';if($('#agcCity'))$('#agcCity').value='';renderAgCopy()};
   if(refresh)refresh.onclick=()=>refreshAgCopy(true);
-  if(search)search.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();renderAgCopy()}};
-  ['#agcCity','#agcDriver','#agcStatus','#agcSituation','#agcSac','#agcFrom','#agcTo'].forEach(id=>{const e=$(id);if(e)e.onchange=renderAgCopy})
+  if($('#agcDate'))$('#agcDate').onchange=renderAgCopy;
+  if($('#agcCity'))$('#agcCity').onchange=renderAgCopy
 }
 function init(){const t=new Date(),f=new Date(t.getFullYear(),t.getMonth(),1);$('#from').value=iso(f);$('#to').value=iso(t)}
 function setDashboardToday(){
@@ -850,11 +831,11 @@ function loadHeavyForTab(tab){
     if(hasPerm('ssw_atrasos'))setTimeout(()=>refreshSswAtrasos(),450);
     if(hasAnyPerm(['remetentes','remetentes_comparativo']))setTimeout(()=>refreshSswRemetentes(),900);
     if(hasPerm('final_carregamento'))setTimeout(()=>refreshLoadingRecords(false),1200);
-    if(hasPerm('agendamentos_copia'))setTimeout(()=>refreshAgCopy(false),1450);
+    if(hasAnyPerm(['agendamentos','agendamentos_copia']))setTimeout(()=>refreshAgCopy(false),1450);
   }else if(tab==='conferencia'&&hasPerm('final_carregamento')){
     loadingDriverOptions();
     setTimeout(()=>refreshLoadingRecords(true),50);
-  }else if(tab==='agendamentos-copia'&&hasPerm('agendamentos_copia')){
+  }else if(tab==='agendamentos-copia'&&hasAnyPerm(['agendamentos','agendamentos_copia'])){
     setTimeout(()=>refreshAgCopy(false),50);
   }else if((tab==='ssw-motoristas'||tab==='motoristas-evolucao')&&tabAllowed(tab)){
     setTimeout(()=>refreshSswMotoristas(),80);
@@ -958,7 +939,6 @@ if($('#remClientB'))$('#remClientB').onchange=renderRemCompare;
 window.onresize=()=>{clearTimeout(window.rz);window.rz=setTimeout(update,150)};
 $('#mobile').onclick=()=>alert(/iphone|ipad|ipod/i.test(navigator.userAgent)?'No Safari: toque em Compartilhar e depois em Adicionar à Tela de Início.':'No Chrome: toque no menu ⋮ e escolha Adicionar à tela inicial.');
 if($('#shareWhatsapp'))$('#shareWhatsapp').onclick=()=>whatsappShare();
-if($('#agCopyTopBtn'))$('#agCopyTopBtn').onclick=()=>{if(hasPerm('agendamentos_copia'))openTab('agendamentos-copia')};
 if($('#usersTopBtn'))$('#usersTopBtn').onclick=()=>{if(AUTH?.is_admin)openTab('usuarios')};
 if($('#logoutBtn'))$('#logoutBtn').onclick=async()=>{try{await fetch('/api/auth/logout',{method:'POST'})}catch{}setDashboardSessionToken('');location.reload()};
 if(DASH_EMBEDDED)bootstrapEmbeddedAuth();else bootstrapAuth();
