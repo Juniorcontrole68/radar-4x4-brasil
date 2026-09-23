@@ -16,6 +16,8 @@ const SSW_DRIVER_INFLIGHT=new Map();
 let SSW_DRIVER_LAST=null;
 const SSW_TRACK_CACHE=new Map();
 const SSW_DRIVER_CONFIRMED_DAY=new Map();
+let SSW38_QUICK_CACHE={at:0,value:null};
+let SSW38_QUICK_INFLIGHT=null;
 async function fetchMotoristasVeiculos(){
   const u=new URL('/api/painel/motoristas-veiculos',COLETAS_PORTAL_URL);
   const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Dashboard/1.0','Cache-Control':'no-cache'},signal:AbortSignal.timeout(15000)});
@@ -233,6 +235,139 @@ async function fetchRomaneioCtrcs38(x,jar,apply,cookie){
   const rows=[...text.matchAll(/^\s*\S{8,14}\s+(\d{6})\b/gm)].map(m=>m[1]);
   return[...new Set(rows)];
 }
+async function fetchSsw38Quick(){
+  if(SSW38_QUICK_CACHE.value&&Date.now()-SSW38_QUICK_CACHE.at<60000)return SSW38_QUICK_CACHE.value;
+  if(SSW38_QUICK_INFLIGHT)return SSW38_QUICK_INFLIGHT;
+  SSW38_QUICK_INFLIGHT=(async()=>{
+    if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
+    const jar=new Map();
+    const apply=headers=>{
+      const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);
+      for(const raw of list){
+        const pair=String(raw).split(';')[0],i=pair.indexOf('=');
+        if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())
+      }
+    };
+    const cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
+
+    let r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{
+      headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},
+      redirect:'manual',signal:AbortSignal.timeout(15000)
+    });
+    apply(r.headers);
+
+    const body=new URLSearchParams({
+      act:'L',
+      f1:process.env.SSW_INTERNAL_DOMINIO||'',
+      f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),
+      f3:process.env.SSW_INTERNAL_USUARIO||'',
+      f4:process.env.SSW_INTERNAL_SENHA||''
+    });
+    r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{
+      method:'POST',
+      headers:{
+        'Content-Type':'application/x-www-form-urlencoded',
+        'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36',
+        'Referer':'https://sistema.ssw.inf.br/bin/ssw0422',
+        'Cookie':cookie()
+      },
+      body:body.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)
+    });
+    apply(r.headers);await r.text();
+    if(!jar.has('token'))throw new Error('Login interno SSW não aceito');
+
+    r=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2=AMR&f3=38',{
+      headers:{
+        'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36',
+        'Cookie':cookie(),
+        'Referer':'https://sistema.ssw.inf.br/bin/menu01'
+      },
+      redirect:'manual',signal:AbortSignal.timeout(15000)
+    });
+    apply(r.headers);
+    const nav=await r.text(),prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0198';
+
+    r=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{
+      headers:{
+        'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36',
+        'Cookie':cookie(),
+        'Referer':'https://sistema.ssw.inf.br/bin/menu01'
+      },
+      redirect:'manual',signal:AbortSignal.timeout(15000)
+    });
+    apply(r.headers);
+    const html=await r.text();
+    let p=parseSsw38Table(html);
+
+    if(!p.rows.length){
+      const params=new URLSearchParams();
+      for(const m of html.matchAll(/<input\b([^>]*)>/gi)){
+        const a=m[1]||'',
+          nm=(a.match(/\bname=["']?([^"'\s>]+)/i)||[])[1],
+          val=(a.match(/\bvalue=["']([^"']*)["']/i)||a.match(/\bvalue=([^\s>]+)/i)||[])[1]||'',
+          type=(a.match(/\btype=["']?([^"'\s>]+)/i)||[])[1]||'';
+        if(nm&&!/^(?:button|submit)$/i.test(type))params.set(nm,htmlText38(val));
+      }
+      params.set('act','ROM_ALL');
+      const rr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{
+        method:'POST',
+        headers:{
+          'Content-Type':'application/x-www-form-urlencoded',
+          'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36',
+          'Referer':'https://sistema.ssw.inf.br/bin/'+prog,
+          'Cookie':cookie()
+        },
+        body:params.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)
+      });
+      apply(rr.headers);
+      const body38=await rr.text();
+      p=parseSsw38Table(body38);
+      if(!p.rows.length)p=parseSsw38Xml(body38)
+    }
+
+    const total=p.rows.reduce((a,x)=>a+Number(x.qtdeCtrcs||0),0);
+    const value={ok:true,rows:p.rows,total,motoristas:[...new Set(p.rows.map(x=>x.motorista).filter(Boolean))].length,romaneios:p.rows.length};
+    SSW38_QUICK_CACHE={at:Date.now(),value};
+    console.log('SSW38 QUICK: '+JSON.stringify({
+      total:value.total,romaneios:value.romaneios,motoristas:value.motoristas,
+      rows:value.rows.map(x=>({motorista:x.motorista,total:x.qtdeCtrcs,falta:x.faltaOcorr}))
+    }));
+    return value
+  })().finally(()=>{SSW38_QUICK_INFLIGHT=null});
+  return SSW38_QUICK_INFLIGHT
+}
+
+function quickSsw38Progress(base,from,to){
+  const groups=new Map();
+  for(const x of (base?.rows||[])){
+    const k=String(x.motorista||x.veiculo||'Não identificado').trim();
+    if(!groups.has(k))groups.set(k,{motorista:x.motorista||'Não identificado',veiculo:x.veiculo||'',total:0,entregues:0,pendentes:0,ocorrencias:0,romaneios:[],vinculados:0});
+    const g=groups.get(k),total=Number(x.qtdeCtrcs||0),pending=Math.max(0,Math.min(total,Number(x.faltaOcorr||0)));
+    g.total+=total;
+    g.pendentes+=pending;
+    g.entregues+=Math.max(0,total-pending);
+    if(x.romaneio)g.romaneios.push(x.romaneio);
+    if(!g.veiculo&&x.veiculo)g.veiculo=x.veiculo
+  }
+  const motoristas38=[...groups.values()].map(g=>({
+    ...g,baixadas:g.entregues,taxa:g.total?g.entregues/g.total*100:0
+  })).sort((a,b)=>b.total-a.total||a.motorista.localeCompare(b.motorista,'pt-BR'));
+  const totalRomaneado=motoristas38.reduce((a,x)=>a+x.total,0);
+  const entregues38=motoristas38.reduce((a,x)=>a+x.entregues,0);
+  const pendentes38=motoristas38.reduce((a,x)=>a+x.pendentes,0);
+  return{
+    ok:true,source:'SSW opção 38',from,to,refreshing:true,quick:true,
+    candidatos:0,trackingConsultados:0,trackingOk:0,
+    totalRomaneado,motoristas38,romaneios38:base?.rows||[],
+    entregues38,pendentes38,ocorrencias38:0,
+    saidas:totalRomaneado,baixadas:entregues38,baixasSsw:entregues38,baixasBi2:0,
+    pendentes:pendentes38,taxa:totalRomaneado?entregues38/totalRomaneado*100:0,
+    veiculos:new Set(motoristas38.map(x=>x.veiculo).filter(Boolean)).size,
+    motoristasIdentificados:motoristas38.length,motoristas:[],ocorrencias:[],rows:[],
+    note:'Progresso carregado rapidamente pela opção 38. Detalhes de rastreamento e previsão estão sendo atualizados em segundo plano.'
+  }
+}
+
 async function fetchSsw38Rows(){
   if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
   const jar=new Map(),apply=headers=>{const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);for(const raw of list){const pair=String(raw).split(';')[0],i=pair.indexOf('=');if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())}},cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
@@ -1168,7 +1303,7 @@ function ensureSswMotoristasRefresh(from='',to=''){
   SSW_DRIVER_INFLIGHT.set(key,p);
   return p
 }
-function getSswMotoristasFast(from='',to=''){
+async function getSswMotoristasFast(from='',to=''){
   const today=spDateISO();from=from||today;to=to||today;
   const key='online|'+from+'|'+to,hit=SSW_DRIVER_CACHE.get(key);
   if(hit){
@@ -1176,7 +1311,31 @@ function getSswMotoristasFast(from='',to=''){
     if(age>=30000)ensureSswMotoristasRefresh(from,to).catch(()=>{});
     return{...hit.value,refreshing:age>=30000,cacheAgeSeconds:Math.round(age/1000)}
   }
+
   ensureSswMotoristasRefresh(from,to).catch(()=>{});
+
+  // Para o dia corrente, entrega imediatamente a opção 38 sem esperar PDFs/tracking.
+  if(from===today&&to===today){
+    try{
+      const q=quickSsw38Progress(await fetchSsw38Quick(),from,to);
+      if(SSW_DRIVER_LAST&&SSW_DRIVER_LAST.key===key){
+        return{
+          ...SSW_DRIVER_LAST.value,
+          ...q,
+          rows:SSW_DRIVER_LAST.value.rows||[],
+          motoristas:SSW_DRIVER_LAST.value.motoristas||[],
+          ocorrencias:SSW_DRIVER_LAST.value.ocorrencias||[],
+          trackingConsultados:SSW_DRIVER_LAST.value.trackingConsultados||0,
+          trackingOk:SSW_DRIVER_LAST.value.trackingOk||0,
+          refreshing:true
+        }
+      }
+      return q
+    }catch(e){
+      console.log('SSW38 QUICK ERRO: '+String(e.message||e))
+    }
+  }
+
   if(SSW_DRIVER_LAST&&SSW_DRIVER_LAST.key===key){
     return{...SSW_DRIVER_LAST.value,refreshing:true,cacheAgeSeconds:Math.round((Date.now()-SSW_DRIVER_LAST.at)/1000)}
   }
@@ -1220,7 +1379,7 @@ async function rows(gid){
   }
   throw e
 }
-http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.pathname==='/health'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:true}))}if(u.pathname==='/api/coletas/status'){try{const x=await fetchColetasStatus(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/baixas'){try{const x=await buildBi2Baixas(u.searchParams.get('date')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/saidas-baixas'){try{const x=getSswMotoristasFast(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/remetentes'){try{const x=await buildBi2Remetentes(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/atrasos'){try{const x=await buildBi2Atrasos(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/api-status'){if(!BI2_API_STATE.lastCheck||Date.now()-new Date(BI2_API_STATE.lastCheck).getTime()>60*1000)await refreshBi2ApiState();res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify(BI2_API_STATE))}if(u.pathname==='/api/bi2/status'){if(!BI2_STATE.lastCheck||Date.now()-new Date(BI2_STATE.lastCheck).getTime()>5*60*1000)await refreshBi2State();res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});const x=BI2_STATE,pub={configured:x.configured,connected:x.connected,fileCount:x.fileCount||0,lastCheck:x.lastCheck,message:x.message,error:x.error||''};return res.end(JSON.stringify(pub))}if(u.pathname==='/api/ssw/status'){const configured=sswConfigured();if(!configured){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:false,connected:false,source:'google-sheets',message:'SSW aguardando credenciais'}))}try{await getSswToken(false);res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:true,connected:true,source:'ssw',message:'SSW conectado'}))}catch(e){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:true,connected:false,source:'google-sheets',message:'SSW configurado, mas a autenticação falhou',error:String(e.message||e)}))}}if(u.pathname.startsWith('/api/sheet/')){const n=u.pathname.split('/').pop(),gid=GIDS[n];if(!gid){res.writeHead(404);return res.end()}try{const x=await rows(gid);res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,rows:x,count:x.length}))}catch(e){res.writeHead(502,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:false,error:e.message}))}}let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.join(PUB,p));if(!p.startsWith(PUB)){res.writeHead(403);return res.end()}fs.readFile(p,(e,d)=>{if(e){res.writeHead(404);return res.end('Not found')}const ext=path.extname(p);res.writeHead(200,{'Content-Type':ext==='.js'?'application/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate','Pragma':'no-cache','Expires':'0'});res.end(d)})}catch(e){res.writeHead(500);res.end(e.message)}}).listen(PORT,'0.0.0.0',()=>{
+http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.pathname==='/health'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:true}))}if(u.pathname==='/api/coletas/status'){try{const x=await fetchColetasStatus(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/baixas'){try{const x=await buildBi2Baixas(u.searchParams.get('date')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/saidas-baixas'){try{const x=await getSswMotoristasFast(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/remetentes'){try{const x=await buildBi2Remetentes(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/atrasos'){try{const x=await buildBi2Atrasos(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/api-status'){if(!BI2_API_STATE.lastCheck||Date.now()-new Date(BI2_API_STATE.lastCheck).getTime()>60*1000)await refreshBi2ApiState();res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify(BI2_API_STATE))}if(u.pathname==='/api/bi2/status'){if(!BI2_STATE.lastCheck||Date.now()-new Date(BI2_STATE.lastCheck).getTime()>5*60*1000)await refreshBi2State();res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});const x=BI2_STATE,pub={configured:x.configured,connected:x.connected,fileCount:x.fileCount||0,lastCheck:x.lastCheck,message:x.message,error:x.error||''};return res.end(JSON.stringify(pub))}if(u.pathname==='/api/ssw/status'){const configured=sswConfigured();if(!configured){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:false,connected:false,source:'google-sheets',message:'SSW aguardando credenciais'}))}try{await getSswToken(false);res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:true,connected:true,source:'ssw',message:'SSW conectado'}))}catch(e){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:true,connected:false,source:'google-sheets',message:'SSW configurado, mas a autenticação falhou',error:String(e.message||e)}))}}if(u.pathname.startsWith('/api/sheet/')){const n=u.pathname.split('/').pop(),gid=GIDS[n];if(!gid){res.writeHead(404);return res.end()}try{const x=await rows(gid);res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,rows:x,count:x.length}))}catch(e){res.writeHead(502,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:false,error:e.message}))}}let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.join(PUB,p));if(!p.startsWith(PUB)){res.writeHead(403);return res.end()}fs.readFile(p,(e,d)=>{if(e){res.writeHead(404);return res.end('Not found')}const ext=path.extname(p);res.writeHead(200,{'Content-Type':ext==='.js'?'application/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate','Pragma':'no-cache','Expires':'0'});res.end(d)})}catch(e){res.writeHead(500);res.end(e.message)}}).listen(PORT,'0.0.0.0',()=>{
   console.log('CONSTRULOG em '+PORT);probeSswAbrirScripts().then(x=>console.log('SSW abrir probe isolado: '+JSON.stringify(x))).catch(()=>{});
 
   refreshBi2State().catch(e=>console.error('BI2 SFTP monitor ERRO: '+e.message));
