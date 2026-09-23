@@ -30,6 +30,11 @@ async function refreshColetasStatus(){
   finally{window.__coletasStatusLoading=false}
 }
 function init(){const t=new Date(),f=new Date(t.getFullYear(),t.getMonth(),1);$('#from').value=iso(f);$('#to').value=iso(t)}
+function setDashboardToday(){
+  const d=iso(new Date());
+  if($('#from'))$('#from').value=d;
+  if($('#to'))$('#to').value=d;
+}
 function inper(d){const f=$('#from').value?new Date($('#from').value+'T00:00:00'):null,t=$('#to').value?new Date($('#to').value+'T23:59:59'):null;return(!f||!d||d>=f)&&(!t||!d||d<=t)}
 function ops(){const d=$('#driver').value,b=$('#branch').value;return S.ops.filter(o=>inper(pd(gd(o)))&&(!d||g(o,'Motorista')===d)&&(!b||g(o,'Filial')===b))}
 function help(){return S.help.filter(o=>inper(pd(g(o,'Data'))))}
@@ -264,6 +269,10 @@ $$('.nav button').forEach(b=>b.onclick=()=>{
   $('#'+b.dataset.tab).classList.add('active');
   $('#pageTitle').textContent=b.textContent;
   setTimeout(()=>{
+    if(b.dataset.tab==='dashboards'){
+      setDashboardToday();
+      refreshData(false);
+    }
     update();
     if(b.dataset.tab==='operacoes')refreshData(false);
     if(b.dataset.tab==='dashboards'){
