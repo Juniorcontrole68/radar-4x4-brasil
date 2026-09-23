@@ -1762,7 +1762,9 @@ async function buildRoutePlan(date='',romaneio=''){
       console.log('ROTEIRIZADOR fallback de linhas ERRO: '+String(e.message||e))
     }
   }
-  const stops=[];
+  const baseGeo=await routeGeocode(ROUTE_BASE_ADDRESS);
+  if(!baseGeo)throw new Error('Não foi possível localizar a base de Americana.');
+  const stops=[],rejectedStops=[];
   for(let idx=0;idx<metas.length;idx++){
     const meta=metas[idx],lk=normCtrcLoose(meta.ctrc),nf=normNf(meta.nf),r=byLoose.get(lk)||byNf.get(nf)||meta.__row||{};
     const destinatario=r.destinatario_nome||r.destinatario||routeField(r,[/(destinatario|destinat)_?nome/,/^destinatario$/])||('Entrega '+(idx+1));
@@ -1771,44 +1773,33 @@ async function buildRoutePlan(date='',romaneio=''){
     const parts=routeAddressParts(r,meta);
     let query='',precision='cidade';
     if(parts.cep){query=parts.cep+', Brasil';precision='cep'}
-    else if(parts.endereco){query=[parts.endereco,parts.numero,parts.bairro,cidade,uf,'Brasil'].filter(Boolean).join(', ');precision='endereco'}
-    else if(destinatario&&cidade){query=destinatario+', '+cidade+', '+uf+', Brasil';precision='cliente'}
-    else query=[cidade,uf,'Brasil'].filter(Boolean).join(', ');
-    let geo=await routeGeocode(query);
-    if(!geo&&cidade){geo=await routeGeocode(cidade+', '+uf+', Brasil');precision='cidade'}
-    if(!geo)continue;
+    else if(parts.endereco){query=[parts.endereco,parts.numero,parts.bairro,cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');precision='endereco'}
+    else if(cidade){query=[cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');precision='cidade'}
+    if(!query){rejectedStops.push({ctrc:meta.ctrc||'',nf:meta.nf||'',destinatario,cidade,uf,reason:'sem cidade/endereço'});continue}
+    let geo=await routeGeocode(query,baseGeo,ROUTE_MAX_RADIUS_METERS);
+    if(!geo&&cidade&&String(uf||'').toUpperCase()!=='SP'){
+      geo=await routeGeocode(cidade+', SP, Brasil',baseGeo,ROUTE_MAX_RADIUS_METERS);
+      if(geo){precision='cidade';query=cidade+', SP, Brasil'}
+    }
+    if(!geo){rejectedStops.push({ctrc:meta.ctrc||'',nf:meta.nf||'',destinatario,cidade,uf,reason:'não localizado dentro de 300 km'});continue}
+    const radius=routeHaversine(baseGeo,geo);
+    if(radius>ROUTE_MAX_RADIUS_METERS){
+      rejectedStops.push({ctrc:meta.ctrc||'',nf:meta.nf||'',destinatario,cidade,uf,radiusKm:radius/1000,reason:'fora do raio de 300 km'});continue
+    }
     stops.push({
       originalOrder:idx+1,ctrc:meta.ctrc||'',nf:meta.nf||'',destinatario,cidade,uf,
       endereco:parts.endereco,numero:parts.numero,bairro:parts.bairro,cep:parts.cep,
-      precision,query,lat:geo.lat,lon:geo.lon,label:destinatario+(cidade?' • '+cidade:'')
+      precision,query,lat:geo.lat,lon:geo.lon,radiusKm:radius/1000,label:destinatario+(cidade?' • '+cidade:'')
     })
   }
   if(!stops.length){
-    throw new Error('O romaneio foi encontrado, mas os CT-es ainda não trouxeram cidade/endereço suficiente para montar as paradas. Atualize os dados do SSW e tente novamente.');
+    throw new Error('Nenhuma entrega válida ficou dentro do raio máximo de 300 km da base. Use o endereço manual ou leia o CT-e para corrigir as paradas.');
   }
-
-  const baseGeo=await routeGeocode(ROUTE_BASE_ADDRESS);
-  if(!baseGeo)throw new Error('Não foi possível localizar a base de Americana.');
-  const points=[{label:'Base Americana',address:ROUTE_BASE_ADDRESS,lat:baseGeo.lat,lon:baseGeo.lon,precision:'base'},...stops];
-  const mt=await routeOsrmTable(points),m=mt.matrix,n=stops.length;
-  let optimized=routeExact(m,n);
-  let method='exata';
-  if(!optimized){optimized=routeTwoOpt(routeNearest(m,n),m);method='heurística otimizada'}
-  const original=Array.from({length:n},(_,i)=>i+1);
-  const optMeters=routeCycleDistance(optimized,m),origMeters=routeCycleDistance(original,m);
-  const geo=await routeGeometry(points,optimized);
-  const value={
-    ok:true,date:target,baseAddress:ROUTE_BASE_ADDRESS,
-    romaneio:selected.romaneio||'',motorista:selected.motorista||'',veiculo:selected.veiculo||'',
-    deliveries:n,method,matrixSource:mt.source,
-    optimizedOrder:optimized,originalOrder:original,
-    optimizedDistanceMeters:Number.isFinite(optMeters)?optMeters:0,
-    originalDistanceMeters:Number.isFinite(origMeters)?origMeters:0,
-    optimizedLegs:routeLegs(optimized,m,points),
-    originalLegs:routeLegs(original,m,points),
-    points,stops,matrix:m,geometry:geo.geometry,
-    approximateStops:stops.filter(x=>x.precision==='cidade'||x.precision==='cliente').length
-  };
+  const value=await routeFinalizePlan(stops,{
+    date:target,romaneio:selected.romaneio||'',motorista:selected.motorista||'',veiculo:selected.veiculo||''
+  });
+  value.rejectedStops=[...(value.rejectedStops||[]),...rejectedStops];
+  value.expectedDeliveries=Number(selected.qtdeCtrcs||metas.length||0);
   ROUTE_PLAN_CACHE.set(cacheKey,{at:Date.now(),value});
   return value
 }
