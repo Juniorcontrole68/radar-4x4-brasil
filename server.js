@@ -709,7 +709,7 @@ function postForm(url,params){
 async function trackingDestQuery(cnpj,nf){
   const doc=String(cnpj||'').replace(/\D/g,''),n=String(nf||'').trim();
   if(doc.length!==14||!n)return{ok:false,items:[],saiu:false,entregue:false};
-  const key=doc+'|'+n,hit=SSW_TRACK_CACHE.get(key),ttl=hit?.value?.entregue?10*60*1000:90*1000;
+  const key=doc+'|'+n,hit=SSW_TRACK_CACHE.get(key),ttl=hit?.value?.entregue?10*60*1000:25*1000;
   if(hit&&Date.now()-hit.at<ttl)return hit.value;
   const body=new URLSearchParams();body.append('cnpjdest',doc);body.append('cnpj',doc);body.append('NR',n);body.append('nro_nf',n);body.append('urlori','https://ssw.inf.br/ajuda/rastreamentodestnf.html');
   try{
@@ -740,6 +740,7 @@ function normCtrcLoose(v){
   return n?String(Number(n)):'';
 }
 function normPlate(v){return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'')}
+function normDriverKey(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]/g,'')}
 function normNf(v){const n=String(v||'').replace(/\D/g,'').replace(/^0+/,'');return n||''}
 function isExplicitSswOccurrence(r){
   if(!r||r.entregue)return false;
@@ -768,7 +769,7 @@ async function buildSswMotoristas(from='',to=''){
   const today=spDateISO();
   from=from||today;to=to||today;
   const cacheKey='online|'+from+'|'+to,hit=SSW_DRIVER_CACHE.get(cacheKey);
-  if(hit&&Date.now()-hit.at<90000)return hit.value;
+  if(hit&&Date.now()-hit.at<30000)return hit.value;
 
   let base38=null;
   if(internalSswConfigured()&&to===today){
@@ -997,6 +998,20 @@ async function buildSswMotoristas(from='',to=''){
       }
       const nf=normNf(r.nf);if(nf)byNf.set(nf,r);
     }
+    const confirmedByDriver=new Map(),confirmedByPlate=new Map(),occByDriver=new Map(),occByPlate=new Map();
+    const addUnique=(map,key,id)=>{if(!key||!id)return;if(!map.has(key))map.set(key,new Set());map.get(key).add(id)};
+    for(const r of rows){
+      const id=normCtrcLoose(r.ctrcOficial||r.ctrc)||('NF'+normNf(r.nf));
+      const dk=normDriverKey(r.motorista),pk=normPlate(r.veiculo);
+      if(r.entregue){
+        addUnique(confirmedByDriver,dk,id);
+        addUnique(confirmedByPlate,pk,id);
+      }else if(isExplicitSswOccurrence(r)){
+        addUnique(occByDriver,dk,id);
+        addUnique(occByPlate,pk,id);
+      }
+    }
+    console.log('BAIXAS CONFIRMADAS POR MOTORISTA: '+JSON.stringify([...confirmedByDriver.entries()].map(([k,v])=>({motorista:k,entregues:v.size}))));
     const gm=new Map();
     for(const x of romaneios38){
       const k=String(x.motorista||x.veiculo||'Não identificado').trim();
@@ -1020,6 +1035,17 @@ async function buildSswMotoristas(from='',to=''){
           g.explicitOccurrences++;
         }
       }
+    }
+
+    // Se o tracking já identificou o motorista/veículo e confirmou a entrega,
+    // usamos essa contagem como piso. Isso evita perder baixas quando o formato do CT-e
+    // do PDF/BI2 não casa literalmente, como ocorreu com Gilmar e Rogério.
+    for(const g of gm.values()){
+      const dk=normDriverKey(g.motorista),pk=normPlate(g.veiculo);
+      const directDelivered=Math.max(confirmedByDriver.get(dk)?.size||0,confirmedByPlate.get(pk)?.size||0);
+      const directOcc=Math.max(occByDriver.get(dk)?.size||0,occByPlate.get(pk)?.size||0);
+      g.entregues=Math.min(g.total,Math.max(g.entregues,directDelivered));
+      g.explicitOccurrences=Math.min(Math.max(0,g.total-g.entregues),Math.max(g.explicitOccurrences,directOcc));
     }
 
     // Quando um PDF de romaneio não entrega todos os CT-es, usamos o total diário
@@ -1096,8 +1122,8 @@ function getSswMotoristasFast(from='',to=''){
   const key='online|'+from+'|'+to,hit=SSW_DRIVER_CACHE.get(key);
   if(hit){
     const age=Date.now()-hit.at;
-    if(age>=90000)ensureSswMotoristasRefresh(from,to).catch(()=>{});
-    return{...hit.value,refreshing:age>=90000,cacheAgeSeconds:Math.round(age/1000)}
+    if(age>=30000)ensureSswMotoristasRefresh(from,to).catch(()=>{});
+    return{...hit.value,refreshing:age>=30000,cacheAgeSeconds:Math.round(age/1000)}
   }
   ensureSswMotoristasRefresh(from,to).catch(()=>{});
   if(SSW_DRIVER_LAST&&SSW_DRIVER_LAST.key===key){
