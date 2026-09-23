@@ -2,9 +2,11 @@ const DASH_SESSION_KEY='construlog_dashboard_session';
 const DASH_EMBEDDED=new URLSearchParams(location.search).get('embed')==='1';
 const PORTAL_ORIGIN='https://controle-coletas-jr.onrender.com';
 let DASH_SESSION_TOKEN=String(window.__DASHBOARD_SESSION_TOKEN__||'');
+let DASH_SESSION_USER=window.__DASHBOARD_SESSION_USER__||null;
 try{
   if(DASH_SESSION_TOKEN)sessionStorage.setItem(DASH_SESSION_KEY,DASH_SESSION_TOKEN);
   try{delete window.__DASHBOARD_SESSION_TOKEN__}catch{}
+  try{delete window.__DASHBOARD_SESSION_USER__}catch{}
 }catch{}
 try{
   const hp=new URLSearchParams(String(location.hash||'').replace(/^#/,''));
@@ -263,12 +265,31 @@ function bootstrapEmbeddedAuth(){
   if(gate)gate.classList.add('hide');
   const loading=document.querySelector('#loading');
   if(loading){
-    loading.textContent='Abrindo Dashboard…';
     loading.style.removeProperty('display');
-    loading.classList.remove('hide');
+    loading.classList.add('hide');
   }
+
+  if(DASH_SESSION_TOKEN&&DASH_SESSION_USER){
+    setDashboardSessionToken(DASH_SESSION_TOKEN);
+    const user=DASH_SESSION_USER;
+    DASH_SESSION_USER=null;
+    showAuthenticatedApp(user);
+    return;
+  }
+
   const tryExisting=async()=>{
-    if(DASH_SESSION_TOKEN)await authenticateEmbeddedToken(DASH_SESSION_TOKEN)
+    if(DASH_SESSION_TOKEN){
+      const ok=await authenticateEmbeddedToken(DASH_SESSION_TOKEN);
+      if(!ok){
+        const er=document.querySelector('#err');
+        document.body.classList.remove('auth-pending');
+        document.querySelector('.app')?.removeAttribute('hidden');
+        if(er){
+          er.style.display='block';
+          er.textContent='Não foi possível validar a sessão. Reabra Visão Geral pelo portal.';
+        }
+      }
+    }
   };
   window.addEventListener('message',async e=>{
     if(e.origin!==PORTAL_ORIGIN)return;
