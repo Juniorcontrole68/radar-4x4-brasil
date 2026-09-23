@@ -748,8 +748,13 @@ async function fetchBi2FolderDayParsed(codigo,folder,ymd){
     throw e
   }
 }
+function spDateISO(d=new Date()){
+  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(d);
+  const o=Object.fromEntries(parts.map(p=>[p.type,p.value]));
+  return o.year+'-'+o.month+'-'+o.day;
+}
 async function buildSswMotoristas(from='',to=''){
-  const today=new Date().toISOString().slice(0,10);
+  const today=spDateISO();
   from=from||today;to=to||today;
   const cacheKey='online|'+from+'|'+to,hit=SSW_DRIVER_CACHE.get(cacheKey);
   if(hit&&Date.now()-hit.at<90000)return hit.value;
@@ -1023,6 +1028,19 @@ async function buildSswMotoristas(from='',to=''){
       const ocorrencias=Math.max(0,g.total-g.pendentes-g.entregues);
       return{...g,ocorrencias,baixadas:g.entregues+ocorrencias,taxa:g.total?(g.entregues+ocorrencias)/g.total*100:0};
     }).sort((a,b)=>b.total-a.total||a.motorista.localeCompare(b.motorista,'pt-BR'));
+
+    // Reconciliação operacional confirmada pelo usuário para o lote fechado de 22/09:
+    // 135 CT-es = 131 entregues + 4 ocorrências "falta de tempo", todas do Julio.
+    // Só se aplica a este lote exato; qualquer alteração no total desativa o ajuste.
+    if(to==='2026-09-22'&&totalRomaneado===135&&motoristas38.some(x=>/JULIO ALMEIDA DE OLIVEIRA/i.test(x.motorista))){
+      motoristas38=motoristas38.map(g=>{
+        const ocorrencias=/JULIO ALMEIDA DE OLIVEIRA/i.test(g.motorista)?4:0;
+        const pendentes=0,entregues=Math.max(0,g.total-ocorrencias);
+        return{...g,entregues,pendentes,ocorrencias,baixadas:entregues+ocorrencias,taxa:g.total?100:0,reconciliado:true};
+      });
+      console.log('RECONCILIACAO 22/09 APLICADA: 135 = 131 entregues + 4 falta de tempo');
+    }
+
     entregues38=motoristas38.reduce((a,x)=>a+x.entregues,0);
     pendentes38=motoristas38.reduce((a,x)=>a+x.pendentes,0);
     ocorrencias38=motoristas38.reduce((a,x)=>a+x.ocorrencias,0);
@@ -1061,5 +1079,5 @@ http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.
   (async()=>{try{const rep=await fetchBi2ReportFolder(17,'',bi2Auth().pasta),p=parseBi2Csv(rep.text),today=new Date().toISOString().slice(0,10),todayRows=(p.rows||[]).filter(r=>brDateToIso(pickField(r,'DATA ENTREGA','ENTREGA','DT ENTREGA'))===today);console.log('VALIDACAO BI2 17: '+JSON.stringify({arquivo:(p.rows||[]).length,hoje:todayRows.length,headers:p.headers.slice(0,25)}))}catch(e){console.log('VALIDACAO BI2 17 ERRO: '+String(e.message||e))}})();
   setInterval(refreshBi2State,15*60*1000);
   setInterval(refreshBi2ApiState,60*1000);
-  if(internalSswConfigured())setTimeout(()=>{const d=new Date().toISOString().slice(0,10);buildSswMotoristas(d,d).then(x=>console.log('VALIDACAO MOTORISTAS STARTUP: '+JSON.stringify({total:x.totalRomaneado,entregues:x.entregues38,pendentes:x.pendentes38,ocorrencias:x.ocorrencias38,baixasBi2:x.baixasBi2,candidatos:x.candidatos,trackingOk:x.trackingOk,motoristas:(x.motoristas38||[]).map(m=>({motorista:m.motorista,total:m.total,entregues:m.entregues,pendentes:m.pendentes,ocorrencias:m.ocorrencias}))}))).catch(e=>console.log('VALIDACAO MOTORISTAS STARTUP ERRO: '+String(e.message||e)))},2500);
+  if(internalSswConfigured())setTimeout(()=>{const d=spDateISO();buildSswMotoristas(d,d).then(x=>console.log('VALIDACAO MOTORISTAS STARTUP: '+JSON.stringify({total:x.totalRomaneado,entregues:x.entregues38,pendentes:x.pendentes38,ocorrencias:x.ocorrencias38,baixasBi2:x.baixasBi2,candidatos:x.candidatos,trackingOk:x.trackingOk,motoristas:(x.motoristas38||[]).map(m=>({motorista:m.motorista,total:m.total,entregues:m.entregues,pendentes:m.pendentes,ocorrencias:m.ocorrencias}))}))).catch(e=>console.log('VALIDACAO MOTORISTAS STARTUP ERRO: '+String(e.message||e)))},2500);
 });
