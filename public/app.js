@@ -998,7 +998,7 @@ async function routeAddManualAddress(){
     ROUTE_EXTRA_STOPS.push(j.stop);
     if(input)input.value='';
     if(msg)msg.textContent='✓ Endereço aceito ('+Number(j.stop.radiusKm||0).toFixed(1).replace('.',',')+' km da base).';
-    if(ROUTE_PLAN)await routeRecalculateWithStops(routeMergedStops());
+    await routeRecalculateWithStops(routeMergedStops());
   }catch(e){if(msg)msg.textContent='Erro: '+e.message}
   finally{if(btn){btn.disabled=false;btn.textContent='Adicionar'}}
 }
@@ -1015,7 +1015,7 @@ async function routeAddCteBarcode(){
     if(!exists)ROUTE_EXTRA_STOPS.push(j.stop);
     if(input)input.value='';
     if(msg)msg.textContent='✓ CT-e '+(j.stop.ctrc||'')+' • '+(j.stop.destinatario||'destinatário')+' adicionado.';
-    if(ROUTE_PLAN)await routeRecalculateWithStops(routeMergedStops());
+    await routeRecalculateWithStops(routeMergedStops());
   }catch(e){
     if(msg)msg.textContent='Erro: '+e.message;
   }finally{if(btn){btn.disabled=false;btn.textContent='Consultar';if(input)input.focus()}}
@@ -1023,7 +1023,14 @@ async function routeAddCteBarcode(){
 
 async function calculateRoute(){
   const date=$('#routeDate')?.value||'',rom=$('#routeManifest')?.value||'',status=$('#routeStatus');
-  if(!rom){if(status)status.textContent='Selecione um motorista e um romaneio.';return}
+  if(!rom){
+    if(ROUTE_EXTRA_STOPS.length){
+      try{await routeRecalculateWithStops(routeMergedStops())}catch(e){if(status)status.textContent='Erro ao calcular rota: '+e.message}
+      return
+    }
+    if(status)status.textContent='Selecione um romaneio ou adicione endereços/CT-es manualmente.';
+    return
+  }
   const btn=$('#routeCalculate');if(btn){btn.disabled=true;btn.textContent='Calculando…'}
   if(status)status.textContent='Localizando clientes e calculando a menor sequência. Na primeira consulta isso pode levar alguns segundos…';
   try{
@@ -1049,7 +1056,14 @@ function setupRoteirizador(){
   if($('#routeAddCte'))$('#routeAddCte').onclick=routeAddCteBarcode;
   if($('#routeManualAddress'))$('#routeManualAddress').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();routeAddManualAddress()}};
   if($('#routeCteBarcode')){
-    $('#routeCteBarcode').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();routeAddCteBarcode()}};
+    const el=$('#routeCteBarcode');
+    el.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();routeAddCteBarcode()}};
+    let scanTimer=null;
+    el.oninput=()=>{
+      clearTimeout(scanTimer);
+      const digits=el.value.replace(/\D/g,'');
+      if(digits.length===44)scanTimer=setTimeout(()=>routeAddCteBarcode(),180)
+    }
   }
   if($('#routeUseBest'))$('#routeUseBest').onclick=()=>{if(ROUTE_PLAN){ROUTE_MANUAL_ORDER=(ROUTE_PLAN.optimizedOrder||[]).slice();routeRenderManual()}};
   if($('#routeOpenGoogle'))$('#routeOpenGoogle').onclick=routeGoogleMaps
