@@ -990,7 +990,7 @@ function routeMergedStops(){
 async function routeAddManualAddress(){
   const input=$('#routeManualAddress'),msg=$('#routeManualMsg'),raw=input?.value.trim()||'';
   if(!raw){if(msg)msg.textContent='Digite o endereço da entrega.';return}
-  const btn=$('#routeAddAddress');if(btn){btn.disabled=true;btn.textContent='Localizando…'}
+  const btn=$('#routeAddAddress');if(btn?.disabled)return;if(btn){btn.disabled=true;btn.textContent='Localizando…'}
   try{
     const r=await fetch('/api/roteirizador/endereco?endereco='+encodeURIComponent(raw),{cache:'no-store'});
     const j=await r.json().catch(()=>({}));
@@ -1005,7 +1005,7 @@ async function routeAddManualAddress(){
 async function routeAddCteBarcode(){
   const input=$('#routeCteBarcode'),msg=$('#routeCteMsg'),raw=input?.value.trim()||'';
   if(!raw){if(msg)msg.textContent='Leia ou digite o código do CT-e.';return}
-  const btn=$('#routeAddCte');if(btn){btn.disabled=true;btn.textContent='Consultando…'}
+  const btn=$('#routeAddCte');if(btn?.disabled)return;if(btn){btn.disabled=true;btn.textContent='Consultando…'}
   try{
     const date=$('#routeDate')?.value||'';
     const r=await fetch('/api/roteirizador/cte?codigo='+encodeURIComponent(raw)+'&date='+encodeURIComponent(date),{cache:'no-store'});
