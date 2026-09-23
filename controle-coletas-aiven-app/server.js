@@ -318,6 +318,38 @@ async function start() {
         return sendHtml(res, ACCOUNTS_INDEX);
       }
 
+      if (req.method === 'POST' && u.pathname === '/api/painel/auth/login') {
+        try {
+          const body=await readJsonBodyLimited(req,64*1024);
+          const username=String(body.username||'').trim();
+          const password=String(body.password||'');
+          if(!username||!password)return sendJson(res,400,{ok:false,error:'Informe usuário e senha.'});
+          const r=await pool.query('SELECT id::text AS id,username,password_salt,password_hash,is_admin,active,permissions FROM dashboard_users WHERE lower(username)=lower($1) LIMIT 1',[username]);
+          if(!r.rowCount||!r.rows[0].active||!dashboardVerifyPassword(password,r.rows[0].password_salt,r.rows[0].password_hash))return sendJson(res,401,{ok:false,error:'Usuário ou senha inválidos.'});
+          const row=r.rows[0];
+          const token=await dashboardCreateSession(row.id);
+          return sendJson(res,200,{ok:true,token,user:{id:row.id,username:row.username,is_admin:!!row.is_admin,permissions:row.is_admin?['*']:dashboardPerms(row.permissions)}});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao entrar.'});}
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/painel/auth/me') {
+        try {const user=await dashboardSession(req,false);return sendJson(res,200,{ok:true,user});}
+        catch(e){return sendJson(res,e.status||401,{ok:false,error:e.message||'Sessão inválida.'});}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/painel/auth/logout') {
+        try {const token=dashboardBearer(req);if(token)await pool.query('DELETE FROM dashboard_sessions WHERE token_hash=$1',[dashboardTokenHash(token)]);} catch {}
+        return sendJson(res,200,{ok:true});
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/painel/auth/users') {
+        try {
+          await dashboardSession(req,true);
+          const r=await pool.query('SELECT id::text AS id,username,is_admin,active,permissions,created_at,updated_at FROM dashboard_users ORDER BY is_admin DESC,lower(username)');
+          return sendJson(res,200,{ok:true,rows:r.rows.map(x=>Object.assign({},x,{permissions:x.is_admin?['*']:dashboardPerms(x.permissions)}))});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Não foi possível carregar os usuários.'});}
+      }
+
       if (req.method === 'GET' && u.pathname === '/api/painel/motoristas-veiculos') {
         try {
           const r = await pool.query(`
