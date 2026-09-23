@@ -1923,6 +1923,29 @@ if(u.pathname==='/api/roteirizador/lista'){try{
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:true,date,baseAddress:ROUTE_BASE_ADDRESS,rows:clean}))
 }catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+if(u.pathname==='/api/roteirizador/endereco'){try{
+  if(!dashboardHasAny(authUser,['dashboard','roteirizador']))return dashboardDeny(res);
+  const stop=await routeResolveManualAddress(u.searchParams.get('endereco')||'');
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:true,stop,radiusLimitKm:300}))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+if(u.pathname==='/api/roteirizador/cte'){try{
+  if(!dashboardHasAny(authUser,['dashboard','roteirizador']))return dashboardDeny(res);
+  const stop=await routeLookupCteBarcode(u.searchParams.get('codigo')||'',u.searchParams.get('date')||'');
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:true,stop,radiusLimitKm:300}))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+if(req.method==='POST'&&u.pathname==='/api/roteirizador/recalcular'){try{
+  if(!dashboardHasAny(authUser,['dashboard','roteirizador']))return dashboardDeny(res);
+  const body=await routeReadJson(req);
+  const stops=Array.isArray(body.stops)?body.stops.slice(0,80):[];
+  if(!stops.length)throw Object.assign(new Error('Nenhuma parada enviada para recalcular.'),{status:400});
+  const x=await routeFinalizePlan(stops,{
+    date:String(body.date||''),romaneio:String(body.romaneio||''),motorista:String(body.motorista||''),veiculo:String(body.veiculo||'')
+  });
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/roteirizador/rota'){try{
   if(!dashboardHasAny(authUser,['dashboard','roteirizador','ssw_saidas','evolucao']))return dashboardDeny(res);
   const x=await buildRoutePlan(u.searchParams.get('date')||'',u.searchParams.get('romaneio')||'');
