@@ -27,6 +27,7 @@
 .dot{width:9px;height:9px;border-radius:50%;background:#22c55e}
 .body{position:relative;flex:1;min-height:0;padding:8px}.module-loading{display:none;position:absolute;inset:8px;z-index:10;background:#ffffffee;align-items:center;justify-content:center;border-radius:12px;font-weight:700;color:#334155}.module-loading.show{display:flex}
 iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 2px 12px #0000000b}
+.auth-pending .shell{display:none}.auth-gate{position:fixed;inset:0;z-index:100;display:grid;place-items:center;padding:20px;background:linear-gradient(135deg,#0f172a,#134e4a)}.auth-gate.hide{display:none!important}.auth-card{width:min(420px,100%);background:#fff;border-radius:18px;padding:28px;box-shadow:0 25px 70px #0005}.auth-card h1{margin:4px 0 6px}.auth-logo{font-size:13px;font-weight:800;color:#0f766e;letter-spacing:.08em}.auth-form{display:grid;gap:12px;margin-top:22px}.auth-form label{display:grid;gap:6px;font-size:12px;font-weight:700;color:#475569}.auth-form input{border:1px solid var(--border);border-radius:10px;padding:12px;font-size:16px}.auth-form button{border:0;border-radius:10px;padding:12px;background:#0f766e;color:#fff;font-weight:800;font-size:15px;cursor:pointer}.auth-error{min-height:20px;color:#b91c1c;font-size:13px;font-weight:700}.session-actions{display:flex;gap:8px;align-items:center}.session-user{font-size:12px;color:#cbd5e1}.logout-btn{border:1px solid #ffffff33;background:#ffffff10;color:#fff;border-radius:8px;padding:8px 10px;cursor:pointer}
 @media(max-width:720px){
  html,body{height:100%;height:100dvh;overflow:hidden}
  .top{padding:9px 10px;display:flex;min-height:48px;flex-wrap:nowrap}
@@ -48,7 +49,8 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
 }
 </style>
 </head>
-<body>
+<body class="auth-pending">
+<div id="authGate" class="auth-gate"><div class="auth-card"><div class="auth-logo">CONSTRULOG</div><h1>Acesso ao Sistema</h1><div style="color:#64748b;font-size:13px">Entre uma vez para acessar os módulos liberados para seu usuário.</div><form id="authForm" class="auth-form"><label>Usuário<input id="authUser" autocomplete="username" required></label><label>Senha<input id="authPass" type="password" autocomplete="current-password" required></label><button id="authSubmit" type="submit">Entrar</button><div id="authError" class="auth-error"></div></form></div></div>
 <div class="shell">
   <div class="top">
     <div class="brand"><strong>CONSTRULOG</strong><span>Todos os módulos da transportadora em um único sistema</span></div>
@@ -59,6 +61,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
       <button class="tab" data-module="dashboards" data-src="https://construlog-dashboard.onrender.com/?embed=1&view=dashboards" data-name="Dashboards">Dashboards</button>
       <button class="tab" data-module="contas" data-src="/contas?embed=1" data-name="Contas a Pagar">Contas a Pagar</button>
     </div>
+    <div class="session-actions"><span id="sessionUser" class="session-user"></span><button id="logoutBtn" class="logout-btn" type="button">Sair</button></div>
   </div>
   <div class="bar"><span class="dot"></span><span id="module">Controle de Coletas</span><span>• Banco Aiven conectado</span><button id="duplicateColeta" class="duplicate-btn" type="button">⧉ Duplicar coleta</button><button id="deleteColeta" class="delete-btn" type="button">🗑 Excluir coleta</button></div>
   <div class="body"><div id="moduleLoading" class="module-loading">Abrindo módulo…</div><iframe id="frame" src="/coletas?embed=1" title="Módulo CONSTRULOG"></iframe></div>
@@ -92,24 +95,58 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
 </div>
 
 <script>
+let AUTH=null;
 const frame=document.getElementById('frame'), moduleName=document.getElementById('module'), moduleLoading=document.getElementById('moduleLoading');
 const duplicateBtn=document.getElementById('duplicateColeta'), duplicateModal=document.getElementById('duplicateModal'), duplicateSelect=document.getElementById('duplicateSelect'), duplicateDate=document.getElementById('duplicateDate'), cancelDuplicate=document.getElementById('cancelDuplicate'), confirmDuplicate=document.getElementById('confirmDuplicate');
 const deleteBtn=document.getElementById('deleteColeta'), deleteModal=document.getElementById('deleteModal'), deleteSelect=document.getElementById('deleteSelect'), cancelDelete=document.getElementById('cancelDelete'), confirmDelete=document.getElementById('confirmDelete');
-function abrirModulo(btn){
+
+function hasPerm(p){return !!(AUTH&&(AUTH.is_admin||AUTH.permissions?.includes('*')||AUTH.permissions?.includes(p)))}
+function moduleAllowed(mod){
+  if(AUTH?.is_admin)return true;
+  if(mod==='coletas')return hasPerm('coletas');
+  if(mod==='financeiro')return hasPerm('financeiro');
+  if(mod==='dashboard')return hasPerm('dashboard');
+  if(mod==='dashboards')return (AUTH?.permissions||[]).some(p=>!['coletas','contas_pagar','dashboard'].includes(p));
+  if(mod==='contas')return hasPerm('contas_pagar');
+  return false
+}
+function applyModulePermissions(){
+  document.querySelectorAll('.tab').forEach(btn=>btn.style.display=moduleAllowed(btn.dataset.module)?'':'none');
+  document.getElementById('sessionUser').textContent=AUTH?(AUTH.username+(AUTH.is_admin?' • Administrador':'')):'';
+}
+async function dashboardTicket(){
+  const r=await fetch('/api/auth/embed-ticket',{method:'POST'});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível autorizar o dashboard.');
+  return j.ticket
+}
+async function abrirModulo(btn){
+  if(!btn||!moduleAllowed(btn.dataset.module))return;
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   btn.classList.add('active');
   const mod=btn.dataset.module||'coletas';
   frame.dataset.module=mod;
   moduleLoading.classList.add('show');
-  let src=btn.dataset.src;
-  const sep=src.includes('?')?'&':'?';
-  if(mod==='financeiro') src += sep+'view=financeiro&refresh='+Date.now();
-  else src += sep+'refresh='+Date.now();
-  frame.src=src;
-  moduleName.textContent=btn.dataset.name;
-  duplicateBtn.style.display=mod==='coletas'?'inline-block':'none';
-  deleteBtn.style.display=mod==='coletas'?'inline-block':'none';
-  try{history.replaceState(null,'','#'+mod)}catch(e){}
+  try{
+    let src=btn.dataset.src;
+    const sep=src.includes('?')?'&':'?';
+    if(mod==='dashboard'||mod==='dashboards'){
+      const ticket=await dashboardTicket();
+      src += sep+'ticket='+encodeURIComponent(ticket)+'&refresh='+Date.now();
+    }else if(mod==='financeiro'){
+      src += sep+'view=financeiro&refresh='+Date.now();
+    }else{
+      src += sep+'refresh='+Date.now();
+    }
+    frame.src=src;
+    moduleName.textContent=btn.dataset.name;
+    duplicateBtn.style.display=mod==='coletas'?'inline-block':'none';
+    deleteBtn.style.display=mod==='coletas'?'inline-block':'none';
+    try{history.replaceState(null,'','#'+mod)}catch(e){}
+  }catch(e){
+    moduleLoading.classList.remove('show');
+    alert(e.message||'Não foi possível abrir o módulo.')
+  }
 }
 document.querySelectorAll('.tab').forEach(btn=>{
   btn.addEventListener('click',e=>{e.preventDefault();abrirModulo(btn)});
@@ -398,14 +435,51 @@ frame.addEventListener('load',()=>{
   abrirFinanceiroNoModulo();
 });
 
-const moduloInicial=(location.hash||'#coletas').slice(1);
-const botaoInicial=document.querySelector('.tab[data-module="'+moduloInicial+'"]')||document.querySelector('.tab[data-module="coletas"]');
-if(botaoInicial) abrirModulo(botaoInicial);
-window.addEventListener('hashchange',()=>{
-  const mod=(location.hash||'#coletas').slice(1);
-  const btn=document.querySelector('.tab[data-module="'+mod+'"]');
-  if(btn && frame.dataset.module!==mod) abrirModulo(btn);
+async function entrarNoSistema(user){
+  AUTH=user;
+  applyModulePermissions();
+  document.body.classList.remove('auth-pending');
+  document.getElementById('authGate').classList.add('hide');
+  const wanted=(location.hash||'').slice(1);
+  let btn=wanted?document.querySelector('.tab[data-module="'+wanted+'"]'):null;
+  if(!btn||!moduleAllowed(btn.dataset.module))btn=[...document.querySelectorAll('.tab')].find(b=>moduleAllowed(b.dataset.module));
+  if(btn)await abrirModulo(btn);
+  else{
+    moduleName.textContent='Sem módulos liberados';
+    frame.removeAttribute('src');
+    frame.srcdoc='<div style="font-family:Segoe UI,Arial;padding:30px"><h2>Sem acesso</h2><p>Este usuário ainda não possui módulos liberados.</p></div>'
+  }
+}
+async function bootstrapAuth(){
+  const form=document.getElementById('authForm'),err=document.getElementById('authError'),btn=document.getElementById('authSubmit');
+  form.addEventListener('submit',async e=>{
+    e.preventDefault();err.textContent='';btn.disabled=true;btn.textContent='Entrando…';
+    try{
+      const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:document.getElementById('authUser').value.trim(),password:document.getElementById('authPass').value})});
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível entrar.');
+      await entrarNoSistema(j.user)
+    }catch(x){err.textContent=x.message||'Falha ao entrar.'}
+    finally{btn.disabled=false;btn.textContent='Entrar'}
+  });
+  try{
+    const r=await fetch('/api/auth/me',{cache:'no-store'}),j=await r.json().catch(()=>({}));
+    if(r.ok&&j.ok)return entrarNoSistema(j.user)
+  }catch{}
+  document.body.classList.add('auth-pending');
+  document.getElementById('authGate').classList.remove('hide')
+}
+document.getElementById('logoutBtn').addEventListener('click',async()=>{
+  try{await fetch('/api/auth/logout',{method:'POST'})}catch{}
+  location.reload()
 });
+window.addEventListener('hashchange',()=>{
+  if(!AUTH)return;
+  const mod=(location.hash||'').slice(1);
+  const btn=document.querySelector('.tab[data-module="'+mod+'"]');
+  if(btn&&moduleAllowed(mod)&&frame.dataset.module!==mod)abrirModulo(btn)
+});
+bootstrapAuth();
 </script>
 </body>
 </html>
