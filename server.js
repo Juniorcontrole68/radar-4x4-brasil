@@ -705,6 +705,13 @@ function normCtrc(v){
   if(m)return m[1]+String(Number(m[2]))+m[3];
   return raw.replace(/[^A-Z0-9]/g,'');
 }
+function normCtrcLoose(v){
+  const raw=String(v||'').toUpperCase().trim();
+  const m=raw.match(/(?:[A-Z]{3})?0*(\d{4,9})\s*-?\s*(\d)\b/);
+  if(m)return String(Number(m[1]))+m[2];
+  const n=raw.replace(/\D/g,'');
+  return n?String(Number(n)):'';
+}
 function normPlate(v){return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'')}
 async function fetchBi2FolderDayParsed(codigo,folder,ymd){
   try{
@@ -748,17 +755,21 @@ async function buildSswMotoristas(from='',to=''){
     if(k)ctrcMap.set(k,r);
   }
 
-  const ownerByCtrc=new Map(),officialCtrcs=new Set();
+  const ownerByCtrc=new Map(),officialCtrcs=new Set(),officialLoose=new Set();
   if(base38&&base38.ok){
     for(const x of (base38.rows||[])){
       for(const raw of (x.ctrcs||[])){
-        const k=normCtrc(raw);if(!k)continue;
-        officialCtrcs.add(k);
-        ownerByCtrc.set(k,{motorista:x.motorista||'',veiculo:normPlate(x.veiculo),romaneio:x.romaneio||'',qtdeCtrcs:Number(x.qtdeCtrcs||0)});
+        const k=normCtrc(raw),lk=normCtrcLoose(raw);if(!k&&!lk)continue;
+        if(k)officialCtrcs.add(k);if(lk)officialLoose.add(lk);
+        const owner={motorista:x.motorista||'',veiculo:normPlate(x.veiculo),romaneio:x.romaneio||'',qtdeCtrcs:Number(x.qtdeCtrcs||0)};
+        if(k)ownerByCtrc.set(k,owner);if(lk)ownerByCtrc.set('#'+lk,owner);
       }
     }
   }
-  let candidates=officialCtrcs.size?[...ctrcMap.values()].filter(r=>officialCtrcs.has(normCtrc(r.numero_ctrc||r.CTRC))):[...ctrcMap.values()].filter(r=>{
+  let candidates=(officialCtrcs.size||officialLoose.size)?[...ctrcMap.values()].filter(r=>{
+    const raw=r.numero_ctrc||r.CTRC;
+    return officialCtrcs.has(normCtrc(raw))||officialLoose.has(normCtrcLoose(raw));
+  }):[...ctrcMap.values()].filter(r=>{
     const d=brDateToIso(r.prev_ent||r['PREV ENTREGA']||r['PREVISAO ENTREGA']);
     return d&&d>=from&&d<=to;
   });
@@ -794,7 +805,7 @@ async function buildSswMotoristas(from='',to=''){
     const occ=String(last.ocorrencia||'').trim();
     const codeMatch=occ.match(/\((\d{1,3})\)/);
     const rawCode=codeMatch?codeMatch[1]:'';
-    const ctrcKey=normCtrc(r.numero_ctrc||r.CTRC),owner=ownerByCtrc.get(ctrcKey)||null;
+    const ctrcRaw=r.numero_ctrc||r.CTRC,ctrcKey=normCtrc(ctrcRaw),ctrcLoose=normCtrcLoose(ctrcRaw),owner=ownerByCtrc.get(ctrcKey)||ownerByCtrc.get('#'+ctrcLoose)||null;
     const plate=owner?.veiculo||normPlate(r.veiculo_entrega),vehicle=vehicleMap.get(plate)||{};
     const saida=!!tr.saiu,entregue=!!tr.entregue;
     rows.push({
@@ -831,8 +842,9 @@ async function buildSswMotoristas(from='',to=''){
   const deliveredMap=new Map();
   const addDeliveredRows=arr=>{
     for(const r of (arr||[])){
-      const k=normCtrc(pickField(r,'CTRC','NUMERO CTRC','NUMERO_CTRC','NRO CTRC','NRO_CTRC')||r.CTRC||r.numero_ctrc);
-      if(k)deliveredMap.set(k,r);
+      const raw=pickField(r,'CTRC','NUMERO CTRC','NUMERO_CTRC','NRO CTRC','NRO_CTRC')||r.CTRC||r.numero_ctrc;
+      const k=normCtrc(raw),lk=normCtrcLoose(raw);
+      if(k)deliveredMap.set(k,r);if(lk)deliveredMap.set('#'+lk,r);
     }
   };
   snaps17.filter(x=>x.ok).forEach(s=>addDeliveredRows(s.rows));
@@ -846,9 +858,9 @@ async function buildSswMotoristas(from='',to=''){
       const rows17=current17.rows||[];
       const today17=rows17.filter(r=>brDateToIso(pickField(r,'DATA ENTREGA','ENTREGA','DT ENTREGA'))===today);
       addDeliveredRows(today17.length?today17:rows17);
-      const officialDbg=new Set((base38.rows||[]).flatMap(x=>(x.ctrcs||[]).map(normCtrc)));
-      const deliveredDbg=[...deliveredMap.keys()];
-      console.log('BI2 17 baixas atuais: '+JSON.stringify({arquivo:rows17.length,hoje:today17.length,ctrcs:deliveredMap.size,intersecaoAtual:deliveredDbg.filter(k=>officialDbg.has(k)).length,amostraArquivo:rows17.slice(0,8).map(r=>pickField(r,'CTRC')),amostraNormalizada:deliveredDbg.slice(0,8),headers:current17.headers.slice(0,20)}));
+      const officialDbg=new Set((base38.rows||[]).flatMap(x=>(x.ctrcs||[]).map(normCtrcLoose).filter(Boolean)));
+      const deliveredDbg=[...deliveredMap.keys()].filter(k=>k.startsWith('#')).map(k=>k.slice(1));
+      console.log('BI2 17 baixas atuais: '+JSON.stringify({arquivo:rows17.length,hoje:today17.length,ctrcs:deliveredDbg.length,intersecaoAtual:deliveredDbg.filter(k=>officialDbg.has(k)).length,amostraArquivo:rows17.slice(0,8).map(r=>pickField(r,'CTRC')),amostraNormalizada:deliveredDbg.slice(0,8),headers:current17.headers.slice(0,20)}));
     }catch(e){
       console.log('BI2 17 baixas atuais ERRO: '+String(e.message||e));
     }
@@ -857,7 +869,11 @@ async function buildSswMotoristas(from='',to=''){
   let motoristas38=[],totalRomaneado=0,romaneios38=[],entregues38=0,pendentes38=0,ocorrencias38=0;
   if(base38&&base38.ok){
     romaneios38=base38.rows||[];totalRomaneado=base38.total||0;
-    const byCtrc=new Map(rows.map(r=>[normCtrc(r.ctrc),r]));
+    const byCtrc=new Map();
+    for(const r of rows){
+      const k=normCtrc(r.ctrc),lk=normCtrcLoose(r.ctrc);
+      if(k)byCtrc.set(k,r);if(lk)byCtrc.set('#'+lk,r);
+    }
     const gm=new Map();
     for(const x of romaneios38){
       const k=String(x.motorista||x.veiculo||'Não identificado').trim();
@@ -874,8 +890,8 @@ async function buildSswMotoristas(from='',to=''){
       g.vinculados+=ctrcs.length;
       g.missingCtrcs+=Math.max(0,totalX-ctrcs.length);
       for(const ck of ctrcs){
-        const r=byCtrc.get(ck);
-        if(deliveredMap.has(ck)||r?.entregue)g.entregues++;
+        const lk=normCtrcLoose(raw),r=byCtrc.get(ck)||byCtrc.get('#'+lk);
+        if(deliveredMap.has(ck)||deliveredMap.has('#'+lk)||r?.entregue)g.entregues++;
       }
     }
 
@@ -909,7 +925,7 @@ async function buildSswMotoristas(from='',to=''){
     days174:snaps174.filter(x=>x.ok).length,days17:snaps17.filter(x=>x.ok).length,
     candidatos:unique.length,trackingConsultados:trackingResults.length,trackingOk,
     totalRomaneado,motoristas38,romaneios38,entregues38,pendentes38,ocorrencias38,
-    saidas:totalRomaneado||saidas,baixadas:totalRomaneado?entregues38:baixadas,baixasSsw:totalRomaneado?entregues38:baixadas,baixasBi2:deliveredMap.size,pendentes:totalRomaneado?pendentes38:pendentes,taxa:totalRomaneado?((entregues38+ocorrencias38)/totalRomaneado*100):(saidas?baixadas/saidas*100:0),
+    saidas:totalRomaneado||saidas,baixadas:totalRomaneado?entregues38:baixadas,baixasSsw:totalRomaneado?entregues38:baixadas,baixasBi2:[...deliveredMap.keys()].filter(k=>k.startsWith('#')).length,pendentes:totalRomaneado?pendentes38:pendentes,taxa:totalRomaneado?((entregues38+ocorrencias38)/totalRomaneado*100):(saidas?baixadas/saidas*100:0),
     veiculos:new Set(saiuRows.map(x=>x.veiculo).filter(Boolean)).size,
     motoristasIdentificados:new Set(saiuRows.map(x=>x.motorista).filter(Boolean)).size,
     motoristas,
