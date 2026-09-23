@@ -96,6 +96,8 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
 
 <script>
 let AUTH=null;
+let DASH_FRAME_TOKEN='';
+const DASHBOARD_ORIGIN='https://construlog-dashboard.onrender.com';
 const frame=document.getElementById('frame'), moduleName=document.getElementById('module'), moduleLoading=document.getElementById('moduleLoading');
 const duplicateBtn=document.getElementById('duplicateColeta'), duplicateModal=document.getElementById('duplicateModal'), duplicateSelect=document.getElementById('duplicateSelect'), duplicateDate=document.getElementById('duplicateDate'), cancelDuplicate=document.getElementById('cancelDuplicate'), confirmDuplicate=document.getElementById('confirmDuplicate');
 const deleteBtn=document.getElementById('deleteColeta'), deleteModal=document.getElementById('deleteModal'), deleteSelect=document.getElementById('deleteSelect'), cancelDelete=document.getElementById('cancelDelete'), confirmDelete=document.getElementById('confirmDelete');
@@ -138,13 +140,15 @@ async function abrirModulo(btn){
     const sep=src.includes('?')?'&':'?';
     if(mod==='dashboard'||mod==='dashboards'){
       if(AUTH?.is_admin){
-        const token=await dashboardAdminToken();
-        src += sep+'refresh='+Date.now()+'#cltoken='+encodeURIComponent(token);
+        DASH_FRAME_TOKEN=await dashboardAdminToken();
+        src += sep+'refresh='+Date.now();
       }else{
+        DASH_FRAME_TOKEN='';
         const ticket=await dashboardTicket();
         src += sep+'ticket='+encodeURIComponent(ticket)+'&refresh='+Date.now();
       }
     }else if(mod==='financeiro'){
+      DASH_FRAME_TOKEN='';
       src += sep+'view=financeiro&refresh='+Date.now();
     }else{
       src += sep+'refresh='+Date.now();
@@ -440,6 +444,19 @@ function abrirFinanceiroNoModulo(){
 
 frame.addEventListener('load',()=>{
   moduleLoading.classList.remove('show');
+  if((frame.dataset.module==='dashboard'||frame.dataset.module==='dashboards') && AUTH?.is_admin && DASH_FRAME_TOKEN){
+    const sendAuth=()=>{
+      try{
+        frame.contentWindow.postMessage(
+          {type:'CONSTRULOG_ADMIN_AUTH',token:DASH_FRAME_TOKEN},
+          DASHBOARD_ORIGIN
+        );
+      }catch(e){}
+    };
+    sendAuth();
+    setTimeout(sendAuth,150);
+    setTimeout(sendAuth,500);
+  }
   ativarTitleCaseNoModulo();
   aplicarFonteLeveNoModulo();
   ajustarCampoClienteEntrega();
