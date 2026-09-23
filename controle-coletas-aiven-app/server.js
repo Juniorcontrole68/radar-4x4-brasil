@@ -103,9 +103,22 @@ function dashboardVerifyPassword(password, salt, expectedHash) {
   } catch { return false; }
 }
 function dashboardTokenHash(token) { return crypto.createHash('sha256').update(String(token || '')).digest('hex'); }
+function dashboardCookie(req, name='cl_session') {
+  const raw=String(req.headers.cookie||'');
+  for(const part of raw.split(';')){
+    const i=part.indexOf('=');
+    if(i<0)continue;
+    const k=part.slice(0,i).trim();
+    if(k===name){try{return decodeURIComponent(part.slice(i+1).trim())}catch{return part.slice(i+1).trim()}}
+  }
+  return '';
+}
 function dashboardBearer(req) {
   const m = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
-  return m ? m[1].trim() : '';
+  return m ? m[1].trim() : dashboardCookie(req);
+}
+function dashboardSetCookie(token,maxAge=14*24*60*60){
+  return 'cl_session='+encodeURIComponent(token||'')+'; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age='+maxAge;
 }
 function dashboardPerms(v) {
   if (Array.isArray(v)) return v.map(String);
@@ -284,6 +297,8 @@ async function start() {
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_dashboard_users_username_lower ON dashboard_users (lower(username))');
   await pool.query('CREATE TABLE IF NOT EXISTS dashboard_sessions (token_hash TEXT PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES dashboard_users(id) ON DELETE CASCADE, expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
   await pool.query('CREATE INDEX IF NOT EXISTS idx_dashboard_sessions_exp ON dashboard_sessions (expires_at)');
+  await pool.query("CREATE TABLE IF NOT EXISTS dashboard_embed_tickets (ticket_hash TEXT PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES dashboard_users(id) ON DELETE CASCADE, expires_at TIMESTAMPTZ NOT NULL, used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())");
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_dashboard_embed_tickets_exp ON dashboard_embed_tickets (expires_at)');
   const adminUser=String(process.env.DASHBOARD_INITIAL_ADMIN_USER||'Junior').trim();
   const adminPass=String(process.env.DASHBOARD_INITIAL_ADMIN_PASSWORD||'').trim();
   if(adminUser&&adminPass){
