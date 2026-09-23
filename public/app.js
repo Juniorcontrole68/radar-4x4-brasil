@@ -230,7 +230,7 @@ async function start(){
   setInterval(()=>{if(!document.hidden)checkSsw()},60000);
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&['ssw-atrasos','dashboards'].includes(t))refreshSswAtrasos()},120000);
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&['ssw-remetentes','ssw-remetentes-comparativo','dashboards'].includes(t))refreshSswRemetentes()},120000);
-  setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&['ssw-motoristas','motoristas-evolucao','dashboards'].includes(t))refreshSswMotoristas()},300000);
+  setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&['ssw-motoristas','motoristas-evolucao','dashboards'].includes(t))refreshSswMotoristas()},30000);
   window.addEventListener('focus',()=>refreshData(false));
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshData(false)})
 }
