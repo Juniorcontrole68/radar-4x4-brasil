@@ -1,5 +1,7 @@
 
 const PERMISSION_OPTIONS=[
+  ['coletas','Controle de Coletas'],
+  ['contas_pagar','Contas a Pagar'],
   ['dashboard','Dashboard principal'],
   ['ssw_saidas','SSW • Saídas x Baixas'],
   ['evolucao','Evolução e previsão por motorista'],
