@@ -120,6 +120,12 @@ async function dashboardTicket(){
   if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível autorizar o dashboard.');
   return j.ticket
 }
+async function dashboardAdminToken(){
+  const r=await fetch('/api/auth/admin-dashboard-token',{method:'POST'});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok||!j.ok||!j.token)throw new Error(j.error||'Não foi possível autorizar o administrador.');
+  return j.token
+}
 async function abrirModulo(btn){
   if(!btn||!moduleAllowed(btn.dataset.module))return;
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
@@ -131,8 +137,13 @@ async function abrirModulo(btn){
     let src=btn.dataset.src;
     const sep=src.includes('?')?'&':'?';
     if(mod==='dashboard'||mod==='dashboards'){
-      const ticket=await dashboardTicket();
-      src += sep+'ticket='+encodeURIComponent(ticket)+'&refresh='+Date.now();
+      if(AUTH?.is_admin){
+        const token=await dashboardAdminToken();
+        src += sep+'refresh='+Date.now()+'#cltoken='+encodeURIComponent(token);
+      }else{
+        const ticket=await dashboardTicket();
+        src += sep+'ticket='+encodeURIComponent(ticket)+'&refresh='+Date.now();
+      }
     }else if(mod==='financeiro'){
       src += sep+'view=financeiro&refresh='+Date.now();
     }else{
