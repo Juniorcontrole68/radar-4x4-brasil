@@ -12,7 +12,23 @@ async function load(n){
     return j.rows||[]
   }finally{clearTimeout(timer)}
 }
-async function loadColetasStatus(){const q=new URLSearchParams(),f=$('#from')?.value||'',t=$('#to')?.value||'';if(f)q.set('from',f);if(t)q.set('to',t);q.set('t',Date.now());const r=await fetch('/api/coletas/status?'+q.toString(),{cache:'no-store',headers:{'Cache-Control':'no-cache'}}),j=await r.json();if(!r.ok||!j.ok)throw Error(j.error||'Falha ao carregar status das coletas');return j}
+async function loadColetasStatus(){
+  const q=new URLSearchParams(),f=$('#from')?.value||'',t=$('#to')?.value||'';
+  if(f)q.set('from',f);if(t)q.set('to',t);q.set('t',Date.now());
+  const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),7000);
+  try{
+    const r=await fetch('/api/coletas/status?'+q.toString(),{cache:'no-store',headers:{'Cache-Control':'no-cache','Pragma':'no-cache'},signal:ctrl.signal}),j=await r.json();
+    if(!r.ok||!j.ok)throw Error(j.error||'Falha ao carregar status das coletas');
+    return j
+  }finally{clearTimeout(timer)}
+}
+async function refreshColetasStatus(){
+  if(window.__coletasStatusLoading)return;
+  window.__coletasStatusLoading=true;
+  try{const co=await loadColetasStatus();if(co&&co.ok){S.coletas=co;update()}}
+  catch(e){console.warn('Coletas resumo indisponível:',e.message||e)}
+  finally{window.__coletasStatusLoading=false}
+}
 function init(){const t=new Date(),f=new Date(t.getFullYear(),t.getMonth(),1);$('#from').value=iso(f);$('#to').value=iso(t)}
 function inper(d){const f=$('#from').value?new Date($('#from').value+'T00:00:00'):null,t=$('#to').value?new Date($('#to').value+'T23:59:59'):null;return(!f||!d||d>=f)&&(!t||!d||d<=t)}
 function ops(){const d=$('#driver').value,b=$('#branch').value;return S.ops.filter(o=>inper(pd(gd(o)))&&(!d||g(o,'Motorista')===d)&&(!b||g(o,'Filial')===b))}
@@ -141,20 +157,18 @@ async function refreshData(first=false){
   window.__refreshing=true;
   if(first)$('#loading').classList.remove('hide');
   try{
-    const [ro,ra,rh,rc]=await Promise.allSettled([
-      load('lancamentos'),load('agendamentos'),load('ajudantes'),loadColetasStatus()
-    ]);
+    const [ro,ra,rh]=await Promise.allSettled([load('lancamentos'),load('agendamentos'),load('ajudantes')]);
     let updated=false,errors=[];
     if(ro.status==='fulfilled'){S.ops=ro.value;S.opsUpdatedAt=Date.now();updated=true}else errors.push('Operações: '+(ro.reason?.message||ro.reason));
     if(ra.status==='fulfilled'){S.sch=ra.value;updated=true}else errors.push('Agendamentos: '+(ra.reason?.message||ra.reason));
     if(rh.status==='fulfilled'){S.help=rh.value;updated=true}else errors.push('Ajudantes: '+(rh.reason?.message||rh.reason));
-    if(rc.status==='fulfilled'&&rc.value&&rc.value.ok)S.coletas=rc.value;
     if(updated){filters();update()}
     const er=$('#err');
     if(errors.length){
       er.style.display='block';
       er.innerHTML='<b>Atualização parcial.</b><br>'+errors.map(safe).join('<br>')+'<br>Os módulos que responderam continuam atualizando normalmente.';
     }else er.style.display='none';
+    refreshColetasStatus();
   }catch(e){
     $('#err').style.display='block';
     $('#err').innerHTML='<b>Erro ao atualizar os dados.</b><br>'+safe(e.message)+'<br><button onclick="refreshData(false)">Tentar novamente</button>';
