@@ -1583,8 +1583,26 @@ async function buildRoutePlan(date='',romaneio=''){
     data={rows:full.romaneios38||[]}
   }
   const manifests=data.rows||[];
-  const selected=manifests.find(x=>String(x.romaneio||'')===String(romaneio||''))||manifests[0];
+  let selected=manifests.find(x=>String(x.romaneio||'')===String(romaneio||''))||manifests[0];
   if(!selected)throw new Error('Nenhum romaneio encontrado no SSW para a data selecionada.');
+
+  // A leitura rápida da opção 38 traz motorista/romaneio/quantidade, mas nem sempre
+  // inclui os CT-es do PDF. Para rotear, força a leitura detalhada quando necessário.
+  let detailedFull=null;
+  const hasSelectedDetails=()=>(
+    (Array.isArray(selected?.ctrcMeta)&&selected.ctrcMeta.length)||
+    (Array.isArray(selected?.ctrcNfs)&&selected.ctrcNfs.length)||
+    (Array.isArray(selected?.ctrcs)&&selected.ctrcs.length)
+  );
+  if(!hasSelectedDetails()){
+    try{
+      detailedFull=await buildSswMotoristas(target,target);
+      const detailed=(detailedFull.romaneios38||[]).find(x=>String(x.romaneio||'')===String(selected.romaneio||''));
+      if(detailed)selected={...selected,...detailed};
+    }catch(e){
+      console.log('ROTEIRIZADOR detalhe do romaneio ERRO: '+String(e.message||e))
+    }
+  }
 
   let biRows=[];
   try{biRows=parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text).rows||[]}catch{}
@@ -1593,13 +1611,38 @@ async function buildRoutePlan(date='',romaneio=''){
     const lk=normCtrcLoose(r.numero_ctrc||r.CTRC),nf=normNf(r.numero_nf||r.NF);
     if(lk)byLoose.set(lk,r);if(nf)byNf.set(nf,r)
   }
-  const metas=(selected.ctrcMeta&&selected.ctrcMeta.length?selected.ctrcMeta:(selected.ctrcNfs||[]).map(p=>({ctrc:p.ctrc,nf:p.nf,cnpjs:[]})));
+  let metas=(selected.ctrcMeta&&selected.ctrcMeta.length
+    ?selected.ctrcMeta
+    :((selected.ctrcNfs&&selected.ctrcNfs.length)
+      ?selected.ctrcNfs.map(p=>({ctrc:p.ctrc,nf:p.nf,cnpjs:[]}))
+      :(selected.ctrcs||[]).map(ctrc=>({ctrc,nf:'',cnpjs:[]}))));
+
+  // Fallback adicional: usa as linhas já reconciliadas do SSW/BI2 do mesmo romaneio.
+  // Isso evita retornar rota vazia quando o PDF não expõe os CT-es na leitura rápida.
+  if(!metas.length){
+    try{
+      if(!detailedFull)detailedFull=await buildSswMotoristas(target,target);
+      const detailRows=(detailedFull.rows||[]).filter(r=>String(r.romaneio||'')===String(selected.romaneio||''));
+      const seen=new Set();
+      metas=detailRows.map(r=>({
+        ctrc:r.ctrcOficial||r.ctrc||'',
+        nf:r.nf||'',
+        cnpjs:[],
+        __row:r
+      })).filter(m=>{
+        const k=normCtrcLoose(m.ctrc)||('NF'+normNf(m.nf));
+        if(!k||seen.has(k))return false;seen.add(k);return true
+      })
+    }catch(e){
+      console.log('ROTEIRIZADOR fallback de linhas ERRO: '+String(e.message||e))
+    }
+  }
   const stops=[];
   for(let idx=0;idx<metas.length;idx++){
-    const meta=metas[idx],lk=normCtrcLoose(meta.ctrc),nf=normNf(meta.nf),r=byLoose.get(lk)||byNf.get(nf)||{};
-    const destinatario=r.destinatario_nome||routeField(r,[/(destinatario|destinat)_?nome/,/^destinatario$/])||('Entrega '+(idx+1));
-    const cidade=r.cidade_destino||r.dest_cidade||routeField(r,[/(cidade).*(dest|destinat)/,/(dest|destinat).*cidade/,/^cidade_destino$/])||'';
-    const uf=r.uf_destino||r.dest_uf||routeField(r,[/(uf).*(dest|destinat)/,/(dest|destinat).*uf/,/^uf_destino$/])||'SP';
+    const meta=metas[idx],lk=normCtrcLoose(meta.ctrc),nf=normNf(meta.nf),r=byLoose.get(lk)||byNf.get(nf)||meta.__row||{};
+    const destinatario=r.destinatario_nome||r.destinatario||routeField(r,[/(destinatario|destinat)_?nome/,/^destinatario$/])||('Entrega '+(idx+1));
+    const cidade=r.cidade_destino||r.dest_cidade||r.cidade||routeField(r,[/(cidade).*(dest|destinat)/,/(dest|destinat).*cidade/,/^cidade_destino$/])||'';
+    const uf=r.uf_destino||r.dest_uf||r.uf||routeField(r,[/(uf).*(dest|destinat)/,/(dest|destinat).*uf/,/^uf_destino$/])||'SP';
     const parts=routeAddressParts(r,meta);
     let query='',precision='cidade';
     if(parts.cep){query=parts.cep+', Brasil';precision='cep'}
@@ -1615,7 +1658,9 @@ async function buildRoutePlan(date='',romaneio=''){
       precision,query,lat:geo.lat,lon:geo.lon,label:destinatario+(cidade?' • '+cidade:'')
     })
   }
-  if(!stops.length)throw new Error('Não foi possível localizar geograficamente as entregas deste romaneio.');
+  if(!stops.length){
+    throw new Error('O romaneio foi encontrado, mas os CT-es ainda não trouxeram cidade/endereço suficiente para montar as paradas. Atualize os dados do SSW e tente novamente.');
+  }
 
   const baseGeo=await routeGeocode(ROUTE_BASE_ADDRESS);
   if(!baseGeo)throw new Error('Não foi possível localizar a base de Americana.');
