@@ -741,6 +741,15 @@ function normCtrcLoose(v){
 }
 function normPlate(v){return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'')}
 function normNf(v){const n=String(v||'').replace(/\D/g,'').replace(/^0+/,'');return n||''}
+function isExplicitSswOccurrence(r){
+  if(!r||r.entregue)return false;
+  const code=String(r.ocorrenciaCodigo||'').replace(/^0+/,'');
+  const txt=(String(r.ocorrencia||'')+' '+String(code||'')).toUpperCase();
+  if(!txt.trim())return false;
+  if(code==='1'||code==='37'||code==='85')return false;
+  if(/SA[IÍ]DA PARA ENTREGA|EM ROTA|EM TR[ÂA]NSITO|PR[EÉ][ -]?ENTREG|AGUARD|CARREG|MANIFEST|TRANSFER|EXPEDI|DOCUMENTO EMITIDO/.test(txt))return false;
+  return /FALTA DE TEMPO|PREJUDICAD[AO]|RECUS|AUSENTE|FECHAD[AO]|ENDERE[CÇ]O|AVARIA|DEVOL|CANCEL|EXTRAV|SINISTRO|ROUB|N[AÃ]O LOCALIZ|N[AÃ]O ENTREG|IMPOSSIBIL|CLIENTE.*N[AÃ]O|HOR[AÁ]RIO/.test(txt);
+}
 async function fetchBi2FolderDayParsed(codigo,folder,ymd){
   try{
     const rep=await fetchBi2ReportFolder(codigo,bi2CompactDate(ymd),folder),p=parseBi2Csv(rep.text);
@@ -991,15 +1000,13 @@ async function buildSswMotoristas(from='',to=''){
     const gm=new Map();
     for(const x of romaneios38){
       const k=String(x.motorista||x.veiculo||'Não identificado').trim();
-      if(!gm.has(k))gm.set(k,{motorista:x.motorista||'Não identificado',veiculo:x.veiculo||'',total:0,entregues:0,pendentes:0,ocorrencias:0,romaneios:[],vinculados:0,missingCtrcs:0});
+      if(!gm.has(k))gm.set(k,{motorista:x.motorista||'Não identificado',veiculo:x.veiculo||'',total:0,entregues:0,pendentes:0,ocorrencias:0,romaneios:[],vinculados:0,missingCtrcs:0,explicitOccurrences:0});
       const g=gm.get(k),totalX=Number(x.qtdeCtrcs||0);
       g.total+=totalX;if(x.romaneio)g.romaneios.push(x.romaneio);if(!g.veiculo&&x.veiculo)g.veiculo=x.veiculo;
 
-      // Na opção 38, "Falta Ocorr." é a fonte oficial do que ainda NÃO recebeu baixa.
-      // Não usamos mais falha de vínculo/rastreamento como sinônimo de pendência.
-      const pendX=Math.max(0,Math.min(totalX,Number(x.faltaOcorr||0)));
-      g.pendentes+=pendX;
-
+      // "Falta Ocorr." continua sendo uma referência do SSW, mas não pode ser
+      // usada para transformar automaticamente a diferença em ocorrência.
+      // Ocorrência só será vermelha quando houver uma ocorrência explícita no tracking.
       const ctrcs=[...new Set((x.ctrcs||[]).map(normCtrc).filter(Boolean))];
       const nfByLoose=new Map((x.ctrcNfs||[]).map(p=>[normCtrcLoose(p.ctrc),normNf(p.nf)]));
       g.vinculados+=ctrcs.length;
@@ -1007,7 +1014,11 @@ async function buildSswMotoristas(from='',to=''){
       for(const ck of ctrcs){
         const lk=normCtrcLoose(ck),nf=nfByLoose.get(lk)||'';
         const r=byCtrc.get(ck)||byCtrc.get('#'+lk)||(nf?byNf.get(nf):null);
-        if(deliveredMap.has(ck)||deliveredMap.has('#'+lk)||r?.entregue)g.entregues++;
+        if(deliveredMap.has(ck)||deliveredMap.has('#'+lk)||r?.entregue){
+          g.entregues++;
+        }else if(isExplicitSswOccurrence(r)){
+          g.explicitOccurrences++;
+        }
       }
     }
 
@@ -1019,16 +1030,18 @@ async function buildSswMotoristas(from='',to=''){
     if(extraDelivered>0&&extraDelivered<=missingPdf){
       for(const g of gm.values()){
         if(extraDelivered<=0)break;
-        const closed=Math.max(0,g.total-g.pendentes);
-        const room=Math.max(0,Math.min(g.missingCtrcs,closed-g.entregues));
+        const room=Math.max(0,Math.min(g.missingCtrcs,g.total-g.entregues-g.explicitOccurrences));
         const add=Math.min(room,extraDelivered);
         g.entregues+=add;extraDelivered-=add;
       }
     }
 
     motoristas38=[...gm.values()].map(g=>{
-      const ocorrencias=Math.max(0,g.total-g.pendentes-g.entregues);
-      return{...g,ocorrencias,baixadas:g.entregues+ocorrencias,taxa:g.total?(g.entregues+ocorrencias)/g.total*100:0};
+      // Regra segura: vermelho somente para ocorrência explicitamente identificada.
+      // Todo CT-e não entregue e sem ocorrência confirmada permanece pendente.
+      const ocorrencias=Math.max(0,Math.min(g.explicitOccurrences,g.total-g.entregues));
+      const pendentes=Math.max(0,g.total-g.entregues-ocorrencias);
+      return{...g,pendentes,ocorrencias,baixadas:g.entregues+ocorrencias,taxa:g.total?(g.entregues+ocorrencias)/g.total*100:0};
     }).sort((a,b)=>b.total-a.total||a.motorista.localeCompare(b.motorista,'pt-BR'));
 
     // Reconciliação operacional confirmada pelo usuário para o lote fechado de 22/09:
