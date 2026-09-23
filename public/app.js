@@ -202,7 +202,11 @@ async function showAuthenticatedApp(user){
   AUTH=user;
   document.body.classList.remove('auth-pending');
   document.querySelector('#authGate')?.classList.add('hide');
-  document.querySelector('#loading')?.classList.add('hide');
+  const authLoading=document.querySelector('#loading');
+  if(authLoading){
+    authLoading.style.removeProperty('display');
+    authLoading.classList.add('hide');
+  }
   applyPermissions();
   setupUserAdmin();
   setupLoadingForm();
@@ -260,7 +264,8 @@ function bootstrapEmbeddedAuth(){
   const loading=document.querySelector('#loading');
   if(loading){
     loading.textContent='Abrindo Dashboard…';
-    loading.style.setProperty('display','flex','important');
+    loading.style.removeProperty('display');
+    loading.classList.remove('hide');
   }
   const tryExisting=async()=>{
     if(DASH_SESSION_TOKEN)await authenticateEmbeddedToken(DASH_SESSION_TOKEN)
@@ -746,7 +751,12 @@ async function start(){
   init();
   $('#err').style.display='none';
   if(hasAnyPerm(['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo']))checkSsw();
-  await refreshData(true);
+  if(DASH_EMBEDDED){
+    document.querySelector('#loading')?.classList.add('hide');
+    refreshData(false);
+  }else{
+    await refreshData(true);
+  }
 
   const view=new URLSearchParams(location.search).get('view');
   const target=view&&tabAllowed(view)?view:firstAllowedTab();
