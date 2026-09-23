@@ -91,6 +91,43 @@ function parseImageDataUrl(dataUrl) {
 }
 
 
+function dashboardHashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const hash = crypto.scryptSync(String(password), salt, 64).toString('hex');
+  return { salt, hash };
+}
+function dashboardVerifyPassword(password, salt, expectedHash) {
+  try {
+    const actual = crypto.scryptSync(String(password), String(salt), 64);
+    const expected = Buffer.from(String(expectedHash), 'hex');
+    return expected.length === actual.length && crypto.timingSafeEqual(actual, expected);
+  } catch { return false; }
+}
+function dashboardTokenHash(token) { return crypto.createHash('sha256').update(String(token || '')).digest('hex'); }
+function dashboardBearer(req) {
+  const m = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
+  return m ? m[1].trim() : '';
+}
+function dashboardPerms(v) {
+  if (Array.isArray(v)) return v.map(String);
+  if (typeof v === 'string') { try { const p=JSON.parse(v); return Array.isArray(p)?p.map(String):[]; } catch { return []; } }
+  return [];
+}
+async function dashboardSession(req, adminOnly=false) {
+  const token=dashboardBearer(req);
+  if(!token){const e=new Error('Sessão não informada.');e.status=401;throw e}
+  const r=await pool.query("SELECT u.id::text AS id,u.username,u.is_admin,u.active,u.permissions FROM dashboard_sessions s JOIN dashboard_users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>NOW() AND u.active=TRUE LIMIT 1",[dashboardTokenHash(token)]);
+  if(!r.rowCount){const e=new Error('Sessão expirada ou inválida.');e.status=401;throw e}
+  const row=r.rows[0];
+  if(adminOnly&&!row.is_admin){const e=new Error('Acesso exclusivo do administrador.');e.status=403;throw e}
+  return {id:row.id,username:row.username,is_admin:!!row.is_admin,active:!!row.active,permissions:row.is_admin?['*']:dashboardPerms(row.permissions)};
+}
+async function dashboardCreateSession(userId){
+  const token=crypto.randomBytes(32).toString('hex');
+  await pool.query('DELETE FROM dashboard_sessions WHERE expires_at<=NOW()');
+  await pool.query("INSERT INTO dashboard_sessions(token_hash,user_id,expires_at) VALUES($1,$2,NOW()+INTERVAL '14 days')",[dashboardTokenHash(token),userId]);
+  return token;
+}
+
 async function duplicateColetaMinimal(id, novaData) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(novaData || ''))) {
     const e = new Error('Nova data inválida.'); e.status = 400; throw e;
