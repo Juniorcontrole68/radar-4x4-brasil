@@ -1,4 +1,6 @@
 const DASH_SESSION_KEY='construlog_dashboard_session';
+const DASH_EMBEDDED=new URLSearchParams(location.search).get('embed')==='1';
+const PORTAL_ORIGIN='https://controle-coletas-jr.onrender.com';
 let DASH_SESSION_TOKEN=String(window.__DASHBOARD_SESSION_TOKEN__||'');
 try{
   if(DASH_SESSION_TOKEN)sessionStorage.setItem(DASH_SESSION_KEY,DASH_SESSION_TOKEN);
@@ -238,6 +240,38 @@ async function bootstrapAuth(){
   document.body.classList.add('auth-pending');
   document.querySelector('#authGate')?.classList.remove('hide');
   document.querySelector('#loading')?.classList.add('hide')
+}
+async function authenticateEmbeddedToken(token){
+  if(!token)return false;
+  setDashboardSessionToken(token);
+  try{
+    const r=await fetch('/api/auth/me',{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(r.ok&&j.ok){
+      await showAuthenticatedApp(j.user);
+      return true
+    }
+  }catch(e){}
+  return false
+}
+function bootstrapEmbeddedAuth(){
+  const gate=document.querySelector('#authGate');
+  if(gate)gate.classList.add('hide');
+  const loading=document.querySelector('#loading');
+  if(loading){
+    loading.textContent='Abrindo Dashboard…';
+    loading.style.setProperty('display','flex','important');
+  }
+  const tryExisting=async()=>{
+    if(DASH_SESSION_TOKEN)await authenticateEmbeddedToken(DASH_SESSION_TOKEN)
+  };
+  window.addEventListener('message',async e=>{
+    if(e.origin!==PORTAL_ORIGIN)return;
+    const d=e.data||{};
+    if(d.type!=='CONSTRULOG_ADMIN_AUTH'||!d.token)return;
+    await authenticateEmbeddedToken(String(d.token))
+  });
+  tryExisting();
 }
 
 const S={ops:[],sch:[],help:[],ssw:null,remetentes:null,coletas:null,sswMotoristas:null},$=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
@@ -795,4 +829,4 @@ window.onresize=()=>{clearTimeout(window.rz);window.rz=setTimeout(update,150)};
 $('#mobile').onclick=()=>alert(/iphone|ipad|ipod/i.test(navigator.userAgent)?'No Safari: toque em Compartilhar e depois em Adicionar à Tela de Início.':'No Chrome: toque no menu ⋮ e escolha Adicionar à tela inicial.');
 if($('#shareWhatsapp'))$('#shareWhatsapp').onclick=()=>whatsappShare();
 if($('#logoutBtn'))$('#logoutBtn').onclick=async()=>{try{await fetch('/api/auth/logout',{method:'POST'})}catch{}setDashboardSessionToken('');location.reload()};
-bootstrapAuth();
+if(DASH_EMBEDDED)bootstrapEmbeddedAuth();else bootstrapAuth();
