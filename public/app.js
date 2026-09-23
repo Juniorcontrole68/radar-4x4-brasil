@@ -1,3 +1,189 @@
+
+const PERMISSION_OPTIONS=[
+  ['dashboard','Dashboard principal'],
+  ['ssw_saidas','SSW • Saídas x Baixas'],
+  ['evolucao','Evolução e previsão por motorista'],
+  ['cidade_destino','Entregas por cidade destino'],
+  ['final_carregamento','Final do carregamento'],
+  ['operacional','Operacional / Entregas'],
+  ['financeiro','Financeiro'],
+  ['motoristas','Motoristas'],
+  ['filiais','Filiais'],
+  ['agendamentos','Agendamentos'],
+  ['ajudantes','Ajudantes e Conferentes'],
+  ['rotas','Rotas e Produtividade'],
+  ['ocorrencias','Ocorrências e SLA'],
+  ['remetentes','Entregas por Cliente Remetente'],
+  ['remetentes_comparativo','Comparativo de Clientes Remetentes'],
+  ['ssw_atrasos','SSW • CT-es Atrasados'],
+  ['bi2','SSW / BI2']
+];
+let AUTH=null;
+function hasPerm(p){return !!(AUTH&&(AUTH.is_admin||AUTH.permissions?.includes('*')||AUTH.permissions?.includes(p)))}
+function hasAnyPerm(list){return list.some(hasPerm)}
+function tabAllowed(tab){
+  const map={
+    dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',
+    agendamentos:'agendamentos',ajudantes:'ajudantes',
+    'ssw-motoristas':'ssw_saidas','motoristas-evolucao':'evolucao',
+    'ssw-atrasos':'ssw_atrasos','ssw-remetentes':'remetentes',
+    'ssw-remetentes-comparativo':'remetentes_comparativo'
+  };
+  if(tab==='usuarios')return !!AUTH?.is_admin;
+  if(tab==='dashboards')return AUTH?.is_admin||PERMISSION_OPTIONS.some(([p])=>hasPerm(p)&&p!=='dashboard');
+  return map[tab]?hasPerm(map[tab]):false
+}
+function applyPermissions(){
+  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',agendamentos:'agendamentos',ajudantes:'ajudantes'};
+  document.querySelectorAll('.nav button').forEach(b=>{
+    let show=true;
+    if(b.dataset.adminOnly==='1')show=!!AUTH?.is_admin;
+    else if(b.dataset.tab==='dashboards')show=tabAllowed('dashboards');
+    else if(navMap[b.dataset.tab])show=hasPerm(navMap[b.dataset.tab]);
+    b.style.display=show?'':'none';
+  });
+
+  const cardMap={
+    'SSW • Saídas x Baixas':'ssw_saidas',
+    'Evolução e Previsão por Motorista':'evolucao',
+    'Entregas por Cidade Destino':'cidade_destino',
+    'Final do Carregamento':'final_carregamento',
+    'Operacional':'operacional',
+    'Financeiro':'financeiro',
+    'Motoristas':'motoristas',
+    'Filiais':'filiais',
+    'Agendamentos':'agendamentos',
+    'Ajudantes e Conferentes':'ajudantes',
+    'Rotas e Produtividade':'rotas',
+    'Ocorrências e SLA':'ocorrencias',
+    'Entregas por Cliente Remetente':'remetentes',
+    'Comparativo de Clientes Remetentes':'remetentes_comparativo',
+    'SSW • CT-es Atrasados':'ssw_atrasos',
+    'SSW / BI2':'bi2'
+  };
+  document.querySelectorAll('#dashboards .dash-card').forEach(card=>{
+    const title=card.querySelector('h3')?.textContent.trim()||'';
+    const perm=cardMap[title];
+    card.style.display=!perm||hasPerm(perm)?'':'none';
+    const btn=card.querySelector('.dash-open[data-open]');
+    if(btn&&!tabAllowed(btn.dataset.open))btn.style.display='none';
+  });
+
+  const cu=document.querySelector('#currentUser');
+  if(cu)cu.textContent=AUTH?(AUTH.username+(AUTH.is_admin?' • Administrador':'')):'';
+}
+function firstAllowedTab(){
+  const btn=[...document.querySelectorAll('.nav button')].find(b=>b.style.display!=='none'&&tabAllowed(b.dataset.tab));
+  return btn?.dataset.tab||null
+}
+function whatsappShare(username=''){
+  const msg=username
+    ?'Acesso ao CONSTRULOG\nSite: '+location.origin+'\nUsuário: '+username+'\nA senha será informada separadamente.'
+    :'Acesso ao CONSTRULOG\n'+location.origin;
+  window.open('https://wa.me/?text='+encodeURIComponent(msg),'_blank','noopener')
+}
+function renderPermissionOptions(){
+  const box=document.querySelector('#userPermGrid');if(!box)return;
+  box.innerHTML=PERMISSION_OPTIONS.map(([id,label])=>'<label class="perm-item"><input type="checkbox" value="'+id+'"> <span>'+label+'</span></label>').join('')
+}
+function resetUserForm(){
+  const f=document.querySelector('#userForm');if(!f)return;
+  f.reset();
+  document.querySelector('#userEditId').value='';
+  document.querySelector('#userActive').checked=true;
+  document.querySelectorAll('#userPermGrid input[type=checkbox]').forEach(x=>x.checked=false);
+  const m=document.querySelector('#userAdminMsg');if(m)m.textContent=''
+}
+function editDashboardUser(id){
+  const u=(window.__dashboardUsers||[]).find(x=>String(x.id)===String(id));if(!u)return;
+  document.querySelector('#userEditId').value=u.id;
+  document.querySelector('#userName').value=u.username||'';
+  document.querySelector('#userPassword').value='';
+  document.querySelector('#userActive').checked=u.active!==false;
+  const set=new Set(u.permissions||[]);
+  document.querySelectorAll('#userPermGrid input[type=checkbox]').forEach(x=>x.checked=u.is_admin||set.has(x.value));
+  document.querySelector('#userAdminMsg').textContent=u.is_admin?'Conta administradora: acesso total.':'Editando '+u.username;
+  document.querySelector('#userName').scrollIntoView({behavior:'smooth',block:'center'})
+}
+function renderDashboardUsers(rows){
+  window.__dashboardUsers=rows;
+  const box=document.querySelector('#userList');if(!box)return;
+  if(!rows.length){box.innerHTML='<div class="muted">Nenhum usuário cadastrado.</div>';return}
+  box.innerHTML=rows.map(u=>{
+    const perms=u.is_admin?'Acesso total':((u.permissions||[]).map(p=>(PERMISSION_OPTIONS.find(x=>x[0]===p)||[p,p])[1]).join(' • ')||'Sem cards liberados');
+    return '<div class="user-row"><div><b>'+safe(u.username)+'</b> '+(u.is_admin?'<span class="dash-tag live">ADMIN</span>':(u.active?'<span class="dash-tag live">ATIVO</span>':'<span class="dash-tag wait">INATIVO</span>'))+'<div class="meta">'+safe(perms)+'</div></div><div class="actions"><button class="edit" data-user-edit="'+u.id+'">Editar</button><button class="wa" data-user-wa="'+safe(u.username)+'">💬 WhatsApp</button></div></div>'
+  }).join('');
+  box.querySelectorAll('[data-user-edit]').forEach(b=>b.onclick=()=>editDashboardUser(b.dataset.userEdit));
+  box.querySelectorAll('[data-user-wa]').forEach(b=>b.onclick=()=>whatsappShare(b.dataset.userWa))
+}
+async function loadDashboardUsers(){
+  if(!AUTH?.is_admin)return;
+  const box=document.querySelector('#userList');if(box)box.innerHTML='<div class="muted">Carregando usuários…</div>';
+  try{
+    const r=await fetch('/api/auth/users',{cache:'no-store'}),j=await r.json();
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar usuários.');
+    renderDashboardUsers(j.rows||[])
+  }catch(e){if(box)box.innerHTML='<div class="muted">'+safe(e.message)+'</div>'}
+}
+function setupUserAdmin(){
+  renderPermissionOptions();
+  const form=document.querySelector('#userForm'),nw=document.querySelector('#userNew'),rf=document.querySelector('#usersRefresh');
+  if(nw)nw.onclick=resetUserForm;
+  if(rf)rf.onclick=loadDashboardUsers;
+  if(!form)return;
+  form.onsubmit=async e=>{
+    e.preventDefault();
+    const id=document.querySelector('#userEditId').value;
+    const username=document.querySelector('#userName').value.trim();
+    const password=document.querySelector('#userPassword').value;
+    const active=document.querySelector('#userActive').checked;
+    const permissions=[...document.querySelectorAll('#userPermGrid input[type=checkbox]:checked')].map(x=>x.value);
+    const msg=document.querySelector('#userAdminMsg');
+    if(!id&&!password){msg.style.color='#b91c1c';msg.textContent='Informe uma senha para o novo usuário.';return}
+    const body={username,active,permissions};
+    if(password)body.password=password;
+    try{
+      msg.style.color='#475569';msg.textContent='Salvando…';
+      const r=await fetch(id?('/api/auth/users/'+id):'/api/auth/users',{method:id?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível salvar o usuário.');
+      msg.style.color='#15803d';msg.textContent='✓ Usuário salvo com sucesso.';
+      resetUserForm();await loadDashboardUsers()
+    }catch(err){msg.style.color='#b91c1c';msg.textContent=err.message}
+  }
+}
+async function showAuthenticatedApp(user){
+  AUTH=user;
+  document.body.classList.remove('auth-pending');
+  document.querySelector('#authGate')?.classList.add('hide');
+  applyPermissions();
+  setupUserAdmin();
+  setupLoadingForm();
+  if(AUTH.is_admin)loadDashboardUsers();
+  if(!window.__appStarted){
+    window.__appStarted=true;
+    await start()
+  }
+}
+async function bootstrapAuth(){
+  const form=document.querySelector('#authForm'),err=document.querySelector('#authError'),btn=document.querySelector('#authSubmit');
+  if(form)form.onsubmit=async e=>{
+    e.preventDefault();err.textContent='';btn.disabled=true;btn.textContent='Entrando…';
+    try{
+      const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:document.querySelector('#authUser').value.trim(),password:document.querySelector('#authPass').value})});
+      const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível entrar.');
+      await showAuthenticatedApp(j.user)
+    }catch(x){err.textContent=x.message}
+    finally{btn.disabled=false;btn.textContent='Entrar'}
+  };
+  try{
+    const r=await fetch('/api/auth/me',{cache:'no-store'}),j=await r.json();
+    if(r.ok&&j.ok)return showAuthenticatedApp(j.user)
+  }catch{}
+  document.body.classList.add('auth-pending');
+  document.querySelector('#authGate')?.classList.remove('hide');
+  document.querySelector('#loading')?.classList.add('hide')
+}
+
 const S={ops:[],sch:[],help:[],ssw:null,remetentes:null,coletas:null,sswMotoristas:null},$=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const gd=o=>o['Data']??o['  Data']??'',g=(o,...k)=>{for(const x of k)if(o[x]!==undefined)return o[x];return''};
 const pd=s=>{if(!s)return null;const p=String(s).trim().split('/');if(p.length!==3)return null;const d=new Date(+p[2],+p[1]-1,+p[0]);return isNaN(d)?null:d};
