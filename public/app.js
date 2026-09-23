@@ -358,6 +358,7 @@ function agCopyFiltered(){
     }
     return true
   })
+}
 function renderAgCopy(){
   const rows=agCopyFiltered(),set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
   const scheduled=rows.filter(o=>agCopyNorm(g(o,'STATUS')).includes('agendado')).length;
