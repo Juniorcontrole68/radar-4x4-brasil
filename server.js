@@ -1470,8 +1470,8 @@ http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.
       .replace('<body class="auth-pending">','<body class="embedded">')
       .replace('<div id="authGate" class="auth-gate">','<div id="authGate" class="auth-gate hide" style="display:none!important">');
   }
-  const bootstrap='<script>window.__DASHBOARD_SESSION_TOKEN__='+JSON.stringify(String(x.token||''))+';<\/script>';
-  html=html.replace('<script src="/app.js"></script>',bootstrap+'<script src="/app.js?v=20260923a"></script>');
+  const bootstrap='<script>window.__DASHBOARD_SESSION_TOKEN__='+JSON.stringify(String(x.token||''))+';window.__DASHBOARD_SESSION_USER__='+JSON.stringify(x.user||null)+';<\/script>';
+  html=html.replace('<script src="/app.js"></script>',bootstrap+'<script src="/app.js?v=20260923b"></script>');
   res.writeHead(200,{
     'Content-Type':'text/html; charset=utf-8',
     'Cache-Control':'no-store, no-cache, must-revalidate',
@@ -1556,7 +1556,7 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
     html=html
       .replace('<body class="auth-pending">','<body class="embedded">')
       .replace('<div id="authGate" class="auth-gate">','<div id="authGate" class="auth-gate hide" style="display:none!important">')
-      .replace('<script src="/app.js"></script>','<script src="/app.js?v=20260923a"></script>');
+      .replace('<script src="/app.js"></script>','<script src="/app.js?v=20260923b"></script>');
     res.writeHead(200,{
       'Content-Type':'text/html; charset=utf-8',
       'Cache-Control':'no-store, no-cache, must-revalidate',
