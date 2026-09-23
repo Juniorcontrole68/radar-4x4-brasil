@@ -1,3 +1,42 @@
+const DASH_SESSION_KEY='construlog_dashboard_session';
+let DASH_SESSION_TOKEN='';
+try{
+  const hp=new URLSearchParams(String(location.hash||'').replace(/^#/,''));
+  const token=hp.get('cltoken')||'';
+  if(token){
+    DASH_SESSION_TOKEN=token;
+    try{sessionStorage.setItem(DASH_SESSION_KEY,token)}catch{}
+    hp.delete('cltoken');
+    const rest=hp.toString();
+    try{history.replaceState(null,'',location.pathname+location.search+(rest?'#'+rest:''))}catch{}
+  }else{
+    try{DASH_SESSION_TOKEN=sessionStorage.getItem(DASH_SESSION_KEY)||''}catch{}
+  }
+}catch{}
+function setDashboardSessionToken(token){
+  DASH_SESSION_TOKEN=String(token||'');
+  try{
+    if(DASH_SESSION_TOKEN)sessionStorage.setItem(DASH_SESSION_KEY,DASH_SESSION_TOKEN);
+    else sessionStorage.removeItem(DASH_SESSION_KEY)
+  }catch{}
+}
+const DASH_NATIVE_FETCH=window.fetch.bind(window);
+window.fetch=function(input,init){
+  const opts=init?Object.assign({},init):{};
+  try{
+    const raw=typeof input==='string'||input instanceof URL?String(input):(input&&input.url?input.url:'');
+    const target=new URL(raw,location.href);
+    if(DASH_SESSION_TOKEN&&target.origin===location.origin&&target.pathname.startsWith('/api/')){
+      const headers=new Headers(opts.headers||(typeof Request!=='undefined'&&input instanceof Request?input.headers:undefined)||{});
+      if(!headers.has('Authorization'))headers.set('Authorization','Bearer '+DASH_SESSION_TOKEN);
+      opts.headers=headers;
+      if(typeof Request!=='undefined'&&input instanceof Request)return DASH_NATIVE_FETCH(new Request(input,opts));
+      return DASH_NATIVE_FETCH(input,opts)
+    }
+  }catch{}
+  return DASH_NATIVE_FETCH(input,opts)
+};
+
 
 const PERMISSION_OPTIONS=[
   ['coletas','Controle de Coletas'],
@@ -173,6 +212,7 @@ async function bootstrapAuth(){
     try{
       const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:document.querySelector('#authUser').value.trim(),password:document.querySelector('#authPass').value})});
       const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível entrar.');
+      if(j.token)setDashboardSessionToken(j.token);
       await showAuthenticatedApp(j.user)
     }catch(x){err.textContent=x.message}
     finally{btn.disabled=false;btn.textContent='Entrar'}
@@ -740,5 +780,5 @@ if($('#remClientB'))$('#remClientB').onchange=renderRemCompare;
 window.onresize=()=>{clearTimeout(window.rz);window.rz=setTimeout(update,150)};
 $('#mobile').onclick=()=>alert(/iphone|ipad|ipod/i.test(navigator.userAgent)?'No Safari: toque em Compartilhar e depois em Adicionar à Tela de Início.':'No Chrome: toque no menu ⋮ e escolha Adicionar à tela inicial.');
 if($('#shareWhatsapp'))$('#shareWhatsapp').onclick=()=>whatsappShare();
-if($('#logoutBtn'))$('#logoutBtn').onclick=async()=>{try{await fetch('/api/auth/logout',{method:'POST'})}catch{}location.reload()};
+if($('#logoutBtn'))$('#logoutBtn').onclick=async()=>{try{await fetch('/api/auth/logout',{method:'POST'})}catch{}setDashboardSessionToken('');location.reload()};
 bootstrapAuth();
