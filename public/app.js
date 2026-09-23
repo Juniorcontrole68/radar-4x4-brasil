@@ -1,5 +1,9 @@
 const DASH_SESSION_KEY='construlog_dashboard_session';
-let DASH_SESSION_TOKEN='';
+let DASH_SESSION_TOKEN=String(window.__DASHBOARD_SESSION_TOKEN__||'');
+try{
+  if(DASH_SESSION_TOKEN)sessionStorage.setItem(DASH_SESSION_KEY,DASH_SESSION_TOKEN);
+  try{delete window.__DASHBOARD_SESSION_TOKEN__}catch{}
+}catch{}
 try{
   const hp=new URLSearchParams(String(location.hash||'').replace(/^#/,''));
   const token=hp.get('cltoken')||'';
@@ -196,13 +200,23 @@ async function showAuthenticatedApp(user){
   AUTH=user;
   document.body.classList.remove('auth-pending');
   document.querySelector('#authGate')?.classList.add('hide');
+  document.querySelector('#loading')?.classList.add('hide');
   applyPermissions();
   setupUserAdmin();
   setupLoadingForm();
   if(AUTH.is_admin)loadDashboardUsers();
   if(!window.__appStarted){
     window.__appStarted=true;
-    await start()
+    try{
+      await start()
+    }catch(e){
+      console.error('Falha ao iniciar dashboard:',e);
+      const er=document.querySelector('#err');
+      if(er){
+        er.style.display='block';
+        er.innerHTML='<b>O acesso foi realizado.</b><br>Houve uma falha ao carregar um dos componentes. Atualize a página para tentar novamente.';
+      }
+    }
   }
 }
 async function bootstrapAuth(){
