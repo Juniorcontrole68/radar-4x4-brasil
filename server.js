@@ -1462,18 +1462,18 @@ async function rows(gid){
 http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.pathname==='/health'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:true}))}if(req.method==='GET'&&u.pathname==='/'&&u.searchParams.get('ticket')){try{
   const ticket=String(u.searchParams.get('ticket')||'').trim();
   const x=await portalAuth('/api/painel/auth/embed-exchange',{method:'POST',body:{ticket}});
-  const clean=new URL(u.pathname+u.search,'https://construlog-dashboard.onrender.com');
-  clean.searchParams.delete('ticket');
-  // O token no fragmento (#) não é enviado ao servidor nem aparece em logs HTTP.
-  // Ele permite autenticar o dashboard dentro de iframe mesmo quando o navegador
-  // bloqueia cookies de terceiros. O cookie continua sendo mantido como fallback.
-  const fragment='cltoken='+encodeURIComponent(x.token);
-  res.writeHead(302,{
-    'Location':clean.pathname+(clean.search||'')+'#'+fragment,
-    'Cache-Control':'no-store',
+  const indexPath=path.join(PUB,'index.html');
+  let html=fs.readFileSync(indexPath,'utf8');
+  const bootstrap='<script>window.__DASHBOARD_SESSION_TOKEN__='+JSON.stringify(String(x.token||''))+';<\/script>';
+  html=html.replace('<script src="/app.js"></script>',bootstrap+'<script src="/app.js"></script>');
+  res.writeHead(200,{
+    'Content-Type':'text/html; charset=utf-8',
+    'Cache-Control':'no-store, no-cache, must-revalidate',
+    'Pragma':'no-cache',
+    'Expires':'0',
     'Set-Cookie':dashboardCookie(x.token)
   });
-  return res.end()
+  return res.end(html)
 }catch(e){
   res.writeHead(401,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
   return res.end('<!doctype html><meta charset="utf-8"><style>body{font-family:Segoe UI,Arial;padding:30px;color:#334155}h2{color:#991b1b}</style><h2>Não foi possível autorizar o dashboard</h2><p>'+String(e.message||e).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]))+'</p>')
