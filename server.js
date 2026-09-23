@@ -755,15 +755,27 @@ async function buildSswMotoristas(from='',to=''){
 
   let baseRows=[];
   snaps174.filter(x=>x.ok).forEach(s=>baseRows.push(...(s.rows||[])));
+  // Para a operação atual, o 174 corrente costuma estar mais atualizado que os
+  // snapshots por data. Mesclamos os dois para não perder CT-es baixados ao longo do dia.
+  if(base38&&base38.ok&&to===today){
+    try{
+      const cur174=parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text);
+      baseRows.push(...(cur174.rows||[]));
+      console.log('BI2 174 atual mesclado: '+JSON.stringify({corrente:(cur174.rows||[]).length,headers:cur174.headers.slice(0,20)}));
+    }catch(e){console.log('BI2 174 atual ERRO: '+String(e.message||e))}
+  }
   if(!baseRows.length){
     try{baseRows=parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text).rows||[]}catch{}
   }
 
   const ctrcMap=new Map();
   for(const r of baseRows){
-    const k=normCtrc(r.numero_ctrc||r.CTRC);
+    const raw=r.numero_ctrc||r.CTRC,k=normCtrc(raw),lk=normCtrcLoose(raw),nf=normNf(r.numero_nf||r.NF);
     if(k)ctrcMap.set(k,r);
+    else if(lk)ctrcMap.set('#'+lk,r);
+    else if(nf)ctrcMap.set('NF#'+nf,r);
   }
+  console.log('BI2 174 base final: '+JSON.stringify({linhas:baseRows.length,chaves:ctrcMap.size}));
 
   const ownerByCtrc=new Map(),ownerByNf=new Map(),officialCtrcs=new Set(),officialLoose=new Set(),officialNfs=new Set();
   if(base38&&base38.ok){
