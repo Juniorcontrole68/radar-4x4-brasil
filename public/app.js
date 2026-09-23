@@ -4,7 +4,14 @@ const pd=s=>{if(!s)return null;const p=String(s).trim().split('/');if(p.length!=
 const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 const num=v=>{if(v==null||v==='')return 0;let s=String(v).replace(/R\$/g,'').trim();if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');s=s.replace(/[^0-9.-]/g,'');return Number(s)||0};
 const brl=v=>v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}),nf=v=>Math.round(v).toLocaleString('pt-BR'),safe=s=>String(s??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
-async function load(n){const r=await fetch('/api/sheet/'+n+'?t='+Date.now(),{cache:'no-store',headers:{'Cache-Control':'no-cache'}}),j=await r.json();if(!r.ok||!j.ok)throw Error(j.error||'Falha ao carregar '+n);return j.rows||[]}
+async function load(n){
+  const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),18000);
+  try{
+    const r=await fetch('/api/sheet/'+n+'?t='+Date.now(),{cache:'no-store',headers:{'Cache-Control':'no-cache','Pragma':'no-cache'},signal:ctrl.signal}),j=await r.json();
+    if(!r.ok||!j.ok)throw Error(j.error||'Falha ao carregar '+n);
+    return j.rows||[]
+  }finally{clearTimeout(timer)}
+}
 async function loadColetasStatus(){const q=new URLSearchParams(),f=$('#from')?.value||'',t=$('#to')?.value||'';if(f)q.set('from',f);if(t)q.set('to',t);q.set('t',Date.now());const r=await fetch('/api/coletas/status?'+q.toString(),{cache:'no-store',headers:{'Cache-Control':'no-cache'}}),j=await r.json();if(!r.ok||!j.ok)throw Error(j.error||'Falha ao carregar status das coletas');return j}
 function init(){const t=new Date(),f=new Date(t.getFullYear(),t.getMonth(),1);$('#from').value=iso(f);$('#to').value=iso(t)}
 function inper(d){const f=$('#from').value?new Date($('#from').value+'T00:00:00'):null,t=$('#to').value?new Date($('#to').value+'T23:59:59'):null;return(!f||!d||d>=f)&&(!t||!d||d<=t)}
@@ -129,11 +136,37 @@ function renderRemetentes(){const d=S.remetentes;if(!d||!d.ok)return;const set=(
 function renderRemCompare(){const d=S.remetentes;if(!d||!d.ok)return;const C=d.clientes||[],a=$('#remClientA'),b=$('#remClientB');if(!a||!b)return;const A=C.find(x=>x.remetente===a.value),B=C.find(x=>x.remetente===b.value),set=(id,v)=>{const e=$(id);if(e)e.textContent=v};const fill=(p,x)=>{set('#rem'+p+'Name',x?x.remetente:'—');set('#rem'+p+'Ctrcs',x?nf(x.ctrcs):'—');set('#rem'+p+'Freight',x?brl(x.frete):'—');set('#rem'+p+'Goods',x?brl(x.valorMercadoria):'—');set('#rem'+p+'Volumes',x?nf(x.volumes):'—');set('#rem'+p+'Weight',x?nf(x.peso):'—');set('#rem'+p+'Delay',x?(x.atrasoMedio||0).toFixed(1).replace('.',',')+' d':'—');set('#rem'+p+'Cities',x?nf(x.cidades):'—');set('#rem'+p+'Recipients',x?nf(x.destinatarios):'—')};fill('A',A);fill('B',B);set('#remCompareMeta',(d.note||'')+(d.meta&&d.meta.data?' • '+d.meta.data+' '+(d.meta.hora||''):''))}
 async function refreshSswRemetentes(){try{const q=sswRangeQuery(),sep=q?'&':'?';const r=await fetch('/api/bi2/remetentes'+q+sep+'t='+Date.now(),{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw Error(j.error||'Falha ao carregar clientes remetentes');S.remetentes=j;renderRemetentes()}catch(e){const ids=['#remMeta','#hubRemNote','#remCompareMeta'];ids.forEach(id=>{const el=$(id);if(el)el.textContent='Não foi possível carregar os clientes remetentes: '+e.message})}}
 async function checkSsw(){try{const [rs,rb,ra]=await Promise.all([fetch('/api/ssw/status?t='+Date.now(),{cache:'no-store'}),fetch('/api/bi2/status?t='+Date.now(),{cache:'no-store'}),fetch('/api/bi2/api-status?t='+Date.now(),{cache:'no-store'})]),s=await rs.json(),b2=await rb.json(),api=await ra.json(),b=$('#sswSource');if(!b)return;if(api.connected){b.textContent='BI2 WebAPI conectada • consulta a cada 1 min • usando Google Sheets';const tag=$('#hubBi2Tag'),txt=$('#hubBi2Text');if(tag){tag.textContent='WEBAPI BI2 CONECTADA';tag.classList.remove('wait');tag.classList.add('live')}if(txt)txt.textContent='WebAPI BI2 conectada. Relatórios monitorados a cada 1 minuto; SFTP mantido como contingência.';b.style.background='#dcfce7';b.style.color='#166534';b.style.borderColor='#86efac'}else if(b2.connected){b.textContent=(b2.fileCount>0?'BI2 SFTP conectado • '+b2.fileCount+' arquivo(s) disponível(is) • usando Google Sheets':'BI2 SFTP conectado • aguardando arquivos do SSW • usando Google Sheets');const tag=$('#hubBi2Tag'),txt=$('#hubBi2Text');if(tag){tag.textContent=b2.fileCount>0?'ARQUIVOS DISPONÍVEIS':'BI2 CONECTADO';tag.classList.remove('wait');tag.classList.add('live')}if(txt)txt.textContent=b2.fileCount>0?'BI2 conectado com '+b2.fileCount+' arquivo(s) disponível(is) para processamento.':'BI2 conectado com sucesso. Aguardando o SSW publicar os primeiros arquivos.';b.style.background='#dcfce7';b.style.color='#166534';b.style.borderColor='#86efac'}else if(b2.configured){b.textContent='BI2 configurado • conexão indisponível • usando Google Sheets';const tag=$('#hubBi2Tag'),txt=$('#hubBi2Text');if(tag){tag.textContent='BI2 INDISPONÍVEL';tag.classList.remove('live');tag.classList.add('wait')}if(txt)txt.textContent='Credenciais configuradas, mas a conexão BI2 não está disponível neste momento.';b.style.background='#fee2e2';b.style.color='#991b1b';b.style.borderColor='#fecaca'}else if(s.connected){b.textContent='SSW WebAPI conectado • usando Google Sheets';b.style.background='#dcfce7';b.style.color='#166534';b.style.borderColor='#86efac'}else if(s.configured){b.textContent='SSW WebAPI: falha de autenticação • usando Google Sheets';b.style.background='#fee2e2';b.style.color='#991b1b';b.style.borderColor='#fecaca'}else{b.textContent='SSW/BI2 aguardando configuração • usando Google Sheets';b.style.background='#ecfeff';b.style.color='#0f766e';b.style.borderColor='#99f6e4'}}catch(e){const b=$('#sswSource');if(b)b.textContent='Fontes SSW indisponíveis • usando Google Sheets'}}
-async function refreshData(first=false){if(window.__refreshing)return;window.__refreshing=true;if(first)$('#loading').classList.remove('hide');try{const [o,a,h,co]=await Promise.all([load('lancamentos'),load('agendamentos'),load('ajudantes'),loadColetasStatus().catch(()=>null)]);S.ops=o;S.sch=a;S.help=h;S.coletas=co&&co.ok?co:null;filters();update();$('#err').style.display='none'}catch(e){$('#err').style.display='block';$('#err').innerHTML='<b>Erro ao atualizar os dados.</b><br>'+safe(e.message)+'<br><button onclick="refreshData(false)">Tentar novamente</button>'}finally{window.__refreshing=false;if(first)$('#loading').classList.add('hide')}}
+async function refreshData(first=false){
+  if(window.__refreshing)return;
+  window.__refreshing=true;
+  if(first)$('#loading').classList.remove('hide');
+  try{
+    const [ro,ra,rh,rc]=await Promise.allSettled([
+      load('lancamentos'),load('agendamentos'),load('ajudantes'),loadColetasStatus()
+    ]);
+    let updated=false,errors=[];
+    if(ro.status==='fulfilled'){S.ops=ro.value;S.opsUpdatedAt=Date.now();updated=true}else errors.push('Operações: '+(ro.reason?.message||ro.reason));
+    if(ra.status==='fulfilled'){S.sch=ra.value;updated=true}else errors.push('Agendamentos: '+(ra.reason?.message||ra.reason));
+    if(rh.status==='fulfilled'){S.help=rh.value;updated=true}else errors.push('Ajudantes: '+(rh.reason?.message||rh.reason));
+    if(rc.status==='fulfilled'&&rc.value&&rc.value.ok)S.coletas=rc.value;
+    if(updated){filters();update()}
+    const er=$('#err');
+    if(errors.length){
+      er.style.display='block';
+      er.innerHTML='<b>Atualização parcial.</b><br>'+errors.map(safe).join('<br>')+'<br>Os módulos que responderam continuam atualizando normalmente.';
+    }else er.style.display='none';
+  }catch(e){
+    $('#err').style.display='block';
+    $('#err').innerHTML='<b>Erro ao atualizar os dados.</b><br>'+safe(e.message)+'<br><button onclick="refreshData(false)">Tentar novamente</button>';
+  }finally{
+    window.__refreshing=false;
+    if(first)$('#loading').classList.add('hide')
+  }
+}
 async function start(){init();$('#err').style.display='none';await Promise.all([refreshData(true),checkSsw(),refreshSswAtrasos(),refreshSswRemetentes(),refreshSswMotoristas()]);const view=new URLSearchParams(location.search).get('view');if(view){const b=$('.nav button[data-tab="'+view+'"]');if(b)b.click()}setInterval(()=>refreshData(false),5000);setInterval(checkSsw,60000);setInterval(refreshSswAtrasos,60000);setInterval(refreshSswRemetentes,60000);setInterval(refreshSswMotoristas,300000);window.addEventListener('focus',()=>refreshData(false));document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshData(false)})}
 function openTab(tab){const b=$('.nav button[data-tab="'+tab+'"]');if(b)return b.click();$$('.nav button').forEach(x=>x.classList.remove('active'));$$('.section').forEach(x=>x.classList.remove('active'));const s=$('#'+tab);if(s){s.classList.add('active');const titles={'ssw-atrasos':'SSW • CT-es Atrasados','ssw-remetentes':'Entregas por Cliente Remetente','ssw-remetentes-comparativo':'Comparativo de Clientes Remetentes','ssw-motoristas':'SSW • Saídas x Baixas','motoristas-evolucao':'Evolução por Motorista'};$('#pageTitle').textContent=titles[tab]||'Dashboards';if(tab==='ssw-atrasos')setTimeout(renderSswAtrasos,30);if(tab==='ssw-remetentes'||tab==='ssw-remetentes-comparativo')setTimeout(renderRemetentes,30);if(tab==='ssw-motoristas')setTimeout(()=>{renderSswMotoristas();refreshSswMotoristas()},30);if(tab==='motoristas-evolucao')setTimeout(()=>{renderDriverProgress();refreshSswMotoristas()},30)}}
 $$('.dash-open').forEach(b=>b.onclick=()=>openTab(b.dataset.open));
-$$('.nav button').forEach(b=>b.onclick=()=>{$$('.nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');$$('.section').forEach(x=>x.classList.remove('active'));$('#'+b.dataset.tab).classList.add('active');$('#pageTitle').textContent=b.textContent;setTimeout(()=>{update();if(b.dataset.tab==='dashboards'){renderSswAtrasos();renderRemetentes();renderSswMotoristas();renderDriverProgress()}},30)});
+$('.nav button').forEach(b=>b.onclick=()=>{$('.nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');$('.section').forEach(x=>x.classList.remove('active'));$('#'+b.dataset.tab).classList.add('active');$('#pageTitle').textContent=b.textContent;setTimeout(()=>{update();if(b.dataset.tab==='operacoes')refreshData(false);if(b.dataset.tab==='dashboards'){renderSswAtrasos();renderRemetentes();renderSswMotoristas();renderDriverProgress()}},30)});
 ['#driver','#branch'].forEach(x=>$(x).onchange=update);['#from','#to'].forEach(x=>$(x).onchange=()=>{refreshData(false);refreshSswAtrasos();refreshSswRemetentes();refreshSswMotoristas()});if($('#remClientA'))$('#remClientA').onchange=renderRemCompare;if($('#remClientB'))$('#remClientB').onchange=renderRemCompare;window.onresize=()=>{clearTimeout(window.rz);window.rz=setTimeout(update,150)};
 $('#mobile').onclick=()=>alert(/iphone|ipad|ipod/i.test(navigator.userAgent)?'No Safari: toque em Compartilhar e depois em Adicionar à Tela de Início.':'No Chrome: toque no menu ⋮ e escolha Adicionar à tela inicial.');
 start();
