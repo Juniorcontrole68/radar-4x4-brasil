@@ -1464,8 +1464,14 @@ http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.
   const x=await portalAuth('/api/painel/auth/embed-exchange',{method:'POST',body:{ticket}});
   const indexPath=path.join(PUB,'index.html');
   let html=fs.readFileSync(indexPath,'utf8');
+  const embedded=u.searchParams.get('embed')==='1';
+  if(embedded){
+    html=html
+      .replace('<body class="auth-pending">','<body class="embedded">')
+      .replace('<div id="authGate" class="auth-gate">','<div id="authGate" class="auth-gate hide" style="display:none!important">');
+  }
   const bootstrap='<script>window.__DASHBOARD_SESSION_TOKEN__='+JSON.stringify(String(x.token||''))+';<\/script>';
-  html=html.replace('<script src="/app.js"></script>',bootstrap+'<script src="/app.js"></script>');
+  html=html.replace('<script src="/app.js"></script>',bootstrap+'<script src="/app.js?v=20260923a"></script>');
   res.writeHead(200,{
     'Content-Type':'text/html; charset=utf-8',
     'Cache-Control':'no-store, no-cache, must-revalidate',
@@ -1544,7 +1550,23 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
   const x=await rows(gid),safeRows=n==='lancamentos'?filterLancamentosForUser(x,authUser):(n==='ajudantes'?filterAjudantesForUser(x,authUser):x);
   res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:true,rows:safeRows,count:safeRows.length}))
-}catch(e){res.writeHead(502,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:false,error:e.message}))}}let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.join(PUB,p));if(!p.startsWith(PUB)){res.writeHead(403);return res.end()}fs.readFile(p,(e,d)=>{if(e){res.writeHead(404);return res.end('Not found')}const ext=path.extname(p);res.writeHead(200,{'Content-Type':ext==='.js'?'application/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate','Pragma':'no-cache','Expires':'0'});res.end(d)})}catch(e){res.writeHead(500);res.end(e.message)}}).listen(PORT,'0.0.0.0',()=>{
+}catch(e){res.writeHead(502,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:false,error:e.message}))}}if(req.method==='GET'&&u.pathname==='/'&&u.searchParams.get('embed')==='1'){
+  try{
+    let html=fs.readFileSync(path.join(PUB,'index.html'),'utf8');
+    html=html
+      .replace('<body class="auth-pending">','<body class="embedded">')
+      .replace('<div id="authGate" class="auth-gate">','<div id="authGate" class="auth-gate hide" style="display:none!important">')
+      .replace('<script src="/app.js"></script>','<script src="/app.js?v=20260923a"></script>');
+    res.writeHead(200,{
+      'Content-Type':'text/html; charset=utf-8',
+      'Cache-Control':'no-store, no-cache, must-revalidate',
+      'Pragma':'no-cache',
+      'Expires':'0'
+    });
+    return res.end(html)
+  }catch(e){}
+}
+let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.join(PUB,p));if(!p.startsWith(PUB)){res.writeHead(403);return res.end()}fs.readFile(p,(e,d)=>{if(e){res.writeHead(404);return res.end('Not found')}const ext=path.extname(p);res.writeHead(200,{'Content-Type':ext==='.js'?'application/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate','Pragma':'no-cache','Expires':'0'});res.end(d)})}catch(e){res.writeHead(500);res.end(e.message)}}).listen(PORT,'0.0.0.0',()=>{
   console.log('CONSTRULOG em '+PORT);probeSswAbrirScripts().then(x=>console.log('SSW abrir probe isolado: '+JSON.stringify(x))).catch(()=>{});
 
   refreshBi2State().catch(e=>console.error('BI2 SFTP monitor ERRO: '+e.message));
