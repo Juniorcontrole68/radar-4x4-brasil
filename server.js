@@ -15,6 +15,7 @@ const SSW_DRIVER_CACHE=new Map();
 const SSW_DRIVER_INFLIGHT=new Map();
 let SSW_DRIVER_LAST=null;
 const SSW_TRACK_CACHE=new Map();
+const SSW_DRIVER_CONFIRMED_DAY=new Map();
 async function fetchMotoristasVeiculos(){
   const u=new URL('/api/painel/motoristas-veiculos',COLETAS_PORTAL_URL);
   const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Dashboard/1.0','Cache-Control':'no-cache'},signal:AbortSignal.timeout(15000)});
@@ -1011,7 +1012,20 @@ async function buildSswMotoristas(from='',to=''){
         addUnique(occByPlate,pk,id);
       }
     }
-    console.log('BAIXAS CONFIRMADAS POR MOTORISTA: '+JSON.stringify([...confirmedByDriver.entries()].map(([k,v])=>({motorista:k,entregues:v.size}))));
+
+    // Fonte direta por motorista a partir do mesmo conjunto que gerou o log do tracking.
+    // Se um CT-e aparece como MERCADORIA ENTREGUE (01), ele conta imediatamente para o
+    // motorista identificado naquela linha, sem depender de novo casamento com PDF/BI2.
+    const directDriverStats=new Map();
+    for(const r of rows){
+      const dk=normDriverKey(r.motorista);
+      if(!dk)continue;
+      if(!directDriverStats.has(dk))directDriverStats.set(dk,{entregues:new Set(),ocorrencias:new Set()});
+      const s=directDriverStats.get(dk),id=normCtrcLoose(r.ctrcOficial||r.ctrc)||('NF'+normNf(r.nf));
+      if(r.entregue&&id)s.entregues.add(id);
+      else if(isExplicitSswOccurrence(r)&&id)s.ocorrencias.add(id);
+    }
+    console.log('BAIXAS CONFIRMADAS POR MOTORISTA: '+JSON.stringify([...directDriverStats.entries()].map(([k,v])=>({motorista:k,entregues:v.entregues.size,ocorrencias:v.ocorrencias.size}))));
     const gm=new Map();
     for(const x of romaneios38){
       const k=String(x.motorista||x.veiculo||'Não identificado').trim();
@@ -1041,9 +1055,17 @@ async function buildSswMotoristas(from='',to=''){
     // usamos essa contagem como piso. Isso evita perder baixas quando o formato do CT-e
     // do PDF/BI2 não casa literalmente, como ocorreu com Gilmar e Rogério.
     for(const g of gm.values()){
-      const dk=normDriverKey(g.motorista),pk=normPlate(g.veiculo);
-      const directDelivered=Math.max(confirmedByDriver.get(dk)?.size||0,confirmedByPlate.get(pk)?.size||0);
-      const directOcc=Math.max(occByDriver.get(dk)?.size||0,occByPlate.get(pk)?.size||0);
+      const dk=normDriverKey(g.motorista),pk=normPlate(g.veiculo),ds=directDriverStats.get(dk);
+      const directDelivered=Math.max(
+        ds?.entregues?.size||0,
+        confirmedByDriver.get(dk)?.size||0,
+        confirmedByPlate.get(pk)?.size||0
+      );
+      const directOcc=Math.max(
+        ds?.ocorrencias?.size||0,
+        occByDriver.get(dk)?.size||0,
+        occByPlate.get(pk)?.size||0
+      );
       g.entregues=Math.min(g.total,Math.max(g.entregues,directDelivered));
       g.explicitOccurrences=Math.min(Math.max(0,g.total-g.entregues),Math.max(g.explicitOccurrences,directOcc));
     }
@@ -1060,6 +1082,17 @@ async function buildSswMotoristas(from='',to=''){
         const add=Math.min(room,extraDelivered);
         g.entregues+=add;extraDelivered-=add;
       }
+    }
+
+    // Uma entrega confirmada não pode voltar a pendente numa leitura seguinte.
+    // Mantemos o maior total confirmado do motorista no dia, protegendo contra
+    // oscilações temporárias/rate limit do endpoint de rastreamento.
+    for(const g of gm.values()){
+      const persistKey=to+'|'+normDriverKey(g.motorista);
+      const prev=SSW_DRIVER_CONFIRMED_DAY.get(persistKey)||0;
+      const now=Math.min(g.total,Math.max(prev,g.entregues));
+      SSW_DRIVER_CONFIRMED_DAY.set(persistKey,now);
+      g.entregues=now;
     }
 
     motoristas38=[...gm.values()].map(g=>{
