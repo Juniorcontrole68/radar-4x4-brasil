@@ -139,14 +139,9 @@ async function abrirModulo(btn){
     let src=btn.dataset.src;
     const sep=src.includes('?')?'&':'?';
     if(mod==='dashboard'||mod==='dashboards'){
-      if(AUTH?.is_admin){
-        DASH_FRAME_TOKEN=await dashboardAdminToken();
-        src += sep+'refresh='+Date.now();
-      }else{
-        DASH_FRAME_TOKEN='';
-        const ticket=await dashboardTicket();
-        src += sep+'ticket='+encodeURIComponent(ticket)+'&refresh='+Date.now();
-      }
+      DASH_FRAME_TOKEN='';
+      const ticket=await dashboardTicket();
+      src += sep+'ticket='+encodeURIComponent(ticket)+'&refresh='+Date.now();
     }else if(mod==='financeiro'){
       DASH_FRAME_TOKEN='';
       src += sep+'view=financeiro&refresh='+Date.now();
