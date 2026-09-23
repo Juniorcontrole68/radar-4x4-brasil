@@ -192,7 +192,23 @@ async function fetchRomaneioCtrcs38(x,jar,apply,cookie){
     .filter(p=>p.ctrc!==rom);
   const pairSeen=new Set();
   x.ctrcNfs=pairMatches.filter(p=>{const k=p.ctrc+'|'+p.nf;if(pairSeen.has(k))return false;pairSeen.add(k);return true});
-  console.log('SSW38 PDF pares CTRC/NF: '+JSON.stringify({romaneio:x.romaneio,pares:x.ctrcNfs.length,esperado:expected}));
+
+  // Lê cada bloco do PDF (da linha do CT-e até a linha anterior ao próximo CT-e)
+  // e coleta possíveis CNPJs. Depois calibramos qual deles é o destinatário usando
+  // os CT-es que também existem no BI2 174.
+  const pdfLines=text.split(/\r?\n/);
+  x.ctrcMeta=[];
+  for(let i=0;i<pdfLines.length;i++){
+    const m=pdfLines[i].match(/^\s*([A-Z]{3}\d{5,7}-\d)\s+(\d{4,12})\b/i);
+    if(!m||m[1].toUpperCase()===rom)continue;
+    let j=i+1;while(j<pdfLines.length&&!/^\s*[A-Z]{3}\d{5,7}-\d\s+\d{4,12}\b/i.test(pdfLines[j]))j++;
+    const block=pdfLines.slice(i,Math.min(j,i+8)).join(' ');
+    const cnpjs=[...new Set([...block.matchAll(/(?:\d{2}[.\s]?\d{3}[.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2}|\b\d{14}\b)/g)]
+      .map(z=>String(z[0]).replace(/\D/g,'')).filter(z=>z.length===14))];
+    x.ctrcMeta.push({ctrc:m[1].toUpperCase(),nf:String(m[2]).replace(/^0+/,'' )||'0',cnpjs});
+    i=j-1;
+  }
+  console.log('SSW38 PDF pares CTRC/NF: '+JSON.stringify({romaneio:x.romaneio,pares:x.ctrcNfs.length,esperado:expected,blocos:x.ctrcMeta.length,blocosComCnpj:x.ctrcMeta.filter(z=>z.cnpjs.length).length,distCnpjs:[...new Set(x.ctrcMeta.map(z=>z.cnpjs.length))].sort((a,b)=>a-b)}));
 
   // O primeiro campo das linhas do PDF é o CTRC/CT-e no formato AMR008212-1.
   // Antes o parser pegava a NF de 6 dígitos, o que impedia o cruzamento com as baixas.
