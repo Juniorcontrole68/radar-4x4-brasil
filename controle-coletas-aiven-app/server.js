@@ -338,30 +338,6 @@ async function start() {
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao entrar.'});}
       }
 
-      if (req.method === 'POST' && u.pathname === '/api/auth/admin-bypass') {
-        try {
-          const configured=String(process.env.ADMIN_BYPASS_KEY||'').trim();
-          if(!configured)return sendJson(res,404,{ok:false,error:'Acesso rápido não configurado.'});
-          const body=await readJsonBodyLimited(req,32*1024);
-          const supplied=String(body.key||'').trim();
-          const a=Buffer.from(configured),b=Buffer.from(supplied);
-          if(!supplied||a.length!==b.length||!crypto.timingSafeEqual(a,b)){
-            return sendJson(res,401,{ok:false,error:'Acesso privado inválido.'});
-          }
-          const adminUser=String(process.env.DASHBOARD_INITIAL_ADMIN_USER||'Junior').trim();
-          let r=await pool.query('SELECT id::text AS id,username,is_admin,active,permissions FROM dashboard_users WHERE lower(username)=lower($1) AND is_admin=TRUE AND active=TRUE LIMIT 1',[adminUser]);
-          if(!r.rowCount)r=await pool.query('SELECT id::text AS id,username,is_admin,active,permissions FROM dashboard_users WHERE is_admin=TRUE AND active=TRUE ORDER BY id LIMIT 1');
-          if(!r.rowCount)return sendJson(res,404,{ok:false,error:'Administrador não encontrado.'});
-          const row=r.rows[0],token=await dashboardCreateSession(row.id);
-          res.writeHead(200,{
-            'Content-Type':'application/json; charset=utf-8',
-            'Cache-Control':'no-store',
-            'Set-Cookie':dashboardSetCookie(token)
-          });
-          return res.end(JSON.stringify({ok:true,user:{id:row.id,username:row.username,is_admin:true,permissions:['*']}}));
-        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha no acesso rápido.'});}
-      }
-
       if (req.method === 'GET' && u.pathname === '/api/auth/me') {
         try {
           const user=await dashboardSession(req,false);
