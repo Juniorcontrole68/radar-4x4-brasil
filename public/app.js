@@ -307,7 +307,7 @@ function bootstrapEmbeddedAuth(){
   tryExisting();
 }
 
-const S={ops:[],sch:[],help:[],agCopy:[],ssw:null,remetentes:null,coletas:null,sswMotoristas:null},$=s=>document.querySelector(s),$=s=>[...document.querySelectorAll(s)];
+const S={ops:[],sch:[],help:[],agCopy:[],ssw:null,remetentes:null,coletas:null,sswMotoristas:null},$=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const gd=o=>o['Data']??o['  Data']??'',g=(o,...k)=>{for(const x of k)if(o[x]!==undefined)return o[x];return''};
 const pd=s=>{if(!s)return null;const p=String(s).trim().split('/');if(p.length!==3)return null;const d=new Date(+p[2],+p[1]-1,+p[0]);return isNaN(d)?null:d};
 const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
