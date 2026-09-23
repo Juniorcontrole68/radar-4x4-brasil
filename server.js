@@ -1580,6 +1580,120 @@ async function routeGeometry(points,order){
   }catch{}
   return{geometry:{type:'LineString',coordinates:[0,...order,0].map(i=>[points[i].lon,points[i].lat])},distanceMeters:null,durationSeconds:null}
 }
+
+async function routeFinalizePlan(stops,meta={}){
+  const baseGeo=await routeGeocode(ROUTE_BASE_ADDRESS);
+  if(!baseGeo)throw new Error('Não foi possível localizar a base de Americana.');
+  const clean=[],rejected=[];
+  for(const raw of (stops||[])){
+    let p={...raw},lat=Number(p.lat),lon=Number(p.lon);
+    if(!Number.isFinite(lat)||!Number.isFinite(lon)){
+      const q=String(p.query||p.endereco||p.address||'').trim();
+      if(q){
+        const geo=await routeGeocode(q,baseGeo,ROUTE_MAX_RADIUS_METERS);
+        if(geo){lat=geo.lat;lon=geo.lon;p.displayName=geo.displayName||q}
+      }
+    }
+    if(!Number.isFinite(lat)||!Number.isFinite(lon)){
+      rejected.push({...p,reason:'localização não encontrada'});continue
+    }
+    const radius=routeHaversine(baseGeo,{lat,lon});
+    if(radius>ROUTE_MAX_RADIUS_METERS){
+      rejected.push({...p,lat,lon,radiusKm:radius/1000,reason:'fora do raio de 300 km'});continue
+    }
+    clean.push({...p,lat,lon,radiusKm:radius/1000})
+  }
+  if(!clean.length)throw new Error('Nenhuma parada válida dentro do raio máximo de 300 km da base de Americana.');
+  const points=[{label:'Base Americana',address:ROUTE_BASE_ADDRESS,lat:baseGeo.lat,lon:baseGeo.lon,precision:'base'},...clean];
+  const mt=await routeOsrmTable(points),m=mt.matrix,n=clean.length;
+  let optimized=routeExact(m,n),method='exata';
+  if(!optimized){optimized=routeTwoOpt(routeNearest(m,n),m);method='heurística otimizada'}
+  const original=Array.from({length:n},(_,i)=>i+1);
+  const optMeters=routeCycleDistance(optimized,m),origMeters=routeCycleDistance(original,m);
+  const geo=await routeGeometry(points,optimized);
+  return{
+    ok:true,date:meta.date||'',baseAddress:ROUTE_BASE_ADDRESS,radiusLimitKm:300,
+    romaneio:meta.romaneio||'',motorista:meta.motorista||'',veiculo:meta.veiculo||'',
+    deliveries:n,method,matrixSource:mt.source,
+    optimizedOrder:optimized,originalOrder:original,
+    optimizedDistanceMeters:Number.isFinite(optMeters)?optMeters:0,
+    originalDistanceMeters:Number.isFinite(origMeters)?origMeters:0,
+    optimizedLegs:routeLegs(optimized,m,points),originalLegs:routeLegs(original,m,points),
+    points,stops:clean,matrix:m,geometry:geo.geometry,rejectedStops:rejected,
+    approximateStops:clean.filter(x=>['cidade','cliente','manual-aproximado','cte-aproximado'].includes(x.precision)).length
+  }
+}
+function routeReadJson(req,maxBytes=1024*1024){
+  return new Promise((resolve,reject)=>{
+    let body='',bytes=0;
+    req.setEncoding('utf8');
+    req.on('data',chunk=>{
+      bytes+=Buffer.byteLength(chunk);
+      if(bytes>maxBytes){reject(Object.assign(new Error('Dados da rota excedem o limite permitido.'),{status:413}));req.destroy();return}
+      body+=chunk
+    });
+    req.on('end',()=>{try{resolve(body?JSON.parse(body):{})}catch{reject(Object.assign(new Error('JSON inválido.'),{status:400}))}});
+    req.on('error',reject)
+  })
+}
+async function routeResolveManualAddress(address){
+  const raw=String(address||'').trim();
+  if(raw.length<5)throw Object.assign(new Error('Digite um endereço completo.'),{status:400});
+  const base=await routeGeocode(ROUTE_BASE_ADDRESS);
+  if(!base)throw new Error('Não foi possível localizar a base de Americana.');
+  const candidates=[];
+  if(!/\bSP\b|SÃO PAULO|SAO PAULO/i.test(raw))candidates.push(raw+', SP, Brasil');
+  candidates.push(raw+', Brasil');
+  let geo=null,used='';
+  for(const q of candidates){
+    geo=await routeGeocode(q,base,ROUTE_MAX_RADIUS_METERS);
+    if(geo){used=q;break}
+  }
+  if(!geo)throw Object.assign(new Error('Endereço não localizado dentro do raio máximo de 300 km da base.'),{status:422});
+  return{
+    source:'manual',originalOrder:0,ctrc:'',nf:'',destinatario:'Endereço digitado',
+    cidade:geo.city||'',uf:/São Paulo|Sao Paulo/i.test(geo.state||'')?'SP':'',
+    endereco:raw,numero:'',bairro:'',cep:'',precision:'manual',query:used,
+    lat:geo.lat,lon:geo.lon,label:raw,radiusKm:routeHaversine(base,geo)/1000
+  }
+}
+async function routeLookupCteBarcode(code,date=''){
+  const raw=String(code||'').trim(),digits=raw.replace(/\D/g,'');
+  if(digits.length<6)throw Object.assign(new Error('Código do CT-e inválido.'),{status:400});
+  let rows=[];
+  const day=date||spDateISO();
+  if(day){
+    try{const snap=await fetchBi2FolderDayParsed(174,'ctrc',day);if(snap.ok)rows.push(...(snap.rows||[]))}catch{}
+  }
+  try{rows.push(...(parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text).rows||[]))}catch{}
+  const match=rows.find(r=>{
+    const key=String(routeField(r,[/^nro_chave_acesso_cte$/, /chave.*acesso.*cte/,/^chave_cte$/])||'').replace(/\D/g,'');
+    const cte=String(routeField(r,[/^numero_cte$/, /^numero_ctrc$/, /^ctrc$/])||r.numero_cte||r.numero_ctrc||'').replace(/\D/g,'').replace(/^0+/,'');
+    return (digits.length>=40&&key===digits)||(digits.length<40&&cte===digits.replace(/^0+/,''))
+  });
+  if(!match)throw Object.assign(new Error('CT-e não encontrado no BI2/SSW para este código.'),{status:404});
+  const base=await routeGeocode(ROUTE_BASE_ADDRESS);
+  if(!base)throw new Error('Não foi possível localizar a base de Americana.');
+  const parts=routeAddressParts(match,{});
+  const destinatario=match.destinatario_nome||routeField(match,[/(destinatario|destinat)_?nome/,/^destinatario$/])||'Destinatário CT-e';
+  const cidade=match.cidade_destino||match.dest_cidade||routeField(match,[/(cidade).*(dest|destinat)/,/(dest|destinat).*cidade/,/^cidade_destino$/])||'';
+  const uf=match.uf_destino||match.dest_uf||routeField(match,[/(uf).*(dest|destinat)/,/(dest|destinat).*uf/,/^uf_destino$/])||'SP';
+  let query='',precision='cte-aproximado';
+  if(parts.cep){query=parts.cep+', Brasil';precision='cep'}
+  else if(parts.endereco){query=[parts.endereco,parts.numero,parts.bairro,cidade,uf,'Brasil'].filter(Boolean).join(', ');precision='endereco'}
+  else if(cidade){query=[cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');precision='cte-aproximado'}
+  else throw Object.assign(new Error('CT-e localizado, mas sem endereço ou cidade. Digite o endereço manualmente.'),{status:422});
+  const geo=await routeGeocode(query,base,ROUTE_MAX_RADIUS_METERS);
+  if(!geo)throw Object.assign(new Error('O destino deste CT-e não foi localizado dentro do raio de 300 km. Digite o endereço manualmente.'),{status:422});
+  const ctrc=match.numero_ctrc||match.CTRC||'',nf=match.numero_nf||match.NF||'';
+  return{
+    source:'cte',barcode:digits,originalOrder:0,ctrc,nf,destinatario,cidade,uf,
+    endereco:parts.endereco,numero:parts.numero,bairro:parts.bairro,cep:parts.cep,
+    precision,query,lat:geo.lat,lon:geo.lon,label:destinatario+(cidade?' • '+cidade:''),
+    radiusKm:routeHaversine(base,geo)/1000
+  }
+}
+
 async function buildRoutePlan(date='',romaneio=''){
   const target=date||spDateISO(),cacheKey=target+'|'+String(romaneio||'').trim();
   const cached=ROUTE_PLAN_CACHE.get(cacheKey);
