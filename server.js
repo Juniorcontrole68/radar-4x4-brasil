@@ -1437,6 +1437,7 @@ async function getSswMotoristasFast(from='',to=''){
 }
 
 const ROUTE_BASE_ADDRESS='Av. do Algodão, 316, Americana, SP, Brasil';
+const ROUTE_MAX_RADIUS_METERS=300000;
 const ROUTE_GEO_CACHE=new Map();
 const ROUTE_PLAN_CACHE=new Map();
 let ROUTE_GEOCODE_LAST=0;
@@ -1465,22 +1466,32 @@ function routeHaversine(a,b){
   const h=Math.sin(dlat/2)**2+Math.cos(la1)*Math.cos(la2)*Math.sin(dlon/2)**2;
   return 2*R*Math.asin(Math.sqrt(h))
 }
-async function routeGeocode(query){
+async function routeGeocode(query,center=null,maxRadiusMeters=null){
   const q=String(query||'').trim();
   if(!q)return null;
-  const key=routeKeyNorm(q),hit=ROUTE_GEO_CACHE.get(key);
-  if(hit)return hit;
+  const centerKey=center&&Number.isFinite(center.lat)&&Number.isFinite(center.lon)?('|'+center.lat.toFixed(3)+'|'+center.lon.toFixed(3)+'|'+Number(maxRadiusMeters||0)):'';
+  const key=routeKeyNorm(q)+centerKey;
+  if(ROUTE_GEO_CACHE.has(key))return ROUTE_GEO_CACHE.get(key);
   const wait=Math.max(0,1050-(Date.now()-ROUTE_GEOCODE_LAST));
   if(wait)await new Promise(r=>setTimeout(r,wait));
   ROUTE_GEOCODE_LAST=Date.now();
   const u=new URL('https://nominatim.openstreetmap.org/search');
-  u.searchParams.set('format','jsonv2');u.searchParams.set('limit','1');u.searchParams.set('countrycodes','br');u.searchParams.set('q',q);
+  u.searchParams.set('format','jsonv2');u.searchParams.set('limit','5');u.searchParams.set('addressdetails','1');u.searchParams.set('countrycodes','br');u.searchParams.set('q',q);
   try{
     const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Roteirizador/1.0 (operacao interna)','Accept-Language':'pt-BR,pt;q=0.9'},signal:AbortSignal.timeout(12000)});
     const j=await r.json().catch(()=>[]);
-    if(r.ok&&Array.isArray(j)&&j[0]){
-      const v={lat:Number(j[0].lat),lon:Number(j[0].lon),displayName:j[0].display_name||q};
-      if(Number.isFinite(v.lat)&&Number.isFinite(v.lon)){ROUTE_GEO_CACHE.set(key,v);return v}
+    if(r.ok&&Array.isArray(j)&&j.length){
+      let list=j.map(x=>({
+        lat:Number(x.lat),lon:Number(x.lon),displayName:x.display_name||q,
+        state:String(x.address?.state||x.address?.region||''),city:String(x.address?.city||x.address?.town||x.address?.municipality||x.address?.village||'')
+      })).filter(v=>Number.isFinite(v.lat)&&Number.isFinite(v.lon));
+      if(center&&Number.isFinite(center.lat)&&Number.isFinite(center.lon)){
+        list=list.map(v=>({...v,distanceFromBaseMeters:routeHaversine(center,v)})).sort((a,b)=>a.distanceFromBaseMeters-b.distanceFromBaseMeters);
+        if(Number(maxRadiusMeters)>0)list=list.filter(v=>v.distanceFromBaseMeters<=Number(maxRadiusMeters));
+      }
+      const v=list[0]||null;
+      ROUTE_GEO_CACHE.set(key,v);
+      return v
     }
   }catch{}
   ROUTE_GEO_CACHE.set(key,null);
