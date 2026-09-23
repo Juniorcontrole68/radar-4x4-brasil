@@ -850,6 +850,7 @@ function loadHeavyForTab(tab){
     if(hasPerm('ssw_atrasos'))setTimeout(()=>refreshSswAtrasos(),450);
     if(hasAnyPerm(['remetentes','remetentes_comparativo']))setTimeout(()=>refreshSswRemetentes(),900);
     if(hasPerm('final_carregamento'))setTimeout(()=>refreshLoadingRecords(false),1200);
+    if(hasPerm('agendamentos_copia'))setTimeout(()=>refreshAgCopy(false),1450);
   }else if(tab==='conferencia'&&hasPerm('final_carregamento')){
     loadingDriverOptions();
     setTimeout(()=>refreshLoadingRecords(true),50);
