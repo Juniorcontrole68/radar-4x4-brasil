@@ -185,6 +185,15 @@ async function fetchRomaneioCtrcs38(x,jar,apply,cookie){
   const text=await pdfTextFromBuffer38(buf,x.romaneio);
   const expected=Number(x.qtdeCtrcs||0),rom=String(x.romaneio||'').toUpperCase();
 
+  // O PDF traz CTRC/CT-e e NF na mesma linha. Guardamos os pares para
+  // conseguir cruzar pelo número da NF quando o BI2 usa outro formato de CTRC.
+  const pairMatches=[...text.matchAll(/^\s*([A-Z]{3}\d{5,7}-\d)\s+(\d{4,12})\b/gmi)]
+    .map(m=>({ctrc:m[1].toUpperCase(),nf:String(m[2]).replace(/^0+/,'')||'0'}))
+    .filter(p=>p.ctrc!==rom);
+  const pairSeen=new Set();
+  x.ctrcNfs=pairMatches.filter(p=>{const k=p.ctrc+'|'+p.nf;if(pairSeen.has(k))return false;pairSeen.add(k);return true});
+  console.log('SSW38 PDF pares CTRC/NF: '+JSON.stringify({romaneio:x.romaneio,pares:x.ctrcNfs.length,esperado:expected}));
+
   // O primeiro campo das linhas do PDF é o CTRC/CT-e no formato AMR008212-1.
   // Antes o parser pegava a NF de 6 dígitos, o que impedia o cruzamento com as baixas.
   const ctrcTokens=[...text.matchAll(/\b([A-Z]{3}\d{5,7}-\d)\b/gi)]
@@ -713,6 +722,7 @@ function normCtrcLoose(v){
   return n?String(Number(n)):'';
 }
 function normPlate(v){return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'')}
+function normNf(v){const n=String(v||'').replace(/\D/g,'').replace(/^0+/,'');return n||''}
 async function fetchBi2FolderDayParsed(codigo,folder,ymd){
   try{
     const rep=await fetchBi2ReportFolder(codigo,bi2CompactDate(ymd),folder),p=parseBi2Csv(rep.text);
@@ -755,20 +765,29 @@ async function buildSswMotoristas(from='',to=''){
     if(k)ctrcMap.set(k,r);
   }
 
-  const ownerByCtrc=new Map(),officialCtrcs=new Set(),officialLoose=new Set();
+  const ownerByCtrc=new Map(),ownerByNf=new Map(),officialCtrcs=new Set(),officialLoose=new Set(),officialNfs=new Set();
   if(base38&&base38.ok){
     for(const x of (base38.rows||[])){
+      const pairs=x.ctrcNfs||[];
+      const nfByCtrc=new Map(pairs.map(p=>[normCtrcLoose(p.ctrc),normNf(p.nf)]));
       for(const raw of (x.ctrcs||[])){
         const k=normCtrc(raw),lk=normCtrcLoose(raw);if(!k&&!lk)continue;
         if(k)officialCtrcs.add(k);if(lk)officialLoose.add(lk);
-        const owner={motorista:x.motorista||'',veiculo:normPlate(x.veiculo),romaneio:x.romaneio||'',qtdeCtrcs:Number(x.qtdeCtrcs||0)};
+        const nf=nfByCtrc.get(lk)||'';
+        const owner={motorista:x.motorista||'',veiculo:normPlate(x.veiculo),romaneio:x.romaneio||'',qtdeCtrcs:Number(x.qtdeCtrcs||0),ctrc:raw,nf};
         if(k)ownerByCtrc.set(k,owner);if(lk)ownerByCtrc.set('#'+lk,owner);
+        if(nf){officialNfs.add(nf);ownerByNf.set(nf,owner)}
+      }
+      for(const p of pairs){
+        const nf=normNf(p.nf);if(!nf)continue;
+        officialNfs.add(nf);
+        if(!ownerByNf.has(nf))ownerByNf.set(nf,{motorista:x.motorista||'',veiculo:normPlate(x.veiculo),romaneio:x.romaneio||'',qtdeCtrcs:Number(x.qtdeCtrcs||0),ctrc:p.ctrc,nf});
       }
     }
   }
-  let candidates=(officialCtrcs.size||officialLoose.size)?[...ctrcMap.values()].filter(r=>{
-    const raw=r.numero_ctrc||r.CTRC;
-    return officialCtrcs.has(normCtrc(raw))||officialLoose.has(normCtrcLoose(raw));
+  let candidates=(officialCtrcs.size||officialLoose.size||officialNfs.size)?[...ctrcMap.values()].filter(r=>{
+    const raw=r.numero_ctrc||r.CTRC,nf=normNf(r.numero_nf||r.NF);
+    return officialCtrcs.has(normCtrc(raw))||officialLoose.has(normCtrcLoose(raw))||(nf&&officialNfs.has(nf));
   }):[...ctrcMap.values()].filter(r=>{
     const d=brDateToIso(r.prev_ent||r['PREV ENTREGA']||r['PREVISAO ENTREGA']);
     return d&&d>=from&&d<=to;
@@ -805,11 +824,11 @@ async function buildSswMotoristas(from='',to=''){
     const occ=String(last.ocorrencia||'').trim();
     const codeMatch=occ.match(/\((\d{1,3})\)/);
     const rawCode=codeMatch?codeMatch[1]:'';
-    const ctrcRaw=r.numero_ctrc||r.CTRC,ctrcKey=normCtrc(ctrcRaw),ctrcLoose=normCtrcLoose(ctrcRaw),owner=ownerByCtrc.get(ctrcKey)||ownerByCtrc.get('#'+ctrcLoose)||null;
+    const ctrcRaw=r.numero_ctrc||r.CTRC,ctrcKey=normCtrc(ctrcRaw),ctrcLoose=normCtrcLoose(ctrcRaw),nfKey=normNf(r.numero_nf||r.NF),owner=ownerByCtrc.get(ctrcKey)||ownerByCtrc.get('#'+ctrcLoose)||ownerByNf.get(nfKey)||null;
     const plate=owner?.veiculo||normPlate(r.veiculo_entrega),vehicle=vehicleMap.get(plate)||{};
     const saida=!!tr.saiu,entregue=!!tr.entregue;
     rows.push({
-      ctrc:r.numero_ctrc||'',nf:r.numero_nf||'',remetente:r.remetente_nome||'',destinatario:r.destinatario_nome||'',
+      ctrc:r.numero_ctrc||'',ctrcOficial:owner?.ctrc||'',nf:r.numero_nf||'',remetente:r.remetente_nome||'',destinatario:r.destinatario_nome||'',
       cidade:r.cidade_destino||r.dest_cidade||'',uf:r.uf_destino||r.dest_uf||'',veiculo:plate||String(r.veiculo_entrega||'').trim(),
       motorista:owner?.motorista||driverMap.get(plate)||'',romaneio:owner?.romaneio||'',relacionamento:vehicle.RELACIONAMENTO||'',saida,entregue,
       ocorrenciaCodigo:rawCode,ocorrencia:occ||r.ult_ocorr_descricao||'',
@@ -869,10 +888,13 @@ async function buildSswMotoristas(from='',to=''){
   let motoristas38=[],totalRomaneado=0,romaneios38=[],entregues38=0,pendentes38=0,ocorrencias38=0;
   if(base38&&base38.ok){
     romaneios38=base38.rows||[];totalRomaneado=base38.total||0;
-    const byCtrc=new Map();
+    const byCtrc=new Map(),byNf=new Map();
     for(const r of rows){
-      const k=normCtrc(r.ctrc),lk=normCtrcLoose(r.ctrc);
-      if(k)byCtrc.set(k,r);if(lk)byCtrc.set('#'+lk,r);
+      for(const raw of [r.ctrc,r.ctrcOficial]){
+        const k=normCtrc(raw),lk=normCtrcLoose(raw);
+        if(k)byCtrc.set(k,r);if(lk)byCtrc.set('#'+lk,r);
+      }
+      const nf=normNf(r.nf);if(nf)byNf.set(nf,r);
     }
     const gm=new Map();
     for(const x of romaneios38){
@@ -887,10 +909,12 @@ async function buildSswMotoristas(from='',to=''){
       g.pendentes+=pendX;
 
       const ctrcs=[...new Set((x.ctrcs||[]).map(normCtrc).filter(Boolean))];
+      const nfByLoose=new Map((x.ctrcNfs||[]).map(p=>[normCtrcLoose(p.ctrc),normNf(p.nf)]));
       g.vinculados+=ctrcs.length;
       g.missingCtrcs+=Math.max(0,totalX-ctrcs.length);
       for(const ck of ctrcs){
-        const lk=normCtrcLoose(raw),r=byCtrc.get(ck)||byCtrc.get('#'+lk);
+        const lk=normCtrcLoose(ck),nf=nfByLoose.get(lk)||'';
+        const r=byCtrc.get(ck)||byCtrc.get('#'+lk)||(nf?byNf.get(nf):null);
         if(deliveredMap.has(ck)||deliveredMap.has('#'+lk)||r?.entregue)g.entregues++;
       }
     }
@@ -899,7 +923,7 @@ async function buildSswMotoristas(from='',to=''){
     // do BI2 apenas para reconciliar a pequena diferença que cabe exatamente nos CT-es ausentes.
     let matchedDelivered=[...gm.values()].reduce((a,g)=>a+g.entregues,0);
     let missingPdf=[...gm.values()].reduce((a,g)=>a+g.missingCtrcs,0);
-    let extraDelivered=Math.max(0,deliveredMap.size-matchedDelivered);
+    let extraDelivered=Math.max(0,[...deliveredMap.keys()].filter(k=>k.startsWith('#')).length-matchedDelivered);
     if(extraDelivered>0&&extraDelivered<=missingPdf){
       for(const g of gm.values()){
         if(extraDelivered<=0)break;
