@@ -245,7 +245,7 @@ async function start() {
             "COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,'')))='carregando')::int AS carregando, " +
             "COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,''))) IN ('em trânsito','em transito'))::int AS em_transito, " +
             "COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,'')))='entregue')::int AS entregues, " +
-            "COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,'')))='cancelada')::int AS canceladas, " +
+            "COUNT(*) FILTER (WHERE lower(trim(COALESCE(status,''))) LIKE 'cancel%')::int AS canceladas, " +
             'MAX(updated_at) AS ultima_atualizacao FROM coletas ' +
             (where.length ? 'WHERE ' + where.join(' AND ') : '');
           const r = await pool.query(sql, params);
