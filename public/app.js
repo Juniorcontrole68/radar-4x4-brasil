@@ -825,10 +825,10 @@ function openTab(tab){
   if(tab==='motoristas-evolucao')setTimeout(renderDriverProgress,30);
   loadHeavyForTab(tab);
 }
-$('.dash-open').forEach(b=>b.onclick=()=>{if(tabAllowed(b.dataset.open))openTab(b.dataset.open)});
-$('.nav button').forEach(b=>b.onclick=()=>{
+$$('.dash-open').forEach(b=>b.onclick=()=>{if(tabAllowed(b.dataset.open))openTab(b.dataset.open)});
+$$('.nav button').forEach(b=>b.onclick=()=>{
   if(!tabAllowed(b.dataset.tab))return;
-  $('.nav button').forEach(x=>x.classList.remove('active'));
+  $$('.nav button').forEach(x=>x.classList.remove('active'));
   b.classList.add('active');
   $$('.section').forEach(x=>x.classList.remove('active'));
   $('#'+b.dataset.tab).classList.add('active');
