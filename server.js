@@ -288,10 +288,16 @@ async function fetchRomaneioCtrcs38(x,jar,apply,cookie){
     const m=pdfLines[i].match(/^\s*([A-Z]{3}\d{5,7}-\d)\s+(\d{4,12})\b/i);
     if(!m||m[1].toUpperCase()===rom)continue;
     let j=i+1;while(j<pdfLines.length&&!/^\s*[A-Z]{3}\d{5,7}-\d\s+\d{4,12}\b/i.test(pdfLines[j]))j++;
-    const block=pdfLines.slice(i,Math.min(j,i+8)).join(' ');
+    const blockLines=pdfLines.slice(i,Math.min(j,i+14)).map(v=>String(v||'').trim()).filter(Boolean);
+    const block=blockLines.join(' ');
     const cnpjs=[...new Set([...block.matchAll(/(?:\d{2}[.\s]?\d{3}[.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2}|\b\d{14}\b)/g)]
       .map(z=>String(z[0]).replace(/\D/g,'')).filter(z=>z.length===14))];
-    x.ctrcMeta.push({ctrc:m[1].toUpperCase(),nf:String(m[2]).replace(/^0+/,'' )||'0',cnpjs});
+    const cepMatch=block.match(/\b(\d{5})[-.\s]?(\d{3})\b/);
+    const streetRe=/\b(?:RUA|R\.|AVENIDA|AV\.|AV |RODOVIA|ROD\.|ESTRADA|EST\.|ALAMEDA|AL\.|TRAVESSA|TRAV\.|PRA[CÇ]A|PC\.)\b/i;
+    const addrCandidates=blockLines.filter(line=>streetRe.test(line)&&line.length>=8&&line.length<=180);
+    const endereco=(addrCandidates.find(line=>!/REMETENTE|EMITENTE|ORIGEM/i.test(line))||addrCandidates[0]||'')
+      .replace(/^.*?(ENDERE[CÇ]O\s*[:\-]?\s*)/i,'').trim();
+    x.ctrcMeta.push({ctrc:m[1].toUpperCase(),nf:String(m[2]).replace(/^0+/,'' )||'0',cnpjs,cep:cepMatch?(cepMatch[1]+'-'+cepMatch[2]):'',endereco});
     i=j-1;
   }
   console.log('SSW38 PDF pares CTRC/NF: '+JSON.stringify({romaneio:x.romaneio,pares:x.ctrcNfs.length,esperado:expected,blocos:x.ctrcMeta.length,blocosComCnpj:x.ctrcMeta.filter(z=>z.cnpjs.length).length,distCnpjs:[...new Set(x.ctrcMeta.map(z=>z.cnpjs.length))].sort((a,b)=>a-b)}));
