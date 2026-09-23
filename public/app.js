@@ -462,18 +462,31 @@ async function refreshData(first=false){
   window.__refreshing=true;
   if(first)$('#loading').classList.remove('hide');
   try{
-    const [ro,ra,rh]=await Promise.allSettled([load('lancamentos'),load('agendamentos'),load('ajudantes')]);
+    const needOps=hasAnyPerm(['dashboard','operacional','financeiro','motoristas','filiais','rotas','ocorrencias']);
+    const needSch=hasAnyPerm(['dashboard','agendamentos']);
+    const needHelp=hasAnyPerm(['dashboard','ajudantes','financeiro']);
+    const [ro,ra,rh]=await Promise.allSettled([
+      needOps?load('lancamentos'):Promise.resolve(null),
+      needSch?load('agendamentos'):Promise.resolve(null),
+      needHelp?load('ajudantes'):Promise.resolve(null)
+    ]);
     let updated=false,errors=[];
-    if(ro.status==='fulfilled'){S.ops=ro.value;S.opsUpdatedAt=Date.now();updated=true}else errors.push('Operações: '+(ro.reason?.message||ro.reason));
-    if(ra.status==='fulfilled'){S.sch=ra.value;updated=true}else errors.push('Agendamentos: '+(ra.reason?.message||ra.reason));
-    if(rh.status==='fulfilled'){S.help=rh.value;updated=true}else errors.push('Ajudantes: '+(rh.reason?.message||rh.reason));
-    if(updated){filters();update()}
+    if(needOps){
+      if(ro.status==='fulfilled'){S.ops=ro.value||[];S.opsUpdatedAt=Date.now();updated=true}else errors.push('Operações: '+(ro.reason?.message||ro.reason))
+    }else S.ops=[];
+    if(needSch){
+      if(ra.status==='fulfilled'){S.sch=ra.value||[];updated=true}else errors.push('Agendamentos: '+(ra.reason?.message||ra.reason))
+    }else S.sch=[];
+    if(needHelp){
+      if(rh.status==='fulfilled'){S.help=rh.value||[];updated=true}else errors.push('Ajudantes: '+(rh.reason?.message||rh.reason))
+    }else S.help=[];
+    if(updated||!needOps){filters();update()}
     const er=$('#err');
     if(errors.length){
       er.style.display='block';
-      er.innerHTML='<b>Atualização parcial.</b><br>'+errors.map(safe).join('<br>')+'<br>Os módulos que responderam continuam atualizando normalmente.';
+      er.innerHTML='<b>Atualização parcial.</b><br>'+errors.map(safe).join('<br>')+'<br>Os módulos permitidos que responderam continuam atualizando normalmente.';
     }else er.style.display='none';
-    refreshColetasStatus();
+    if(hasAnyPerm(['dashboard','operacional']))refreshColetasStatus();
   }catch(e){
     $('#err').style.display='block';
     $('#err').innerHTML='<b>Erro ao atualizar os dados.</b><br>'+safe(e.message)+'<br><button onclick="refreshData(false)">Tentar novamente</button>';
@@ -622,41 +635,50 @@ function setupLoadingForm(){
 
 function loadHeavyForTab(tab){
   if(tab==='dashboards'){
-    setTimeout(()=>refreshSswMotoristas(),100);
-    setTimeout(()=>refreshSswAtrasos(),450);
-    setTimeout(()=>refreshSswRemetentes(),900);
-    setTimeout(()=>refreshLoadingRecords(false),1200);
-  }else if(tab==='conferencia'){
+    if(hasAnyPerm(['ssw_saidas','evolucao','cidade_destino']))setTimeout(()=>refreshSswMotoristas(),100);
+    if(hasPerm('ssw_atrasos'))setTimeout(()=>refreshSswAtrasos(),450);
+    if(hasAnyPerm(['remetentes','remetentes_comparativo']))setTimeout(()=>refreshSswRemetentes(),900);
+    if(hasPerm('final_carregamento'))setTimeout(()=>refreshLoadingRecords(false),1200);
+  }else if(tab==='conferencia'&&hasPerm('final_carregamento')){
     loadingDriverOptions();
     setTimeout(()=>refreshLoadingRecords(true),50);
-  }else if(tab==='ssw-motoristas'||tab==='motoristas-evolucao'){
+  }else if((tab==='ssw-motoristas'||tab==='motoristas-evolucao')&&tabAllowed(tab)){
     setTimeout(()=>refreshSswMotoristas(),80);
-  }else if(tab==='ssw-atrasos'){
+  }else if(tab==='ssw-atrasos'&&hasPerm('ssw_atrasos')){
     setTimeout(()=>refreshSswAtrasos(),80);
-  }else if(tab==='ssw-remetentes'||tab==='ssw-remetentes-comparativo'){
+  }else if((tab==='ssw-remetentes'||tab==='ssw-remetentes-comparativo')&&tabAllowed(tab)){
     setTimeout(()=>refreshSswRemetentes(),80);
+  }else if(tab==='usuarios'&&AUTH?.is_admin){
+    setTimeout(()=>loadDashboardUsers(),50);
   }
 }
 async function start(){
   init();
   $('#err').style.display='none';
-  checkSsw();
+  if(hasAnyPerm(['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo']))checkSsw();
   await refreshData(true);
+
   const view=new URLSearchParams(location.search).get('view');
-  if(view){
-    const b=$('.nav button[data-tab="'+view+'"]');
-    if(b)b.click();else openTab(view)
+  const target=view&&tabAllowed(view)?view:firstAllowedTab();
+  if(target){
+    const b=$('.nav button[data-tab="'+target+'"]');
+    if(b)b.click();else openTab(target)
+  }else{
+    $('#err').style.display='block';
+    $('#err').textContent='Este usuário ainda não possui nenhum card liberado.'
   }
-  loadHeavyForTab($('.section.active')?.id||'dashboard');
+
+  loadHeavyForTab($('.section.active')?.id||target||'');
   setInterval(()=>{if(!document.hidden)refreshData(false)},5000);
-  setInterval(()=>{if(!document.hidden)checkSsw()},60000);
-  setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&['ssw-atrasos','dashboards'].includes(t))refreshSswAtrasos()},120000);
-  setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&['ssw-remetentes','ssw-remetentes-comparativo','dashboards'].includes(t))refreshSswRemetentes()},120000);
-  setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&['ssw-motoristas','motoristas-evolucao','dashboards'].includes(t))refreshSswMotoristas()},120000);
+  setInterval(()=>{if(!document.hidden&&hasAnyPerm(['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo']))checkSsw()},60000);
+  setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasPerm('ssw_atrasos')&&['ssw-atrasos','dashboards'].includes(t))refreshSswAtrasos()},120000);
+  setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasAnyPerm(['remetentes','remetentes_comparativo'])&&['ssw-remetentes','ssw-remetentes-comparativo','dashboards'].includes(t))refreshSswRemetentes()},120000);
+  setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasAnyPerm(['ssw_saidas','evolucao','cidade_destino'])&&['ssw-motoristas','motoristas-evolucao','dashboards'].includes(t))refreshSswMotoristas()},120000);
   window.addEventListener('focus',()=>refreshData(false));
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshData(false)})
 }
 function openTab(tab){
+  if(!tabAllowed(tab))return;
   const b=$('.nav button[data-tab="'+tab+'"]');
   if(b)return b.click();
   $$('.nav button').forEach(x=>x.classList.remove('active'));
@@ -670,7 +692,8 @@ function openTab(tab){
     'ssw-remetentes-comparativo':'Comparativo de Clientes Remetentes',
     'ssw-motoristas':'SSW • Saídas x Baixas',
     'motoristas-evolucao':'Evolução por Motorista',
-    'conferencia':'Final do Carregamento'
+    'conferencia':'Final do Carregamento',
+    'usuarios':'Usuários e Acessos'
   };
   $('#pageTitle').textContent=titles[tab]||'Dashboards';
   if(tab==='ssw-atrasos')setTimeout(renderSswAtrasos,30);
@@ -679,9 +702,10 @@ function openTab(tab){
   if(tab==='motoristas-evolucao')setTimeout(renderDriverProgress,30);
   loadHeavyForTab(tab);
 }
-$$('.dash-open').forEach(b=>b.onclick=()=>openTab(b.dataset.open));
-$$('.nav button').forEach(b=>b.onclick=()=>{
-  $$('.nav button').forEach(x=>x.classList.remove('active'));
+$('.dash-open').forEach(b=>b.onclick=()=>{if(tabAllowed(b.dataset.open))openTab(b.dataset.open)});
+$('.nav button').forEach(b=>b.onclick=()=>{
+  if(!tabAllowed(b.dataset.tab))return;
+  $('.nav button').forEach(x=>x.classList.remove('active'));
   b.classList.add('active');
   $$('.section').forEach(x=>x.classList.remove('active'));
   $('#'+b.dataset.tab).classList.add('active');
@@ -693,6 +717,7 @@ $$('.nav button').forEach(b=>b.onclick=()=>{
     }
     update();
     if(b.dataset.tab==='operacoes')refreshData(false);
+    if(b.dataset.tab==='usuarios'&&AUTH?.is_admin)loadDashboardUsers();
     if(b.dataset.tab==='dashboards'){
       renderSswAtrasos();
       renderRemetentes();
@@ -712,5 +737,6 @@ if($('#remClientA'))$('#remClientA').onchange=renderRemCompare;
 if($('#remClientB'))$('#remClientB').onchange=renderRemCompare;
 window.onresize=()=>{clearTimeout(window.rz);window.rz=setTimeout(update,150)};
 $('#mobile').onclick=()=>alert(/iphone|ipad|ipod/i.test(navigator.userAgent)?'No Safari: toque em Compartilhar e depois em Adicionar à Tela de Início.':'No Chrome: toque no menu ⋮ e escolha Adicionar à tela inicial.');
-setupLoadingForm();
-start();
+if($('#shareWhatsapp'))$('#shareWhatsapp').onclick=()=>whatsappShare();
+if($('#logoutBtn'))$('#logoutBtn').onclick=async()=>{try{await fetch('/api/auth/logout',{method:'POST'})}catch{}location.reload()};
+bootstrapAuth();
