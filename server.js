@@ -857,11 +857,12 @@ async function buildSswMotoristas(from='',to=''){
     }
     let addedPdf=0;
     for(const x of (base38.rows||[]))for(const m of (x.ctrcMeta||[])){
-      const lk=normCtrcLoose(m.ctrc),nf=normNf(m.nf),doc=String((m.cnpjs||[])[destIdx]||'').replace(/\D/g,'');
-      if(doc.length!==14||!nf)continue;
+      const lk=normCtrcLoose(m.ctrc),nf=normNf(m.nf),cnpjs=[...new Set((m.cnpjs||[]).map(z=>String(z).replace(/\D/g,'')).filter(z=>z.length===14))];
+      const doc=cnpjs[destIdx]||cnpjs[0]||'';
+      if(!doc||!nf)continue;
       if((lk&&knownKeys.has('C'+lk))||knownKeys.has('N'+nf))continue;
       candidates.push({
-        numero_ctrc:m.ctrc,numero_nf:nf,dest_cnpj:doc,
+        numero_ctrc:m.ctrc,numero_nf:nf,dest_cnpj:doc,__cnpjs:cnpjs,
         veiculo_entrega:x.veiculo||'',__pdf:true,__romaneio:x.romaneio||''
       });
       if(lk)knownKeys.add('C'+lk);knownKeys.add('N'+nf);addedPdf++;
@@ -879,7 +880,18 @@ async function buildSswMotoristas(from='',to=''){
   }
 
   const trackingResults=await mapLimit(unique,8,async r=>{
-    const tr=await trackingDestQuery(r.dest_cnpj||r['CNPJ DESTINATARIO'],r.numero_nf||r.NF);
+    const nf=r.numero_nf||r.NF;
+    if(r.__pdf&&Array.isArray(r.__cnpjs)&&r.__cnpjs.length){
+      let best=null,bestDoc='';
+      for(const doc of r.__cnpjs){
+        const tr=await trackingDestQuery(doc,nf);
+        if(!best||((tr.items||[]).length>(best.items||[]).length)){best=tr;bestDoc=doc}
+        if((tr.items||[]).length){r.dest_cnpj=doc;return{r,tr}}
+      }
+      if(bestDoc)r.dest_cnpj=bestDoc;
+      return{r,tr:best||{ok:false,items:[],saiu:false,entregue:false}}
+    }
+    const tr=await trackingDestQuery(r.dest_cnpj||r['CNPJ DESTINATARIO'],nf);
     return{r,tr}
   });
 
