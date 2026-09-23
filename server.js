@@ -34,6 +34,30 @@ async function fetchColetasStatus(from='',to=''){
   if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
   return j;
 }
+
+async function readJsonLimited(req,maxBytes=2*1024*1024){
+  const chunks=[];let size=0;
+  for await(const chunk of req){
+    size+=chunk.length;
+    if(size>maxBytes){const e=new Error('Arquivo muito grande.');e.status=413;throw e}
+    chunks.push(Buffer.from(chunk))
+  }
+  if(!chunks.length)return{};
+  try{return JSON.parse(Buffer.concat(chunks).toString('utf8'))}
+  catch{const e=new Error('Dados inválidos.');e.status=400;throw e}
+}
+async function portalJson(pathname,{method='GET',body=null,timeout=25000}={}){
+  const u=new URL(pathname,COLETAS_PORTAL_URL);
+  const headers={'User-Agent':'CONSTRULOG-Dashboard/1.0','Cache-Control':'no-cache'};
+  let payload;
+  if(body!==null){headers['Content-Type']='application/json';payload=JSON.stringify(body)}
+  const r=await fetch(u,{method,headers,body:payload,signal:AbortSignal.timeout(timeout)});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok||j.ok===false){
+    const e=new Error(j.error||('HTTP '+r.status));e.status=r.status;throw e
+  }
+  return j
+}
 function internalSswConfigured(){return !!(process.env.SSW_INTERNAL_DOMINIO&&process.env.SSW_INTERNAL_CPF&&process.env.SSW_INTERNAL_USUARIO&&process.env.SSW_INTERNAL_SENHA)}
 async function testInternalSswLogin(){
   const jar=new Map();
@@ -1379,7 +1403,37 @@ async function rows(gid){
   }
   throw e
 }
-http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.pathname==='/health'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:true}))}if(u.pathname==='/api/coletas/status'){try{const x=await fetchColetasStatus(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/baixas'){try{const x=await buildBi2Baixas(u.searchParams.get('date')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/saidas-baixas'){try{const x=await getSswMotoristasFast(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/remetentes'){try{const x=await buildBi2Remetentes(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/atrasos'){try{const x=await buildBi2Atrasos(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/api-status'){if(!BI2_API_STATE.lastCheck||Date.now()-new Date(BI2_API_STATE.lastCheck).getTime()>60*1000)await refreshBi2ApiState();res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify(BI2_API_STATE))}if(u.pathname==='/api/bi2/status'){if(!BI2_STATE.lastCheck||Date.now()-new Date(BI2_STATE.lastCheck).getTime()>5*60*1000)await refreshBi2State();res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});const x=BI2_STATE,pub={configured:x.configured,connected:x.connected,fileCount:x.fileCount||0,lastCheck:x.lastCheck,message:x.message,error:x.error||''};return res.end(JSON.stringify(pub))}if(u.pathname==='/api/ssw/status'){const configured=sswConfigured();if(!configured){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:false,connected:false,source:'google-sheets',message:'SSW aguardando credenciais'}))}try{await getSswToken(false);res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:true,connected:true,source:'ssw',message:'SSW conectado'}))}catch(e){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:true,connected:false,source:'google-sheets',message:'SSW configurado, mas a autenticação falhou',error:String(e.message||e)}))}}if(u.pathname.startsWith('/api/sheet/')){const n=u.pathname.split('/').pop(),gid=GIDS[n];if(!gid){res.writeHead(404);return res.end()}try{const x=await rows(gid);res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,rows:x,count:x.length}))}catch(e){res.writeHead(502,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:false,error:e.message}))}}let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.join(PUB,p));if(!p.startsWith(PUB)){res.writeHead(403);return res.end()}fs.readFile(p,(e,d)=>{if(e){res.writeHead(404);return res.end('Not found')}const ext=path.extname(p);res.writeHead(200,{'Content-Type':ext==='.js'?'application/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate','Pragma':'no-cache','Expires':'0'});res.end(d)})}catch(e){res.writeHead(500);res.end(e.message)}}).listen(PORT,'0.0.0.0',()=>{
+http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.pathname==='/health'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:true}))}if(u.pathname==='/api/coletas/status'){try{const x=await fetchColetasStatus(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/carregamentos-finais'&&req.method==='GET'){try{
+  const limit=Math.max(1,Math.min(100,Number(u.searchParams.get('limit')||30)));
+  const x=await portalJson('/api/painel/carregamentos-finais?limit='+limit);
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){
+  res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}
+if(u.pathname==='/api/carregamentos-finais'&&req.method==='POST'){try{
+  const body=await readJsonLimited(req,2*1024*1024);
+  const x=await portalJson('/api/painel/carregamentos-finais',{method:'POST',body,timeout:30000});
+  res.writeHead(201,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){
+  res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}
+const carregamentoFoto=u.pathname.match(/^\/api\/carregamentos-finais\/(\d+)\/foto$/);
+if(carregamentoFoto&&req.method==='GET'){try{
+  const ru=new URL('/api/painel/carregamentos-finais/'+carregamentoFoto[1]+'/foto',COLETAS_PORTAL_URL);
+  const rr=await fetch(ru,{headers:{'User-Agent':'CONSTRULOG-Dashboard/1.0'},signal:AbortSignal.timeout(20000)});
+  if(!rr.ok)throw Object.assign(new Error('Foto não encontrada.'),{status:rr.status});
+  const buf=Buffer.from(await rr.arrayBuffer());
+  res.writeHead(200,{'Content-Type':rr.headers.get('content-type')||'image/jpeg','Content-Length':buf.length,'Cache-Control':'private, max-age=3600'});
+  return res.end(buf)
+}catch(e){
+  res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}
+if(u.pathname==='/api/bi2/baixas'){try{const x=await buildBi2Baixas(u.searchParams.get('date')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/saidas-baixas'){try{const x=await getSswMotoristasFast(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/remetentes'){try{const x=await buildBi2Remetentes(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/atrasos'){try{const x=await buildBi2Atrasos(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/api-status'){if(!BI2_API_STATE.lastCheck||Date.now()-new Date(BI2_API_STATE.lastCheck).getTime()>60*1000)await refreshBi2ApiState();res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify(BI2_API_STATE))}if(u.pathname==='/api/bi2/status'){if(!BI2_STATE.lastCheck||Date.now()-new Date(BI2_STATE.lastCheck).getTime()>5*60*1000)await refreshBi2State();res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});const x=BI2_STATE,pub={configured:x.configured,connected:x.connected,fileCount:x.fileCount||0,lastCheck:x.lastCheck,message:x.message,error:x.error||''};return res.end(JSON.stringify(pub))}if(u.pathname==='/api/ssw/status'){const configured=sswConfigured();if(!configured){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:false,connected:false,source:'google-sheets',message:'SSW aguardando credenciais'}))}try{await getSswToken(false);res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:true,connected:true,source:'ssw',message:'SSW conectado'}))}catch(e){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:true,connected:false,source:'google-sheets',message:'SSW configurado, mas a autenticação falhou',error:String(e.message||e)}))}}if(u.pathname.startsWith('/api/sheet/')){const n=u.pathname.split('/').pop(),gid=GIDS[n];if(!gid){res.writeHead(404);return res.end()}try{const x=await rows(gid);res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,rows:x,count:x.length}))}catch(e){res.writeHead(502,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:false,error:e.message}))}}let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.join(PUB,p));if(!p.startsWith(PUB)){res.writeHead(403);return res.end()}fs.readFile(p,(e,d)=>{if(e){res.writeHead(404);return res.end('Not found')}const ext=path.extname(p);res.writeHead(200,{'Content-Type':ext==='.js'?'application/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate','Pragma':'no-cache','Expires':'0'});res.end(d)})}catch(e){res.writeHead(500);res.end(e.message)}}).listen(PORT,'0.0.0.0',()=>{
   console.log('CONSTRULOG em '+PORT);probeSswAbrirScripts().then(x=>console.log('SSW abrir probe isolado: '+JSON.stringify(x))).catch(()=>{});
 
   refreshBi2State().catch(e=>console.error('BI2 SFTP monitor ERRO: '+e.message));
