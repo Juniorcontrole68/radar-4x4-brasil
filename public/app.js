@@ -181,10 +181,86 @@ async function refreshData(first=false){
     if(first)$('#loading').classList.add('hide')
   }
 }
-async function start(){init();$('#err').style.display='none';await Promise.all([refreshData(true),checkSsw(),refreshSswAtrasos(),refreshSswRemetentes(),refreshSswMotoristas()]);const view=new URLSearchParams(location.search).get('view');if(view){const b=$('.nav button[data-tab="'+view+'"]');if(b)b.click()}setInterval(()=>refreshData(false),5000);setInterval(checkSsw,60000);setInterval(refreshSswAtrasos,60000);setInterval(refreshSswRemetentes,60000);setInterval(refreshSswMotoristas,300000);window.addEventListener('focus',()=>refreshData(false));document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshData(false)})}
-function openTab(tab){const b=$('.nav button[data-tab="'+tab+'"]');if(b)return b.click();$$('.nav button').forEach(x=>x.classList.remove('active'));$$('.section').forEach(x=>x.classList.remove('active'));const s=$('#'+tab);if(s){s.classList.add('active');const titles={'ssw-atrasos':'SSW • CT-es Atrasados','ssw-remetentes':'Entregas por Cliente Remetente','ssw-remetentes-comparativo':'Comparativo de Clientes Remetentes','ssw-motoristas':'SSW • Saídas x Baixas','motoristas-evolucao':'Evolução por Motorista'};$('#pageTitle').textContent=titles[tab]||'Dashboards';if(tab==='ssw-atrasos')setTimeout(renderSswAtrasos,30);if(tab==='ssw-remetentes'||tab==='ssw-remetentes-comparativo')setTimeout(renderRemetentes,30);if(tab==='ssw-motoristas')setTimeout(()=>{renderSswMotoristas();refreshSswMotoristas()},30);if(tab==='motoristas-evolucao')setTimeout(()=>{renderDriverProgress();refreshSswMotoristas()},30)}}
+function loadHeavyForTab(tab){
+  if(tab==='dashboards'){
+    setTimeout(()=>refreshSswMotoristas(),100);
+    setTimeout(()=>refreshSswAtrasos(),450);
+    setTimeout(()=>refreshSswRemetentes(),900);
+  }else if(tab==='ssw-motoristas'||tab==='motoristas-evolucao'){
+    setTimeout(()=>refreshSswMotoristas(),80);
+  }else if(tab==='ssw-atrasos'){
+    setTimeout(()=>refreshSswAtrasos(),80);
+  }else if(tab==='ssw-remetentes'||tab==='ssw-remetentes-comparativo'){
+    setTimeout(()=>refreshSswRemetentes(),80);
+  }
+}
+async function start(){
+  init();
+  $('#err').style.display='none';
+  checkSsw();
+  await refreshData(true);
+  const view=new URLSearchParams(location.search).get('view');
+  if(view){
+    const b=$('.nav button[data-tab="'+view+'"]');
+    if(b)b.click();else openTab(view)
+  }
+  loadHeavyForTab($('.section.active')?.id||'dashboard');
+  setInterval(()=>{if(!document.hidden)refreshData(false)},5000);
+  setInterval(()=>{if(!document.hidden)checkSsw()},60000);
+  setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&['ssw-atrasos','dashboards'].includes(t))refreshSswAtrasos()},120000);
+  setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&['ssw-remetentes','ssw-remetentes-comparativo','dashboards'].includes(t))refreshSswRemetentes()},120000);
+  setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&['ssw-motoristas','motoristas-evolucao','dashboards'].includes(t))refreshSswMotoristas()},300000);
+  window.addEventListener('focus',()=>refreshData(false));
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshData(false)})
+}
+function openTab(tab){
+  const b=$('.nav button[data-tab="'+tab+'"]');
+  if(b)return b.click();
+  $$('.nav button').forEach(x=>x.classList.remove('active'));
+  $$('.section').forEach(x=>x.classList.remove('active'));
+  const s=$('#'+tab);
+  if(!s)return;
+  s.classList.add('active');
+  const titles={
+    'ssw-atrasos':'SSW • CT-es Atrasados',
+    'ssw-remetentes':'Entregas por Cliente Remetente',
+    'ssw-remetentes-comparativo':'Comparativo de Clientes Remetentes',
+    'ssw-motoristas':'SSW • Saídas x Baixas',
+    'motoristas-evolucao':'Evolução por Motorista'
+  };
+  $('#pageTitle').textContent=titles[tab]||'Dashboards';
+  if(tab==='ssw-atrasos')setTimeout(renderSswAtrasos,30);
+  if(tab==='ssw-remetentes'||tab==='ssw-remetentes-comparativo')setTimeout(renderRemetentes,30);
+  if(tab==='ssw-motoristas')setTimeout(renderSswMotoristas,30);
+  if(tab==='motoristas-evolucao')setTimeout(renderDriverProgress,30);
+  loadHeavyForTab(tab);
+}
 $$('.dash-open').forEach(b=>b.onclick=()=>openTab(b.dataset.open));
-$('.nav button').forEach(b=>b.onclick=()=>{$('.nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');$('.section').forEach(x=>x.classList.remove('active'));$('#'+b.dataset.tab).classList.add('active');$('#pageTitle').textContent=b.textContent;setTimeout(()=>{update();if(b.dataset.tab==='operacoes')refreshData(false);if(b.dataset.tab==='dashboards'){renderSswAtrasos();renderRemetentes();renderSswMotoristas();renderDriverProgress()}},30)});
-['#driver','#branch'].forEach(x=>$(x).onchange=update);['#from','#to'].forEach(x=>$(x).onchange=()=>{refreshData(false);refreshSswAtrasos();refreshSswRemetentes();refreshSswMotoristas()});if($('#remClientA'))$('#remClientA').onchange=renderRemCompare;if($('#remClientB'))$('#remClientB').onchange=renderRemCompare;window.onresize=()=>{clearTimeout(window.rz);window.rz=setTimeout(update,150)};
+$$('.nav button').forEach(b=>b.onclick=()=>{
+  $$('.nav button').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  $$('.section').forEach(x=>x.classList.remove('active'));
+  $('#'+b.dataset.tab).classList.add('active');
+  $('#pageTitle').textContent=b.textContent;
+  setTimeout(()=>{
+    update();
+    if(b.dataset.tab==='operacoes')refreshData(false);
+    if(b.dataset.tab==='dashboards'){
+      renderSswAtrasos();
+      renderRemetentes();
+      renderSswMotoristas();
+      renderDriverProgress();
+    }
+    loadHeavyForTab(b.dataset.tab);
+  },30)
+});
+['#driver','#branch'].forEach(x=>$(x).onchange=update);
+['#from','#to'].forEach(x=>$(x).onchange=()=>{
+  refreshData(false);
+  loadHeavyForTab($('.section.active')?.id||'dashboard')
+});
+if($('#remClientA'))$('#remClientA').onchange=renderRemCompare;
+if($('#remClientB'))$('#remClientB').onchange=renderRemCompare;
+window.onresize=()=>{clearTimeout(window.rz);window.rz=setTimeout(update,150)};
 $('#mobile').onclick=()=>alert(/iphone|ipad|ipod/i.test(navigator.userAgent)?'No Safari: toque em Compartilhar e depois em Adicionar à Tela de Início.':'No Chrome: toque no menu ⋮ e escolha Adicionar à tela inicial.');
 start();
