@@ -347,23 +347,51 @@ function renderLoadingRecords(rows){
   const info=$('#hubLoadInfo');
   if(info)info.textContent=rows.length?('Último: '+(rows[0].motorista||'—')+' • '+nf(Number(rows[0].quantidade_entregas||0))+' entregas • '+loadingDateTime(rows[0].capturada_em)):'Nenhum registro realizado ainda.';
 }
-async function refreshLoadingRecords(){
+async function refreshLoadingRecords(useFilters=true){
   if(window.__loadingRecordsBusy)return;
   window.__loadingRecordsBusy=true;
   try{
-    const r=await fetch('/api/carregamentos-finais?limit=30&t='+Date.now(),{cache:'no-store'});
+    const q=new URLSearchParams({limit:'30',t:String(Date.now())});
+    const motorista=useFilters?($('#loadFilterDriver')?.value||'').trim():'';
+    const data=useFilters?($('#loadFilterDate')?.value||'').trim():'';
+    if(motorista)q.set('motorista',motorista);
+    if(data)q.set('data',data);
+
+    const r=await fetch('/api/carregamentos-finais?'+q.toString(),{cache:'no-store'});
     const j=await r.json();
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar registros.');
-    renderLoadingRecords(Array.isArray(j.rows)?j.rows:[])
+    const rows=Array.isArray(j.rows)?j.rows:[];
+    renderLoadingRecords(rows);
+
+    const fi=$('#loadFilterInfo');
+    if(fi){
+      const parts=[];
+      if(motorista)parts.push('motorista: '+motorista);
+      if(data){
+        const p=data.split('-');
+        parts.push('data: '+(p.length===3?p[2]+'/'+p[1]+'/'+p[0]:data))
+      }
+      fi.textContent=parts.length
+        ? nf(rows.length)+' registro(s) encontrado(s) • '+parts.join(' • ')
+        : 'Mostrando os últimos registros.'
+    }
   }catch(e){
     const box=$('#loadRecords');if(box)box.innerHTML='<div class="muted">Não foi possível carregar os registros: '+safe(e.message)+'</div>';
     const info=$('#hubLoadInfo');if(info)info.textContent='Registros de carregamento indisponíveis no momento.'
   }finally{window.__loadingRecordsBusy=false}
 }
 function setupLoadingForm(){
-  const photo=$('#loadPhoto'),form=$('#loadFinalForm'),refresh=$('#loadRefresh');
+  const photo=$('#loadPhoto'),form=$('#loadFinalForm'),refresh=$('#loadRefresh'),search=$('#loadSearch'),clear=$('#loadClear');
   if(!photo||!form)return;
-  if(refresh)refresh.onclick=refreshLoadingRecords;
+  if(refresh)refresh.onclick=()=>refreshLoadingRecords(true);
+  if(search)search.onclick=()=>refreshLoadingRecords(true);
+  if(clear)clear.onclick=()=>{
+    if($('#loadFilterDriver'))$('#loadFilterDriver').value='';
+    if($('#loadFilterDate'))$('#loadFilterDate').value='';
+    refreshLoadingRecords(true)
+  };
+  if($('#loadFilterDriver'))$('#loadFilterDriver').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();refreshLoadingRecords(true)}});
+  if($('#loadFilterDate'))$('#loadFilterDate').addEventListener('change',()=>refreshLoadingRecords(true));
   photo.onchange=async()=>{
     const file=photo.files&&photo.files[0];
     const msg=$('#loadMsg');
@@ -399,7 +427,7 @@ function setupLoadingForm(){
       if(msg){msg.style.color='#15803d';msg.textContent='✓ Final do carregamento salvo com sucesso.'}
       form.reset();window.__loadPhotoData='';window.__loadCapturedAt='';
       $('#loadPreview').style.display='none';$('#loadPreviewImg').removeAttribute('src');
-      await refreshLoadingRecords()
+      await refreshLoadingRecords(true)
     }catch(e){
       if(msg){msg.style.color='#b91c1c';msg.textContent=e.message}
     }finally{btn.disabled=false}
@@ -411,10 +439,10 @@ function loadHeavyForTab(tab){
     setTimeout(()=>refreshSswMotoristas(),100);
     setTimeout(()=>refreshSswAtrasos(),450);
     setTimeout(()=>refreshSswRemetentes(),900);
-    setTimeout(()=>refreshLoadingRecords(),1200);
+    setTimeout(()=>refreshLoadingRecords(false),1200);
   }else if(tab==='conferencia'){
     loadingDriverOptions();
-    setTimeout(()=>refreshLoadingRecords(),50);
+    setTimeout(()=>refreshLoadingRecords(true),50);
   }else if(tab==='ssw-motoristas'||tab==='motoristas-evolucao'){
     setTimeout(()=>refreshSswMotoristas(),80);
   }else if(tab==='ssw-atrasos'){
