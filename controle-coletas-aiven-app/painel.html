@@ -149,8 +149,8 @@ async function abrirModulo(btn){
   }
 }
 document.querySelectorAll('.tab').forEach(btn=>{
+  // Um único evento evita abertura dupla no celular (touchend + click).
   btn.addEventListener('click',e=>{e.preventDefault();abrirModulo(btn)});
-  btn.addEventListener('touchend',e=>{e.preventDefault();abrirModulo(btn)},{passive:false});
 });
 
 function coletaLabel(c){
