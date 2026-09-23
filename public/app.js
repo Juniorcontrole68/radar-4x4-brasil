@@ -53,6 +53,7 @@ const PERMISSION_OPTIONS=[
   ['ssw_saidas','SSW • Saídas x Baixas'],
   ['evolucao','Evolução e previsão por motorista'],
   ['cidade_destino','Entregas por cidade destino'],
+  ['roteirizador','Roteirizador de romaneios'],
   ['final_carregamento','Final do carregamento'],
   ['operacional','Operacional / Entregas'],
   ['financeiro','Financeiro'],
@@ -79,6 +80,7 @@ function tabAllowed(tab){
     'ssw-remetentes-comparativo':'remetentes_comparativo'
   };
   if(tab==='usuarios')return !!AUTH?.is_admin;
+  if(tab==='roteirizador')return hasPerm('roteirizador');
   if(tab==='agendamentos-copia')return hasAnyPerm(['agendamentos','agendamentos_copia']);
   if(tab==='dashboards')return AUTH?.is_admin||PERMISSION_OPTIONS.some(([p])=>hasPerm(p)&&p!=='dashboard');
   return map[tab]?hasPerm(map[tab]):false
@@ -122,12 +124,14 @@ function applyPermissions(){
 
   const cu=document.querySelector('#currentUser');
   if(cu)cu.textContent=AUTH?(AUTH.username+(AUTH.is_admin?' • Administrador':'')):'';
+  const rb=document.querySelector('#routeTopBtn');
+  if(rb)rb.style.display=hasPerm('roteirizador')?'':'none';
   const ub=document.querySelector('#usersTopBtn');
   if(ub)ub.style.display=AUTH?.is_admin?'':'none';
 }
 function firstAllowedTab(){
   const btn=[...document.querySelectorAll('.nav button')].find(b=>b.style.display!=='none'&&tabAllowed(b.dataset.tab));
-  return btn?.dataset.tab||null
+  return btn?.dataset.tab||(hasPerm('roteirizador')?'roteirizador':null)
 }
 function whatsappShare(username=''){
   const msg=username
@@ -217,6 +221,7 @@ async function showAuthenticatedApp(user){
   setupUserAdmin();
   setupLoadingForm();
   setupAgCopy();
+  setupRoteirizador();
   if(AUTH.is_admin)loadDashboardUsers();
   if(!window.__appStarted){
     window.__appStarted=true;
@@ -826,6 +831,157 @@ function setupLoadingForm(){
   }
 }
 
+
+let ROUTE_MANIFESTS=[],ROUTE_PLAN=null,ROUTE_MANUAL_ORDER=[],ROUTE_MAP=null,ROUTE_LAYER=null;
+function routeFmtKm(m){return Number.isFinite(Number(m))?(Number(m)/1000).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})+' km':'—'}
+function routeDistance(order,m){
+  if(!order?.length||!m?.length)return 0;
+  let d=Number(m[0]?.[order[0]]||0);
+  for(let i=1;i<order.length;i++)d+=Number(m[order[i-1]]?.[order[i]]||0);
+  d+=Number(m[order[order.length-1]]?.[0]||0);
+  return d
+}
+function routeLegs(order){
+  if(!ROUTE_PLAN)return[];
+  const seq=[0,...order,0],out=[];
+  for(let i=1;i<seq.length;i++){
+    const a=seq[i-1],b=seq[i],p=ROUTE_PLAN.points[b]||{},from=ROUTE_PLAN.points[a]||{};
+    out.push({fromIndex:a,toIndex:b,from:from.label||'',to:p.label||'',meters:Number(ROUTE_PLAN.matrix[a]?.[b]||0),point:p})
+  }
+  return out
+}
+function routePopulateManifest(){
+  const driver=$('#routeDriver')?.value||'',sel=$('#routeManifest');if(!sel)return;
+  const rows=ROUTE_MANIFESTS.filter(x=>!driver||x.motorista===driver);
+  sel.innerHTML='<option value="">Selecione o romaneio</option>'+rows.map(x=>'<option value="'+safe(x.romaneio)+'">'+safe(x.romaneio)+' • '+nf(x.entregas)+' entrega(s)'+(x.veiculo?' • '+safe(x.veiculo):'')+'</option>').join('');
+}
+function routePopulateDrivers(){
+  const sel=$('#routeDriver');if(!sel)return;
+  const cur=sel.value,drivers=[...new Set(ROUTE_MANIFESTS.map(x=>x.motorista).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+  sel.innerHTML='<option value="">Selecione o motorista</option>'+drivers.map(x=>'<option>'+safe(x)+'</option>').join('');
+  if(drivers.includes(cur))sel.value=cur;
+  routePopulateManifest()
+}
+async function loadRouteManifests(force=false){
+  if(!hasPerm('roteirizador'))return;
+  const date=$('#routeDate')?.value||iso(new Date()),status=$('#routeStatus');
+  if(status)status.textContent='Carregando romaneios do SSW…';
+  try{
+    const r=await fetch('/api/roteirizador/lista?date='+encodeURIComponent(date)+(force?'&t='+Date.now():''),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível carregar os romaneios.');
+    ROUTE_MANIFESTS=j.rows||[];
+    routePopulateDrivers();
+    if(status)status.textContent=ROUTE_MANIFESTS.length?nf(ROUTE_MANIFESTS.length)+' romaneio(s) disponível(is) para '+date.split('-').reverse().join('/')+'.':'Nenhum romaneio encontrado para esta data.'
+  }catch(e){if(status)status.textContent='Erro ao carregar romaneios: '+e.message}
+}
+function routeRenderMap(){
+  const box=$('#routeMap');if(!box||!ROUTE_PLAN)return;
+  if(typeof L==='undefined'){box.innerHTML='<div style="padding:24px" class="muted">Mapa indisponível. A sequência e as distâncias continuam disponíveis abaixo.</div>';return}
+  if(!ROUTE_MAP){
+    ROUTE_MAP=L.map(box,{zoomControl:true});
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(ROUTE_MAP)
+  }
+  if(ROUTE_LAYER)ROUTE_LAYER.remove();
+  ROUTE_LAYER=L.layerGroup().addTo(ROUTE_MAP);
+  const order=ROUTE_PLAN.optimizedOrder||[],points=ROUTE_PLAN.points||[];
+  const base=points[0];
+  L.marker([base.lat,base.lon]).addTo(ROUTE_LAYER).bindTooltip('Base • Av. do Algodão, 316',{permanent:false});
+  order.forEach((idx,pos)=>{
+    const p=points[idx],icon=L.divIcon({className:'',html:'<div style="background:#0f766e;color:#fff;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-weight:800;border:2px solid #fff;box-shadow:0 1px 5px #0005">'+(pos+1)+'</div>',iconSize:[28,28],iconAnchor:[14,14]});
+    L.marker([p.lat,p.lon],{icon}).addTo(ROUTE_LAYER).bindPopup('<b>'+safe(p.destinatario||p.label)+'</b><br>'+safe((p.cidade||'')+(p.uf?' / '+p.uf:''))+'<br>'+safe(p.endereco||p.cep||'Localização aproximada'))
+  });
+  const coords=(ROUTE_PLAN.geometry?.coordinates||[]).map(x=>[x[1],x[0]]);
+  if(coords.length)L.polyline(coords,{weight:5,opacity:.8}).addTo(ROUTE_LAYER);
+  const bounds=L.latLngBounds([[base.lat,base.lon],...order.map(i=>[points[i].lat,points[i].lon])]);
+  if(bounds.isValid())ROUTE_MAP.fitBounds(bounds.pad(.12));
+  setTimeout(()=>ROUTE_MAP.invalidateSize(),80)
+}
+function routePrecision(p){
+  const approx=p.precision==='cidade'||p.precision==='cliente';
+  const label=p.precision==='endereco'?'endereço':p.precision==='cep'?'CEP':p.precision==='cliente'?'cliente/cidade':'cidade';
+  return '<span class="precision-badge '+(approx?'approx':'')+'">'+label+'</span>'
+}
+function routeRenderBest(){
+  if(!ROUTE_PLAN)return;
+  const legs=routeLegs(ROUTE_PLAN.optimizedOrder||[]),table=$('#routeBestTable');if(!table)return;
+  let html='<thead><tr><th>Ordem</th><th>Destino</th><th>Cidade</th><th>CT-e</th><th>NF</th><th>Precisão</th><th>Distância do trecho</th></tr></thead><tbody>';
+  let seq=0;
+  for(const leg of legs){
+    if(leg.toIndex===0){
+      html+='<tr><td>↩</td><td><b>Retorno à Base Americana</b></td><td>Americana/SP</td><td>—</td><td>—</td><td><span class="precision-badge">base</span></td><td><b>'+routeFmtKm(leg.meters)+'</b></td></tr>';
+      continue
+    }
+    seq++;const p=leg.point||{};
+    html+='<tr><td><b>'+seq+'</b></td><td>'+safe(p.destinatario||p.label||'')+'</td><td>'+safe((p.cidade||'')+(p.uf?' / '+p.uf:''))+'</td><td>'+safe(p.ctrc||'')+'</td><td>'+safe(p.nf||'')+'</td><td>'+routePrecision(p)+'</td><td><b>'+routeFmtKm(leg.meters)+'</b></td></tr>'
+  }
+  table.innerHTML=html+'</tbody>'
+}
+function routeMove(pos,dir){
+  const n=pos+dir;if(n<0||n>=ROUTE_MANUAL_ORDER.length)return;
+  [ROUTE_MANUAL_ORDER[pos],ROUTE_MANUAL_ORDER[n]]=[ROUTE_MANUAL_ORDER[n],ROUTE_MANUAL_ORDER[pos]];
+  routeRenderManual()
+}
+function routeRenderManual(){
+  if(!ROUTE_PLAN)return;
+  const box=$('#routeManualList'),m=ROUTE_PLAN.matrix||[],points=ROUTE_PLAN.points||[],order=ROUTE_MANUAL_ORDER;
+  const legs=routeLegs(order),manual=routeDistance(order,m),best=Number(ROUTE_PLAN.optimizedDistanceMeters||0),diff=manual-best;
+  if($('#routeManualKm'))$('#routeManualKm').textContent=routeFmtKm(manual);
+  if($('#routeDifferenceKm'))$('#routeDifferenceKm').textContent=(diff>=0?'+':'')+routeFmtKm(diff);
+  if($('#routeCompare'))$('#routeCompare').innerHTML=diff>50?'A ordem atual acrescenta <strong>'+routeFmtKm(diff)+'</strong> em relação à menor rota. A menor distância continua sendo a referência recomendada.':'A ordem atual está praticamente igual à menor rota encontrada.';
+  if(!box)return;
+  box.innerHTML=order.map((idx,pos)=>{
+    const p=points[idx]||{},leg=legs[pos]||{};
+    return '<div class="route-stop"><div class="seq">'+(pos+1)+'</div><div><b>'+safe(p.destinatario||p.label||'')+'</b><div class="meta">'+safe((p.cidade||'')+(p.uf?' / '+p.uf:''))+' • '+routePrecision(p)+'</div><div class="meta">CT-e '+safe(p.ctrc||'—')+' • NF '+safe(p.nf||'—')+'</div></div><div><div class="km">'+routeFmtKm(leg.meters)+'</div><div class="move"><button type="button" data-route-up="'+pos+'" '+(pos===0?'disabled':'')+'>↑</button><button type="button" data-route-down="'+pos+'" '+(pos===order.length-1?'disabled':'')+'>↓</button></div></div></div>'
+  }).join('')+'<div class="route-stop"><div class="seq">↩</div><div><b>Retorno à Base Americana</b><div class="meta">Av. do Algodão, 316, Americana/SP</div></div><div class="km">'+routeFmtKm(legs[legs.length-1]?.meters||0)+'</div></div>';
+  box.querySelectorAll('[data-route-up]').forEach(b=>b.onclick=()=>routeMove(Number(b.dataset.routeUp),-1));
+  box.querySelectorAll('[data-route-down]').forEach(b=>b.onclick=()=>routeMove(Number(b.dataset.routeDown),1))
+}
+function routeGoogleMaps(){
+  if(!ROUTE_PLAN)return;
+  const pts=ROUTE_PLAN.points||[],order=ROUTE_PLAN.optimizedOrder||[],base=pts[0];
+  const origin=base.lat+','+base.lon,dest=origin,ways=order.map(i=>pts[i].lat+','+pts[i].lon).join('|');
+  const url='https://www.google.com/maps/dir/?api=1&origin='+encodeURIComponent(origin)+'&destination='+encodeURIComponent(dest)+'&waypoints='+encodeURIComponent(ways)+'&travelmode=driving';
+  window.open(url,'_blank','noopener')
+}
+function routeRenderPlan(){
+  if(!ROUTE_PLAN)return;
+  if($('#routeDeliveries'))$('#routeDeliveries').textContent=nf(ROUTE_PLAN.deliveries||0);
+  if($('#routeOptimizedKm'))$('#routeOptimizedKm').textContent=routeFmtKm(ROUTE_PLAN.optimizedDistanceMeters||0);
+  if($('#routeApprox'))$('#routeApprox').textContent=nf(ROUTE_PLAN.approximateStops||0);
+  if($('#routeMethod'))$('#routeMethod').textContent=(ROUTE_PLAN.method||'otimizada').toUpperCase()+' • '+(ROUTE_PLAN.matrixSource||'');
+  const w=$('#routeWarning');
+  if(w){
+    const n=Number(ROUTE_PLAN.approximateStops||0);
+    w.style.display=n?'':'none';
+    w.textContent=n?n+' parada(s) não possuem rua/CEP confirmado no dado atual do SSW. Elas foram localizadas por cliente/cidade; a tela sinaliza isso para não tratar a distância como exata.':''
+  }
+  routeRenderBest();routeRenderManual();routeRenderMap()
+}
+async function calculateRoute(){
+  const date=$('#routeDate')?.value||'',rom=$('#routeManifest')?.value||'',status=$('#routeStatus');
+  if(!rom){if(status)status.textContent='Selecione um motorista e um romaneio.';return}
+  const btn=$('#routeCalculate');if(btn){btn.disabled=true;btn.textContent='Calculando…'}
+  if(status)status.textContent='Localizando clientes e calculando a menor sequência. Na primeira consulta isso pode levar alguns segundos…';
+  try{
+    const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(date)+'&romaneio='+encodeURIComponent(rom),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível calcular a rota.');
+    ROUTE_PLAN=j;ROUTE_MANUAL_ORDER=(j.originalOrder||[]).slice();
+    if(status)status.textContent=(j.motorista||'Motorista')+' • '+(j.romaneio||'')+' • '+nf(j.deliveries||0)+' entrega(s) • base fixa em Americana.';
+    routeRenderPlan()
+  }catch(e){if(status)status.textContent='Erro ao calcular rota: '+e.message}
+  finally{if(btn){btn.disabled=false;btn.textContent='Otimizar rota'}}
+}
+function setupRoteirizador(){
+  const d=$('#routeDate');if(d&&!d.value)d.value=iso(new Date());
+  if(d)d.onchange=()=>{ROUTE_PLAN=null;ROUTE_MANUAL_ORDER=[];loadRouteManifests(true)};
+  if($('#routeDriver'))$('#routeDriver').onchange=routePopulateManifest;
+  if($('#routeCalculate'))$('#routeCalculate').onclick=calculateRoute;
+  if($('#routeUseBest'))$('#routeUseBest').onclick=()=>{if(ROUTE_PLAN){ROUTE_MANUAL_ORDER=(ROUTE_PLAN.optimizedOrder||[]).slice();routeRenderManual()}};
+  if($('#routeOpenGoogle'))$('#routeOpenGoogle').onclick=routeGoogleMaps
+}
+
 function loadHeavyForTab(tab){
   if(tab==='dashboards'){
     if(hasAnyPerm(['ssw_saidas','evolucao','cidade_destino']))setTimeout(()=>refreshSswMotoristas(),100);
@@ -838,6 +994,8 @@ function loadHeavyForTab(tab){
     setTimeout(()=>refreshLoadingRecords(true),50);
   }else if(tab==='agendamentos-copia'&&hasAnyPerm(['agendamentos','agendamentos_copia'])){
     setTimeout(()=>refreshAgCopy(false),50);
+  }else if(tab==='roteirizador'&&hasPerm('roteirizador')){
+    setTimeout(()=>loadRouteManifests(false),50);
   }else if((tab==='ssw-motoristas'||tab==='motoristas-evolucao')&&tabAllowed(tab)){
     setTimeout(()=>refreshSswMotoristas(),80);
   }else if(tab==='ssw-atrasos'&&hasPerm('ssw_atrasos')){
@@ -894,6 +1052,7 @@ function openTab(tab){
     'ssw-motoristas':'SSW • Saídas x Baixas',
     'motoristas-evolucao':'Evolução por Motorista',
     'conferencia':'Final do Carregamento',
+    'roteirizador':'Roteirizador SSW',
     'agendamentos-copia':'Consulta de Agendamentos',
     'usuarios':'Usuários e Acessos'
   };
@@ -940,6 +1099,7 @@ if($('#remClientB'))$('#remClientB').onchange=renderRemCompare;
 window.onresize=()=>{clearTimeout(window.rz);window.rz=setTimeout(update,150)};
 $('#mobile').onclick=()=>alert(/iphone|ipad|ipod/i.test(navigator.userAgent)?'No Safari: toque em Compartilhar e depois em Adicionar à Tela de Início.':'No Chrome: toque no menu ⋮ e escolha Adicionar à tela inicial.');
 if($('#shareWhatsapp'))$('#shareWhatsapp').onclick=()=>whatsappShare();
+if($('#routeTopBtn'))$('#routeTopBtn').onclick=()=>{if(hasPerm('roteirizador'))openTab('roteirizador')};
 if($('#usersTopBtn'))$('#usersTopBtn').onclick=()=>{if(AUTH?.is_admin)openTab('usuarios')};
 if($('#logoutBtn'))$('#logoutBtn').onclick=async()=>{try{await fetch('/api/auth/logout',{method:'POST'})}catch{}setDashboardSessionToken('');location.reload()};
 if(DASH_EMBEDDED)bootstrapEmbeddedAuth();else bootstrapAuth();
