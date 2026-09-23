@@ -809,6 +809,13 @@ async function buildSswMotoristas(from='',to=''){
     });
   }
 
+  const trackDiag={};
+  for(const r of rows){
+    if(!r.trackingOk)continue;
+    const k=(r.ocorrenciaCodigo?String(r.ocorrenciaCodigo)+' | ':'')+(r.ocorrencia||'(sem ocorrência)');
+    trackDiag[k]=(trackDiag[k]||0)+1;
+  }
+  console.log('TRACKING ATUAL DETALHES: '+JSON.stringify({consultados:rows.length,ok:trackingOk,status:trackDiag,amostra:rows.filter(x=>x.trackingOk).slice(0,40).map(x=>({ctrc:x.ctrc,motorista:x.motorista,entregue:x.entregue,saida:x.saida,codigo:x.ocorrenciaCodigo,ocorrencia:x.ocorrencia,data:x.dataOcorrencia}))}));
   const saiuRows=rows.filter(x=>x.saida||x.entregue);
   const groups=new Map();
   saiuRows.forEach(r=>{
