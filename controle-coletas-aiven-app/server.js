@@ -90,6 +90,25 @@ function parseImageDataUrl(dataUrl) {
   return { mime, buffer };
 }
 
+function parseDocumentDataUrl(dataUrl) {
+  const m = String(dataUrl || '').match(/^data:(application\/pdf|image\/(?:jpeg|jpg|png|webp));base64,([A-Za-z0-9+/=\r\n]+)$/i);
+  if (!m) {
+    const e = new Error('Documento inválido. Envie PDF, JPG, PNG ou WEBP.');
+    e.status = 400;
+    throw e;
+  }
+  let mime = m[1].toLowerCase();
+  if (mime === 'image/jpg') mime = 'image/jpeg';
+  const buffer = Buffer.from(m[2].replace(/\s+/g, ''), 'base64');
+  if (!buffer.length || buffer.length > 7 * 1024 * 1024) {
+    const e = new Error('O documento deve ter no máximo 7 MB.');
+    e.status = 413;
+    throw e;
+  }
+  return { mime, buffer };
+}
+
+
 
 function dashboardHashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const hash = crypto.scryptSync(String(password), salt, 64).toString('hex');
@@ -281,6 +300,28 @@ async function start() {
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS data_recebimento DATE');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS previsao_pagamento_fatura DATE');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS destinatario TEXT');
+  await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS motorista_cpf TEXT');
+  await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS placa_carreta TEXT');
+  await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS capacidade_carga_cavalo TEXT');
+  await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS eixos_cavalo INTEGER');
+  await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS capacidade_carga_carreta TEXT');
+  await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS eixos_carreta INTEGER');
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS coleta_documentos (
+      id BIGSERIAL PRIMARY KEY,
+      coleta_id TEXT NOT NULL,
+      tipo TEXT NOT NULL CHECK (tipo IN ('motorista','cavalo','carreta')),
+      nome_arquivo TEXT NOT NULL,
+      mime TEXT NOT NULL,
+      arquivo BYTEA NOT NULL,
+      bytes INTEGER NOT NULL DEFAULT 0,
+      criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (coleta_id, tipo)
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_coleta_documentos_coleta ON coleta_documentos (coleta_id)');
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS carregamentos_finais (
       id BIGSERIAL PRIMARY KEY,
@@ -533,6 +574,101 @@ async function start() {
           return sendJson(res, 200, { ok: true, rows: r.rows });
         } catch (e) {
           return sendJson(res, 500, { ok: false, error: e.message || 'Não foi possível carregar motoristas e veículos.' });
+        }
+      }
+
+
+      const dadosDocumentaisMatch = u.pathname.match(/^\/api\/painel\/coletas-documentais\/([^/]+)$/);
+      if (req.method === 'PATCH' && dadosDocumentaisMatch) {
+        try {
+          const id = decodeURIComponent(dadosDocumentaisMatch[1]);
+          const body = await readJsonBodyLimited(req, 256 * 1024);
+          const cpf = String(body.motorista_cpf || '').replace(/\D/g, '').slice(0, 11);
+          const placaCarreta = String(body.placa_carreta || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7);
+          const capacidadeCavalo = String(body.capacidade_carga_cavalo || '').trim().slice(0, 80);
+          const capacidadeCarreta = String(body.capacidade_carga_carreta || '').trim().slice(0, 80);
+          const intOrNull = v => {
+            if (v === '' || v === null || v === undefined) return null;
+            const n = Number(v);
+            return Number.isInteger(n) && n >= 0 && n <= 20 ? n : null;
+          };
+          const eixosCavalo = intOrNull(body.eixos_cavalo);
+          const eixosCarreta = intOrNull(body.eixos_carreta);
+          let eixosTotal = intOrNull(body.eixos_total);
+          if (eixosTotal === null && (eixosCavalo !== null || eixosCarreta !== null)) {
+            eixosTotal = Number(eixosCavalo || 0) + Number(eixosCarreta || 0);
+          }
+          const sql = 'UPDATE coletas SET motorista_cpf=$1, placa_carreta=$2, capacidade_carga_cavalo=$3, ' +
+            'eixos_cavalo=$4, capacidade_carga_carreta=$5, eixos_carreta=$6, ' +
+            'eixos=COALESCE($7,eixos), updated_at=NOW() WHERE id::text=$8 ' +
+            'RETURNING id::text AS id, motorista, motorista_cpf, placa, placa_carreta, ' +
+            'capacidade_carga_cavalo, eixos_cavalo, capacidade_carga_carreta, eixos_carreta, eixos';
+          const r = await pool.query(sql, [
+            cpf || null, placaCarreta || null, capacidadeCavalo || null, eixosCavalo,
+            capacidadeCarreta || null, eixosCarreta, eixosTotal, id
+          ]);
+          if (!r.rowCount) return sendJson(res, 404, { ok:false, error:'Coleta não encontrada.' });
+          return sendJson(res, 200, { ok:true, ...r.rows[0] });
+        } catch (e) {
+          return sendJson(res, e.status || 500, { ok:false, error:e.message || 'Não foi possível salvar os dados documentais.' });
+        }
+      }
+
+      const docsListMatch = u.pathname.match(/^\/api\/painel\/coletas-documentos\/([^/]+)$/);
+      if (req.method === 'GET' && docsListMatch) {
+        try {
+          const id = decodeURIComponent(docsListMatch[1]);
+          const r = await pool.query(
+            'SELECT tipo, nome_arquivo, mime, bytes, criado_em, atualizado_em FROM coleta_documentos WHERE coleta_id=$1 ORDER BY tipo',
+            [id]
+          );
+          return sendJson(res, 200, { ok:true, rows:r.rows });
+        } catch (e) {
+          return sendJson(res, 500, { ok:false, error:e.message || 'Não foi possível consultar os documentos.' });
+        }
+      }
+
+      if (req.method === 'POST' && docsListMatch) {
+        try {
+          const id = decodeURIComponent(docsListMatch[1]);
+          const exists = await pool.query('SELECT 1 FROM coletas WHERE id::text=$1 LIMIT 1',[id]);
+          if (!exists.rowCount) return sendJson(res,404,{ok:false,error:'Coleta não encontrada.'});
+          const body = await readJsonBodyLimited(req, 10 * 1024 * 1024);
+          const tipo = String(body.tipo || '').toLowerCase();
+          if (!['motorista','cavalo','carreta'].includes(tipo)) {
+            return sendJson(res,400,{ok:false,error:'Tipo de documento inválido.'});
+          }
+          const doc = parseDocumentDataUrl(body.arquivo);
+          const nome = String(body.nome_arquivo || ('documento-'+tipo)).trim().slice(0,180) || ('documento-'+tipo);
+          const sql = 'INSERT INTO coleta_documentos(coleta_id,tipo,nome_arquivo,mime,arquivo,bytes) VALUES($1,$2,$3,$4,$5,$6) ' +
+            'ON CONFLICT (coleta_id,tipo) DO UPDATE SET nome_arquivo=EXCLUDED.nome_arquivo,mime=EXCLUDED.mime,' +
+            'arquivo=EXCLUDED.arquivo,bytes=EXCLUDED.bytes,atualizado_em=NOW()';
+          await pool.query(sql,[id,tipo,nome,doc.mime,doc.buffer,doc.buffer.length]);
+          return sendJson(res,201,{ok:true,tipo,nome_arquivo:nome,mime:doc.mime,bytes:doc.buffer.length});
+        } catch (e) {
+          return sendJson(res,e.status || 500,{ok:false,error:e.message || 'Não foi possível salvar o documento.'});
+        }
+      }
+
+      const docFileMatch = u.pathname.match(/^\/api\/painel\/coletas-documentos\/([^/]+)\/(motorista|cavalo|carreta)$/);
+      if (req.method === 'GET' && docFileMatch) {
+        try {
+          const id=decodeURIComponent(docFileMatch[1]),tipo=docFileMatch[2];
+          const r=await pool.query(
+            'SELECT nome_arquivo,mime,arquivo FROM coleta_documentos WHERE coleta_id=$1 AND tipo=$2 LIMIT 1',
+            [id,tipo]
+          );
+          if(!r.rowCount) return sendJson(res,404,{ok:false,error:'Documento não encontrado.'});
+          const row=r.rows[0],safeName=String(row.nome_arquivo||('documento-'+tipo)).replace(/["\r\n]/g,'_');
+          res.writeHead(200,{
+            'Content-Type':row.mime || 'application/octet-stream',
+            'Content-Length':row.arquivo.length,
+            'Content-Disposition':'inline; filename="'+safeName+'"',
+            'Cache-Control':'private, max-age=300'
+          });
+          return res.end(row.arquivo);
+        } catch(e) {
+          return sendJson(res,500,{ok:false,error:e.message || 'Não foi possível abrir o documento.'});
         }
       }
 
