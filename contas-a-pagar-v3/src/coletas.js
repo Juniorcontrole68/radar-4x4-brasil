@@ -898,8 +898,7 @@ try{
         function bindRefreshDocumentButton(){
           const btn=byId('doc_refresh_data');
           if(!btn)return;
-          btn.dataset.boundRefresh='1';
-          btn.onclick=e=>{e.preventDefault();refreshDocumentData();return false}
+          btn.dataset.boundRefresh='1'
         }
         if(!window.__coletaDocRefreshDelegated){
           window.__coletaDocRefreshDelegated=true;
@@ -907,6 +906,7 @@ try{
             const btn=e.target?.closest?.('#doc_refresh_data');
             if(!btn)return;
             e.preventDefault();
+            e.stopPropagation();
             if(btn.dataset.refreshRunning==='1')return;
             btn.dataset.refreshRunning='1';
             Promise.resolve(refreshDocumentData()).finally(()=>{btn.dataset.refreshRunning='0'})
