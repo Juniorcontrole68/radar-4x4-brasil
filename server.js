@@ -2153,7 +2153,7 @@ http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.
       .replace('<div id="loading" class="loading">Carregando dados do Google Sheets…</div>','<div id="loading" class="loading hide" style="display:none!important"></div>');
   }
   const bootstrap='<script>window.__DASHBOARD_SESSION_TOKEN__='+JSON.stringify(String(x.token||''))+';window.__DASHBOARD_SESSION_USER__='+JSON.stringify(x.user||null)+';<\/script>';
-  html=html.replace('<script src="/app.js"></script>',bootstrap+'<script src="/app.js?v=20260924a"></script>');
+  html=html.replace('<script src="/app.js"></script>',bootstrap+'<script src="/app.js?v=20260924b"></script>');
   res.writeHead(200,{
     'Content-Type':'text/html; charset=utf-8',
     'Cache-Control':'no-store, no-cache, must-revalidate',
@@ -2286,7 +2286,7 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
       .replace('<body class="auth-pending">','<body class="embedded">')
       .replace('<div id="authGate" class="auth-gate">','<div id="authGate" class="auth-gate hide" style="display:none!important">')
       .replace('<div id="loading" class="loading">Carregando dados do Google Sheets…</div>','<div id="loading" class="loading hide" style="display:none!important"></div>')
-      .replace('<script src="/app.js"></script>','<script src="/app.js?v=20260924a"></script>');
+      .replace('<script src="/app.js"></script>','<script src="/app.js?v=20260924b"></script>');
     res.writeHead(200,{
       'Content-Type':'text/html; charset=utf-8',
       'Cache-Control':'no-store, no-cache, must-revalidate',
@@ -2301,6 +2301,7 @@ let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.jo
 
   refreshBi2State().catch(e=>console.error('BI2 SFTP monitor ERRO: '+e.message));
   refreshBi2ApiState().catch(e=>console.error('BI2 WebAPI monitor ERRO: '+e.message));
+  buildBi2Receita().then(x=>console.log('VALIDACAO RECEITA SSW: '+JSON.stringify({ok:x.ok,fonte:x.sourceCode,periodo:x.periodo,total:x.totalFaturamento,clientes:x.totalClientes,ctes:x.totalRegistros,somerlog:(x.clientes||[]).find(y=>y.cliente==='Somerlog')||null,error:x.error||''}))).catch(e=>console.log('VALIDACAO RECEITA SSW ERRO: '+String(e.message||e)));
   (async()=>{try{const rep=await fetchBi2ReportFolder(17,'',bi2Auth().pasta),p=parseBi2Csv(rep.text),today=new Date().toISOString().slice(0,10),todayRows=(p.rows||[]).filter(r=>brDateToIso(pickField(r,'DATA ENTREGA','ENTREGA','DT ENTREGA'))===today);console.log('VALIDACAO BI2 17: '+JSON.stringify({arquivo:(p.rows||[]).length,hoje:todayRows.length,headers:p.headers.slice(0,25)}))}catch(e){console.log('VALIDACAO BI2 17 ERRO: '+String(e.message||e))}})();
   setInterval(refreshBi2State,15*60*1000);
   setInterval(refreshBi2ApiState,60*1000);
