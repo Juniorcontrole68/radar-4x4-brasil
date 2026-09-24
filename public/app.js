@@ -352,6 +352,55 @@ function agCopyField(o,...names){
   for(const [k,v] of Object.entries(o||{})){if(wanted.has(agCopyKey(k))&&String(v??'').trim()!=='')return v}
   return''
 }
+function agCopyDateInfo(v){
+  if(v===null||v===undefined||String(v).trim()==='')return null;
+  const raw=String(v).trim();
+  let d=null,m=raw.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if(m)d=new Date(+m[3],+m[2]-1,+m[1]);
+  if(!d||isNaN(d)){m=raw.match(/^(\d{4})-(\d{2})-(\d{2})/);if(m)d=new Date(+m[1],+m[2]-1,+m[3])}
+  if(!d||isNaN(d)){const x=new Date(raw);if(!isNaN(x))d=x}
+  return d&&!isNaN(d)?{raw,date:d}:null
+}
+function agCopyLastMovementInfo(o){
+  const names=[
+    'DATA ÚLTIMA MOVIMENTAÇÃO','DATA ULTIMA MOVIMENTAÇÃO','DATA ULTIMA MOVIMENTACAO','ÚLTIMA MOVIMENTAÇÃO','ULTIMA MOVIMENTAÇÃO','ULTIMA MOVIMENTACAO',
+    'DATA MOVIMENTAÇÃO','DATA MOVIMENTACAO','DATA STATUS','DATA ATUALIZAÇÃO','DATA ATUALIZACAO','ATUALIZADO EM',
+    'DATA ENTREGA','DATA DA ENTREGA','2º TENTATIVA','2ª TENTATIVA','SEGUNDA TENTATIVA','DATA CONTATO','DATA AGENDADA'
+  ];
+  const found=[];
+  for(const name of names){
+    const v=agCopyField(o,name);
+    if(v){const info=agCopyDateInfo(v);if(info)found.push(info)}
+  }
+  if(!found.length)return null;
+  found.sort((x,y)=>y.date-x.date);
+  return found[0]
+}
+function agCopyLastMovement(o){
+  const x=agCopyLastMovementInfo(o);
+  return x?x.raw:''
+}
+function agCopyOldDelivered(o){
+  if(!agCopyNorm(g(o,'STATUS')).includes('entregue'))return false;
+  const raw=agCopyField(o,'DATA ENTREGA','DATA DA ENTREGA','DATA ÚLTIMA MOVIMENTAÇÃO','DATA ULTIMA MOVIMENTAÇÃO','DATA ULTIMA MOVIMENTACAO','DATA AGENDADA');
+  const info=agCopyDateInfo(raw)||agCopyLastMovementInfo(o);
+  if(!info)return false;
+  const today=new Date();today.setHours(0,0,0,0);
+  const d=new Date(info.date);d.setHours(0,0,0,0);
+  return d<today
+}
+function renderAgStatusCards(id,rows){
+  const box=$(id);if(!box)return;
+  const counts=new Map();
+  for(const o of (rows||[])){
+    const raw=String(g(o,'STATUS')||'').trim()||'Sem status';
+    if(agCopyNorm(raw).includes('entregue'))continue;
+    counts.set(raw,(counts.get(raw)||0)+1)
+  }
+  const items=[...counts.entries()].sort((x,y)=>y[1]-x[1]||x[0].localeCompare(y[0],'pt-BR'));
+  box.innerHTML=items.length?items.map(([status,n])=>'<div class="ag-status-card"><div class="label">'+safe(status)+'</div><div class="value">'+nf(n)+'</div></div>').join(''):'<div class="ag-status-card empty">Nenhum status em aberto no período.</div>'
+}
+
 function agCopyFillSelect(id,key,label){
   const el=$(id);if(!el)return;
   const current=el.value;
@@ -366,6 +415,7 @@ function agCopyFiltered(){
   const status=$('#agcStatus')?.value||'';
   const selected=$('#agcDate')?.value||'';
   return (S.agCopy||[]).filter(o=>{
+    if(agCopyOldDelivered(o))return false;
     if(status&&agCopyNorm(g(o,'STATUS'))!==agCopyNorm(status))return false;
     if(selected){
       const dt=pd(g(o,'DATA AGENDADA'));
@@ -374,24 +424,42 @@ function agCopyFiltered(){
     return true
   })
 }
-function renderAgCopy(){
-  const rows=agCopyFiltered(),set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
-  const scheduled=rows.filter(o=>agCopyNorm(g(o,'STATUS')).includes('agendado')).length;
-  const delivered=rows.filter(o=>agCopyNorm(g(o,'STATUS')).includes('entregue')).length;
-  const failed=rows.filter(o=>agCopyNorm(g(o,'STATUS')).includes('insucesso')).length;
-  set('#agcTotal',nf(rows.length));set('#agcScheduled',nf(scheduled));set('#agcDelivered',nf(delivered));set('#agcFailed',nf(failed));
-  const info=$('#agcInfo');
-  if(info)info.textContent=nf(rows.length)+' registro(s) encontrado(s) de '+nf((S.agCopy||[]).length)+' na aba Cópia de AGENDAMENTOS'+(rows.length>1000?' • exibindo os 1.000 primeiros':'');
-  const resultRows=rows.slice(0,1000).map(o=>({
+function agCopyReportRows(){
+  return agCopyFiltered().slice(0,1000).map(o=>({
+    ultimaMovimentacao:agCopyLastMovement(o),
+    status:agCopyField(o,'STATUS'),
     notaFiscal:agCopyField(o,'NF','NOTA FISCAL','Nº NF','NUMERO NF','NÚMERO NF','NOTA','COL_1'),
     cliente:agCopyField(o,'NOME CLIENTE','CLIENTE','NOME DO CLIENTE'),
     cidade:agCopyField(o,'CIDADE','CIDADE DESTINO','MUNICIPIO','MUNICÍPIO'),
     mercadoria:agCopyField(o,'MERCADORIA','PRODUTO','DESCRIÇÃO MERCADORIA','DESCRICAO MERCADORIA')
-  }));
-  if($('#agcTable'))table('#agcTable',[['Nota Fiscal','notaFiscal'],['Nome do cliente','cliente'],['Cidade','cidade'],['Mercadoria','mercadoria']],resultRows)
+  }))
+}
+function renderAgCopy(){
+  const rows=agCopyFiltered();
+  const info=$('#agcInfo');
+  if(info)info.textContent=nf(rows.length)+' registro(s) encontrado(s) de '+nf((S.agCopy||[]).length)+' na aba Cópia de AGENDAMENTOS • entregues anteriores a hoje não entram no relatório'+(rows.length>1000?' • exibindo os 1.000 primeiros':'');
+  renderAgStatusCards('#agcStatusSummary',rows);
+  if($('#agcTable'))table('#agcTable',[
+    ['Última movimentação','ultimaMovimentacao'],
+    ['Status','status'],
+    ['Nota Fiscal','notaFiscal'],
+    ['Nome do cliente','cliente'],
+    ['Cidade','cidade'],
+    ['Mercadoria','mercadoria']
+  ],agCopyReportRows())
+}
+function printAgCopyReport(){
+  const rows=agCopyReportRows();
+  const status=$('#agcStatus')?.value||'Todos os status';
+  const date=$('#agcDate')?.value||'Todas as datas';
+  const body=rows.map(r=>'<tr><td>'+safe(r.ultimaMovimentacao)+'</td><td>'+safe(r.status)+'</td><td>'+safe(r.notaFiscal)+'</td><td>'+safe(r.cliente)+'</td><td>'+safe(r.cidade)+'</td><td>'+safe(r.mercadoria)+'</td></tr>').join('');
+  const w=window.open('','_blank','noopener,noreferrer');
+  if(!w){alert('O navegador bloqueou a janela de impressão. Libere pop-ups para este site e tente novamente.');return}
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Relatório de Agendamentos</title><style>body{font-family:Arial,sans-serif;color:#111827;margin:24px}h1{font-size:20px;margin:0 0 6px}.meta{font-size:12px;color:#4b5563;margin-bottom:14px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #d1d5db;padding:6px;text-align:left;vertical-align:top}th{background:#f3f4f6} @media print{body{margin:10mm}}</style></head><body><h1>Relatório de Agendamentos por Status</h1><div class="meta">Data: '+safe(date)+' • Status: '+safe(status)+' • Registros: '+nf(rows.length)+'<br>Entregues com datas anteriores a hoje foram desconsiderados.</div><table><thead><tr><th>Última movimentação</th><th>Status</th><th>NF</th><th>Cliente</th><th>Cidade</th><th>Mercadoria</th></tr></thead><tbody>'+body+'</tbody></table><script>window.onload=()=>{window.print()}<\/script></body></html>');
+  w.document.close()
 }
 function renderAgCopyHub(){
-  const rows=S.agCopy||[],set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
+  const rows=(S.agCopy||[]).filter(o=>!agCopyOldDelivered(o)),set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
   set('#hubAgCopyN',nf(rows.length));
   set('#hubAgCopyScheduled',nf(rows.filter(o=>agCopyNorm(g(o,'STATUS')).includes('agendado')).length));
   set('#hubAgCopyDelivered',nf(rows.filter(o=>agCopyNorm(g(o,'STATUS')).includes('entregue')).length));
@@ -416,8 +484,9 @@ async function refreshAgCopy(force=false){
   }finally{window.__agCopyLoading=false}
 }
 function setupAgCopy(){
-  const apply=$('#agcApply'),today=$('#agcToday'),clear=$('#agcClear'),refresh=$('#agcRefresh');
+  const apply=$('#agcApply'),print=$('#agcPrint'),today=$('#agcToday'),clear=$('#agcClear'),refresh=$('#agcRefresh');
   if(apply)apply.onclick=renderAgCopy;
+  if(print)print.onclick=printAgCopyReport;
   if(today)today.onclick=()=>{const d=iso(new Date());if($('#agcDate'))$('#agcDate').value=d;renderAgCopy()};
   if(clear)clear.onclick=()=>{if($('#agcDate'))$('#agcDate').value='';if($('#agcStatus'))$('#agcStatus').value='';renderAgCopy()};
   if(refresh)refresh.onclick=()=>refreshAgCopy(true);
@@ -485,15 +554,7 @@ const active=$('.section.active')?.id||'dashboard';
 if(active==='dashboard'){
   const bd={};O.forEach(o=>{const k=gd(o)||'Sem data';bd[k]??={d:0,r:0};bd[k].d+=num(g(o,'Realizadas'));bd[k].r+=num(g(o,'Retorno'))});const K=Object.keys(bd).sort((a,b)=>(pd(a)||0)-(pd(b)||0));lines('#trend',K,K.map(k=>bd[k].d),K.map(k=>bd[k].r));
   const dm={};O.forEach(o=>{const k=g(o,'Motorista')||'Sem motorista';dm[k]=(dm[k]||0)+num(g(o,'Entregas'))});const T=Object.entries(dm).sort((a,b)=>b[1]-a[1]).slice(0,10);bars('#drivers',T.map(x=>x[0]),T.map(x=>x[1]),T.map(x=>nf(x[1])),true);
-  const st={};A.forEach(o=>{const k=(g(o,'STATUS')||'SEM STATUS').trim();st[k]=(st[k]||0)+1});donut('#statusChart',Object.keys(st),Object.values(st));
-  if($('#schOverview'))table('#schOverview',[
-    ['Nota Fiscal','NF','NOTA FISCAL','NOTA','COL_1'],
-    ['Cliente','NOME CLIENTE','CLIENTE'],
-    ['Cidade','CIDADE'],
-    ['Data','DATA AGENDADA'],
-    ['Status','STATUS'],
-    ['Mercadoria','MERCADORIA']
-  ],A.slice().reverse().slice(0,250));
+  renderAgStatusCards('#agStatusCards',A);
   const hdA={},hdC={};HA.forEach(o=>{const k=g(o,'Data')||'Sem data';hdA[k]??={valor:0,nomes:new Set()};hdA[k].valor+=num(g(o,'Valor'));const nome=String(g(o,'NOME')||'').trim();if(nome)hdA[k].nomes.add(nome)});HCf.forEach(o=>{const k=g(o,'Data')||'Sem data';hdC[k]??={valor:0,nomes:new Set()};hdC[k].valor+=num(g(o,'Valor'));const nome=String(g(o,'NOME')||'').trim();if(nome)hdC[k].nomes.add(nome)});const HK=[...new Set([...Object.keys(hdA),...Object.keys(hdC)])].sort((a,b)=>(pd(a)||0)-(pd(b)||0));groupedBars('#helpersChart',HK,HK.map(k=>hdA[k]?.valor||0),HK.map(k=>hdC[k]?.valor||0),HK.map(k=>nf(hdA[k]?.nomes.size||0)),HK.map(k=>nf(hdC[k]?.nomes.size||0)));
 }
 $('#hc').textContent=brl(helperCost);$('#hcc').textContent=brl(checkerCost);$('#hn').textContent=nf(H.length);$('#hp').textContent=new Set(HA.map(o=>g(o,'NOME')).filter(Boolean)).size;$('#hcp').textContent=new Set(HCf.map(o=>g(o,'NOME')).filter(Boolean)).size;
