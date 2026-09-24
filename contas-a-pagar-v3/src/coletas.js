@@ -754,9 +754,8 @@ try{
         }
         function extractRgCandidate(v){
           const s=norm(v).replace(/\s+/g,' ');
-          const uf='(?:AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)';
-          const re=new RegExp('(?:\\\\b'+uf+'[- ]?)?\\\\b(\\\\d[\\\\d.\\\\-]{4,18}[0-9X]?)\\\\b','i');
-          const m=s.match(re);if(!m)return'';
+          const m=s.match(/\b(?:(?:AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)[- ]?)?(\d[\d.\-]{4,18}[0-9X]?)\b/i);
+          if(!m)return'';
           const candidate=(m[0]||m[1]||'').replace(/\s+/g,'').replace(/[.\-]+$/,'');
           const d=digits(candidate);
           if(d.length<5||d.length>14)return'';
