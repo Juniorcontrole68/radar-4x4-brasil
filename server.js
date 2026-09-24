@@ -457,6 +457,43 @@ function quickSsw38Progress(base,from,to){
 
 
 
+
+async function probeSswRevenueCandidates(){
+  if(!internalSswConfigured())return{ok:false,error:'Credenciais internas SSW não configuradas'};
+  const jar=new Map();
+  const apply=headers=>{const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);for(const raw of list){const pair=String(raw).split(';')[0],i=pair.indexOf('=');if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())}};
+  const cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
+  let r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
+  const body=new URLSearchParams({act:'L',f1:process.env.SSW_INTERNAL_DOMINIO||'',f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),f3:process.env.SSW_INTERNAL_USUARIO||'',f4:process.env.SSW_INTERNAL_SENHA||''});
+  r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/ssw0422','Cookie':cookie()},body:body.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);await r.text();
+  if(!jar.has('token'))return{ok:false,error:'Login interno SSW não aceito'};
+
+  const fetchPage=async path=>{
+    const rr=await fetch('https://sistema.ssw.inf.br/bin/'+path,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});
+    apply(rr.headers);const html=await rr.text();
+    const title=htmlText38((html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)||[])[1]||'');
+    const inputs=[...html.matchAll(/<input\b([^>]*)>/gi)].map(m=>{const a=m[1]||'';return{name:(a.match(/\bname=["']?([^"'\s>]+)/i)||[])[1]||'',type:(a.match(/\btype=["']?([^"'\s>]+)/i)||[])[1]||'',value:htmlText38((a.match(/\bvalue=["']([^"']*)["']/i)||[])[1]||'')}}).filter(x=>x.name).slice(0,80);
+    const selects=[...html.matchAll(/<select\b([^>]*)>([\s\S]*?)<\/select>/gi)].map(m=>({name:(m[1].match(/\bname=["']?([^"'\s>]+)/i)||[])[1]||'',options:[...m[2].matchAll(/<option\b[^>]*>([\s\S]*?)<\/option>/gi)].map(x=>htmlText38(x[1])).filter(Boolean).slice(0,20)})).slice(0,20);
+    const links=[...html.matchAll(/(?:href|onclick)=["']([^"']+)["']/gi)].map(m=>m[1]).filter(x=>/ssw\d+|menu01|f3=|act=/i.test(x)).slice(0,100);
+    const trs=[...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(m=>[...m[1].matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(x=>htmlText38(x[1])).filter(Boolean)).filter(x=>x.length).slice(0,30);
+    return{path,status:rr.status,bytes:Buffer.byteLength(html),title,inputs,selects,links,rows:trs,text:htmlText38(html).slice(0,3000)}
+  };
+
+  const menu=await fetchPage('menu01');
+  const rawRes=await fetch('https://sistema.ssw.inf.br/bin/menu01',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie()},signal:AbortSignal.timeout(15000)});
+  const raw=await rawRes.text();
+  const around={};
+  for(const key of ['A0004','A0012','ssw0082']){
+    const p=raw.indexOf(key);
+    around[key]=p>=0?raw.slice(Math.max(0,p-700),Math.min(raw.length,p+1800)).replace(/\s+/g,' '):''
+  }
+  const pages=[];
+  for(const pth of ['ssw0082']){
+    try{pages.push(await fetchPage(pth))}catch(e){pages.push({path:pth,error:String(e.message||e)})}
+  }
+  return{ok:true,around,menu:{title:menu.title,links:menu.links.slice(0,50)},pages}
+}
+
 async function probeSswRevenueMenu(){
   if(!internalSswConfigured())return{ok:false,error:'Credenciais internas SSW não configuradas'};
   const jar=new Map();
@@ -2135,6 +2172,7 @@ let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.jo
   console.log('CONSTRULOG em '+PORT);probeSswAbrirScripts().then(x=>console.log('SSW abrir probe isolado: '+JSON.stringify(x))).catch(()=>{});
   probeSsw83().then(x=>console.log('SSW83 PROBE: '+JSON.stringify(x))).catch(e=>console.log('SSW83 PROBE ERRO: '+String(e.message||e)));
   probeSswRevenueMenu().then(x=>console.log('SSW RECEITA MENU: '+JSON.stringify(x))).catch(e=>console.log('SSW RECEITA MENU ERRO: '+String(e.message||e)));
+  probeSswRevenueCandidates().then(x=>console.log('SSW RECEITA CANDIDATOS: '+JSON.stringify(x))).catch(e=>console.log('SSW RECEITA CANDIDATOS ERRO: '+String(e.message||e)));
 
   refreshBi2State().catch(e=>console.error('BI2 SFTP monitor ERRO: '+e.message));
   refreshBi2ApiState().catch(e=>console.error('BI2 WebAPI monitor ERRO: '+e.message));
