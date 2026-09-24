@@ -54,7 +54,7 @@ const PERMISSION_OPTIONS=[
   ['evolucao','Evolução e previsão por motorista'],
   ['cidade_destino','Entregas por cidade destino'],
   ['roteirizador','Roteirizador de romaneios'],
-  ['final_carregamento','Final do carregamento'],
+  ['final_carregamento','Registro de Carga e Descarga'],
   ['operacional','Operacional / Entregas'],
   ['financeiro','Financeiro'],
   ['receita_ssw','Receita SSW'],
@@ -101,7 +101,7 @@ function applyPermissions(){
     'SSW • Saídas x Baixas':'ssw_saidas',
     'Evolução e Previsão por Motorista':'evolucao',
     'Entregas por Cidade Destino':'cidade_destino',
-    'Final do Carregamento':'final_carregamento',
+    'Registro de Carga e Descarga':'final_carregamento',
     'Operacional':'operacional',
     'Financeiro':'financeiro',
     'Receita SSW':'receita_ssw',
@@ -895,135 +895,128 @@ async function hydrateLoadingPhotos(){
   const box=$('#loadRecords');if(!box)return;
   const imgs=[...box.querySelectorAll('img[data-loading-photo-id]')];
   await Promise.all(imgs.map(async img=>{
-    const id=img.dataset.loadingPhotoId;
-    if(!id)return;
+    const id=img.dataset.loadingPhotoId;if(!id)return;
     const wrap=img.closest('a');
     try{
       const r=await fetch('/api/carregamentos-finais/'+encodeURIComponent(id)+'/foto?t='+Date.now(),{cache:'no-store'});
       if(!r.ok)throw new Error('HTTP '+r.status);
-      const blob=await r.blob();
-      if(!blob.size)throw new Error('Foto vazia');
+      const blob=await r.blob();if(!blob.size)throw new Error('Foto vazia');
       const url=URL.createObjectURL(blob);
       if(!Array.isArray(window.__loadingPhotoObjectUrls))window.__loadingPhotoObjectUrls=[];
       window.__loadingPhotoObjectUrls.push(url);
-      img.src=url;
-      img.classList.remove('load-photo-pending','load-photo-error');
+      img.src=url;img.classList.remove('load-photo-pending','load-photo-error');
       if(wrap){wrap.href=url;wrap.target='_blank';wrap.rel='noopener'}
     }catch(e){
-      img.classList.remove('load-photo-pending');
-      img.classList.add('load-photo-error');
+      img.classList.remove('load-photo-pending');img.classList.add('load-photo-error');
       img.alt='Não foi possível carregar a foto';
       if(wrap){wrap.removeAttribute('href');wrap.removeAttribute('target');wrap.title='Não foi possível carregar esta foto.'}
     }
   }))
 }
+function cargoTypeLabel(v){return String(v||'carregamento').toLowerCase()==='descarga'?'Descarga':'Carregamento'}
 function renderLoadingRecords(rows){
-  const box=$('#loadRecords');
-  clearLoadingPhotoUrls();
+  const box=$('#loadRecords');clearLoadingPhotoUrls();
   if(box){
-    if(!rows.length)box.innerHTML='<div class="muted">Nenhum final de carregamento registrado ainda.</div>';
+    if(!rows.length)box.innerHTML='<div class="muted">Nenhum registro de carga ou descarga encontrado.</div>';
     else{
       box.innerHTML=rows.map(r=>{
-        const dt=loadingDateTime(r.capturada_em);
-        return '<div class="load-record"><a class="load-photo-link" data-loading-photo-id="'+safe(r.id)+'" title="Abrir foto"><img class="load-photo-pending" data-loading-photo-id="'+safe(r.id)+'" alt="Carregando foto do final do carregamento"></a><div><b>'+safe(r.motorista||'Motorista não informado')+'</b><div class="meta">Conferente: '+safe(r.conferente||'—')+'<br>Entregas: <b>'+nf(Number(r.quantidade_entregas||0))+'</b><br>Foto: '+safe(dt)+'</div></div></div>'
+        const dt=loadingDateTime(r.capturada_em),tipo=cargoTypeLabel(r.tipo);
+        return '<div class="load-record"><a class="load-photo-link" data-loading-photo-id="'+safe(r.id)+'" title="Abrir foto"><img class="load-photo-pending" data-loading-photo-id="'+safe(r.id)+'" alt="Carregando foto do registro"></a><div><b>'+safe(tipo)+' • '+safe(r.motorista||'Motorista não informado')+'</b><div class="meta">Conferente: '+safe(r.conferente||'—')+'<br>Quantidade: <b>'+nf(Number(r.quantidade_entregas||0))+'</b><br>Registro: '+safe(dt)+'</div></div></div>'
       }).join('');
       hydrateLoadingPhotos().catch(()=>{})
     }
   }
-  const today=iso(new Date()),todayRows=rows.filter(r=>{
-    const d=new Date(r.capturada_em);return !isNaN(d)&&iso(d)===today
-  });
+  const today=iso(new Date()),todayRows=rows.filter(r=>{const d=new Date(r.capturada_em);return !isNaN(d)&&iso(d)===today});
   const set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
   set('#hubLoadCount',nf(todayRows.length));
   set('#hubLoadLast',rows.length?new Date(rows[0].capturada_em).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'—');
   const info=$('#hubLoadInfo');
-  if(info)info.textContent=rows.length?('Último: '+(rows[0].motorista||'—')+' • '+nf(Number(rows[0].quantidade_entregas||0))+' entregas • '+loadingDateTime(rows[0].capturada_em)):'Nenhum registro realizado ainda.';
+  if(info)info.textContent=rows.length?('Último: '+cargoTypeLabel(rows[0].tipo)+' • '+(rows[0].motorista||'—')+' • '+nf(Number(rows[0].quantidade_entregas||0))+' • '+loadingDateTime(rows[0].capturada_em)):'Nenhum registro realizado ainda.'
 }
 async function refreshLoadingRecords(useFilters=true){
   if(window.__loadingRecordsBusy)return;
   window.__loadingRecordsBusy=true;
   try{
-    const q=new URLSearchParams({limit:'30',t:String(Date.now())});
+    const q=new URLSearchParams({limit:'50',t:String(Date.now())});
+    const tipo=useFilters?($('#loadFilterType')?.value||'').trim():'';
     const motorista=useFilters?($('#loadFilterDriver')?.value||'').trim():'';
     const data=useFilters?($('#loadFilterDate')?.value||'').trim():'';
+    if(tipo)q.set('tipo',tipo);
     if(motorista)q.set('motorista',motorista);
     if(data)q.set('data',data);
-
     const r=await fetch('/api/carregamentos-finais?'+q.toString(),{cache:'no-store'});
     const j=await r.json();
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar registros.');
     const rows=Array.isArray(j.rows)?j.rows:[];
     renderLoadingRecords(rows);
-
     const fi=$('#loadFilterInfo');
     if(fi){
       const parts=[];
+      if(tipo)parts.push('tipo: '+cargoTypeLabel(tipo));
       if(motorista)parts.push('motorista: '+motorista);
-      if(data){
-        const p=data.split('-');
-        parts.push('data: '+(p.length===3?p[2]+'/'+p[1]+'/'+p[0]:data))
-      }
-      fi.textContent=parts.length
-        ? nf(rows.length)+' registro(s) encontrado(s) • '+parts.join(' • ')
-        : 'Mostrando os últimos registros.'
+      if(data){const p=data.split('-');parts.push('data: '+(p.length===3?p[2]+'/'+p[1]+'/'+p[0]:data))}
+      fi.textContent=parts.length?nf(rows.length)+' registro(s) encontrado(s) • '+parts.join(' • '):'Mostrando os últimos registros de carga e descarga.'
     }
   }catch(e){
     const box=$('#loadRecords');if(box)box.innerHTML='<div class="muted">Não foi possível carregar os registros: '+safe(e.message)+'</div>';
-    const info=$('#hubLoadInfo');if(info)info.textContent='Registros de carregamento indisponíveis no momento.'
+    const info=$('#hubLoadInfo');if(info)info.textContent='Registros de carga e descarga indisponíveis no momento.'
   }finally{window.__loadingRecordsBusy=false}
 }
-function setupLoadingForm(){
-  const photo=$('#loadPhoto'),form=$('#loadFinalForm'),refresh=$('#loadRefresh'),search=$('#loadSearch'),clear=$('#loadClear');
-  if(!photo||!form)return;
-  if(refresh)refresh.onclick=()=>refreshLoadingRecords(true);
-  if(search)search.onclick=()=>refreshLoadingRecords(true);
-  if(clear)clear.onclick=()=>{
-    if($('#loadFilterDriver'))$('#loadFilterDriver').value='';
-    if($('#loadFilterDate'))$('#loadFilterDate').value='';
-    refreshLoadingRecords(true)
-  };
-  if($('#loadFilterDriver'))$('#loadFilterDriver').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();refreshLoadingRecords(true)}});
-  if($('#loadFilterDate'))$('#loadFilterDate').addEventListener('change',()=>refreshLoadingRecords(true));
+function setupCargoOperationForm(cfg){
+  const form=$(cfg.form),photo=$(cfg.photo),msg=$(cfg.msg),btn=$(cfg.save);
+  if(!form||!photo)return;
+  if(!window.__cargoFormState)window.__cargoFormState={};
+  const state=window.__cargoFormState[cfg.tipo]={photo:'',captured:''};
   photo.onchange=async()=>{
     const file=photo.files&&photo.files[0];
-    const msg=$('#loadMsg');
-    if(!file){window.__loadPhotoData='';return}
+    if(!file){state.photo='';state.captured='';return}
     try{
       if(msg){msg.style.color='#475569';msg.textContent='Preparando foto…'}
       const captured=new Date(file.lastModified||Date.now());
-      window.__loadCapturedAt=captured.toISOString();
-      window.__loadPhotoData=await compressLoadingPhoto(file);
-      $('#loadPreviewImg').src=window.__loadPhotoData;
-      $('#loadPhotoTime').textContent='Foto registrada em '+captured.toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'medium'});
-      $('#loadPreview').style.display='block';
+      state.captured=captured.toISOString();
+      state.photo=await compressLoadingPhoto(file);
+      $(cfg.previewImg).src=state.photo;
+      $(cfg.photoTime).textContent='Foto registrada em '+captured.toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'medium'});
+      $(cfg.preview).style.display='block';
       if(msg)msg.textContent='Foto pronta para salvar.'
     }catch(e){
-      window.__loadPhotoData='';
+      state.photo='';state.captured='';
       if(msg){msg.style.color='#b91c1c';msg.textContent=e.message}
     }
   };
   form.onsubmit=async ev=>{
     ev.preventDefault();
-    const msg=$('#loadMsg'),btn=$('#loadSave');
-    const conferente=$('#loadChecker').value.trim(),motorista=$('#loadDriver').value.trim(),quantidade=Number($('#loadQty').value);
-    if(!window.__loadPhotoData){if(msg){msg.style.color='#b91c1c';msg.textContent='Tire a foto do final do carregamento antes de salvar.'}return}
+    const conferente=$(cfg.checker).value.trim(),motorista=$(cfg.driver).value.trim(),quantidade=Number($(cfg.qty).value);
+    if(!state.photo){if(msg){msg.style.color='#b91c1c';msg.textContent='Tire a foto da operação antes de salvar.'}return}
     btn.disabled=true;
-    if(msg){msg.style.color='#475569';msg.textContent='Salvando registro…'}
+    if(msg){msg.style.color='#475569';msg.textContent='Salvando '+cfg.label.toLowerCase()+'…'}
     try{
-      const r=await fetch('/api/carregamentos-finais',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({conferente,motorista,quantidade_entregas:quantidade,capturada_em:window.__loadCapturedAt||new Date().toISOString(),foto:window.__loadPhotoData})
-      });
-      const j=await r.json();
-      if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível salvar.');
-      if(msg){msg.style.color='#15803d';msg.textContent='✓ Final do carregamento salvo com sucesso.'}
-      form.reset();window.__loadPhotoData='';window.__loadCapturedAt='';
-      $('#loadPreview').style.display='none';$('#loadPreviewImg').removeAttribute('src');
+      const r=await fetch('/api/carregamentos-finais',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        tipo:cfg.tipo,conferente,motorista,quantidade_entregas:quantidade,capturada_em:state.captured||new Date().toISOString(),foto:state.photo
+      })});
+      const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível salvar.');
+      if(msg){msg.style.color='#15803d';msg.textContent='✓ '+cfg.label+' salvo com sucesso.'}
+      form.reset();state.photo='';state.captured='';
+      $(cfg.preview).style.display='none';$(cfg.previewImg).removeAttribute('src');
       await refreshLoadingRecords(true)
-    }catch(e){
-      if(msg){msg.style.color='#b91c1c';msg.textContent=e.message}
-    }finally{btn.disabled=false}
+    }catch(e){if(msg){msg.style.color='#b91c1c';msg.textContent=e.message}}
+    finally{btn.disabled=false}
   }
+}
+function setupLoadingForm(){
+  const refresh=$('#loadRefresh'),search=$('#loadSearch'),clear=$('#loadClear');
+  setupCargoOperationForm({tipo:'carregamento',label:'Carregamento',form:'#loadFinalForm',photo:'#loadPhoto',msg:'#loadMsg',save:'#loadSave',checker:'#loadChecker',driver:'#loadDriver',qty:'#loadQty',preview:'#loadPreview',previewImg:'#loadPreviewImg',photoTime:'#loadPhotoTime'});
+  setupCargoOperationForm({tipo:'descarga',label:'Descarga',form:'#unloadFinalForm',photo:'#unloadPhoto',msg:'#unloadMsg',save:'#unloadSave',checker:'#unloadChecker',driver:'#unloadDriver',qty:'#unloadQty',preview:'#unloadPreview',previewImg:'#unloadPreviewImg',photoTime:'#unloadPhotoTime'});
+  if(refresh)refresh.onclick=()=>refreshLoadingRecords(true);
+  if(search)search.onclick=()=>refreshLoadingRecords(true);
+  if(clear)clear.onclick=()=>{
+    if($('#loadFilterType'))$('#loadFilterType').value='';
+    if($('#loadFilterDriver'))$('#loadFilterDriver').value='';
+    if($('#loadFilterDate'))$('#loadFilterDate').value='';
+    refreshLoadingRecords(true)
+  };
+  if($('#loadFilterDriver'))$('#loadFilterDriver').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();refreshLoadingRecords(true)}});
+  if($('#loadFilterDate'))$('#loadFilterDate').addEventListener('change',()=>refreshLoadingRecords(true))
 }
 
 
@@ -1340,7 +1333,7 @@ function openTab(tab){
     'ssw-remetentes-comparativo':'Comparativo de Clientes Remetentes',
     'ssw-motoristas':'SSW • Saídas x Baixas',
     'motoristas-evolucao':'Evolução por Motorista',
-    'conferencia':'Final do Carregamento',
+    'conferencia':'Registro de Carga e Descarga',
     'roteirizador':'Roteirizador SSW',
     'agendamentos-copia':'Consulta de Agendamentos',
     'usuarios':'Usuários e Acessos'
