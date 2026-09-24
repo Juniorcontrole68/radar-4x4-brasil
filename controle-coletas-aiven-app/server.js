@@ -743,7 +743,16 @@ async function start() {
 
           if (motorista) {
             params.push('%' + motorista + '%');
-            where.push('motorista ILIKE 
+            where.push('motorista ILIKE $' + params.length);
+          }
+          if (tipo) {
+            if (!['carregamento','descarga'].includes(tipo)) {
+              return sendJson(res, 400, { ok: false, error: 'Tipo de operação inválido.' });
+            }
+            params.push(tipo);
+            where.push('lower(tipo) = $' + params.length);
+          }
+          if (data) {
             if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) {
               return sendJson(res, 400, { ok: false, error: 'Data de consulta inválida.' });
             }
@@ -758,10 +767,10 @@ async function start() {
             'FROM carregamentos_finais ' +
             (where.length ? 'WHERE ' + where.join(' AND ') + ' ' : '') +
             'ORDER BY capturada_em DESC, id DESC LIMIT $' + params.length;
-          const r = await pool.query(sql, params);
-          return sendJson(res, 200, { ok: true, motorista: motorista || null, data: data || null, tipo: tipo || null, rows: r.rows });
+          const qr = await pool.query(sql, params);
+          return sendJson(res, 200, { ok: true, motorista: motorista || null, data: data || null, tipo: tipo || null, rows: qr.rows });
         } catch (e) {
-          return sendJson(res, 500, { ok: false, error: e.message || 'Não foi possível carregar os registros de carregamento.' });
+          return sendJson(res, 500, { ok: false, error: e.message || 'Não foi possível carregar os registros de carga e descarga.' });
         }
       }
 
