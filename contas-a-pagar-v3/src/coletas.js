@@ -546,6 +546,7 @@ try{
           const recipients=historyLatest(rows,'destinatario');
 
           const sm=byId('historico_motorista'),sr=byId('historico_remetente'),sd=byId('historico_destinatario');
+          window.__coletaHistoryProfiles={drivers,senders,recipients};
           fillHistorySelect(sm,drivers,'motorista',r=>{
             const cpf=formatCpf(r.motorista_cpf||'');
             return String(r.motorista||'')+(cpf?' • CPF '+cpf:'')
@@ -556,7 +557,7 @@ try{
           if(sm&&!sm.dataset.historyBound){
             sm.dataset.historyBound='1';
             sm.addEventListener('change',()=>{
-              const r=drivers.find(x=>String(x.id||'')===sm.value);if(!r)return;
+              const r=(window.__coletaHistoryProfiles?.drivers||[]).find(x=>String(x.id||'')===sm.value);if(!r)return;
               setField('motorista',r.motorista);
               setField('motorista_cpf',formatCpf(r.motorista_cpf||''));
               setField('telefone_motorista',r.telefone_motorista);
@@ -566,7 +567,7 @@ try{
           if(sr&&!sr.dataset.historyBound){
             sr.dataset.historyBound='1';
             sr.addEventListener('change',()=>{
-              const r=senders.find(x=>String(x.id||'')===sr.value);if(!r)return;
+              const r=(window.__coletaHistoryProfiles?.senders||[]).find(x=>String(x.id||'')===sr.value);if(!r)return;
               setField('cliente',r.cliente);
               setField('endereco_coleta',r.endereco_coleta)
             })
@@ -574,7 +575,7 @@ try{
           if(sd&&!sd.dataset.historyBound){
             sd.dataset.historyBound='1';
             sd.addEventListener('change',()=>{
-              const r=recipients.find(x=>String(x.id||'')===sd.value);if(!r)return;
+              const r=(window.__coletaHistoryProfiles?.recipients||[]).find(x=>String(x.id||'')===sd.value);if(!r)return;
               setField('destinatario',r.destinatario);
               setField('endereco_entrega',r.endereco_entrega)
             })
