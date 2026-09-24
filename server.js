@@ -489,7 +489,14 @@ async function fetchSswPendingDeliveries(){
     r=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2=AMR&f3=38',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
     const nav=await r.text(),prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0198';
     r=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
-    const html=await r.text(),params=deliveryProgramFormParams(html);params.set('act','PEN');
+    const html=await r.text(),params=deliveryProgramFormParams(html);
+    let manifest=(parseSsw38Table(html).rows||[])[0]||null;
+    if(!manifest){try{manifest=((await fetchSsw38Quick()).rows||[])[0]||null}catch{}}
+    if(manifest){
+      const mm=String(manifest.romaneio||'').match(/^[A-Z]{3}0*(\d+)-(\d+)$/i);
+      if(mm){params.set('nro_romaneio',mm[1]);params.set('seq_romaneio',mm[2]);params.set('qtde_ctrc',String(manifest.qtdeCtrcs||''))}
+    }
+    params.set('act','PEN');
     const pr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/'+prog,'Cookie':cookie()},body:params.toString(),redirect:'manual',signal:AbortSignal.timeout(25000)});apply(pr.headers);
     const body=await pr.text(),rows=[];
     for(const rm of body.matchAll(/<r\b[^>]*>([\s\S]*?)<\/r>/gi)){
