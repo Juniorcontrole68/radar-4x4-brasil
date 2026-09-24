@@ -24,7 +24,7 @@ try{
         '<label>Capacidade de carga da carreta<input id="capacidade_carga_carreta" placeholder="Ex.: 28.000 kg" /></label>'+
         '<label>Eixos da carreta<input id="eixos_carreta" type="number" min="0" max="20" /></label>'+
         '<label class="full doc-field" style="grid-column:1/-1"><span class="doc-title">Subir documento da carreta</span><input id="doc_carreta_file" type="file" accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/*" /><span id="doc_carreta_status" class="doc-status">PDF ou foto. O sistema tenta preencher placa, capacidade e eixos.</span></label>'+
-        '<label class="full doc-refresh-field" style="grid-column:1/-1"><span class="doc-title">Preencher dados pelos documentos anexados</span><button id="doc_refresh_data" type="button">↻ Atualizar dados dos documentos</button><span id="doc_refresh_status" class="doc-status">Anexe os documentos acima e clique em Atualizar.</span></label>';
+        '<label class="full doc-refresh-field" style="grid-column:1/-1"><span class="doc-title">Preencher dados pelos documentos anexados</span><button id="doc_refresh_data" type="button" onclick="event.preventDefault();var s=document.getElementById(\'doc_refresh_status\');if(s){s.className=\'doc-status\';s.textContent=\'Botão acionado. Preparando leitura…\'}if(window.__refreshColetaDocumentData){window.__refreshColetaDocumentData()}else if(s){s.className=\'doc-status err\';s.textContent=\'O leitor de documentos ainda não carregou. Feche e abra a coleta novamente.\'}return false;">↻ Atualizar dados dos documentos</button><span id="doc_refresh_status" class="doc-status">Anexe os documentos acima e clique em Atualizar.</span></label>';
       html=html.replace(mvStart,mvStart+staticDocs);
     }
 
@@ -826,41 +826,91 @@ try{
             await processDocumentFile(file,tipo,statusId)
           })
         }
+        async function storedDocumentFile(tipo){
+          const id=currentId();if(!id)return null;
+          try{
+            const r=await docBaseFetch('/api/painel/coletas-documentos/'+encodeURIComponent(id)+'/'+encodeURIComponent(tipo)+'?t='+Date.now(),{cache:'no-store'});
+            if(!r.ok)return null;
+            const blob=await r.blob();if(!blob.size)return null;
+            let ext='bin';
+            if(blob.type==='application/pdf')ext='pdf';
+            else if(blob.type==='image/jpeg')ext='jpg';
+            else if(blob.type==='image/png')ext='png';
+            else if(blob.type==='image/webp')ext='webp';
+            return new File([blob],'documento-'+tipo+'.'+ext,{type:blob.type||'application/octet-stream'})
+          }catch{return null}
+        }
         async function refreshDocumentData(){
           const btn=byId('doc_refresh_data'),status=byId('doc_refresh_status');
-          const items=[
+          if(status){status.className='doc-status';status.innerHTML='<span class="doc-reading">Preparando documentos…</span>'}
+          const defs=[
             {input:byId('doc_motorista_file'),tipo:'motorista',status:'doc_motorista_status'},
             {input:byId('doc_cavalo_file'),tipo:'cavalo',status:'doc_cavalo_status'},
             {input:byId('doc_carreta_file'),tipo:'carreta',status:'doc_carreta_status'}
           ];
-          const selected=items.filter(x=>x.input?.files?.[0]);
-          if(!selected.length){
-            if(status){status.className='doc-status err';status.textContent='Anexe pelo menos um documento antes de atualizar.'}
-            return
-          }
           if(btn){btn.disabled=true;btn.textContent='Atualizando dados…'}
-          if(status){status.className='doc-status';status.innerHTML='<span class="doc-reading">Lendo '+selected.length+' documento(s)…</span>'}
-          let ok=0;
           try{
-            for(const item of selected){
-              if(await processDocumentFile(item.input.files[0],item.tipo,item.status))ok++
+            const items=[];
+            for(const d of defs){
+              let file=d.input?.files?.[0]||null;
+              let origem='anexado agora';
+              if(!file){
+                file=await storedDocumentFile(d.tipo);
+                origem='salvo na coleta'
+              }
+              if(file)items.push({...d,file,origem})
+            }
+            if(!items.length){
+              if(status){
+                status.className='doc-status err';
+                status.textContent=currentId()
+                  ?'Nenhum documento anexado ou salvo foi encontrado nesta coleta.'
+                  :'Anexe pelo menos um documento do motorista, cavalo ou carreta antes de atualizar.'
+              }
+              return
+            }
+            if(status){status.className='doc-status';status.innerHTML='<span class="doc-reading">Lendo '+items.length+' documento(s)…</span>'}
+            let ok=0;
+            const erros=[];
+            for(const item of items){
+              try{
+                if(await processDocumentFile(item.file,item.tipo,item.status))ok++
+                else erros.push(item.tipo)
+              }catch(e){erros.push(item.tipo)}
             }
             sumAxes();
             if(status){
-              status.className='doc-status '+(ok?'ok':'err');
-              status.textContent=ok
-                ?'✓ Dados atualizados a partir de '+ok+' documento(s). Confira os campos antes de salvar.'
-                :'Os documentos foram lidos, mas nenhum dado pôde ser reconhecido automaticamente.'
+              if(ok){
+                status.className='doc-status ok';
+                status.textContent='✓ Dados atualizados por '+ok+' documento(s). Confira nome, CPF, placas, capacidades e eixos antes de salvar.'
+              }else{
+                status.className='doc-status err';
+                status.textContent='Os documentos foram encontrados, mas nenhum dado pôde ser reconhecido. Veja a mensagem exibida abaixo de cada documento.'
+              }
             }
+          }catch(e){
+            if(status){status.className='doc-status err';status.textContent='Erro ao atualizar dados: '+String(e.message||e)}
           }finally{
             if(btn){btn.disabled=false;btn.textContent='↻ Atualizar dados dos documentos'}
           }
         }
+        window.__refreshColetaDocumentData=refreshDocumentData;
         function bindRefreshDocumentButton(){
           const btn=byId('doc_refresh_data');
-          if(!btn||btn.dataset.boundRefresh==='1')return;
+          if(!btn)return;
           btn.dataset.boundRefresh='1';
-          btn.addEventListener('click',refreshDocumentData)
+          btn.onclick=e=>{e.preventDefault();refreshDocumentData();return false}
+        }
+        if(!window.__coletaDocRefreshDelegated){
+          window.__coletaDocRefreshDelegated=true;
+          document.addEventListener('click',e=>{
+            const btn=e.target?.closest?.('#doc_refresh_data');
+            if(!btn)return;
+            e.preventDefault();
+            if(btn.dataset.refreshRunning==='1')return;
+            btn.dataset.refreshRunning='1';
+            Promise.resolve(refreshDocumentData()).finally(()=>{btn.dataset.refreshRunning='0'})
+          },true)
         }
         async function saveExtras(id){
           const body={
