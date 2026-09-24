@@ -887,6 +887,11 @@ try{
       if(bodyClose>=0){
         html=html.slice(0,bodyClose)+recebimentoAddon+documentoAddon+html.slice(bodyClose);
       }
+      console.log('COLETAS FIELD SNIPPETS: '+JSON.stringify({
+        motorista:(()=>{const p=html.indexOf('id="motorista"');return p>=0?html.slice(Math.max(0,p-500),p+1000):''})(),
+        placa:(()=>{const p=html.indexOf('id="placa"');return p>=0?html.slice(Math.max(0,p-500),p+1000):''})(),
+        eixos:(()=>{const p=html.indexOf('id="eixos"');return p>=0?html.slice(Math.max(0,p-500),p+1000):''})()
+      }));
       console.log('COLETAS FRONTEND PATCH: '+JSON.stringify({
         addon:html.includes('documentos-coleta-script'),
         uploadMotorista:html.includes('doc_motorista_file'),
