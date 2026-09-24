@@ -467,7 +467,7 @@ try{
       })();
       <\/script>`;
 
-      const documentoAddon=`<style id="documentos-coleta-addon">
+      const documentoAddon=String.raw`<style id="documentos-coleta-addon">
       .doc-field{grid-column:1/-1;border:1px dashed #94a3b8;border-radius:12px;padding:12px;background:#fff}
       .doc-field .doc-title{display:block;font-weight:700;color:#334155;margin-bottom:5px}
       .doc-field input[type=file]{width:100%;padding:9px;border:1px solid #dbe4ee;border-radius:9px;background:#f8fafc}
