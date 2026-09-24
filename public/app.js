@@ -82,7 +82,7 @@ function tabAllowed(tab){
   };
   if(tab==='usuarios')return !!AUTH?.is_admin;
   if(tab==='roteirizador')return hasPerm('roteirizador');
-  if(tab==='agendamentos-copia')return hasAnyPerm(['agendamentos','agendamentos_copia']);
+  if(tab==='agendamentos-copia')return hasAnyPerm(['dashboard','agendamentos','agendamentos_copia']);
   if(tab==='dashboards')return AUTH?.is_admin||PERMISSION_OPTIONS.some(([p])=>hasPerm(p)&&p!=='dashboard');
   return map[tab]?hasPerm(map[tab]):false
 }
@@ -92,6 +92,7 @@ function applyPermissions(){
     let show=true;
     if(b.dataset.adminOnly==='1')show=!!AUTH?.is_admin;
     else if(b.dataset.tab==='dashboards')show=tabAllowed('dashboards');
+    else if(b.dataset.tab==='agendamentos')show=hasPerm('agendamentos')&&!hasPerm('dashboard');
     else if(navMap[b.dataset.tab])show=hasPerm(navMap[b.dataset.tab]);
     b.style.display=show?'':'none';
   });
@@ -344,6 +345,13 @@ async function refreshColetasStatus(){
   finally{window.__coletasStatusLoading=false}
 }
 function agCopyNorm(v){return String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('pt-BR').trim()}
+function agCopyKey(v){return agCopyNorm(v).replace(/[^a-z0-9]/g,'')}
+function agCopyField(o,...names){
+  for(const name of names){if(o&&o[name]!==undefined&&String(o[name]??'').trim()!=='')return o[name]}
+  const wanted=new Set(names.map(agCopyKey));
+  for(const [k,v] of Object.entries(o||{})){if(wanted.has(agCopyKey(k))&&String(v??'').trim()!=='')return v}
+  return''
+}
 function agCopyFillSelect(id,key,label){
   const el=$(id);if(!el)return;
   const current=el.value;
@@ -352,13 +360,13 @@ function agCopyFillSelect(id,key,label){
   if(values.includes(current))el.value=current
 }
 function agCopyPopulateFilters(){
-  agCopyFillSelect('#agcCity','CIDADE','Todas as cidades')
+  agCopyFillSelect('#agcStatus','STATUS','Todos os status')
 }
 function agCopyFiltered(){
-  const city=$('#agcCity')?.value||'';
+  const status=$('#agcStatus')?.value||'';
   const selected=$('#agcDate')?.value||'';
   return (S.agCopy||[]).filter(o=>{
-    if(city&&String(g(o,'CIDADE')||'').trim()!==city)return false;
+    if(status&&agCopyNorm(g(o,'STATUS'))!==agCopyNorm(status))return false;
     if(selected){
       const dt=pd(g(o,'DATA AGENDADA'));
       if(!dt||iso(dt)!==selected)return false
@@ -374,12 +382,13 @@ function renderAgCopy(){
   set('#agcTotal',nf(rows.length));set('#agcScheduled',nf(scheduled));set('#agcDelivered',nf(delivered));set('#agcFailed',nf(failed));
   const info=$('#agcInfo');
   if(info)info.textContent=nf(rows.length)+' registro(s) encontrado(s) de '+nf((S.agCopy||[]).length)+' na aba Cópia de AGENDAMENTOS'+(rows.length>1000?' • exibindo os 1.000 primeiros':'');
-  const cols=[
-    ['Nº','COL_1'],['Cidade','CIDADE'],['Dia de rota','DIA DE ROTA'],['Cliente','NOME CLIENTE'],['Telefone','TELEFONE CLIENTE'],
-    ['Data contato','DATA CONTATO'],['Data agendada','DATA AGENDADA'],['2ª tentativa','2º TENTATIVA'],['Status','STATUS'],['Situação','SITUAÇÃO'],
-    ['Responsável SAC','RESPONSÁVEL SAC'],['Motorista','MOTORISTA'],['Mercadoria','MERCADORIA'],['Observação','OBSERVAÇÃO']
-  ];
-  if($('#agcTable'))table('#agcTable',cols,rows.slice(0,1000))
+  const resultRows=rows.slice(0,1000).map(o=>({
+    notaFiscal:agCopyField(o,'NF','NOTA FISCAL','Nº NF','NUMERO NF','NÚMERO NF','NOTA','COL_1'),
+    cliente:agCopyField(o,'NOME CLIENTE','CLIENTE','NOME DO CLIENTE'),
+    cidade:agCopyField(o,'CIDADE','CIDADE DESTINO','MUNICIPIO','MUNICÍPIO'),
+    mercadoria:agCopyField(o,'MERCADORIA','PRODUTO','DESCRIÇÃO MERCADORIA','DESCRICAO MERCADORIA')
+  }));
+  if($('#agcTable'))table('#agcTable',[['Nota Fiscal','notaFiscal'],['Nome do cliente','cliente'],['Cidade','cidade'],['Mercadoria','mercadoria']],resultRows)
 }
 function renderAgCopyHub(){
   const rows=S.agCopy||[],set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
@@ -390,7 +399,7 @@ function renderAgCopyHub(){
   set('#hubAgCopyInfo',rows.length?'Dados atualizados da aba Cópia de AGENDAMENTOS.':'Sem registros disponíveis.')
 }
 async function refreshAgCopy(force=false){
-  if(!hasAnyPerm(['agendamentos','agendamentos_copia']))return;
+  if(!hasAnyPerm(['dashboard','agendamentos','agendamentos_copia']))return;
   if(window.__agCopyLoading)return;
   if(!force&&S.agCopy.length&&Date.now()-(window.__agCopyLoadedAt||0)<60000){agCopyPopulateFilters();renderAgCopy();renderAgCopyHub();return}
   window.__agCopyLoading=true;
@@ -410,10 +419,10 @@ function setupAgCopy(){
   const apply=$('#agcApply'),today=$('#agcToday'),clear=$('#agcClear'),refresh=$('#agcRefresh');
   if(apply)apply.onclick=renderAgCopy;
   if(today)today.onclick=()=>{const d=iso(new Date());if($('#agcDate'))$('#agcDate').value=d;renderAgCopy()};
-  if(clear)clear.onclick=()=>{if($('#agcDate'))$('#agcDate').value='';if($('#agcCity'))$('#agcCity').value='';renderAgCopy()};
+  if(clear)clear.onclick=()=>{if($('#agcDate'))$('#agcDate').value='';if($('#agcStatus'))$('#agcStatus').value='';renderAgCopy()};
   if(refresh)refresh.onclick=()=>refreshAgCopy(true);
   if($('#agcDate'))$('#agcDate').onchange=renderAgCopy;
-  if($('#agcCity'))$('#agcCity').onchange=renderAgCopy
+  if($('#agcStatus'))$('#agcStatus').onchange=renderAgCopy
 }
 function init(){const t=new Date(),f=new Date(t.getFullYear(),t.getMonth(),1);$('#from').value=iso(f);$('#to').value=iso(t)}
 function setDashboardToday(){
@@ -477,6 +486,14 @@ if(active==='dashboard'){
   const bd={};O.forEach(o=>{const k=gd(o)||'Sem data';bd[k]??={d:0,r:0};bd[k].d+=num(g(o,'Realizadas'));bd[k].r+=num(g(o,'Retorno'))});const K=Object.keys(bd).sort((a,b)=>(pd(a)||0)-(pd(b)||0));lines('#trend',K,K.map(k=>bd[k].d),K.map(k=>bd[k].r));
   const dm={};O.forEach(o=>{const k=g(o,'Motorista')||'Sem motorista';dm[k]=(dm[k]||0)+num(g(o,'Entregas'))});const T=Object.entries(dm).sort((a,b)=>b[1]-a[1]).slice(0,10);bars('#drivers',T.map(x=>x[0]),T.map(x=>x[1]),T.map(x=>nf(x[1])),true);
   const st={};A.forEach(o=>{const k=(g(o,'STATUS')||'SEM STATUS').trim();st[k]=(st[k]||0)+1});donut('#statusChart',Object.keys(st),Object.values(st));
+  if($('#schOverview'))table('#schOverview',[
+    ['Nota Fiscal','NF','NOTA FISCAL','NOTA','COL_1'],
+    ['Cliente','NOME CLIENTE','CLIENTE'],
+    ['Cidade','CIDADE'],
+    ['Data','DATA AGENDADA'],
+    ['Status','STATUS'],
+    ['Mercadoria','MERCADORIA']
+  ],A.slice().reverse().slice(0,250));
   const hdA={},hdC={};HA.forEach(o=>{const k=g(o,'Data')||'Sem data';hdA[k]??={valor:0,nomes:new Set()};hdA[k].valor+=num(g(o,'Valor'));const nome=String(g(o,'NOME')||'').trim();if(nome)hdA[k].nomes.add(nome)});HCf.forEach(o=>{const k=g(o,'Data')||'Sem data';hdC[k]??={valor:0,nomes:new Set()};hdC[k].valor+=num(g(o,'Valor'));const nome=String(g(o,'NOME')||'').trim();if(nome)hdC[k].nomes.add(nome)});const HK=[...new Set([...Object.keys(hdA),...Object.keys(hdC)])].sort((a,b)=>(pd(a)||0)-(pd(b)||0));groupedBars('#helpersChart',HK,HK.map(k=>hdA[k]?.valor||0),HK.map(k=>hdC[k]?.valor||0),HK.map(k=>nf(hdA[k]?.nomes.size||0)),HK.map(k=>nf(hdC[k]?.nomes.size||0)));
 }
 $('#hc').textContent=brl(helperCost);$('#hcc').textContent=brl(checkerCost);$('#hn').textContent=nf(H.length);$('#hp').textContent=new Set(HA.map(o=>g(o,'NOME')).filter(Boolean)).size;$('#hcp').textContent=new Set(HCf.map(o=>g(o,'NOME')).filter(Boolean)).size;
@@ -1173,11 +1190,11 @@ function loadHeavyForTab(tab){
     if(hasPerm('receita_ssw'))setTimeout(()=>refreshSswReceita(),700);
     if(hasAnyPerm(['remetentes','remetentes_comparativo']))setTimeout(()=>refreshSswRemetentes(),1000);
     if(hasPerm('final_carregamento'))setTimeout(()=>refreshLoadingRecords(false),1250);
-    if(hasAnyPerm(['agendamentos','agendamentos_copia']))setTimeout(()=>refreshAgCopy(false),1450);
+    if(hasAnyPerm(['dashboard','agendamentos','agendamentos_copia']))setTimeout(()=>refreshAgCopy(false),1450);
   }else if(tab==='conferencia'&&hasPerm('final_carregamento')){
     loadingDriverOptions();
     setTimeout(()=>refreshLoadingRecords(true),50);
-  }else if(tab==='agendamentos-copia'&&hasAnyPerm(['agendamentos','agendamentos_copia'])){
+  }else if(tab==='agendamentos-copia'&&hasAnyPerm(['dashboard','agendamentos','agendamentos_copia'])){
     setTimeout(()=>refreshAgCopy(false),50);
   }else if(tab==='roteirizador'&&hasPerm('roteirizador')){
     setTimeout(()=>loadRouteManifests(false),50);
