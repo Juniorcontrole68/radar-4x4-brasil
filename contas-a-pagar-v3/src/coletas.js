@@ -17,9 +17,9 @@ try{
       const staticDocs=
         '<label>CPF do motorista<input id="motorista_cpf" placeholder="000.000.000-00" inputmode="numeric" maxlength="14" /></label>'+
         '<label class="full doc-field" style="grid-column:1/-1"><span class="doc-title">Importar documento do motorista</span><input id="doc_motorista_file" type="file" accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/*" /><span id="doc_motorista_status" class="doc-status">PDF ou foto. O sistema tenta preencher nome e CPF automaticamente.</span></label>'+
-        '<label>Capacidade de carga do cavalo<input id="capacidade_carga_cavalo" placeholder="Ex.: 16.000 kg" /></label>'+
-        '<label>Eixos do cavalo<input id="eixos_cavalo" type="number" min="0" max="20" /></label>'+
-        '<label class="full doc-field" style="grid-column:1/-1"><span class="doc-title">Subir documento do cavalo mecânico</span><input id="doc_cavalo_file" type="file" accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/*" /><span id="doc_cavalo_status" class="doc-status">PDF ou foto. O sistema tenta preencher placa, capacidade e eixos.</span></label>'+
+        '<label>Capacidade de carga do caminhão / cavalo<input id="capacidade_carga_cavalo" placeholder="Ex.: 16.000 kg" /></label>'+
+        '<label>Eixos do caminhão / cavalo<input id="eixos_cavalo" type="number" min="0" max="20" /></label>'+
+        '<label class="full doc-field" style="grid-column:1/-1"><span class="doc-title">Subir documento do caminhão / cavalo mecânico</span><input id="doc_cavalo_file" type="file" accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/*" /><span id="doc_cavalo_status" class="doc-status">PDF ou foto. O sistema tenta preencher placa, capacidade e eixos.</span></label>'+
         '<label>Placa da carreta<input id="placa_carreta" placeholder="ABC1D23" maxlength="8" /></label>'+
         '<label>Capacidade de carga da carreta<input id="capacidade_carga_carreta" placeholder="Ex.: 28.000 kg" /></label>'+
         '<label>Eixos da carreta<input id="eixos_carreta" type="number" min="0" max="20" /></label>'+
@@ -647,9 +647,9 @@ try{
           if(truckGrid){
             const placa=byId('placa');if(placa){placa.dataset.noTitlecase='true';const s=placa.closest('label')?.querySelector('span');if(s)s.textContent='Placa do cavalo mecânico'}
             const total=byId('eixos');if(total){const s=total.closest('label')?.querySelector('span');if(s)s.textContent='Total de eixos';total.min='0';total.max='20'}
-            const capC=addInput(truckGrid,'capacidade_carga_cavalo','Capacidade de carga do cavalo','text',{placeholder:'Ex.: 16.000 kg',noTitlecase:true});
-            const eixC=addInput(truckGrid,'eixos_cavalo','Eixos do cavalo','number',{min:'0',max:'20',noTitlecase:true});
-            const docC=addUpload(truckGrid,'doc_cavalo_file','Subir documento do cavalo mecânico','doc_cavalo_status');
+            const capC=addInput(truckGrid,'capacidade_carga_cavalo','Capacidade de carga do caminhão / cavalo','text',{placeholder:'Ex.: 16.000 kg',noTitlecase:true});
+            const eixC=addInput(truckGrid,'eixos_cavalo','Eixos do caminhão / cavalo','number',{min:'0',max:'20',noTitlecase:true});
+            const docC=addUpload(truckGrid,'doc_cavalo_file','Subir documento do caminhão / cavalo mecânico','doc_cavalo_status');
             const placaT=addInput(truckGrid,'placa_carreta','Placa da carreta','text',{placeholder:'ABC1D23',noTitlecase:true});
             placaT.maxLength=8;
             const capT=addInput(truckGrid,'capacidade_carga_carreta','Capacidade de carga da carreta','text',{placeholder:'Ex.: 28.000 kg',noTitlecase:true});
@@ -711,20 +711,24 @@ try{
           }});
           return result?.data?.text||''
         }
-        async function extractText(file,statusId){
+        async function extractText(file,statusId,forceOcr=false){
           if(file.type==='application/pdf'){
             const pdfjs=await ensurePdf(),buf=await file.arrayBuffer(),pdf=await pdfjs.getDocument({data:buf}).promise;
             let text='';
-            const maxPages=Math.min(pdf.numPages,3);
-            for(let n=1;n<=maxPages;n++){
-              const page=await pdf.getPage(n),tc=await page.getTextContent();
-              text+='\n'+tc.items.map(x=>x.str||'').join(' ')
+            if(!forceOcr){
+              const maxPages=Math.min(pdf.numPages,3);
+              for(let n=1;n<=maxPages;n++){
+                const page=await pdf.getPage(n),tc=await page.getTextContent();
+                text+='\n'+tc.items.map(x=>x.str||'').join(' ')
+              }
+              if(norm(text).length>80)return text
             }
-            if(norm(text).length>80)return text;
             for(let n=1;n<=Math.min(pdf.numPages,2);n++){
-              const page=await pdf.getPage(n),vp=page.getViewport({scale:1.7}),canvas=document.createElement('canvas');
+              setStatus(statusId,'<span class="doc-reading">Aplicando OCR na página '+n+'…</span>');
+              const page=await pdf.getPage(n),vp=page.getViewport({scale:2.15}),canvas=document.createElement('canvas');
               canvas.width=Math.round(vp.width);canvas.height=Math.round(vp.height);
-              await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
+              const ctx=canvas.getContext('2d');
+              await page.render({canvasContext:ctx,viewport:vp}).promise;
               text+='\n'+await ocrSource(canvas,statusId)
             }
             return text
@@ -905,14 +909,24 @@ try{
             setStatus(statusId,'<span class="doc-reading">Lendo documento…</span>');
             const stored=await storageDataUrl(file);
             pendingDocs[tipo]={tipo,nome_arquivo:file.name||('documento-'+tipo),arquivo:stored};
-            const text=await extractText(file,statusId);
+            let text=await extractText(file,statusId);
             if(tipo==='motorista'){
-              const d=parseDriver(text);applyDriver(d);
+              let d=parseDriver(text);
+              if(file.type==='application/pdf'&&(!d.nome||!d.cpf)){
+                const ocr=await extractText(file,statusId,true);
+                d=parseDriver(text+'\n'+ocr)
+              }
+              applyDriver(d);
               const found=[d.nome?'nome':'',d.cpf?'CPF':''].filter(Boolean);
               setStatus(statusId,found.length?'✓ '+esc(found.join(' e '))+' preenchido(s). Confira antes de salvar.':'Documento anexado, mas nome/CPF não foram reconhecidos. Preencha manualmente.','ok');
               return found.length>0
             }else{
-              const d=parseVehicle(text);applyVehicle(tipo,d);
+              let d=parseVehicle(text);
+              if(file.type==='application/pdf'&&(!d.placa||d.eixos===null||!d.capacidade||!d.tipoVeiculo)){
+                const ocr=await extractText(file,statusId,true);
+                d=parseVehicle(text+'\n'+ocr)
+              }
+              applyVehicle(tipo,d);
               const found=[d.placa?'placa':'',d.tipoVeiculo?'tipo do caminhão':'',d.capacidade?'capacidade':'',d.eixos!==null?'eixos':''].filter(Boolean);
               setStatus(statusId,found.length?'✓ '+esc(found.join(', '))+' preenchido(s). Confira antes de salvar.':'Documento anexado, mas os dados não foram reconhecidos. Preencha manualmente.','ok');
               return found.length>0
