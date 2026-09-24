@@ -2171,8 +2171,10 @@ if(u.pathname==='/api/auth/login'&&req.method==='POST'){try{  const body=await r
   const q=new URLSearchParams({limit:String(limit)});
   const motorista=String(u.searchParams.get('motorista')||'').trim();
   const data=String(u.searchParams.get('data')||'').trim();
+  const tipo=String(u.searchParams.get('tipo')||'').trim();
   if(motorista)q.set('motorista',motorista);
   if(data)q.set('data',data);
+  if(tipo)q.set('tipo',tipo);
   const x=await portalJson('/api/painel/carregamentos-finais?'+q.toString());
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
