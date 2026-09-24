@@ -301,6 +301,7 @@ async function start() {
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS previsao_pagamento_fatura DATE');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS destinatario TEXT');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS motorista_cpf TEXT');
+  await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS motorista_rg TEXT');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS placa_carreta TEXT');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS capacidade_carga_cavalo TEXT');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS eixos_cavalo INTEGER');
@@ -586,7 +587,7 @@ async function start() {
 
           const id = decodeURIComponent(dadosDocumentaisMatch[1]);
           const body = await readJsonBodyLimited(req, 256 * 1024);
-          const cpf = String(body.motorista_cpf || '').replace(/\D/g, '').slice(0, 11);
+          const rg = String(body.motorista_rg || '').trim().toUpperCase().replace(/\s+/g, ' ').slice(0, 50);
           const placaCarreta = String(body.placa_carreta || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7);
           const capacidadeCavalo = String(body.capacidade_carga_cavalo || '').trim().slice(0, 80);
           const capacidadeCarreta = String(body.capacidade_carga_carreta || '').trim().slice(0, 80);
@@ -601,13 +602,13 @@ async function start() {
           if (eixosTotal === null && (eixosCavalo !== null || eixosCarreta !== null)) {
             eixosTotal = Number(eixosCavalo || 0) + Number(eixosCarreta || 0);
           }
-          const sql = 'UPDATE coletas SET motorista_cpf=$1, placa_carreta=$2, capacidade_carga_cavalo=$3, ' +
+          const sql = 'UPDATE coletas SET motorista_rg=$1, placa_carreta=$2, capacidade_carga_cavalo=$3, ' +
             'eixos_cavalo=$4, capacidade_carga_carreta=$5, eixos_carreta=$6, ' +
             'eixos=COALESCE($7,eixos), updated_at=NOW() WHERE id::text=$8 ' +
-            'RETURNING id::text AS id, motorista, motorista_cpf, placa, placa_carreta, ' +
+            'RETURNING id::text AS id, motorista, motorista_rg, motorista_cpf, placa, placa_carreta, ' +
             'capacidade_carga_cavalo, eixos_cavalo, capacidade_carga_carreta, eixos_carreta, eixos';
           const r = await pool.query(sql, [
-            cpf || null, placaCarreta || null, capacidadeCavalo || null, eixosCavalo,
+            rg || null, placaCarreta || null, capacidadeCavalo || null, eixosCavalo,
             capacidadeCarreta || null, eixosCarreta, eixosTotal, id
           ]);
           if (!r.rowCount) return sendJson(res, 404, { ok:false, error:'Coleta não encontrada.' });
