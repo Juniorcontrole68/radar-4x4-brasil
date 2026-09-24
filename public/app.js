@@ -469,7 +469,7 @@ function renderAgCopyHub(){
 async function refreshAgCopy(force=false){
   if(!hasAnyPerm(['dashboard','agendamentos','agendamentos_copia']))return;
   if(window.__agCopyLoading)return;
-  if(!force&&S.agCopy.length&&Date.now()-(window.__agCopyLoadedAt||0)<60000){agCopyPopulateFilters();renderAgCopy();renderAgCopyHub();return}
+  if(!force&&S.agCopy.length&&Date.now()-(window.__agCopyLoadedAt||0)<60000){agCopyPopulateFilters();renderAgCopy();renderAgCopyHub();renderAgStatusCards('#agStatusCards',S.agCopy||[]);renderAgStatusCards('#agStatusCards',S.agCopy||[]);return}
   window.__agCopyLoading=true;
   const info=$('#agcInfo');if(info)info.textContent='Atualizando dados da Cópia de AGENDAMENTOS…';
   try{
@@ -554,7 +554,7 @@ const active=$('.section.active')?.id||'dashboard';
 if(active==='dashboard'){
   const bd={};O.forEach(o=>{const k=gd(o)||'Sem data';bd[k]??={d:0,r:0};bd[k].d+=num(g(o,'Realizadas'));bd[k].r+=num(g(o,'Retorno'))});const K=Object.keys(bd).sort((a,b)=>(pd(a)||0)-(pd(b)||0));lines('#trend',K,K.map(k=>bd[k].d),K.map(k=>bd[k].r));
   const dm={};O.forEach(o=>{const k=g(o,'Motorista')||'Sem motorista';dm[k]=(dm[k]||0)+num(g(o,'Entregas'))});const T=Object.entries(dm).sort((a,b)=>b[1]-a[1]).slice(0,10);bars('#drivers',T.map(x=>x[0]),T.map(x=>x[1]),T.map(x=>nf(x[1])),true);
-  renderAgStatusCards('#agStatusCards',A);
+  renderAgStatusCards('#agStatusCards',S.agCopy||[]);
   const hdA={},hdC={};HA.forEach(o=>{const k=g(o,'Data')||'Sem data';hdA[k]??={valor:0,nomes:new Set()};hdA[k].valor+=num(g(o,'Valor'));const nome=String(g(o,'NOME')||'').trim();if(nome)hdA[k].nomes.add(nome)});HCf.forEach(o=>{const k=g(o,'Data')||'Sem data';hdC[k]??={valor:0,nomes:new Set()};hdC[k].valor+=num(g(o,'Valor'));const nome=String(g(o,'NOME')||'').trim();if(nome)hdC[k].nomes.add(nome)});const HK=[...new Set([...Object.keys(hdA),...Object.keys(hdC)])].sort((a,b)=>(pd(a)||0)-(pd(b)||0));groupedBars('#helpersChart',HK,HK.map(k=>hdA[k]?.valor||0),HK.map(k=>hdC[k]?.valor||0),HK.map(k=>nf(hdA[k]?.nomes.size||0)),HK.map(k=>nf(hdC[k]?.nomes.size||0)));
 }
 $('#hc').textContent=brl(helperCost);$('#hcc').textContent=brl(checkerCost);$('#hn').textContent=nf(H.length);$('#hp').textContent=new Set(HA.map(o=>g(o,'NOME')).filter(Boolean)).size;$('#hcp').textContent=new Set(HCf.map(o=>g(o,'NOME')).filter(Boolean)).size;
@@ -1245,7 +1245,9 @@ function setupRoteirizador(){
 }
 
 function loadHeavyForTab(tab){
-  if(tab==='dashboards'){
+  if(tab==='dashboard'){
+    if(hasAnyPerm(['dashboard','agendamentos','agendamentos_copia']))setTimeout(()=>refreshAgCopy(false),80);
+  }else if(tab==='dashboards'){
     if(hasAnyPerm(['ssw_saidas','evolucao','cidade_destino']))setTimeout(()=>refreshSswMotoristas(),100);
     if(hasPerm('ssw_atrasos'))setTimeout(()=>refreshSswAtrasos(),450);
     if(hasPerm('receita_ssw'))setTimeout(()=>refreshSswReceita(),700);
