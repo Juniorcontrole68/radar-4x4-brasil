@@ -752,23 +752,60 @@ try{
           for(const m of all){const d=m.slice(1,5).join('');if(validCpf(d))return d}
           return perto?perto.slice(1,5).join(''):''
         }
+        function cleanRgValue(v){
+          let s=String(v||'').toUpperCase().replace(/\s+/g,' ').trim();
+          s=s.replace(/^(?:RG|DOC(?:UMENTO)?(?: DE)? IDENTIDADE|IDENTIDADE)\s*[:\-]?\s*/,'');
+          s=s.replace(/\b(?:ORGAO|ÓRGAO|EMISSOR|UF|DATA|NASCIMENTO|CPF)\b.*$/,'').trim();
+          const m=s.match(/[0-9A-Z][0-9A-Z.\-\/]{4,24}/);
+          return m?m[0].replace(/[\/\-\.]+$/,''):''
+        }
+        function parseRg(text){
+          const raw=String(text||''),lines=linesOf(raw),flat=norm(raw).replace(/\s+/g,' ');
+          const patterns=[
+            /\bRG\s*[:\-]?\s*([0-9A-Z][0-9A-Z.\-\/]{4,24})/,
+            /\bDOC(?:UMENTO)?(?: DE)? IDENTIDADE\b[^0-9A-Z]{0,15}([0-9A-Z][0-9A-Z.\-\/]{4,24})/,
+            /\bIDENTIDADE\b[^0-9A-Z]{0,15}([0-9A-Z][0-9A-Z.\-\/]{4,24})/
+          ];
+          for(const re of patterns){
+            const m=flat.match(re);if(m){
+              const rg=cleanRgValue(m[1]);
+              if(rg&&digits(rg).length>=5&&digits(rg).length<=14)return rg
+            }
+          }
+          for(let i=0;i<lines.length;i++){
+            const n=norm(lines[i]);
+            if(/\b(?:RG|DOC(?:UMENTO)?(?: DE)? IDENTIDADE|IDENTIDADE)\b/.test(n)){
+              const same=cleanRgValue(lines[i]);
+              if(same&&digits(same).length>=5)return same;
+              for(let j=1;j<=2;j++){
+                const next=cleanRgValue(lines[i+j]||'');
+                if(next&&digits(next).length>=5&&digits(next).length<=14)return next
+              }
+            }
+          }
+          return''
+        }
         function cleanPersonName(v){
           return String(v||'')
             .replace(/^\s*(?:\d+\s*)?(?:NOME(?: E SOBRENOME)?|NOME DO CONDUTOR|NOME COMPLETO)\s*[:\-]?\s*/i,'')
-            .replace(/\b(?:CPF|DATA DE NASCIMENTO|NASCIMENTO|DOC(?:UMENTO)?(?: DE)? IDENTIDADE|FILIA[CÇ][AÃ]O|VALIDADE|CAT(?:EGORIA)?|REGISTRO|NACIONALIDADE)\b.*$/i,'')
+            .replace(/\b(?:CPF|RG|DATA DE NASCIMENTO|NASCIMENTO|DOC(?:UMENTO)?(?: DE)? IDENTIDADE|FILIA[CÇ][AÃ]O|VALIDADE|CAT(?:EGORIA)?|REGISTRO|NACIONALIDADE)\b.*$/i,'')
             .replace(/[^A-Za-zÀ-ÿ'\-\s]/g,' ').replace(/\s+/g,' ').trim()
         }
         function plausiblePersonName(v){
           const n=cleanPersonName(v),parts=n.split(' ').filter(Boolean);
           if(n.length<6||n.length>90||parts.length<2||parts.length>8)return false;
-          if(/\b(?:CARTEIRA|HABILITACAO|REPUBLICA|FEDERATIVA|BRASIL|DETRAN|SECRETARIA|ASSINATURA|CONDUTOR|CPF|REGISTRO|VALIDADE|CATEGORIA)\b/i.test(norm(n)))return false;
-          return parts.every(p=>p.length>=2)
+          if(/\b(?:CARTEIRA|HABILITACAO|REPUBLICA|FEDERATIVA|BRASIL|DETRAN|SECRETARIA|ASSINATURA|CONDUTOR|CPF|RG|REGISTRO|VALIDADE|CATEGORIA|IDENTIDADE)\b/i.test(norm(n)))return false;
+          if(!parts.every(p=>p.length>=2))return false;
+          const long=parts.filter(p=>p.length>=4).length;
+          if(parts.length>=4&&long===0)return false;
+          if(parts.length>=5&&long<2)return false;
+          return true
         }
         function parseDriver(text){
-          const raw=String(text||''),lines=linesOf(raw),flat=raw.replace(/\s+/g,' ').trim(),cpf=parseCpf(raw);let nome='';
+          const raw=String(text||''),lines=linesOf(raw),flat=raw.replace(/\s+/g,' ').trim(),rg=parseRg(raw);let nome='';
           const labelPatterns=[
-            /(?:^|\s)(?:\d+\s*)?NOME(?:\s+E\s+SOBRENOME)?\s*[:\-]?\s*([A-ZÀ-Ü][A-ZÀ-Ü'\- ]{5,90}?)(?=\s+(?:CPF|DATA\s+DE\s+NASCIMENTO|NASCIMENTO|DOC(?:UMENTO)?|FILIA[CÇ][AÃ]O|VALIDADE|CAT(?:EGORIA)?|REGISTRO|NACIONALIDADE)\b|$)/i,
-            /(?:^|\s)NOME\s+DO\s+CONDUTOR\s*[:\-]?\s*([A-ZÀ-Ü][A-ZÀ-Ü'\- ]{5,90}?)(?=\s+(?:CPF|DATA|DOC|FILIA|VALIDADE|REGISTRO)\b|$)/i
+            /(?:^|\s)(?:\d+\s*)?NOME(?:\s+E\s+SOBRENOME)?\s*[:\-]?\s*([A-ZÀ-Ü][A-ZÀ-Ü'\- ]{5,90}?)(?=\s+(?:CPF|RG|DATA\s+DE\s+NASCIMENTO|NASCIMENTO|DOC(?:UMENTO)?|IDENTIDADE|FILIA[CÇ][AÃ]O|VALIDADE|CAT(?:EGORIA)?|REGISTRO|NACIONALIDADE)\b|$)/i,
+            /(?:^|\s)NOME\s+DO\s+CONDUTOR\s*[:\-]?\s*([A-ZÀ-Ü][A-ZÀ-Ü'\- ]{5,90}?)(?=\s+(?:CPF|RG|DATA|DOC|IDENTIDADE|FILIA|VALIDADE|REGISTRO)\b|$)/i
           ];
           for(const re of labelPatterns){
             const m=flat.match(re);if(m&&plausiblePersonName(m[1])){nome=titleCase(cleanPersonName(m[1]));break}
@@ -785,13 +822,13 @@ try{
             }
           }
           if(!nome){
-            const cpfLine=lines.findIndex(x=>/\bCPF\b/.test(norm(x)));
-            const start=cpfLine>0?Math.max(0,cpfLine-3):0,end=cpfLine>=0?cpfLine:Math.min(lines.length,12);
+            const docLine=lines.findIndex(x=>/\b(?:RG|DOC(?:UMENTO)?(?: DE)? IDENTIDADE|IDENTIDADE)\b/.test(norm(x)));
+            const start=docLine>0?Math.max(0,docLine-4):0,end=docLine>=0?docLine:Math.min(lines.length,14);
             for(let i=start;i<end;i++){
               if(plausiblePersonName(lines[i])){nome=titleCase(cleanPersonName(lines[i]));break}
             }
           }
-          return{nome,cpf}
+          return{nome,rg}
         }
         function parsePlate(text){
           const lines=linesOf(text);
@@ -873,7 +910,7 @@ try{
         }
         function applyDriver(d){
           if(d.nome&&byId('motorista'))setField('motorista',d.nome);
-          if(d.cpf&&byId('motorista_rg'))setField('motorista_rg',formatCpf(d.cpf))
+          if(d.rg&&byId('motorista_rg'))setField('motorista_rg',d.rg)
         }
         function setTruckType(value){
           const el=byId('tipo_caminhao');if(!el||!value)return;
@@ -911,13 +948,14 @@ try{
             let text=await extractText(file,statusId);
             if(tipo==='motorista'){
               let d=parseDriver(text);
-              if(file.type==='application/pdf'&&(!d.nome||!d.cpf)){
+              if(file.type==='application/pdf'&&(!d.nome||!d.rg)){
                 const ocr=await extractText(file,statusId,true);
-                d=parseDriver(text+'\n'+ocr)
+                const od=parseDriver(ocr);
+                d={nome:od.nome||d.nome,rg:od.rg||d.rg}
               }
               applyDriver(d);
-              const found=[d.nome?'nome':'',d.cpf?'CPF':''].filter(Boolean);
-              setStatus(statusId,found.length?'✓ '+esc(found.join(' e '))+' preenchido(s). Confira antes de salvar.':'Documento anexado, mas nome/CPF não foram reconhecidos. Preencha manualmente.','ok');
+              const found=[d.nome?'nome':'',d.rg?'RG':''].filter(Boolean);
+              setStatus(statusId,found.length?'✓ '+esc(found.join(' e '))+' preenchido(s). Confira antes de salvar.':'Documento anexado, mas nome/RG não foram reconhecidos. Preencha manualmente.','ok');
               return found.length>0
             }else{
               let d=parseVehicle(text);
