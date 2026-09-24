@@ -581,6 +581,9 @@ async function start() {
       const dadosDocumentaisMatch = u.pathname.match(/^\/api\/painel\/coletas-documentais\/([^/]+)$/);
       if (req.method === 'PATCH' && dadosDocumentaisMatch) {
         try {
+          const docUser=await dashboardSession(req,false);
+          if(!dashboardHas(docUser,'coletas')) return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+
           const id = decodeURIComponent(dadosDocumentaisMatch[1]);
           const body = await readJsonBodyLimited(req, 256 * 1024);
           const cpf = String(body.motorista_cpf || '').replace(/\D/g, '').slice(0, 11);
@@ -617,6 +620,9 @@ async function start() {
       const docsListMatch = u.pathname.match(/^\/api\/painel\/coletas-documentos\/([^/]+)$/);
       if (req.method === 'GET' && docsListMatch) {
         try {
+          const docUser=await dashboardSession(req,false);
+          if(!dashboardHas(docUser,'coletas')) return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+
           const id = decodeURIComponent(docsListMatch[1]);
           const r = await pool.query(
             'SELECT tipo, nome_arquivo, mime, bytes, criado_em, atualizado_em FROM coleta_documentos WHERE coleta_id=$1 ORDER BY tipo',
@@ -630,6 +636,9 @@ async function start() {
 
       if (req.method === 'POST' && docsListMatch) {
         try {
+          const docUser=await dashboardSession(req,false);
+          if(!dashboardHas(docUser,'coletas')) return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+
           const id = decodeURIComponent(docsListMatch[1]);
           const exists = await pool.query('SELECT 1 FROM coletas WHERE id::text=$1 LIMIT 1',[id]);
           if (!exists.rowCount) return sendJson(res,404,{ok:false,error:'Coleta não encontrada.'});
@@ -653,6 +662,9 @@ async function start() {
       const docFileMatch = u.pathname.match(/^\/api\/painel\/coletas-documentos\/([^/]+)\/(motorista|cavalo|carreta)$/);
       if (req.method === 'GET' && docFileMatch) {
         try {
+          const docUser=await dashboardSession(req,false);
+          if(!dashboardHas(docUser,'coletas')) return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+
           const id=decodeURIComponent(docFileMatch[1]),tipo=docFileMatch[2];
           const r=await pool.query(
             'SELECT nome_arquivo,mime,arquivo FROM coleta_documentos WHERE coleta_id=$1 AND tipo=$2 LIMIT 1',
