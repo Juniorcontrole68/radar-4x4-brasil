@@ -452,6 +452,7 @@ function renderAgCopy(){
     }).join('')+'</tbody>';
     reportTable.querySelectorAll('[data-ag-observation]').forEach(btn=>btn.onclick=()=>openAgObservation(Number(btn.dataset.agObservation)))
   }
+}
 function openAgObservation(index){
   const r=(window.__agCopyReportRows||[])[index];if(!r||!r.observacao)return;
   const modal=$('#agObservationModal'),client=$('#agObservationClient'),textEl=$('#agObservationText');
