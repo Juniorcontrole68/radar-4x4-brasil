@@ -469,7 +469,7 @@ function renderAgCopyHub(){
 async function refreshAgCopy(force=false){
   if(!hasAnyPerm(['dashboard','agendamentos','agendamentos_copia']))return;
   if(window.__agCopyLoading)return;
-  if(!force&&S.agCopy.length&&Date.now()-(window.__agCopyLoadedAt||0)<60000){agCopyPopulateFilters();renderAgCopy();renderAgCopyHub();renderAgStatusCards('#agStatusCards',S.agCopy||[]);renderAgStatusCards('#agStatusCards',S.agCopy||[]);return}
+  if(!force&&S.agCopy.length&&Date.now()-(window.__agCopyLoadedAt||0)<60000){agCopyPopulateFilters();renderAgCopy();renderAgCopyHub();renderAgStatusCards('#agStatusCards',S.agCopy||[]);return}
   window.__agCopyLoading=true;
   const info=$('#agcInfo');if(info)info.textContent='Atualizando dados da Cópia de AGENDAMENTOS…';
   try{
@@ -477,7 +477,7 @@ async function refreshAgCopy(force=false){
     const j=await r.json();
     if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível carregar a Cópia de AGENDAMENTOS.');
     S.agCopy=j.rows||[];window.__agCopyLoadedAt=Date.now();
-    agCopyPopulateFilters();renderAgCopy();renderAgCopyHub()
+    agCopyPopulateFilters();renderAgCopy();renderAgCopyHub();renderAgStatusCards('#agStatusCards',S.agCopy||[])
   }catch(e){
     if(info)info.textContent='Não foi possível carregar os agendamentos: '+e.message;
     const h=$('#hubAgCopyInfo');if(h)h.textContent='Consulta de agendamentos indisponível: '+e.message
