@@ -455,6 +455,10 @@ try{
       .doc-status.ok{color:#15803d;font-weight:600}.doc-status.err{color:#b91c1c;font-weight:600}
       .doc-status a{color:#0f766e;font-weight:700;text-decoration:none}
       .doc-reading{display:inline-flex;align-items:center;gap:6px}
+      .history-select-wrap{grid-column:1/-1;border:1px solid #cbd5e1;border-radius:11px;padding:11px;background:#fff}
+      .history-select-wrap>span{display:block;font-weight:700;color:#334155;margin-bottom:6px}
+      .history-select{width:100%;box-sizing:border-box;min-height:42px;border:1px solid #cbd5e1;border-radius:9px;padding:8px 10px;background:#fff}
+      .history-hint{display:block;margin-top:5px;font-size:11px;color:#64748b}
       .doc-reading:before{content:"";width:10px;height:10px;border:2px solid #cbd5e1;border-top-color:#0f766e;border-radius:50%;animation:docSpin .8s linear infinite}
       @keyframes docSpin{to{transform:rotate(360deg)}}
       </style>
@@ -488,6 +492,95 @@ try{
           if(opts.noTitlecase)el.dataset.noTitlecase='true';
           lbl.append(sp,el);grid.appendChild(lbl);return el
         }
+
+        function addHistorySelect(grid,id,label,placeholder){
+          let sel=byId(id);if(sel)return sel;
+          const wrap=document.createElement('label');wrap.className='history-select-wrap';
+          const sp=document.createElement('span');sp.textContent=label;
+          sel=document.createElement('select');sel.id=id;sel.className='history-select';sel.dataset.noTitlecase='true';
+          sel.innerHTML='<option value="">'+esc(placeholder)+'</option>';
+          const hint=document.createElement('small');hint.className='history-hint';hint.textContent='Os dados abaixo continuam livres para edição manual.';
+          wrap.append(sp,sel,hint);
+          grid.insertBefore(wrap,grid.firstChild);
+          return sel
+        }
+        function setField(id,value){
+          const el=byId(id);if(!el||value===undefined||value===null||String(value).trim()==='')return;
+          el.value=String(value);
+          try{el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}))}catch{}
+        }
+        function historyLatest(rows,key){
+          const map=new Map();
+          (Array.isArray(rows)?rows:[]).forEach(r=>{
+            const raw=String(r?.[key]||'').trim();if(!raw)return;
+            const k=norm(raw);
+            const prev=map.get(k);
+            const rid=Number(r.id||0),pid=Number(prev?.id||0);
+            if(!prev||rid>=pid)map.set(k,r)
+          });
+          return [...map.values()].sort((a,b)=>String(a?.[key]||'').localeCompare(String(b?.[key]||''),'pt-BR',{sensitivity:'base'}))
+        }
+        function fillHistorySelect(sel,rows,key,render){
+          if(!sel)return;
+          const current=sel.value;
+          sel.innerHTML='<option value="">Selecione…</option>';
+          rows.forEach(r=>{
+            const opt=document.createElement('option');
+            opt.value=String(r.id||'');
+            opt.textContent=render(r);
+            sel.appendChild(opt)
+          });
+          if([...sel.options].some(o=>o.value===current))sel.value=current
+        }
+        async function refreshHistorySelectors(){
+          ensureFields();
+          let rows=[];
+          try{
+            const r=await docBaseFetch('/coletas/api/coletas',{cache:'no-store'});
+            if(r.ok)rows=await r.json()
+          }catch{}
+          if(!Array.isArray(rows))rows=[];
+
+          const drivers=historyLatest(rows,'motorista');
+          const senders=historyLatest(rows,'cliente');
+          const recipients=historyLatest(rows,'destinatario');
+
+          const sm=byId('historico_motorista'),sr=byId('historico_remetente'),sd=byId('historico_destinatario');
+          fillHistorySelect(sm,drivers,'motorista',r=>{
+            const cpf=formatCpf(r.motorista_cpf||'');
+            return String(r.motorista||'')+(cpf?' • CPF '+cpf:'')
+          });
+          fillHistorySelect(sr,senders,'cliente',r=>String(r.cliente||'')+(r.endereco_coleta?' • '+r.endereco_coleta:''));
+          fillHistorySelect(sd,recipients,'destinatario',r=>String(r.destinatario||'')+(r.endereco_entrega?' • '+r.endereco_entrega:''));
+
+          if(sm&&!sm.dataset.historyBound){
+            sm.dataset.historyBound='1';
+            sm.addEventListener('change',()=>{
+              const r=drivers.find(x=>String(x.id||'')===sm.value);if(!r)return;
+              setField('motorista',r.motorista);
+              setField('motorista_cpf',formatCpf(r.motorista_cpf||''));
+              setField('telefone_motorista',r.telefone_motorista);
+              setField('transportadora_agregado',r.transportadora_agregado)
+            })
+          }
+          if(sr&&!sr.dataset.historyBound){
+            sr.dataset.historyBound='1';
+            sr.addEventListener('change',()=>{
+              const r=senders.find(x=>String(x.id||'')===sr.value);if(!r)return;
+              setField('cliente',r.cliente);
+              setField('endereco_coleta',r.endereco_coleta)
+            })
+          }
+          if(sd&&!sd.dataset.historyBound){
+            sd.dataset.historyBound='1';
+            sd.addEventListener('change',()=>{
+              const r=recipients.find(x=>String(x.id||'')===sd.value);if(!r)return;
+              setField('destinatario',r.destinatario);
+              setField('endereco_entrega',r.endereco_entrega)
+            })
+          }
+        }
+
         function addUpload(grid,id,label,statusId){
           let input=byId(id);if(input)return input;
           const box=document.createElement('label');box.className='doc-field form-wide';
@@ -502,9 +595,16 @@ try{
           el.className='doc-status'+(kind?' '+kind:'');el.innerHTML=msg
         }
         function ensureFields(){
-          const motorCard=cardByTitle('Dados do Motorista'),truckCard=cardByTitle('Dados do Caminhão');
+          const motorCard=cardByTitle('Dados do Motorista'),truckCard=cardByTitle('Dados do Caminhão'),senderCard=cardByTitle('Coleta'),recipientCard=cardByTitle('Entrega');
+          if(senderCard){
+            addHistorySelect(senderCard.querySelector('.coleta-form-grid'),'historico_remetente','Escolher remetente já utilizado','Escolha um remetente do histórico')
+          }
+          if(recipientCard){
+            addHistorySelect(recipientCard.querySelector('.coleta-form-grid'),'historico_destinatario','Escolher destinatário já utilizado','Escolha um destinatário do histórico')
+          }
           if(motorCard){
             const grid=motorCard.querySelector('.coleta-form-grid');
+            addHistorySelect(grid,'historico_motorista','Escolher motorista já utilizado','Escolha um motorista do histórico');
             const cpf=addInput(grid,'motorista_cpf','CPF do motorista','text',{placeholder:'000.000.000-00',inputmode:'numeric',noTitlecase:true});
             cpf.maxLength=14;
             if(!cpf.dataset.docBound){cpf.dataset.docBound='1';cpf.addEventListener('input',()=>{cpf.value=formatCpf(cpf.value)})}
@@ -766,9 +866,10 @@ try{
           setTimeout(ensureFields,80);
           const modal=byId('modal');
           if(modal){
-            const obs=new MutationObserver(()=>{if(modal.open)setTimeout(loadFields,100)});
+            const obs=new MutationObserver(()=>{if(modal.open)setTimeout(()=>{loadFields();refreshHistorySelectors()},100)});
             obs.observe(modal,{attributes:true,attributeFilter:['open']})
           }
+          setTimeout(refreshHistorySelectors,180);
           document.addEventListener('click',()=>setTimeout(ensureFields,80),true)
         })
       })();
