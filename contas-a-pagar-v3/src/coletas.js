@@ -752,34 +752,39 @@ try{
           for(const m of all){const d=m.slice(1,5).join('');if(validCpf(d))return d}
           return perto?perto.slice(1,5).join(''):''
         }
-        function cleanRgValue(v){
-          let s=String(v||'').toUpperCase().replace(/\s+/g,' ').trim();
-          s=s.replace(/^(?:RG|DOC(?:UMENTO)?(?: DE)? IDENTIDADE|IDENTIDADE)\s*[:\-]?\s*/,'');
-          s=s.replace(/\b(?:ORGAO|ÓRGAO|EMISSOR|UF|DATA|NASCIMENTO|CPF)\b.*$/,'').trim();
-          const m=s.match(/[0-9A-Z][0-9A-Z.\-\/]{4,24}/);
-          return m?m[0].replace(/[\/\-\.]+$/,''):''
+        function extractRgCandidate(v){
+          const s=norm(v).replace(/\s+/g,' ');
+          const uf='(?:AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)';
+          const re=new RegExp('(?:\\\\b'+uf+'[- ]?)?\\\\b(\\\\d[\\\\d.\\\\-]{4,18}[0-9X]?)\\\\b','i');
+          const m=s.match(re);if(!m)return'';
+          const candidate=(m[0]||m[1]||'').replace(/\s+/g,'').replace(/[.\-]+$/,'');
+          const d=digits(candidate);
+          if(d.length<5||d.length>14)return'';
+          if(/^\d{2}[\/\-]\d{2}[\/\-]\d{4}$/.test(candidate))return'';
+          return candidate
         }
         function parseRg(text){
           const raw=String(text||''),lines=linesOf(raw),flat=norm(raw).replace(/\s+/g,' ');
-          const patterns=[
-            /\bRG\s*[:\-]?\s*([0-9A-Z][0-9A-Z.\-\/]{4,24})/,
-            /\bDOC(?:UMENTO)?(?: DE)? IDENTIDADE\b[^0-9A-Z]{0,15}([0-9A-Z][0-9A-Z.\-\/]{4,24})/,
-            /\bIDENTIDADE\b[^0-9A-Z]{0,15}([0-9A-Z][0-9A-Z.\-\/]{4,24})/
+          const labels=[
+            /\bDOC(?:UMENTO)?(?: DE)? IDENTIDADE\b/,
+            /\bIDENTIDADE\b/,
+            /\bRG\b/
           ];
-          for(const re of patterns){
-            const m=flat.match(re);if(m){
-              const rg=cleanRgValue(m[1]);
-              if(rg&&digits(rg).length>=5&&digits(rg).length<=14)return rg
+          for(const label of labels){
+            const m=flat.match(label);
+            if(m){
+              const frag=flat.slice((m.index||0)+m[0].length,(m.index||0)+m[0].length+120);
+              const rg=extractRgCandidate(frag);if(rg)return rg
             }
           }
           for(let i=0;i<lines.length;i++){
             const n=norm(lines[i]);
             if(/\b(?:RG|DOC(?:UMENTO)?(?: DE)? IDENTIDADE|IDENTIDADE)\b/.test(n)){
-              const same=cleanRgValue(lines[i]);
-              if(same&&digits(same).length>=5)return same;
-              for(let j=1;j<=2;j++){
-                const next=cleanRgValue(lines[i+j]||'');
-                if(next&&digits(next).length>=5&&digits(next).length<=14)return next
+              const after=n.replace(/^.*?\b(?:RG|DOC(?:UMENTO)?(?: DE)? IDENTIDADE|IDENTIDADE)\b/,'');
+              const same=extractRgCandidate(after);if(same)return same;
+              for(let j=1;j<=3;j++){
+                const next=extractRgCandidate(lines[i+j]||'');
+                if(next)return next
               }
             }
           }
