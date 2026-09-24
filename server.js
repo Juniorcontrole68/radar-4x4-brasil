@@ -458,6 +458,38 @@ function quickSsw38Progress(base,from,to){
 
 
 
+
+async function probeSsw0082Catalog(){
+  if(!internalSswConfigured())return{ok:false,error:'Credenciais internas SSW não configuradas'};
+  const jar=new Map();
+  const apply=headers=>{const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);for(const raw of list){const pair=String(raw).split(';')[0],i=pair.indexOf('=');if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())}};
+  const cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
+  let r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
+  const login=new URLSearchParams({act:'L',f1:process.env.SSW_INTERNAL_DOMINIO||'',f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),f3:process.env.SSW_INTERNAL_USUARIO||'',f4:process.env.SSW_INTERNAL_SENHA||''});
+  r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/ssw0422','Cookie':cookie()},body:login.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);await r.text();
+  if(!jar.has('token'))return{ok:false,error:'Login interno SSW não aceito'};
+  r=await fetch('https://sistema.ssw.inf.br/bin/ssw0082',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
+  const html=await r.text(),catalog=[];
+  const seen=new Set();
+  for(const m of html.matchAll(/ssw0082\?act=4\|([^"'<>]+?)["']/gi)){
+    const payload=String(m[1]||'').replace(/&amp;/g,'&');
+    const parts=payload.split('|');
+    const code=String(parts[5]||'').replace(/\D/g,'');
+    const desc=htmlText38(parts.slice(7).join('|')||'');
+    const key=code+'|'+desc;
+    if(!code||seen.has(key))continue;seen.add(key);
+    catalog.push({code,desc,payload})
+  }
+  // Fallback from visible text: capture leading 3-digit report codes and titles.
+  const plain=htmlText38(html);
+  for(const m of plain.matchAll(/\b(\d{3})\s+([^0-9]{5,100}?)(?=\s+\d+\s+(?:DI[AÁ]RIO|MENSAL|HOR[AÁ]RIO|SEMANAL)|\s+\d{3}\s+|$)/gi)){
+    const code=m[1],desc=m[2].trim(),key=code+'|'+desc;
+    if(!seen.has(key)){seen.add(key);catalog.push({code,desc,payload:''})}
+  }
+  const interesting=catalog.filter(x=>/FATUR|FRETE|RECEIT|CLIENT|PAGADOR|EMITENTE|COMERCIAL|RESULTADO|VEND|RENTABIL|MARGEM/i.test(norm38(x.desc)));
+  return{ok:true,total:catalog.length,interesting:interesting.slice(0,120),sample:catalog.slice(0,30)}
+}
+
 async function probeSswRevenueCandidates(){
   if(!internalSswConfigured())return{ok:false,error:'Credenciais internas SSW não configuradas'};
   const jar=new Map();
@@ -2173,6 +2205,7 @@ let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.jo
   probeSsw83().then(x=>console.log('SSW83 PROBE: '+JSON.stringify(x))).catch(e=>console.log('SSW83 PROBE ERRO: '+String(e.message||e)));
   probeSswRevenueMenu().then(x=>console.log('SSW RECEITA MENU: '+JSON.stringify(x))).catch(e=>console.log('SSW RECEITA MENU ERRO: '+String(e.message||e)));
   probeSswRevenueCandidates().then(x=>console.log('SSW RECEITA CANDIDATOS: '+JSON.stringify(x))).catch(e=>console.log('SSW RECEITA CANDIDATOS ERRO: '+String(e.message||e)));
+  probeSsw0082Catalog().then(x=>console.log('SSW0082 CATALOGO RECEITA: '+JSON.stringify(x))).catch(e=>console.log('SSW0082 CATALOGO RECEITA ERRO: '+String(e.message||e)));
 
   refreshBi2State().catch(e=>console.error('BI2 SFTP monitor ERRO: '+e.message));
   refreshBi2ApiState().catch(e=>console.error('BI2 WebAPI monitor ERRO: '+e.message));
