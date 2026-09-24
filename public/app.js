@@ -57,6 +57,7 @@ const PERMISSION_OPTIONS=[
   ['final_carregamento','Final do carregamento'],
   ['operacional','Operacional / Entregas'],
   ['financeiro','Financeiro'],
+  ['receita_ssw','Receita SSW'],
   ['motoristas','Motoristas'],
   ['filiais','Filiais'],
   ['agendamentos','Agendamentos'],
@@ -77,7 +78,7 @@ function tabAllowed(tab){
     agendamentos:'agendamentos',ajudantes:'ajudantes',
     'ssw-motoristas':'ssw_saidas','motoristas-evolucao':'evolucao',
     'ssw-atrasos':'ssw_atrasos','ssw-remetentes':'remetentes',
-    'ssw-remetentes-comparativo':'remetentes_comparativo'
+    'ssw-remetentes-comparativo':'remetentes_comparativo','receita-ssw':'receita_ssw'
   };
   if(tab==='usuarios')return !!AUTH?.is_admin;
   if(tab==='roteirizador')return hasPerm('roteirizador');
@@ -102,6 +103,7 @@ function applyPermissions(){
     'Final do Carregamento':'final_carregamento',
     'Operacional':'operacional',
     'Financeiro':'financeiro',
+    'Receita SSW':'receita_ssw',
     'Motoristas':'motoristas',
     'Filiais':'filiais',
     'Agendamentos':'agendamentos',
@@ -310,7 +312,7 @@ function bootstrapEmbeddedAuth(){
   tryExisting();
 }
 
-const S={ops:[],sch:[],help:[],agCopy:[],ssw:null,remetentes:null,coletas:null,sswMotoristas:null},$=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+const S={ops:[],sch:[],help:[],agCopy:[],ssw:null,remetentes:null,receita:null,coletas:null,sswMotoristas:null},$=s=>document.querySelector(s),$=s=>[...document.querySelectorAll(s)];
 const gd=o=>o['Data']??o['  Data']??'',g=(o,...k)=>{for(const x of k)if(o[x]!==undefined)return o[x];return''};
 const pd=s=>{if(!s)return null;const p=String(s).trim().split('/');if(p.length!==3)return null;const d=new Date(+p[2],+p[1]-1,+p[0]);return isNaN(d)?null:d};
 const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -426,7 +428,7 @@ function sch(){return S.sch.filter(o=>inper(pd(g(o,'DATA AGENDADA'))||pd(g(o,'DA
 function filters(){const curD=$('#driver').value,curB=$('#branch').value,ds=[...new Set(S.ops.map(o=>g(o,'Motorista')).filter(Boolean))].sort(),bs=[...new Set(S.ops.map(o=>g(o,'Filial')).filter(Boolean))].sort();$('#driver').innerHTML='<option value="">Todos motoristas</option>'+ds.map(x=>'<option>'+safe(x)+'</option>').join('');$('#branch').innerHTML='<option value="">Todas filiais</option>'+bs.map(x=>'<option>'+safe(x)+'</option>').join('');if(ds.includes(curD))$('#driver').value=curD;if(bs.includes(curB))$('#branch').value=curB}
 function cv(id){const c=$(id),b=c.parentElement,w=Math.max(290,b.clientWidth),h=Math.max(220,b.clientHeight),d=devicePixelRatio||1;c.width=w*d;c.height=h*d;c.style.width=w+'px';c.style.height=h+'px';const x=c.getContext('2d');x.setTransform(d,0,0,d,0,0);x.clearRect(0,0,w,h);x.font='12px Segoe UI';return{x,w,h}}
 function empty(id){const{x,w,h}=cv(id);x.fillStyle='#94a3b8';x.textAlign='center';x.fillText('Sem dados no período',w/2,h/2)}
-function bars(id,L,D,labels=[]){if(!D.length)return empty(id);const{x,w,h}=cv(id),p={l:42,r:12,t:28,b:58},cw=w-p.l-p.r,ch=h-p.t-p.b,m=Math.max(...D,1),bw=Math.max(5,Math.min(38,cw/D.length*.65));x.strokeStyle='#e2e8f0';x.strokeRect(p.l,p.t,cw,ch);D.forEach((v,i)=>{const px=p.l+(i+.5)*cw/D.length,bh=v/m*ch;x.fillStyle='#0f766e';x.fillRect(px-bw/2,h-p.b-bh,bw,bh);if(labels[i]!==undefined&&labels[i]!==null&&String(labels[i])!==''){x.save();x.textAlign='center';x.textBaseline='bottom';x.fillStyle='#172033';x.font='700 11px Segoe UI';x.fillText(String(labels[i]),px,Math.max(14,h-p.b-bh-5));x.restore()}x.save();x.translate(px,h-p.b+8);x.rotate(-Math.PI/4);x.textAlign='right';x.fillStyle='#64748b';x.font='12px Segoe UI';x.fillText(String(L[i]).slice(0,18),0,0);x.restore()})}
+function bars(id,L,D,labels=[],inside=false){if(!D.length)return empty(id);const{x,w,h}=cv(id),p={l:42,r:12,t:28,b:58},cw=w-p.l-p.r,ch=h-p.t-p.b,m=Math.max(...D,1),bw=Math.max(5,Math.min(38,cw/D.length*.65));x.strokeStyle='#e2e8f0';x.strokeRect(p.l,p.t,cw,ch);D.forEach((v,i)=>{const px=p.l+(i+.5)*cw/D.length,bh=v/m*ch;x.fillStyle='#0f766e';x.fillRect(px-bw/2,h-p.b-bh,bw,bh);if(labels[i]!==undefined&&labels[i]!==null&&String(labels[i])!==''){x.save();x.textAlign='center';x.font='700 11px Segoe UI';if(inside&&bh>=15){x.textBaseline='top';x.fillStyle='#fff';x.fillText(String(labels[i]),px,h-p.b-bh+4)}else{x.textBaseline='bottom';x.fillStyle='#172033';x.fillText(String(labels[i]),px,Math.max(14,h-p.b-bh-5))}x.restore()}x.save();x.translate(px,h-p.b+8);x.rotate(-Math.PI/4);x.textAlign='right';x.fillStyle='#64748b';x.font='12px Segoe UI';x.fillText(String(L[i]).slice(0,18),0,0);x.restore()})}
 
 function groupedBars(id,L,A,B,labelsA=[],labelsB=[]){
   if(!L.length)return empty(id);
@@ -473,7 +475,7 @@ set('#hubIssue',nf(ret));set('#hubIssueRate',(del?ret/del*100:0).toFixed(1).repl
 const active=$('.section.active')?.id||'dashboard';
 if(active==='dashboard'){
   const bd={};O.forEach(o=>{const k=gd(o)||'Sem data';bd[k]??={d:0,r:0};bd[k].d+=num(g(o,'Realizadas'));bd[k].r+=num(g(o,'Retorno'))});const K=Object.keys(bd).sort((a,b)=>(pd(a)||0)-(pd(b)||0));lines('#trend',K,K.map(k=>bd[k].d),K.map(k=>bd[k].r));
-  const dm={};O.forEach(o=>{const k=g(o,'Motorista')||'Sem motorista';dm[k]=(dm[k]||0)+num(g(o,'Entregas'))});const T=Object.entries(dm).sort((a,b)=>b[1]-a[1]).slice(0,10);bars('#drivers',T.map(x=>x[0]),T.map(x=>x[1]));
+  const dm={};O.forEach(o=>{const k=g(o,'Motorista')||'Sem motorista';dm[k]=(dm[k]||0)+num(g(o,'Entregas'))});const T=Object.entries(dm).sort((a,b)=>b[1]-a[1]).slice(0,10);bars('#drivers',T.map(x=>x[0]),T.map(x=>x[1]),T.map(x=>nf(x[1])),true);
   const st={};A.forEach(o=>{const k=(g(o,'STATUS')||'SEM STATUS').trim();st[k]=(st[k]||0)+1});donut('#statusChart',Object.keys(st),Object.values(st));
   const hdA={},hdC={};HA.forEach(o=>{const k=g(o,'Data')||'Sem data';hdA[k]??={valor:0,nomes:new Set()};hdA[k].valor+=num(g(o,'Valor'));const nome=String(g(o,'NOME')||'').trim();if(nome)hdA[k].nomes.add(nome)});HCf.forEach(o=>{const k=g(o,'Data')||'Sem data';hdC[k]??={valor:0,nomes:new Set()};hdC[k].valor+=num(g(o,'Valor'));const nome=String(g(o,'NOME')||'').trim();if(nome)hdC[k].nomes.add(nome)});const HK=[...new Set([...Object.keys(hdA),...Object.keys(hdC)])].sort((a,b)=>(pd(a)||0)-(pd(b)||0));groupedBars('#helpersChart',HK,HK.map(k=>hdA[k]?.valor||0),HK.map(k=>hdC[k]?.valor||0),HK.map(k=>nf(hdA[k]?.nomes.size||0)),HK.map(k=>nf(hdC[k]?.nomes.size||0)));
 }
@@ -676,6 +678,41 @@ async function refreshSswMotoristas(){
     window.__sswMotoristasLoading=false;
   }
 }
+
+function renderSswReceita(){
+  const d=S.receita,set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
+  if(!d||!d.ok){
+    set('#hubRevenueTotal','—');set('#hubRevenueClients','—');set('#hubRevenueTop','—');
+    const msg=d?.error||'Receita SSW aguardando relatório 083.';
+    set('#hubRevenueInfo',msg);set('#revenueMeta',msg);
+    set('#revenueTotal','—');set('#revenueClients','—');set('#revenueRows','—');set('#revenueField','—');
+    if($('#sswRevenueChart'))empty('#sswRevenueChart');
+    if($('#sswRevenueTable'))$('#sswRevenueTable').innerHTML='<tbody><tr><td>'+safe(msg)+'</td></tr></tbody>';
+    return
+  }
+  const C=d.clientes||[],top=C[0]||null,total=Number(d.totalFaturamento||0);
+  set('#hubRevenueTotal',brl(total));set('#hubRevenueClients',nf(d.totalClientes||0));set('#hubRevenueTop',top?top.cliente:'—');
+  set('#hubRevenueInfo',(top?('Maior faturamento: '+top.cliente+' • '+brl(top.faturamento)):'Sem clientes')+' • '+(d.aliasRule||''));
+  set('#revenueTotal',brl(total));set('#revenueClients',nf(d.totalClientes||0));set('#revenueRows',nf(d.totalRegistros||0));set('#revenueField',d.revenueField||'—');
+  const meta=[d.sourceName||'Relatório 083',d.meta?.data,d.meta?.hora,'Cliente: '+(d.clientField||'—'),'Receita: '+(d.revenueField||'—'),d.aliasRule].filter(Boolean).join(' • ');
+  set('#revenueMeta',meta);
+  const top10=C.slice(0,10);
+  bars('#sswRevenueChart',top10.map(x=>x.cliente),top10.map(x=>x.faturamento),top10.map(x=>brl(x.faturamento)));
+  const rows=C.map((x,i)=>({pos:String(i+1),cliente:x.cliente,faturamento:brl(x.faturamento),participacao:(total?x.faturamento/total*100:0).toFixed(1).replace('.',',')+'%',registros:nf(x.registros)}));
+  table('#sswRevenueTable',[['#','pos'],['Cliente','cliente'],['Faturamento','faturamento'],['Participação','participacao'],['Registros','registros']],rows)
+}
+async function refreshSswReceita(){
+  if(!hasPerm('receita_ssw'))return;
+  try{
+    const q=sswRangeQuery(),sep=q?'&':'?';
+    const r=await fetch('/api/bi2/receita'+q+sep+'t='+Date.now(),{cache:'no-store'});
+    const j=await r.json().catch(()=>({ok:false,error:'Resposta inválida do SSW.'}));
+    S.receita=j;renderSswReceita()
+  }catch(e){
+    S.receita={ok:false,error:'Não foi possível carregar a Receita SSW: '+e.message};renderSswReceita()
+  }
+}
+
 function renderRemetentes(){const d=S.remetentes;if(!d||!d.ok)return;const set=(id,v)=>{const e=$(id);if(e)e.textContent=v},C=d.clientes||[];set('#hubRemClients',nf(d.totalClientes||0));set('#hubRemCtrcs',nf(d.totalCtrcs||0));set('#hubRemFreight',brl(d.totalFrete||0));set('#hubRemVolumes',nf(d.totalVolumes||0));set('#hubRemNote',d.note||'Dados SSW / BI2');set('#remClients',nf(d.totalClientes||0));set('#remCtrcs',nf(d.totalCtrcs||0));set('#remFreight',brl(d.totalFrete||0));set('#remGoods',brl(d.totalMercadoria||0));set('#remVolumes',nf(d.totalVolumes||0));const p=d.period,pt=p?('Período '+p.from+' a '+p.to+' • '+p.daysAvailable+'/'+p.daysRequested+' dia(s) com arquivo BI2'):'';const meta=(d.meta&&d.meta.data?d.meta.data+' '+(d.meta.hora||''):'')+(pt?' • '+pt:'')+' • '+(d.note||'');set('#remMeta',meta);const top=C.slice(0,10),topF=C.slice().sort((a,b)=>b.frete-a.frete).slice(0,10);bars('#remCtrcChart',top.map(x=>x.remetente),top.map(x=>x.ctrcs));bars('#remFreightChart',topF.map(x=>x.remetente),topF.map(x=>x.frete));const rows=C.map((x,i)=>({pos:String(i+1),remetente:x.remetente,ctrcs:nf(x.ctrcs),frete:brl(x.frete),mercadoria:brl(x.valorMercadoria),volumes:nf(x.volumes),peso:nf(x.peso),m3:(x.m3||0).toLocaleString('pt-BR',{maximumFractionDigits:2}),atraso:(x.atrasoMedio||0).toFixed(1).replace('.',',')+' d',cidades:nf(x.cidades),destinatarios:nf(x.destinatarios)}));table('#remTable',[['#','pos'],['Cliente remetente','remetente'],['CT-es','ctrcs'],['Frete','frete'],['Valor mercadoria','mercadoria'],['Volumes','volumes'],['Peso','peso'],['m³','m3'],['Atraso médio','atraso'],['Cidades','cidades'],['Destinatários','destinatarios']],rows);table('#remCompareTable',[['#','pos'],['Cliente remetente','remetente'],['CT-es','ctrcs'],['Frete','frete'],['Volumes','volumes'],['Atraso médio','atraso'],['Cidades','cidades'],['Destinatários','destinatarios']],rows);const a=$('#remClientA'),b=$('#remClientB');if(a&&b){const va=a.value,vb=b.value,opts=C.map(x=>'<option value="'+safe(x.remetente)+'">'+safe(x.remetente)+'</option>').join('');a.innerHTML=opts;b.innerHTML=opts;if(C.some(x=>x.remetente===va))a.value=va;else if(C[0])a.value=C[0].remetente;if(C.some(x=>x.remetente===vb))b.value=vb;else if(C[1])b.value=C[1].remetente;else if(C[0])b.value=C[0].remetente;renderRemCompare()}}
 function renderRemCompare(){const d=S.remetentes;if(!d||!d.ok)return;const C=d.clientes||[],a=$('#remClientA'),b=$('#remClientB');if(!a||!b)return;const A=C.find(x=>x.remetente===a.value),B=C.find(x=>x.remetente===b.value),set=(id,v)=>{const e=$(id);if(e)e.textContent=v};const fill=(p,x)=>{set('#rem'+p+'Name',x?x.remetente:'—');set('#rem'+p+'Ctrcs',x?nf(x.ctrcs):'—');set('#rem'+p+'Freight',x?brl(x.frete):'—');set('#rem'+p+'Goods',x?brl(x.valorMercadoria):'—');set('#rem'+p+'Volumes',x?nf(x.volumes):'—');set('#rem'+p+'Weight',x?nf(x.peso):'—');set('#rem'+p+'Delay',x?(x.atrasoMedio||0).toFixed(1).replace('.',',')+' d':'—');set('#rem'+p+'Cities',x?nf(x.cidades):'—');set('#rem'+p+'Recipients',x?nf(x.destinatarios):'—')};fill('A',A);fill('B',B);set('#remCompareMeta',(d.note||'')+(d.meta&&d.meta.data?' • '+d.meta.data+' '+(d.meta.hora||''):''))}
 async function refreshSswRemetentes(){try{const q=sswRangeQuery(),sep=q?'&':'?';const r=await fetch('/api/bi2/remetentes'+q+sep+'t='+Date.now(),{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw Error(j.error||'Falha ao carregar clientes remetentes');S.remetentes=j;renderRemetentes()}catch(e){const ids=['#remMeta','#hubRemNote','#remCompareMeta'];ids.forEach(id=>{const el=$(id);if(el)el.textContent='Não foi possível carregar os clientes remetentes: '+e.message})}}
@@ -1098,8 +1135,9 @@ function loadHeavyForTab(tab){
   if(tab==='dashboards'){
     if(hasAnyPerm(['ssw_saidas','evolucao','cidade_destino']))setTimeout(()=>refreshSswMotoristas(),100);
     if(hasPerm('ssw_atrasos'))setTimeout(()=>refreshSswAtrasos(),450);
-    if(hasAnyPerm(['remetentes','remetentes_comparativo']))setTimeout(()=>refreshSswRemetentes(),900);
-    if(hasPerm('final_carregamento'))setTimeout(()=>refreshLoadingRecords(false),1200);
+    if(hasPerm('receita_ssw'))setTimeout(()=>refreshSswReceita(),700);
+    if(hasAnyPerm(['remetentes','remetentes_comparativo']))setTimeout(()=>refreshSswRemetentes(),1000);
+    if(hasPerm('final_carregamento'))setTimeout(()=>refreshLoadingRecords(false),1250);
     if(hasAnyPerm(['agendamentos','agendamentos_copia']))setTimeout(()=>refreshAgCopy(false),1450);
   }else if(tab==='conferencia'&&hasPerm('final_carregamento')){
     loadingDriverOptions();
@@ -1110,6 +1148,8 @@ function loadHeavyForTab(tab){
     setTimeout(()=>loadRouteManifests(false),50);
   }else if((tab==='ssw-motoristas'||tab==='motoristas-evolucao')&&tabAllowed(tab)){
     setTimeout(()=>refreshSswMotoristas(),80);
+  }else if(tab==='receita-ssw'&&hasPerm('receita_ssw')){
+    setTimeout(()=>refreshSswReceita(),50);
   }else if(tab==='ssw-atrasos'&&hasPerm('ssw_atrasos')){
     setTimeout(()=>refreshSswAtrasos(),80);
   }else if((tab==='ssw-remetentes'||tab==='ssw-remetentes-comparativo')&&tabAllowed(tab)){
@@ -1121,7 +1161,7 @@ function loadHeavyForTab(tab){
 async function start(){
   init();
   $('#err').style.display='none';
-  if(hasAnyPerm(['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo']))checkSsw();
+  if(hasAnyPerm(['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo','receita_ssw']))checkSsw();
   if(DASH_EMBEDDED){
     document.querySelector('#loading')?.classList.add('hide');
     refreshData(false);
@@ -1141,8 +1181,9 @@ async function start(){
 
   loadHeavyForTab($('.section.active')?.id||target||'');
   setInterval(()=>{if(!document.hidden)refreshData(false)},5000);
-  setInterval(()=>{if(!document.hidden&&hasAnyPerm(['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo']))checkSsw()},60000);
+  setInterval(()=>{if(!document.hidden&&hasAnyPerm(['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo','receita_ssw']))checkSsw()},60000);
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasPerm('ssw_atrasos')&&['ssw-atrasos','dashboards'].includes(t))refreshSswAtrasos()},120000);
+  setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasPerm('receita_ssw')&&['receita-ssw','dashboards'].includes(t))refreshSswReceita()},120000);
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasAnyPerm(['remetentes','remetentes_comparativo'])&&['ssw-remetentes','ssw-remetentes-comparativo','dashboards'].includes(t))refreshSswRemetentes()},120000);
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasAnyPerm(['ssw_saidas','evolucao','cidade_destino'])&&['ssw-motoristas','motoristas-evolucao','dashboards'].includes(t))refreshSswMotoristas()},120000);
   window.addEventListener('focus',()=>refreshData(false));
@@ -1158,6 +1199,7 @@ function openTab(tab){
   if(!s)return;
   s.classList.add('active');
   const titles={
+    'receita-ssw':'Receita SSW',
     'ssw-atrasos':'SSW • CT-es Atrasados',
     'ssw-remetentes':'Entregas por Cliente Remetente',
     'ssw-remetentes-comparativo':'Comparativo de Clientes Remetentes',
@@ -1169,6 +1211,7 @@ function openTab(tab){
     'usuarios':'Usuários e Acessos'
   };
   $('#pageTitle').textContent=titles[tab]||'Dashboards';
+  if(tab==='receita-ssw')setTimeout(renderSswReceita,30);
   if(tab==='ssw-atrasos')setTimeout(renderSswAtrasos,30);
   if(tab==='ssw-remetentes'||tab==='ssw-remetentes-comparativo')setTimeout(renderRemetentes,30);
   if(tab==='ssw-motoristas')setTimeout(renderSswMotoristas,30);
@@ -1193,6 +1236,7 @@ $$('.nav button').forEach(b=>b.onclick=()=>{
     if(b.dataset.tab==='usuarios'&&AUTH?.is_admin)loadDashboardUsers();
     if(b.dataset.tab==='dashboards'){
       renderSswAtrasos();
+      renderSswReceita();
       renderRemetentes();
       renderSswMotoristas();
       renderDriverProgress();
