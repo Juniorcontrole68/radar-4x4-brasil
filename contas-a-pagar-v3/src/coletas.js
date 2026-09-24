@@ -887,6 +887,16 @@ try{
       if(bodyClose>=0){
         html=html.slice(0,bodyClose)+recebimentoAddon+documentoAddon+html.slice(bodyClose);
       }
+      console.log('COLETAS FRONTEND PATCH: '+JSON.stringify({
+        addon:html.includes('documentos-coleta-script'),
+        uploadMotorista:html.includes('doc_motorista_file'),
+        uploadCavalo:html.includes('doc_cavalo_file'),
+        uploadCarreta:html.includes('doc_carreta_file'),
+        campoMotorista:html.includes('id="motorista"'),
+        campoPlaca:html.includes('id="placa"'),
+        campoEixos:html.includes('id="eixos"'),
+        bytes:html.length
+      }));
     }
 
     const newFront=zlib.gzipSync(Buffer.from(html,'utf8')).toString('base64');
