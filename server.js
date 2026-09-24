@@ -469,25 +469,15 @@ async function probeSsw0082Catalog(){
   r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/ssw0422','Cookie':cookie()},body:login.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);await r.text();
   if(!jar.has('token'))return{ok:false,error:'Login interno SSW não aceito'};
   r=await fetch('https://sistema.ssw.inf.br/bin/ssw0082',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
-  const html=await r.text(),catalog=[];
-  const seen=new Set();
-  for(const m of html.matchAll(/ssw0082\?act=4\|([^"'<>]+?)["']/gi)){
-    const payload=String(m[1]||'').replace(/&amp;/g,'&');
-    const parts=payload.split('|');
-    const code=String(parts[5]||'').replace(/\D/g,'');
-    const desc=htmlText38(parts.slice(7).join('|')||'');
-    const key=code+'|'+desc;
-    if(!code||seen.has(key))continue;seen.add(key);
-    catalog.push({code,desc,payload})
+  const html=await r.text(),plain=htmlText38(html);
+  const acts=[...html.matchAll(/ssw0082\?act=([^"'<>]+?)(?=["'])/gi)].map(m=>String(m[1]||'').replace(/&amp;/g,'&')).slice(0,300);
+  const contexts={};
+  for(const term of ['MONITORACAO DE CLIENTES','RESULTADO COMERCIAL DA TRANSPORTADORA','VOLUMES DOS PAGADORES']){
+    const idx=norm38(html).indexOf(norm38(term));
+    contexts[term]=idx>=0?htmlText38(html.slice(Math.max(0,idx-1500),Math.min(html.length,idx+2500))):''
   }
-  // Fallback from visible text: capture leading 3-digit report codes and titles.
-  const plain=htmlText38(html);
-  for(const m of plain.matchAll(/\b(\d{3})\s+([^0-9]{5,100}?)(?=\s+\d+\s+(?:DI[AÁ]RIO|MENSAL|HOR[AÁ]RIO|SEMANAL)|\s+\d{3}\s+|$)/gi)){
-    const code=m[1],desc=m[2].trim(),key=code+'|'+desc;
-    if(!seen.has(key)){seen.add(key);catalog.push({code,desc,payload:''})}
-  }
-  const interesting=catalog.filter(x=>/FATUR|FRETE|RECEIT|CLIENT|PAGADOR|EMITENTE|COMERCIAL|RESULTADO|VEND|RENTABIL|MARGEM/i.test(norm38(x.desc)));
-  return{ok:true,total:catalog.length,interesting:interesting.slice(0,120),sample:catalog.slice(0,30)}
+  const interestingActs=acts.filter(x=>/\|(?:73|75|125|152|153|167|168)\|\|/i.test(x)||/CLIENT|PAGADOR|COMERCIAL|FATUR|FRETE|RECEIT/i.test(norm38(x)));
+  return{ok:true,bytes:Buffer.byteLength(html),actCount:acts.length,interestingActs:interestingActs.slice(0,80),contexts,plainHits:[...plain.matchAll(/\b(?:073|075|125|152|153|167|168)\b.{0,180}/g)].map(x=>x[0]).slice(0,60)}
 }
 
 async function probeSswRevenueCandidates(){
