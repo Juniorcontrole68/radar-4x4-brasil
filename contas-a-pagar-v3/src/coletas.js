@@ -79,6 +79,30 @@ try{
         const today=()=>new Date().toISOString().slice(0,10);
         const originalFetch=window.fetch.bind(window);
         const escLocal=(v)=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+        function numeroLocal(v){
+          if(v===null||v===undefined||v==='')return null;
+          if(typeof v==='number')return Number.isFinite(v)?v:null;
+          let s=String(v).trim().replace(/\s/g,'');
+          if(!s)return null;
+          if(s.includes(',')&&s.includes('.')){
+            s=s.lastIndexOf(',')>s.lastIndexOf('.')?s.replace(/\./g,'').replace(',','.'):s.replace(/,/g,'')
+          }else if(s.includes(',')){
+            s=s.replace(/\./g,'').replace(',','.')
+          }
+          const n=Number(s);return Number.isFinite(n)?n:null
+        }
+        const fmtKg=v=>{
+          const n=numeroLocal(v);return n===null?'—':new Intl.NumberFormat('pt-BR',{minimumFractionDigits:0,maximumFractionDigits:2}).format(n)+' kg'
+        };
+        const fmtBRL=v=>{
+          const n=numeroLocal(v);return n===null?'—':new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(n)
+        };
+        const normHead=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+        function colIndex(headRow,terms){
+          if(!headRow)return -1;
+          const hs=[...headRow.children].map(x=>normHead(x.textContent));
+          return hs.findIndex(h=>terms.some(t=>h.includes(t)))
+        }
         let dadosCache=[];
 
         async function carregarDados(){
@@ -149,9 +173,11 @@ try{
             headRow.children[1].textContent='Coleta / Destinatário / Entrega';
           }
 
+          const pesoIdx=colIndex(headRow,['peso']);
           [...tbody.querySelectorAll('tr')].forEach(tr=>{
             const coleta=acharPorLinha(tr);
             if(!coleta || !tr.cells || tr.cells.length<2) return;
+            if(pesoIdx>=0&&tr.cells[pesoIdx])tr.cells[pesoIdx].textContent=fmtKg(coleta.peso_total);
             const signature=[
               coleta.os_numero||coleta.id||'',
               coleta.cliente||'',
@@ -198,10 +224,1098 @@ try{
             headRow.append(th1,th2,th3);
           }
 
+          const moneyCols=[
+            {idx:colIndex(headRow,['frete cobrado','valor cobrado']),key:'frete_cobrado'},
+            {idx:colIndex(headRow,['frete pago','valor pago']),key:'frete_pago'},
+            {idx:colIndex(headRow,['valor adiantamento','adiantamento r
+
+            const tdCheck=document.createElement('td');
+            tdCheck.className='recebido-cell';
+            const check=document.createElement('input');
+            check.type='checkbox';
+            check.className='recebido-check';
+            check.checked=!!coleta.recebido;
+            check.title='Marcar frete como recebido';
+
+            const tdData=document.createElement('td');
+            tdData.className='recebido-cell';
+            const date=document.createElement('input');
+            date.type='date';
+            date.className='recebido-date';
+            date.value=coleta.data_recebimento?String(coleta.data_recebimento).slice(0,10):'';
+            date.disabled=!check.checked;
+
+            const tdPrev=document.createElement('td');
+            tdPrev.className='recebido-cell';
+            const prev=document.createElement('input');
+            prev.type='date';
+            prev.className='previsao-date';
+            prev.value=coleta.previsao_pagamento_fatura?String(coleta.previsao_pagamento_fatura).slice(0,10):'';
+            prev.title='Previsão de pagamento da fatura';
+            prev.addEventListener('change',async()=>{
+              const antigo=coleta.previsao_pagamento_fatura?String(coleta.previsao_pagamento_fatura).slice(0,10):'';
+              try{
+                await salvarPrevisao(coleta.id,prev.value);
+                coleta.previsao_pagamento_fatura=prev.value||null;
+              }catch(e){
+                prev.value=antigo;
+                alert(e.message);
+              }
+            });
+
+            check.addEventListener('change',async()=>{
+              const prev=!check.checked;
+              try{
+                if(check.checked && !date.value) date.value=today();
+                date.disabled=!check.checked;
+                await salvarStatus(coleta.id,check.checked,date.value);
+                coleta.recebido=check.checked;
+                coleta.data_recebimento=check.checked?date.value:null;
+              }catch(e){
+                check.checked=prev;
+                date.disabled=!check.checked;
+                alert(e.message);
+              }
+            });
+
+            date.addEventListener('change',async()=>{
+              if(!check.checked) return;
+              try{
+                await salvarStatus(coleta.id,true,date.value);
+                coleta.data_recebimento=date.value;
+              }catch(e){ alert(e.message); }
+            });
+
+            tdCheck.appendChild(check);
+            tdData.appendChild(date);
+            tdPrev.appendChild(prev);
+            tr.append(tdCheck,tdData,tdPrev);
+          });
+        }
+
+        function rotuloCampo(id,texto){
+          const el=document.getElementById(id);
+          const label=el?.closest('label');
+          if(!label) return;
+          const span=label.querySelector(':scope > span');
+          if(span) span.textContent=texto;
+          else{
+            const nodes=[...label.childNodes];
+            const firstText=nodes.find(n=>n.nodeType===Node.TEXT_NODE&&n.textContent.trim());
+            if(firstText) firstText.textContent=texto;
+            else label.insertAdjacentText('afterbegin',texto);
+          }
+        }
+
+        function organizarFormularioColeta(){
+          const form=document.getElementById('formColeta');
+          if(!form) return;
+          let wrap=document.getElementById('coletaFormGroups');
+          if(wrap?.dataset?.ready==='1') return;
+          if(!wrap){
+            wrap=document.createElement('div');
+            wrap.id='coletaFormGroups';
+            wrap.className='coleta-form-groups';
+            const primeiro=form.querySelector('.section-title');
+            if(primeiro) form.insertBefore(wrap,primeiro);
+            else form.appendChild(wrap);
+          }
+
+          const make=(title,ids)=>{
+            const card=document.createElement('section');
+            card.className='coleta-form-card';
+            const h=document.createElement('h3');h.textContent=title;card.appendChild(h);
+            const grid=document.createElement('div');grid.className='coleta-form-grid';card.appendChild(grid);
+            ids.forEach(id=>{
+              const el=document.getElementById(id),label=el?.closest('label');
+              if(label){
+                label.classList.toggle('form-wide',['endereco_coleta','endereco_entrega','comprovante','observacoes','lucro'].includes(id));
+                grid.appendChild(label);
+              }
+            });
+            if(grid.children.length) wrap.appendChild(card);
+          };
+
+          rotuloCampo('os_numero','Nº da coleta');
+          rotuloCampo('cliente','Remetente *');
+          rotuloCampo('endereco_coleta','Endereço da coleta');
+          rotuloCampo('data_carregamento','Data da coleta');
+          rotuloCampo('hora_carregamento','Hora da coleta');
+
+          rotuloCampo('destinatario','Destinatário *');
+          rotuloCampo('endereco_entrega','Endereço da entrega *');
+          rotuloCampo('previsao_entrega','Previsão de entrega');
+          rotuloCampo('data_descarga','Data da descarga');
+          rotuloCampo('status','Status');
+          rotuloCampo('comprovante','Comprovante de entrega');
+
+          rotuloCampo('motorista','Nome do motorista');
+          rotuloCampo('telefone_motorista','Telefone / WhatsApp');
+          rotuloCampo('transportadora_agregado','Transportadora / Agregado');
+
+          rotuloCampo('placa','Placa');
+          rotuloCampo('tipo_caminhao','Tipo de caminhão');
+          rotuloCampo('implemento','Implemento');
+          rotuloCampo('eixos','Quantidade de eixos');
+
+          rotuloCampo('quantidade_paletes','Quantidade de paletes');
+          rotuloCampo('peso_total','Peso total (kg)');
+          rotuloCampo('observacoes','Observações');
+
+          rotuloCampo('frete_cobrado','Frete cobrado (R$)');
+          rotuloCampo('frete_pago','Frete pago (R$)');
+          rotuloCampo('percentual_adiantamento','Percentual de adiantamento (%)');
+          rotuloCampo('valor_adiantamento','Valor do adiantamento (R$)');
+          rotuloCampo('tarifa_rota_por_eixo','Tarifa da rota por eixo (R$)');
+          rotuloCampo('pedagio','Pedágio (R$)');
+          rotuloCampo('lucro','Lucro (R$)');
+
+          make('Coleta',['os_numero','cliente','endereco_coleta','data_carregamento','hora_carregamento']);
+          make('Entrega',['destinatario','endereco_entrega','previsao_entrega','data_descarga','status','comprovante']);
+          make('Dados do Motorista',['motorista','telefone_motorista','transportadora_agregado','doc_motorista_file']);
+          make('Dados do Caminhão',['placa','tipo_caminhao','implemento','eixos','capacidade_carga_cavalo','eixos_cavalo','doc_cavalo_file','placa_carreta','capacidade_carga_carreta','eixos_carreta','doc_carreta_file','doc_refresh_data']);
+          make('Dados da Carga',['quantidade_paletes','peso_total','observacoes']);
+          make('Financeiro',['frete_cobrado','frete_pago','percentual_adiantamento','valor_adiantamento','tarifa_rota_por_eixo','pedagio','lucro','recebido_financeiro','data_recebimento_financeiro','previsao_pagamento_fatura']);
+
+          [...form.querySelectorAll(':scope > .section-title')].forEach(x=>x.style.display='none');
+          [...form.querySelectorAll(':scope > .grid')].forEach(g=>{if(g.id!=='coletaFormGroups')g.style.display='none'});
+          const hint=[...form.querySelectorAll(':scope > .hint')].find(x=>/pedágio|lucro|adiantamento/i.test(x.textContent||''));
+          if(hint){
+            const fin=[...wrap.querySelectorAll('.coleta-form-card')].find(x=>x.querySelector('h3')?.textContent==='Financeiro');
+            if(fin){hint.style.display='block';hint.style.marginTop='10px';fin.appendChild(hint)}
+          }
+          wrap.dataset.ready='1';
+        }
+
+        function garantirCamposFormulario(){
+          const cliente=document.getElementById('cliente');
+          if(cliente && !document.getElementById('destinatario')){
+            const clienteLabel=cliente.closest('label');
+            const lblDest=document.createElement('label');
+            lblDest.innerHTML='<span>Destinatário *</span><input id="destinatario" type="text" required placeholder="Nome do destinatário">';
+            if(clienteLabel?.parentElement) clienteLabel.insertAdjacentElement('afterend',lblDest);
+          }
+
+          const frete=document.getElementById('frete_cobrado');
+          if(!frete) return;
+          const grid=frete.closest('.grid');
+          if(!grid) return;
+
+          if(!document.getElementById('recebido_financeiro')){
+            const lblCheck=document.createElement('label');
+            lblCheck.innerHTML='<span>Recebido</span><span class="recebido-inline"><input id="recebido_financeiro" type="checkbox" class="recebido-check"> <span>Frete recebido do cliente</span></span>';
+
+            const lblData=document.createElement('label');
+            lblData.innerHTML='<span>Data do recebimento</span><input id="data_recebimento_financeiro" type="date" disabled>';
+
+            grid.append(lblCheck,lblData);
+
+            const check=document.getElementById('recebido_financeiro');
+            const date=document.getElementById('data_recebimento_financeiro');
+            check.addEventListener('change',()=>{
+              if(check.checked && !date.value) date.value=today();
+              date.disabled=!check.checked;
+              if(!check.checked) date.value='';
+            });
+          }
+
+          if(!document.getElementById('previsao_pagamento_fatura')){
+            const lblPrev=document.createElement('label');
+            lblPrev.innerHTML='<span>Previsão de pagamento da fatura</span><input id="previsao_pagamento_fatura" type="date" class="previsao-date">';
+            grid.appendChild(lblPrev);
+          }
+          organizarFormularioColeta();
+        }
+
+        async function carregarCamposFormulario(){
+          garantirCamposFormulario();
+          const modal=document.getElementById('modal');
+          if(!modal?.open) return;
+          const id=document.getElementById('id')?.value;
+          const check=document.getElementById('recebido_financeiro');
+          const date=document.getElementById('data_recebimento_financeiro');
+          const prev=document.getElementById('previsao_pagamento_fatura');
+          const dest=document.getElementById('destinatario');
+          if(!check || !date || !prev || !dest) return;
+
+          if(!id){
+            check.checked=false;
+            date.value='';
+            date.disabled=true;
+            prev.value='';
+            dest.value='';
+            return;
+          }
+          await carregarDados();
+          const coleta=dadosCache.find(c=>String(c.id)===String(id));
+          check.checked=!!coleta?.recebido;
+          date.value=coleta?.data_recebimento?String(coleta.data_recebimento).slice(0,10):'';
+          date.disabled=!check.checked;
+          prev.value=coleta?.previsao_pagamento_fatura?String(coleta.previsao_pagamento_fatura).slice(0,10):'';
+          dest.value=coleta?.destinatario||'';
+        }
+
+        window.fetch=async function(input,init={}){
+          const res=await originalFetch(input,init);
+          try{
+            const url=typeof input==='string'?input:(input?.url||'');
+            const method=String(init?.method||'GET').toUpperCase();
+            if(res.ok && /^\\/coletas\\/api\\/coletas(?:\\/\\d+)?$/.test(url) && (method==='POST'||method==='PUT')){
+              const data=await res.clone().json();
+              const check=document.getElementById('recebido_financeiro');
+              const date=document.getElementById('data_recebimento_financeiro');
+              const prev=document.getElementById('previsao_pagamento_fatura');
+              const dest=document.getElementById('destinatario');
+              if(data?.id){
+                if(check) await salvarStatus(data.id,check.checked,date?.value||'');
+                if(prev) await salvarPrevisao(data.id,prev.value||'');
+                if(dest) await salvarDestinatario(data.id,dest.value||'');
+                setTimeout(decorarFinanceiro,150);
+              }
+            }
+          }catch(e){ console.warn('Recebimento:',e); }
+          return res;
+        };
+
+        document.addEventListener('DOMContentLoaded',()=>{
+          garantirCamposFormulario();
+          const tbody=document.getElementById('tbodyFinanceiro');
+          if(tbody){
+            const obs=new MutationObserver(()=>setTimeout(decorarFinanceiro,30));
+            obs.observe(tbody,{childList:true,subtree:true});
+          }
+          const tbodyOp=document.getElementById('tbodyOperacional');
+          if(tbodyOp){
+            const obsOp=new MutationObserver(()=>setTimeout(decorarOperacional,30));
+            obsOp.observe(tbodyOp,{childList:true,subtree:true});
+          }
+          const modal=document.getElementById('modal');
+          if(modal){
+            const obsModal=new MutationObserver(()=>setTimeout(()=>{garantirCamposFormulario();carregarCamposFormulario()},30));
+            obsModal.observe(modal,{attributes:true,attributeFilter:['open']});
+          }
+          setTimeout(decorarFinanceiro,250);setTimeout(decorarOperacional,250);
+        });
+      })();
+      <\/script>`;
+
+      const documentoAddon=String.raw`<style id="documentos-coleta-addon">
+      .doc-field{grid-column:1/-1;border:1px dashed #94a3b8;border-radius:12px;padding:12px;background:#fff}
+      .doc-field .doc-title{display:block;font-weight:700;color:#334155;margin-bottom:5px}
+      .doc-field input[type=file]{width:100%;padding:9px;border:1px solid #dbe4ee;border-radius:9px;background:#f8fafc}
+      .doc-status{display:block;margin-top:7px;font-size:11px;color:#64748b;line-height:1.4}
+      .doc-status.ok{color:#15803d;font-weight:600}.doc-status.err{color:#b91c1c;font-weight:600}
+      .doc-status a{color:#0f766e;font-weight:700;text-decoration:none}
+      .doc-refresh-field{grid-column:1/-1;border:1px solid #99f6e4;border-radius:12px;padding:12px;background:#f0fdfa}
+      .doc-refresh-field .doc-title{display:block;font-weight:700;color:#115e59;margin-bottom:7px}
+      #doc_refresh_data{width:100%;border:0;border-radius:9px;padding:11px 14px;background:#0f766e;color:#fff;font-weight:700;cursor:pointer}
+      #doc_refresh_data:disabled{opacity:.55;cursor:wait}
+      .doc-reading{display:inline-flex;align-items:center;gap:6px}
+      .history-select-wrap{grid-column:1/-1;border:1px solid #cbd5e1;border-radius:11px;padding:11px;background:#fff}
+      .history-select-wrap>span{display:block;font-weight:700;color:#334155;margin-bottom:6px}
+      .history-select{width:100%;box-sizing:border-box;min-height:42px;border:1px solid #cbd5e1;border-radius:9px;padding:8px 10px;background:#fff}
+      .history-hint{display:block;margin-top:5px;font-size:11px;color:#64748b}
+      .doc-reading:before{content:"";width:10px;height:10px;border:2px solid #cbd5e1;border-top-color:#0f766e;border-radius:50%;animation:docSpin .8s linear infinite}
+      @keyframes docSpin{to{transform:rotate(360deg)}}
+      </style>
+      <script id="documentos-coleta-script">
+      (() => {
+        const docBaseFetch=window.fetch.bind(window);
+        let pendingDocs={motorista:null,cavalo:null,carreta:null};
+        let lastOpenKey='';
+
+        const byId=id=>document.getElementById(id);
+        const titleCase=v=>String(v||'').toLocaleLowerCase('pt-BR').replace(/(^|[\s\-'])\p{L}/gu,m=>m.toLocaleUpperCase('pt-BR'));
+        const digits=v=>String(v||'').replace(/\D/g,'');
+        const formatCpf=v=>{const d=digits(v).slice(0,11);return d.length===11?d.slice(0,3)+'.'+d.slice(3,6)+'.'+d.slice(6,9)+'-'+d.slice(9):d};
+        const norm=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\s+/g,' ').trim();
+        const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+        const currentId=()=>String(byId('id')?.value||'').trim();
+
+        function cardByTitle(title){
+          return [...document.querySelectorAll('.coleta-form-card')].find(x=>norm(x.querySelector('h3')?.textContent||'')===norm(title));
+        }
+        function addInput(grid,id,label,type='text',opts={}){
+          let el=byId(id);if(el)return el;
+          const lbl=document.createElement('label');
+          if(opts.wide)lbl.className='form-wide';
+          const sp=document.createElement('span');sp.textContent=label;
+          el=document.createElement('input');el.id=id;el.type=type;
+          if(opts.placeholder)el.placeholder=opts.placeholder;
+          if(opts.inputmode)el.inputMode=opts.inputmode;
+          if(opts.max)el.max=opts.max;
+          if(opts.min)el.min=opts.min;
+          if(opts.noTitlecase)el.dataset.noTitlecase='true';
+          lbl.append(sp,el);grid.appendChild(lbl);return el
+        }
+
+        function addHistorySelect(grid,id,label,placeholder){
+          let sel=byId(id);if(sel)return sel;
+          const wrap=document.createElement('label');wrap.className='history-select-wrap';
+          const sp=document.createElement('span');sp.textContent=label;
+          sel=document.createElement('select');sel.id=id;sel.className='history-select';sel.dataset.noTitlecase='true';
+          sel.innerHTML='<option value="">'+esc(placeholder)+'</option>';
+          const hint=document.createElement('small');hint.className='history-hint';hint.textContent='Os dados abaixo continuam livres para edição manual.';
+          wrap.append(sp,sel,hint);
+          grid.insertBefore(wrap,grid.firstChild);
+          return sel
+        }
+        function setField(id,value){
+          const el=byId(id);if(!el||value===undefined||value===null||String(value).trim()==='')return;
+          el.value=String(value);
+          try{el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}))}catch{}
+        }
+        function historyLatest(rows,key){
+          const map=new Map();
+          (Array.isArray(rows)?rows:[]).forEach(r=>{
+            const raw=String(r?.[key]||'').trim();if(!raw)return;
+            const k=norm(raw);
+            const prev=map.get(k);
+            const rid=Number(r.id||0),pid=Number(prev?.id||0);
+            if(!prev||rid>=pid)map.set(k,r)
+          });
+          return [...map.values()].sort((a,b)=>String(a?.[key]||'').localeCompare(String(b?.[key]||''),'pt-BR',{sensitivity:'base'}))
+        }
+        function fillHistorySelect(sel,rows,key,render){
+          if(!sel)return;
+          const current=sel.value;
+          sel.innerHTML='<option value="">Selecione…</option>';
+          rows.forEach(r=>{
+            const opt=document.createElement('option');
+            opt.value=String(r.id||'');
+            opt.textContent=render(r);
+            sel.appendChild(opt)
+          });
+          if([...sel.options].some(o=>o.value===current))sel.value=current
+        }
+        async function refreshHistorySelectors(){
+          ensureFields();
+          let rows=[];
+          try{
+            const r=await docBaseFetch('/coletas/api/coletas',{cache:'no-store'});
+            if(r.ok)rows=await r.json()
+          }catch{}
+          if(!Array.isArray(rows))rows=[];
+
+          const drivers=historyLatest(rows,'motorista');
+          const senders=historyLatest(rows,'cliente');
+          const recipients=historyLatest(rows,'destinatario');
+
+          const sm=byId('historico_motorista'),sr=byId('historico_remetente'),sd=byId('historico_destinatario');
+          window.__coletaHistoryProfiles={drivers,senders,recipients};
+          fillHistorySelect(sm,drivers,'motorista',r=>String(r.motorista||''));
+          fillHistorySelect(sr,senders,'cliente',r=>String(r.cliente||'')+(r.endereco_coleta?' • '+r.endereco_coleta:''));
+          fillHistorySelect(sd,recipients,'destinatario',r=>String(r.destinatario||'')+(r.endereco_entrega?' • '+r.endereco_entrega:''));
+
+          if(sm&&!sm.dataset.historyBound){
+            sm.dataset.historyBound='1';
+            sm.addEventListener('change',()=>{
+              const r=(window.__coletaHistoryProfiles?.drivers||[]).find(x=>String(x.id||'')===sm.value);if(!r)return;
+              setField('motorista',r.motorista);
+              setField('telefone_motorista',r.telefone_motorista);
+              setField('transportadora_agregado',r.transportadora_agregado)
+            })
+          }
+          if(sr&&!sr.dataset.historyBound){
+            sr.dataset.historyBound='1';
+            sr.addEventListener('change',()=>{
+              const r=(window.__coletaHistoryProfiles?.senders||[]).find(x=>String(x.id||'')===sr.value);if(!r)return;
+              setField('cliente',r.cliente);
+              setField('endereco_coleta',r.endereco_coleta)
+            })
+          }
+          if(sd&&!sd.dataset.historyBound){
+            sd.dataset.historyBound='1';
+            sd.addEventListener('change',()=>{
+              const r=(window.__coletaHistoryProfiles?.recipients||[]).find(x=>String(x.id||'')===sd.value);if(!r)return;
+              setField('destinatario',r.destinatario);
+              setField('endereco_entrega',r.endereco_entrega)
+            })
+          }
+        }
+
+        function addUpload(grid,id,label,statusId){
+          let input=byId(id);if(input)return input;
+          const box=document.createElement('label');box.className='doc-field form-wide';
+          const title=document.createElement('span');title.className='doc-title';title.textContent=label;
+          input=document.createElement('input');input.id=id;input.type='file';input.accept='.pdf,application/pdf,image/jpeg,image/png,image/webp,image/*';
+          input.dataset.noTitlecase='true';
+          const st=document.createElement('span');st.id=statusId;st.className='doc-status';st.textContent='PDF ou foto. O sistema tenta preencher os campos automaticamente.';
+          box.append(title,input,st);grid.appendChild(box);return input
+        }
+        function setStatus(id,msg,kind=''){
+          const el=byId(id);if(!el)return;
+          el.className='doc-status'+(kind?' '+kind:'');el.innerHTML=msg
+        }
+        function fieldGrid(id){
+          const el=byId(id);if(!el)return null;
+          return el.closest('.coleta-form-grid')||el.closest('.coleta-form-card')?.querySelector('.coleta-form-grid')||el.closest('form')||el.parentElement?.parentElement||null
+        }
+        function ensureFields(){
+          const motorCard=cardByTitle('Dados do Motorista'),truckCard=cardByTitle('Dados do Caminhão'),senderCard=cardByTitle('Coleta'),recipientCard=cardByTitle('Entrega');
+          const senderGrid=fieldGrid('cliente')||fieldGrid('endereco_coleta')||senderCard?.querySelector('.coleta-form-grid');
+          const recipientGrid=fieldGrid('destinatario')||fieldGrid('endereco_entrega')||recipientCard?.querySelector('.coleta-form-grid');
+          const motorGrid=fieldGrid('motorista')||fieldGrid('telefone_motorista')||motorCard?.querySelector('.coleta-form-grid');
+          const truckGrid=fieldGrid('placa')||fieldGrid('eixos')||truckCard?.querySelector('.coleta-form-grid');
+
+          if(senderGrid){
+            addHistorySelect(senderGrid,'historico_remetente','Escolher remetente já utilizado','Escolha um remetente do histórico')
+          }
+          if(recipientGrid){
+            addHistorySelect(recipientGrid,'historico_destinatario','Escolher destinatário já utilizado','Escolha um destinatário do histórico')
+          }
+          if(motorGrid){
+            addHistorySelect(motorGrid,'historico_motorista','Escolher motorista já utilizado','Escolha um motorista do histórico');
+            const up=addUpload(motorGrid,'doc_motorista_file','Importar documento do motorista','doc_motorista_status');
+            bindUpload(up,'motorista','doc_motorista_status')
+          }
+          if(truckGrid){
+            const placa=byId('placa');if(placa){placa.dataset.noTitlecase='true';const s=placa.closest('label')?.querySelector('span');if(s)s.textContent='Placa do cavalo mecânico'}
+            const total=byId('eixos');if(total){const s=total.closest('label')?.querySelector('span');if(s)s.textContent='Total de eixos';total.min='0';total.max='20'}
+            const capC=addInput(truckGrid,'capacidade_carga_cavalo','Capacidade de carga do caminhão / cavalo','text',{placeholder:'Ex.: 16.000 kg',noTitlecase:true});
+            const eixC=addInput(truckGrid,'eixos_cavalo','Eixos do caminhão / cavalo','number',{min:'0',max:'20',noTitlecase:true});
+            const docC=addUpload(truckGrid,'doc_cavalo_file','Subir documento do caminhão / cavalo mecânico','doc_cavalo_status');
+            const placaT=addInput(truckGrid,'placa_carreta','Placa da carreta','text',{placeholder:'ABC1D23',noTitlecase:true});
+            placaT.maxLength=8;
+            const capT=addInput(truckGrid,'capacidade_carga_carreta','Capacidade de carga da carreta','text',{placeholder:'Ex.: 28.000 kg',noTitlecase:true});
+            const eixT=addInput(truckGrid,'eixos_carreta','Eixos da carreta','number',{min:'0',max:'20',noTitlecase:true});
+            const docT=addUpload(truckGrid,'doc_carreta_file','Subir documento da carreta','doc_carreta_status');
+            if(!placaT.dataset.docBound){placaT.dataset.docBound='1';placaT.addEventListener('input',()=>{placaT.value=placaT.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,7)})}
+            if(placa&&!placa.dataset.docPlateBound){placa.dataset.docPlateBound='1';placa.addEventListener('input',()=>{placa.value=placa.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,7)})}
+            [eixC,eixT].forEach(x=>{if(x&&!x.dataset.sumBound){x.dataset.sumBound='1';x.addEventListener('input',sumAxes)}});
+            bindUpload(docC,'cavalo','doc_cavalo_status');bindUpload(docT,'carreta','doc_carreta_status')
+          }
+          bindRefreshDocumentButton()
+        }
+        function sumAxes(){
+          const a=Number(byId('eixos_cavalo')?.value||0),b=Number(byId('eixos_carreta')?.value||0);
+          if((byId('eixos_cavalo')?.value||'')!==''||(byId('eixos_carreta')?.value||'')!==''){
+            const total=byId('eixos');if(total)total.value=String(a+b)
+          }
+        }
+        function loadScript(src,id){
+          return new Promise((resolve,reject)=>{
+            if(window[id])return resolve(window[id]);
+            const prior=document.querySelector('script[data-doc-lib="'+id+'"]');
+            if(prior){prior.addEventListener('load',()=>resolve(window[id]));prior.addEventListener('error',reject);return}
+            const s=document.createElement('script');s.src=src;s.async=true;s.dataset.docLib=id;
+            s.onload=()=>resolve(window[id]);s.onerror=()=>reject(new Error('Não foi possível carregar o leitor automático.'));
+            document.head.appendChild(s)
+          })
+        }
+        async function ensurePdf(){
+          if(window.pdfjsLib)return window.pdfjsLib;
+          await loadScript('https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js','pdfjsLib');
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+          return window.pdfjsLib
+        }
+        async function ensureOcr(){
+          if(window.Tesseract)return window.Tesseract;
+          await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js','Tesseract');
+          return window.Tesseract
+        }
+        function fileDataUrl(file){
+          return new Promise((resolve,reject)=>{const fr=new FileReader();fr.onload=()=>resolve(fr.result);fr.onerror=()=>reject(new Error('Não foi possível ler o arquivo.'));fr.readAsDataURL(file)})
+        }
+        async function storageDataUrl(file){
+          if(file.type==='application/pdf'){
+            if(file.size>7*1024*1024)throw new Error('PDF maior que 7 MB.');
+            return fileDataUrl(file)
+          }
+          if(!String(file.type||'').startsWith('image/'))throw new Error('Use PDF ou imagem.');
+          const src=await fileDataUrl(file);
+          const img=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=()=>reject(new Error('Imagem inválida.'));im.src=src});
+          const max=2200,scale=Math.min(1,max/Math.max(img.naturalWidth,img.naturalHeight)),w=Math.max(1,Math.round(img.naturalWidth*scale)),h=Math.max(1,Math.round(img.naturalHeight*scale));
+          const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;canvas.getContext('2d').drawImage(img,0,0,w,h);
+          return canvas.toDataURL('image/jpeg',.86)
+        }
+        async function ocrSource(source,statusId){
+          const T=await ensureOcr();
+          const result=await T.recognize(source,'por',{logger:m=>{
+            if(m.status==='recognizing text')setStatus(statusId,'<span class="doc-reading">Lendo documento '+Math.round((m.progress||0)*100)+'%</span>')
+          }});
+          return result?.data?.text||''
+        }
+
+        function groupPdfTextLines(items){
+          const rows=[];
+          (items||[]).forEach(it=>{
+            const str=String(it?.str||'').replace(/\s+/g,' ').trim();if(!str)return;
+            const tr=it.transform||[],x=Number(tr[4]||0),y=Number(tr[5]||0),w=Number(it.width||0),h=Math.abs(Number(it.height||tr[0]||10));
+            let row=rows.find(r=>Math.abs(r.y-y)<=Math.max(2.5,Math.min(7,h*.55)));
+            if(!row){row={y,items:[]};rows.push(row)}
+            row.items.push({str,x,y,w,h})
+          });
+          rows.sort((a,b)=>b.y-a.y);
+          return rows.map(r=>{
+            r.items.sort((a,b)=>a.x-b.x);
+            return {y:r.y,text:r.items.map(i=>i.str).join(' ').replace(/\s+/g,' ').trim(),items:r.items}
+          }).filter(r=>r.text)
+        }
+        function isDriverLabelLine(v){
+          const n=norm(v);
+          return /(?:NOME(?: E SOBRENOME| DO CONDUTOR| COMPLETO)?|DOC(?:UMENTO)?(?: DE)? IDENTIDADE|IDENTIDADE|ORGAO EMISSOR|CPF|DATA DE NASCIMENTO|NASCIMENTO|FILIACAO|VALIDADE|CATEGORIA|REGISTRO|NACIONALIDADE|ASSINATURA)/.test(n)
+        }
+        function driverNameFromRows(rows){
+          for(let i=0;i<rows.length;i++){
+            const n=norm(rows[i].text);
+            if(/\b(?:NOME E SOBRENOME|NOME DO CONDUTOR)\b/.test(n)&&!/PAI|MAE|FILIACAO/.test(n)){
+              const inline=cleanPersonName(rows[i].text);
+              if(plausiblePersonName(inline)&&!/\bNOME\b/.test(norm(inline)))return titleCase(inline);
+              for(let j=i+1;j<Math.min(rows.length,i+3);j++){
+                const cand=cleanPersonName(rows[j].text);
+                if(isDriverLabelLine(cand))break;
+                if(plausiblePersonName(cand))return titleCase(cand)
+              }
+            }
+          }
+          return''
+        }
+        function driverRgFromRows(rows){
+          for(let i=0;i<rows.length;i++){
+            const n=norm(rows[i].text);
+            if(/\b(?:DOC(?:UMENTO)?(?: DE)? IDENTIDADE|IDENTIDADE|RG)\b/.test(n)){
+              const same=parseRg(rows[i].text);if(same)return same;
+              for(let j=i+1;j<Math.min(rows.length,i+5);j++){
+                if(/\b(?:DATA|NASCIMENTO|CPF|VALIDADE|CATEGORIA|REGISTRO)\b/.test(norm(rows[j].text)))break;
+                const rg=extractRgCandidate(rows[j].text);if(rg)return rg
+              }
+            }
+          }
+          return''
+        }
+        async function extractDriverFromPdfLayout(file,statusId){
+          try{
+            setStatus(statusId,'<span class="doc-reading">Lendo campos internos da CNH…</span>');
+            const pdfjs=await ensurePdf(),buf=await file.arrayBuffer(),pdf=await pdfjs.getDocument({data:buf}).promise;
+            let nome='',allText='';
+            for(let n=1;n<=Math.min(pdf.numPages,2);n++){
+              const page=await pdf.getPage(n),tc=await page.getTextContent(),rows=groupPdfTextLines(tc.items);
+              const pageText=rows.map(r=>r.text).join('\n');
+              allText+='\n'+pageText;
+              if(!nome)nome=driverNameFromRows(rows);
+              if(nome)break
+            }
+            if(!nome){
+              const parsed=parseDriver(allText);
+              nome=parsed.nome||''
+            }
+            return{nome,text:allText}
+          }catch{return{nome:'',text:''}}
+        }
+        function enhanceOcrCanvas(canvas){
+          try{
+            const ctx=canvas.getContext('2d',{willReadFrequently:true}),img=ctx.getImageData(0,0,canvas.width,canvas.height),d=img.data;
+            for(let i=0;i<d.length;i+=4){
+              const g=Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2]);
+              const v=g<205?Math.max(0,Math.round((g-128)*1.55+128)):255;
+              d[i]=d[i+1]=d[i+2]=v
+            }
+            ctx.putImageData(img,0,0)
+          }catch{}
+          return canvas
+        }
+        async function extractDriverByOcr(file,statusId){
+          if(file.type==='application/pdf'){
+            const pdfjs=await ensurePdf(),buf=await file.arrayBuffer(),pdf=await pdfjs.getDocument({data:buf}).promise;
+            let text='';
+            for(let n=1;n<=Math.min(pdf.numPages,2);n++){
+              setStatus(statusId,'<span class="doc-reading">OCR reforçado da CNH • página '+n+'…</span>');
+              const page=await pdf.getPage(n),vp=page.getViewport({scale:3.4}),canvas=document.createElement('canvas');
+              canvas.width=Math.round(vp.width);canvas.height=Math.round(vp.height);
+              await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
+              enhanceOcrCanvas(canvas);
+              text+='\n'+await ocrSource(canvas,statusId)
+            }
+            return parseDriver(text)
+          }
+          const src=await fileDataUrl(file);
+          const img=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=src});
+          const max=3200,scale=Math.min(2.5,max/Math.max(img.naturalWidth,img.naturalHeight)),canvas=document.createElement('canvas');
+          canvas.width=Math.max(1,Math.round(img.naturalWidth*scale));canvas.height=Math.max(1,Math.round(img.naturalHeight*scale));
+          canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);enhanceOcrCanvas(canvas);
+          return parseDriver(await ocrSource(canvas,statusId))
+        }
+        async function extractText(file,statusId,forceOcr=false){
+          if(file.type==='application/pdf'){
+            const pdfjs=await ensurePdf(),buf=await file.arrayBuffer(),pdf=await pdfjs.getDocument({data:buf}).promise;
+            let text='';
+            if(!forceOcr){
+              const maxPages=Math.min(pdf.numPages,3);
+              for(let n=1;n<=maxPages;n++){
+                const page=await pdf.getPage(n),tc=await page.getTextContent();
+                text+='\n'+tc.items.map(x=>x.str||'').join(' ')
+              }
+              if(norm(text).length>80)return text
+            }
+            for(let n=1;n<=Math.min(pdf.numPages,2);n++){
+              setStatus(statusId,'<span class="doc-reading">Aplicando OCR na página '+n+'…</span>');
+              const page=await pdf.getPage(n),vp=page.getViewport({scale:2.15}),canvas=document.createElement('canvas');
+              canvas.width=Math.round(vp.width);canvas.height=Math.round(vp.height);
+              const ctx=canvas.getContext('2d');
+              await page.render({canvasContext:ctx,viewport:vp}).promise;
+              text+='\n'+await ocrSource(canvas,statusId)
+            }
+            return text
+          }
+          return ocrSource(file,statusId)
+        }
+        function linesOf(text){return String(text||'').split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean)}
+        function validCpf(v){
+          const d=digits(v);if(d.length!==11||/^(\d)\1{10}$/.test(d))return false;
+          let s=0;for(let i=0;i<9;i++)s+=Number(d[i])*(10-i);
+          let x=(s*10)%11;if(x===10)x=0;if(x!==Number(d[9]))return false;
+          s=0;for(let i=0;i<10;i++)s+=Number(d[i])*(11-i);
+          x=(s*10)%11;if(x===10)x=0;return x===Number(d[10])
+        }
+        function parseCpf(text){
+          const raw=String(text||''),flat=raw.replace(/\s+/g,' ');
+          const perto=flat.match(/\bCPF\b[^0-9]{0,30}(\d{3})[\.\s]?(\d{3})[\.\s]?(\d{3})[-\s]?(\d{2})/i);
+          if(perto){
+            const d=perto.slice(1,5).join('');if(validCpf(d))return d
+          }
+          const all=[...flat.matchAll(/\b(\d{3})[\.\s]?(\d{3})[\.\s]?(\d{3})[-\s]?(\d{2})\b/g)];
+          for(const m of all){const d=m.slice(1,5).join('');if(validCpf(d))return d}
+          return perto?perto.slice(1,5).join(''):''
+        }
+        function extractRgCandidate(v){
+          const s=norm(v).replace(/\s+/g,' ');
+          const m=s.match(/\b(?:(?:AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)[- ]?)?(\d[\d.\-]{4,18}[0-9X]?)\b/i);
+          if(!m)return'';
+          const candidate=(m[0]||m[1]||'').replace(/\s+/g,'').replace(/[.\-]+$/,'');
+          const d=digits(candidate);
+          if(d.length<5||d.length>14)return'';
+          if(/^\d{2}[\/\-]\d{2}[\/\-]\d{4}$/.test(candidate))return'';
+          return candidate
+        }
+        function parseRg(text){
+          const raw=String(text||''),lines=linesOf(raw),flat=norm(raw).replace(/\s+/g,' ');
+          const labels=[
+            /\bDOC(?:UMENTO)?(?: DE)? IDENTIDADE\b/,
+            /\bIDENTIDADE\b/,
+            /\bRG\b/
+          ];
+          for(const label of labels){
+            const m=flat.match(label);
+            if(m){
+              const frag=flat.slice((m.index||0)+m[0].length,(m.index||0)+m[0].length+120);
+              const rg=extractRgCandidate(frag);if(rg)return rg
+            }
+          }
+          for(let i=0;i<lines.length;i++){
+            const n=norm(lines[i]);
+            if(/\b(?:RG|DOC(?:UMENTO)?(?: DE)? IDENTIDADE|IDENTIDADE)\b/.test(n)){
+              const after=n.replace(/^.*?\b(?:RG|DOC(?:UMENTO)?(?: DE)? IDENTIDADE|IDENTIDADE)\b/,'');
+              const same=extractRgCandidate(after);if(same)return same;
+              for(let j=1;j<=3;j++){
+                const next=extractRgCandidate(lines[i+j]||'');
+                if(next)return next
+              }
+            }
+          }
+          return''
+        }
+        function cleanPersonName(v){
+          return String(v||'')
+            .replace(/^\s*(?:\d+\s*)?(?:NOME(?: E SOBRENOME)?|NOME DO CONDUTOR|NOME COMPLETO)\s*[:\-]?\s*/i,'')
+            .replace(/\b(?:CPF|RG|DATA DE NASCIMENTO|NASCIMENTO|DOC(?:UMENTO)?(?: DE)? IDENTIDADE|FILIA[CÇ][AÃ]O|VALIDADE|CAT(?:EGORIA)?|REGISTRO|NACIONALIDADE)\b.*$/i,'')
+            .replace(/[^A-Za-zÀ-ÿ'\-\s]/g,' ').replace(/\s+/g,' ').trim()
+        }
+        function plausiblePersonName(v){
+          const n=cleanPersonName(v),parts=n.split(' ').filter(Boolean),u=norm(n);
+          if(n.length<6||n.length>90||parts.length<2||parts.length>8)return false;
+          if(/\b(?:CARTEIRA|HABILITACAO|REPUBLICA|FEDERATIVA|BRASIL|DETRAN|SECRETARIA|ASSINATURA|CONDUTOR|CPF|RG|REGISTRO|VALIDADE|CATEGORIA|IDENTIDADE|MINISTERIO|INFRAESTRUTURA|TRANSPORTES|TRANSITO|DEPARTAMENTO|NACIONAL|GOVERNO|ESTADO|MUNICIPIO|DOCUMENTO|ORGAO|EMISSOR)\b/.test(u))return false;
+          if(!parts.every(p=>p.length>=2))return false;
+          const long=parts.filter(p=>p.length>=4).length;
+          if(parts.length>=4&&long===0)return false;
+          if(parts.length>=5&&long<2)return false;
+          return true
+        }
+        function parseDriver(text){
+          const raw=String(text||''),lines=linesOf(raw),flat=raw.replace(/\s+/g,' ').trim();let nome='';
+          const labelPatterns=[
+            /(?:^|\s)(?:\d+\s*)?NOME\s+E\s+SOBRENOME\s*[:\-]?\s*([A-ZÀ-Ü][A-ZÀ-Ü'\- ]{5,90}?)(?=\s+(?:CPF|RG|DATA\s+DE\s+NASCIMENTO|NASCIMENTO|DOC(?:UMENTO)?|IDENTIDADE|FILIA[CÇ][AÃ]O|VALIDADE|CAT(?:EGORIA)?|REGISTRO|NACIONALIDADE)\b|$)/i,
+            /(?:^|\s)NOME\s+DO\s+CONDUTOR\s*[:\-]?\s*([A-ZÀ-Ü][A-ZÀ-Ü'\- ]{5,90}?)(?=\s+(?:CPF|RG|DATA|DOC|IDENTIDADE|FILIA|VALIDADE|REGISTRO)\b|$)/i
+          ];
+          for(const re of labelPatterns){
+            const m=flat.match(re);
+            if(m&&plausiblePersonName(m[1])){nome=titleCase(cleanPersonName(m[1]));break}
+          }
+          if(!nome){
+            for(let i=0;i<lines.length;i++){
+              const n=norm(lines[i]);
+              if(/\b(?:NOME E SOBRENOME|NOME DO CONDUTOR)\b/.test(n)&&!/PAI|MAE|FILIA/.test(n)){
+                const inline=cleanPersonName(lines[i]);
+                if(plausiblePersonName(inline)&&!/\bNOME\b/.test(norm(inline))){nome=titleCase(inline);break}
+                for(let j=i+1;j<Math.min(lines.length,i+3);j++){
+                  const cand=cleanPersonName(lines[j]);
+                  if(isDriverLabelLine(cand))break;
+                  if(plausiblePersonName(cand)){nome=titleCase(cand);break}
+                }
+                if(nome)break
+              }
+            }
+          }
+          return{nome}
+        }
+        function parsePlate(text){
+          const lines=linesOf(text);
+          for(let i=0;i<lines.length;i++){
+            if(/PLACA/i.test(norm(lines[i]))){
+              const s=(lines[i]+' '+(lines[i+1]||'')).toUpperCase().replace(/[^A-Z0-9]/g,' ');
+              const m=s.match(/\b[A-Z]{3}[0-9][A-Z0-9][0-9]{2}\b/);if(m)return m[0]
+            }
+          }
+          const all=String(text||'').toUpperCase().replace(/[^A-Z0-9]/g,' ');
+          const m=all.match(/\b[A-Z]{3}[0-9][A-Z0-9][0-9]{2}\b/);return m?m[0]:''
+        }
+        function parseAxes(text){
+          const t=norm(text)
+            .replace(/\bE1XOS?\b/g,'EIXOS')
+            .replace(/\bEIX0S?\b/g,'EIXOS');
+          const patterns=[
+            /(?:N(?:UMERO|º|°)?\s+DE\s+)?EIXOS?\s*[:\-]?\s*(\d{1,2})\b/,
+            /(\d{1,2})\s+EIXOS?\b/
+          ];
+          for(const re of patterns){
+            const m=t.match(re);if(m){const n=Number(m[1]);if(n>=1&&n<=12)return n}
+          }
+          return null
+        }
+        function parseNumberPt(v){
+          let s=String(v||'').trim().replace(/\s/g,'');
+          if(!s)return null;
+          if(s.includes(',')&&s.includes('.'))s=s.lastIndexOf(',')>s.lastIndexOf('.')?s.replace(/\./g,'').replace(',','.'):s.replace(/,/g,'');
+          else if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');
+          else if((s.match(/\./g)||[]).length>1)s=s.replace(/\./g,'');
+          const n=Number(s);return Number.isFinite(n)?n:null
+        }
+        function formatCapacityValue(raw,unit=''){
+          const n=parseNumberPt(raw);if(n===null||n<=0)return'';
+          let u=norm(unit).replace(/\./g,'');
+          if(!u)u=n<=100?'T':'KG';
+          if(/^TON/.test(u)||u==='T')return String(raw).trim()+' t';
+          return String(raw).trim()+' kg'
+        }
+        function parseCapacity(text){
+          const t=norm(text).replace(/\s+/g,' ');
+          const labels=[
+            'CAPACIDADE DE CARGA','CAPACIDADE MAXIMA DE CARGA','CAPACIDADE CARGA',
+            'CAP CARGA','CARGA UTIL','CARGA LIQUIDA','CAPACIDADE'
+          ];
+          for(const label of labels){
+            const p=t.indexOf(label);if(p<0)continue;
+            const frag=t.slice(p+label.length,p+label.length+100);
+            const m=frag.match(/(?:[:\-]\s*)?([0-9]{1,6}(?:[.,][0-9]{1,3})?)\s*(KG|QUILOS?|T|TON|TONELADAS?)?\b/);
+            if(m){
+              const v=formatCapacityValue(m[1],m[2]||'');
+              if(v)return v
+            }
+          }
+          const tara=t.match(/\bTARA\s*[:\-]?\s*([0-9]{2,6}(?:[.,][0-9]{1,3})?)\s*(KG|T|TON|TONELADAS?)?/);
+          const pbt=t.match(/\b(?:PBT|PESO BRUTO TOTAL)\s*[:\-]?\s*([0-9]{2,6}(?:[.,][0-9]{1,3})?)\s*(KG|T|TON|TONELADAS?)?/);
+          if(tara&&pbt){
+            let a=parseNumberPt(tara[1]),b=parseNumberPt(pbt[1]);
+            const ta=norm(tara[2]||''),tb=norm(pbt[2]||'');
+            if(/^T|TON/.test(ta))a*=1000;if(/^T|TON/.test(tb))b*=1000;
+            const payload=b-a;if(payload>0)return Math.round(payload).toLocaleString('pt-BR')+' kg'
+          }
+          return''
+        }
+        function parseVehicleType(text,eixos){
+          const t=norm(text).replace(/\s+/g,' ');
+          if(/\b(?:CAVALO MECANICO|CAMINHAO[\s\-]+TRATOR|CAMINHAO TRATOR|TRATOR RODOVIARIO)\b/.test(t))return'Cavalo mecânico';
+          if(/\b(?:TRUCK|TRUCADO)\b/.test(t))return'Truck';
+          if(/\bTOCO\b/.test(t))return'Toco';
+          const rigid=/\bCAMINHAO\b/.test(t)&&!/\b(?:SEMI[\s\-]?REBOQUE|REBOQUE|CAMINHAO[\s\-]+TRATOR)\b/.test(t);
+          if(rigid&&eixos===2)return'Toco';
+          if(rigid&&eixos>=3)return'Truck';
+          return''
+        }
+        function parseVehicle(text){
+          const eixos=parseAxes(text);
+          return{placa:parsePlate(text),eixos,capacidade:parseCapacity(text),tipoVeiculo:parseVehicleType(text,eixos)}
+        }
+        function applyDriver(d){
+          if(d.nome&&byId('motorista'))setField('motorista',d.nome)
+        }
+        function setTruckType(value){
+          const el=byId('tipo_caminhao');if(!el||!value)return;
+          if(el.tagName==='SELECT'){
+            const want=norm(value);
+            const aliases=value==='Cavalo mecânico'?['CAVALO MECANICO','CAVALO','CAMINHAO TRATOR','TRATOR']:
+              value==='Truck'?['TRUCK','TRUCADO']:['TOCO'];
+            const opt=[...el.options].find(o=>aliases.some(a=>norm(o.value)===a||norm(o.textContent)===a||norm(o.value).includes(a)||norm(o.textContent).includes(a)));
+            if(opt)el.value=opt.value;
+            else{
+              const o=document.createElement('option');o.value=value;o.textContent=value;el.appendChild(o);el.value=value
+            }
+          }else el.value=value;
+          try{el.dispatchEvent(new Event('change',{bubbles:true}))}catch{}
+        }
+        function applyVehicle(tipo,d){
+          if(tipo==='cavalo'){
+            if(d.placa&&byId('placa'))setField('placa',d.placa);
+            if(d.tipoVeiculo)setTruckType(d.tipoVeiculo);
+            if(d.capacidade&&byId('capacidade_carga_cavalo'))setField('capacidade_carga_cavalo',d.capacidade);
+            if(d.eixos!==null&&byId('eixos_cavalo'))setField('eixos_cavalo',String(d.eixos))
+          }else{
+            if(d.placa&&byId('placa_carreta'))setField('placa_carreta',d.placa);
+            if(d.capacidade&&byId('capacidade_carga_carreta'))setField('capacidade_carga_carreta',d.capacidade);
+            if(d.eixos!==null&&byId('eixos_carreta'))setField('eixos_carreta',String(d.eixos))
+          }
+          sumAxes()
+        }
+        async function processDocumentFile(file,tipo,statusId){
+          if(!file)return false;
+          try{
+            setStatus(statusId,'<span class="doc-reading">Lendo documento…</span>');
+            const stored=await storageDataUrl(file);
+            pendingDocs[tipo]={tipo,nome_arquivo:file.name||('documento-'+tipo),arquivo:stored};
+            let text=await extractText(file,statusId);
+            if(tipo==='motorista'){
+              if(byId('motorista'))setField('motorista','');
+              let d={nome:''};
+              if(file.type==='application/pdf'){
+                const layout=await extractDriverFromPdfLayout(file,statusId);
+                d={nome:layout.nome||''}
+              }else d=parseDriver(text);
+              if(!d.nome){
+                const od=await extractDriverByOcr(file,statusId);
+                d={nome:od.nome||''}
+              }
+              if(d.nome&&!plausiblePersonName(d.nome))d.nome='';
+              applyDriver(d);
+              setStatus(statusId,d.nome
+                ?'✓ Nome do motorista preenchido. Confira antes de salvar.'
+                :'Não foi possível identificar o nome do motorista com segurança. O campo foi deixado em branco para preenchimento manual.',
+                d.nome?'ok':'err');
+              return !!d.nome
+            }else{
+              let d=parseVehicle(text);
+              if(file.type==='application/pdf'&&(!d.placa||d.eixos===null||!d.capacidade||!d.tipoVeiculo)){
+                const ocr=await extractText(file,statusId,true);
+                d=parseVehicle(text+'\n'+ocr)
+              }
+              applyVehicle(tipo,d);
+              const found=[d.placa?'placa':'',d.tipoVeiculo?'tipo do caminhão':'',d.capacidade?'capacidade':'',d.eixos!==null?'eixos':''].filter(Boolean);
+              setStatus(statusId,found.length?'✓ '+esc(found.join(', '))+' preenchido(s). Confira antes de salvar.':'Documento anexado, mas os dados não foram reconhecidos. Preencha manualmente.','ok');
+              return found.length>0
+            }
+          }catch(e){
+            setStatus(statusId,'Documento selecionado. Leitura automática indisponível: '+esc(e.message)+'. Você pode preencher os campos manualmente e salvar.','err');
+            try{pendingDocs[tipo]={tipo,nome_arquivo:file.name||('documento-'+tipo),arquivo:await storageDataUrl(file)}}catch{}
+            return false
+          }
+        }
+        function bindUpload(input,tipo,statusId){
+          if(!input||input.dataset.boundDoc==='1')return;
+          input.dataset.boundDoc='1';
+          input.addEventListener('change',async()=>{
+            const file=input.files?.[0];if(!file)return;
+            await processDocumentFile(file,tipo,statusId)
+          })
+        }
+        async function storedDocumentFile(tipo){
+          const id=currentId();if(!id)return null;
+          try{
+            const r=await docBaseFetch('/api/painel/coletas-documentos/'+encodeURIComponent(id)+'/'+encodeURIComponent(tipo)+'?t='+Date.now(),{cache:'no-store'});
+            if(!r.ok)return null;
+            const blob=await r.blob();if(!blob.size)return null;
+            let ext='bin';
+            if(blob.type==='application/pdf')ext='pdf';
+            else if(blob.type==='image/jpeg')ext='jpg';
+            else if(blob.type==='image/png')ext='png';
+            else if(blob.type==='image/webp')ext='webp';
+            return new File([blob],'documento-'+tipo+'.'+ext,{type:blob.type||'application/octet-stream'})
+          }catch{return null}
+        }
+        async function refreshDocumentData(){
+          const btn=byId('doc_refresh_data'),status=byId('doc_refresh_status');
+          if(status){status.className='doc-status';status.innerHTML='<span class="doc-reading">Preparando documentos…</span>'}
+          const defs=[
+            {input:byId('doc_motorista_file'),tipo:'motorista',status:'doc_motorista_status'},
+            {input:byId('doc_cavalo_file'),tipo:'cavalo',status:'doc_cavalo_status'},
+            {input:byId('doc_carreta_file'),tipo:'carreta',status:'doc_carreta_status'}
+          ];
+          if(btn){btn.disabled=true;btn.textContent='Atualizando dados…'}
+          try{
+            const items=[];
+            for(const d of defs){
+              let file=d.input?.files?.[0]||null;
+              let origem='anexado agora';
+              if(!file){
+                file=await storedDocumentFile(d.tipo);
+                origem='salvo na coleta'
+              }
+              if(file)items.push({...d,file,origem})
+            }
+            if(!items.length){
+              if(status){
+                status.className='doc-status err';
+                status.textContent=currentId()
+                  ?'Nenhum documento anexado ou salvo foi encontrado nesta coleta.'
+                  :'Anexe pelo menos um documento do motorista, cavalo ou carreta antes de atualizar.'
+              }
+              return
+            }
+            if(status){status.className='doc-status';status.innerHTML='<span class="doc-reading">Lendo '+items.length+' documento(s)…</span>'}
+            let ok=0;
+            const erros=[];
+            for(const item of items){
+              try{
+                if(await processDocumentFile(item.file,item.tipo,item.status))ok++
+                else erros.push(item.tipo)
+              }catch(e){erros.push(item.tipo)}
+            }
+            sumAxes();
+            if(status){
+              if(ok){
+                status.className='doc-status ok';
+                status.textContent='✓ Dados atualizados por '+ok+' documento(s). Confira nome, placas, capacidades e eixos antes de salvar.'
+              }else{
+                status.className='doc-status err';
+                status.textContent='Os documentos foram encontrados, mas nenhum dado pôde ser reconhecido. Veja a mensagem exibida abaixo de cada documento.'
+              }
+            }
+          }catch(e){
+            if(status){status.className='doc-status err';status.textContent='Erro ao atualizar dados: '+String(e.message||e)}
+          }finally{
+            if(btn){btn.disabled=false;btn.textContent='↻ Atualizar dados dos documentos'}
+          }
+        }
+        window.__refreshColetaDocumentData=refreshDocumentData;
+        function bindRefreshDocumentButton(){
+          const btn=byId('doc_refresh_data');
+          if(!btn)return;
+          btn.dataset.boundRefresh='1'
+        }
+        if(!window.__coletaDocRefreshDelegated){
+          window.__coletaDocRefreshDelegated=true;
+          document.addEventListener('click',e=>{
+            const btn=e.target?.closest?.('#doc_refresh_data');
+            if(!btn)return;
+            e.preventDefault();
+            e.stopPropagation();
+            if(btn.dataset.refreshRunning==='1')return;
+            btn.dataset.refreshRunning='1';
+            Promise.resolve(refreshDocumentData()).finally(()=>{btn.dataset.refreshRunning='0'})
+          },true)
+        }
+        async function saveExtras(id){
+          const body={
+            placa_carreta:byId('placa_carreta')?.value||'',
+            capacidade_carga_cavalo:byId('capacidade_carga_cavalo')?.value||'',
+            eixos_cavalo:byId('eixos_cavalo')?.value||'',
+            capacidade_carga_carreta:byId('capacidade_carga_carreta')?.value||'',
+            eixos_carreta:byId('eixos_carreta')?.value||'',
+            eixos_total:byId('eixos')?.value||''
+          };
+          const r=await docBaseFetch('/api/painel/coletas-documentais/'+encodeURIComponent(id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+          if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error(j.error||'Falha ao salvar dados dos documentos.')}
+        }
+        async function uploadPending(id){
+          for(const tipo of ['motorista','cavalo','carreta']){
+            const doc=pendingDocs[tipo];if(!doc)continue;
+            const r=await docBaseFetch('/api/painel/coletas-documentos/'+encodeURIComponent(id),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(doc)});
+            if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error(j.error||('Falha ao salvar documento '+tipo+'.'))}
+            const st=tipo==='motorista'?'doc_motorista_status':(tipo==='cavalo'?'doc_cavalo_status':'doc_carreta_status');
+            setStatus(st,'✓ Documento salvo com a coleta.','ok')
+          }
+          pendingDocs={motorista:null,cavalo:null,carreta:null}
+        }
+        async function loadExistingDocs(id){
+          if(!id)return;
+          try{
+            const r=await docBaseFetch('/api/painel/coletas-documentos/'+encodeURIComponent(id),{cache:'no-store'});
+            const j=await r.json();if(!r.ok||!j.ok)return;
+            (j.rows||[]).forEach(d=>{
+              const st=d.tipo==='motorista'?'doc_motorista_status':(d.tipo==='cavalo'?'doc_cavalo_status':'doc_carreta_status');
+              const href='/api/painel/coletas-documentos/'+encodeURIComponent(id)+'/'+encodeURIComponent(d.tipo);
+              setStatus(st,'✓ Documento salvo: <a href="'+href+'" target="_blank" rel="noopener">'+esc(d.nome_arquivo||'Abrir documento')+'</a>','ok')
+            })
+          }catch{}
+        }
+        async function loadFields(){
+          ensureFields();
+          const modal=byId('modal');if(!modal?.open)return;
+          const id=currentId(),key=String(Date.now())+'|'+id;
+          lastOpenKey=key;pendingDocs={motorista:null,cavalo:null,carreta:null};
+          ['doc_motorista_file','doc_cavalo_file','doc_carreta_file'].forEach(x=>{const el=byId(x);if(el)el.value=''});
+          if(!id){
+            ['placa_carreta','capacidade_carga_cavalo','eixos_cavalo','capacidade_carga_carreta','eixos_carreta'].forEach(x=>{const el=byId(x);if(el)el.value=''});
+            setStatus('doc_motorista_status','PDF ou foto. O sistema tenta preencher somente o nome do motorista.');
+            setStatus('doc_cavalo_status','PDF ou foto. O sistema tenta preencher placa, capacidade e eixos.');
+            setStatus('doc_carreta_status','PDF ou foto. O sistema tenta preencher placa, capacidade e eixos.');
+            return
+          }
+          try{
+            const r=await docBaseFetch('/coletas/api/coletas',{cache:'no-store'}),rows=await r.json();
+            const co=(Array.isArray(rows)?rows:[]).find(x=>String(x.id)===id);
+            if(co){
+              if(byId('placa_carreta'))byId('placa_carreta').value=String(co.placa_carreta||'').toUpperCase();
+              if(byId('capacidade_carga_cavalo'))byId('capacidade_carga_cavalo').value=co.capacidade_carga_cavalo||'';
+              if(byId('eixos_cavalo'))byId('eixos_cavalo').value=co.eixos_cavalo??'';
+              if(byId('capacidade_carga_carreta'))byId('capacidade_carga_carreta').value=co.capacidade_carga_carreta||'';
+              if(byId('eixos_carreta'))byId('eixos_carreta').value=co.eixos_carreta??''
+            }
+          }catch{}
+          await loadExistingDocs(id)
+        }
+
+        window.fetch=async function(input,init={}){
+          const res=await docBaseFetch(input,init);
+          try{
+            const url=typeof input==='string'?input:(input?.url||'');
+            const method=String(init?.method||'GET').toUpperCase();
+            if(res.ok&&/^\/coletas\/api\/coletas(?:\/\d+)?$/.test(url)&&(method==='POST'||method==='PUT')){
+              const data=await res.clone().json();
+              if(data?.id){await saveExtras(data.id);await uploadPending(data.id)}
+            }
+          }catch(e){console.warn('Documentos da coleta:',e);alert('A coleta foi salva, mas houve problema ao salvar os dados/documentos: '+e.message)}
+          return res
+        };
+
+        document.addEventListener('DOMContentLoaded',()=>{
+          [50,150,350,700,1200].forEach(ms=>setTimeout(()=>{ensureFields();if(ms>=350)refreshHistorySelectors()},ms));
+          const modal=byId('modal');
+          if(modal){
+            const obs=new MutationObserver(()=>{if(modal.open)setTimeout(()=>{loadFields();refreshHistorySelectors()},100)});
+            obs.observe(modal,{attributes:true,attributeFilter:['open']})
+          }
+          setTimeout(refreshHistorySelectors,180);
+          document.addEventListener('click',()=>{[40,150,400].forEach(ms=>setTimeout(()=>{ensureFields();if(byId('modal')?.open)refreshHistorySelectors()},ms))},true)
+        })
+      })();
+      </script>`;
+
+      const bodyClose=html.lastIndexOf('</body>');
+      if(bodyClose>=0){
+        html=html.slice(0,bodyClose)+recebimentoAddon+documentoAddon+html.slice(bodyClose);
+      }
+    }
+
+    const newFront=zlib.gzipSync(Buffer.from(html,'utf8')).toString('base64');
+    src=src.replace(fm[0],"const FRONTEND_B64='"+newFront+"'");
+  }
+
+  src=src.replaceAll("['Cliente',c.cliente||'-']","['Remetente',c.cliente||'-']");
+  src=src.replaceAll("Cliente da entrega","Remetente");
+}catch(e){
+  console.error('Ajuste visual do módulo de coletas não aplicado:',e.message);
+}
+
+eval(src);
+,'adiantamento (r$)']),key:'valor_adiantamento'},
+            {idx:colIndex(headRow,['tarifa rota','tarifa por eixo','rota por eixo']),key:'tarifa_rota_por_eixo'},
+            {idx:colIndex(headRow,['pedagio']),key:'pedagio'},
+            {idx:colIndex(headRow,['lucro']),key:'lucro'}
+          ];
           [...tbody.querySelectorAll('tr')].forEach(tr=>{
-            if(tr.dataset.recebidoDecorado==='1') return;
             const coleta=acharPorLinha(tr);
             if(!coleta) return;
+            moneyCols.forEach(m=>{if(m.idx>=0&&tr.cells?.[m.idx])tr.cells[m.idx].textContent=fmtBRL(coleta[m.key])});
+            if(tr.dataset.recebidoDecorado==='1') return;
             tr.dataset.recebidoDecorado='1';
 
             const tdCheck=document.createElement('td');
