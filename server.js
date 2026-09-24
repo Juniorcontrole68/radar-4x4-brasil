@@ -442,9 +442,9 @@ async function fetchSsw38Quick(){
 
 
 const DELIVERY_FLEET=[
-  {id:'fiorino',label:'Fiorino',kg:600,m3:3,cost:400},
-  {id:'van_furgao',label:'Van Furgão',kg:1500,m3:10,cost:700},
-  {id:'van_bau',label:'Van Baú',kg:1500,m3:15,cost:800}
+  {id:'fiorino',label:'Fiorino',kg:600,cost:400},
+  {id:'van_furgao',label:'Van Furgão',kg:1500,cost:700},
+  {id:'van_bau',label:'Van Baú',kg:1500,cost:800}
 ];
 function deliveryProgramTomorrow(){
   const p=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(Date.now()+86400000));
@@ -612,43 +612,32 @@ async function deliveryProgramGeo(rows){
 }
 function deliveryProgramPack(items,counts,maxStops){
   const bins=[];
-  for(const t of DELIVERY_FLEET){
-    for(let i=0;i<(counts[t.id]||0);i++)bins.push({type:t,items:[],kg:0,m3:0})
-  }
-  const sorted=items.slice().sort((a,b)=>{
-    const sa=Math.max(a.peso/1500,a.m3/15),sb=Math.max(b.peso/1500,b.m3/15);
-    return sb-sa||b.m3-a.m3||b.peso-a.peso
-  });
+  for(const t of DELIVERY_FLEET)for(let i=0;i<(counts[t.id]||0);i++)bins.push({type:t,items:[],kg:0});
+  const sorted=items.slice().sort((a,b)=>b.peso-a.peso);
   for(const item of sorted){
-    const feasible=bins.filter(b=>b.items.length<maxStops&&b.kg+item.peso<=b.type.kg+1e-9&&b.m3+item.m3<=b.type.m3+1e-9);
+    const feasible=bins.filter(b=>b.items.length<maxStops&&b.kg+item.peso<=b.type.kg+1e-9);
     if(!feasible.length)return null;
-    feasible.sort((a,b)=>{
-      const aa=(a.type.kg-(a.kg+item.peso))/a.type.kg+(a.type.m3-(a.m3+item.m3))/a.type.m3;
-      const bb=(b.type.kg-(b.kg+item.peso))/b.type.kg+(b.type.m3-(b.m3+item.m3))/b.type.m3;
-      return aa-bb||a.type.cost-b.type.cost
-    });
-    const bin=feasible[0];bin.items.push(item);bin.kg+=item.peso;bin.m3+=item.m3
+    feasible.sort((a,b)=>(a.type.kg-(a.kg+item.peso))-(b.type.kg-(b.kg+item.peso))||a.type.cost-b.type.cost);
+    const bin=feasible[0];bin.items.push(item);bin.kg+=item.peso
   }
   if(bins.some(b=>!b.items.length))return null;
   return bins
 }
 function deliveryProgramOptimizeGroup(items,maxStops){
   if(!items.length)return[];
-  const kg=items.reduce((a,x)=>a+x.peso,0),m3=items.reduce((a,x)=>a+x.m3,0),n=items.length;
-  const vb=Math.max(1,Math.ceil(kg/1500),Math.ceil(m3/15),Math.ceil(n/maxStops));
-  let best=deliveryProgramPack(items,{fiorino:0,van_furgao:0,van_bau:vb},maxStops),bestCost=vb*800;
-  const fMax=Math.floor(bestCost/400),vfMax=Math.floor(bestCost/700),vbMax=Math.floor(bestCost/800);
-  const candidates=[];
-  for(let f=0;f<=fMax;f++)for(let vf=0;vf<=vfMax;vf++)for(let b=0;b<=vbMax;b++){
-    if(f+vf+b===0)continue;
-    const cost=f*400+vf*700+b*800;if(cost>bestCost)continue;
-    const capKg=f*600+(vf+b)*1500,capM3=f*3+vf*10+b*15,capStops=(f+vf+b)*maxStops;
-    if(capKg+1e-9<kg||capM3+1e-9<m3||capStops<n)continue;
-    candidates.push({cost,bins:f+vf+b,counts:{fiorino:f,van_furgao:vf,van_bau:b}})
+  const kg=items.reduce((a,x)=>a+x.peso,0),n=items.length;
+  const vf=Math.max(1,Math.ceil(kg/1500),Math.ceil(n/maxStops));
+  let best=deliveryProgramPack(items,{fiorino:0,van_furgao:vf,van_bau:0},maxStops),bestCost=vf*700;
+  const fMax=Math.floor(bestCost/400),vfMax=Math.floor(bestCost/700),vbMax=Math.floor(bestCost/800),candidates=[];
+  for(let f=0;f<=fMax;f++)for(let v=0;v<=vfMax;v++)for(let b=0;b<=vbMax;b++){
+    if(f+v+b===0)continue;
+    const cost=f*400+v*700+b*800;if(cost>bestCost)continue;
+    const capKg=f*600+(v+b)*1500,capStops=(f+v+b)*maxStops;
+    if(capKg+1e-9<kg||capStops<n)continue;
+    candidates.push({cost,bins:f+v+b,counts:{fiorino:f,van_furgao:v,van_bau:b}})
   }
   candidates.sort((a,b)=>a.cost-b.cost||a.bins-b.bins||a.counts.van_bau-b.counts.van_bau);
   for(const cand of candidates){
-    if(cand.cost>bestCost)break;
     const packed=deliveryProgramPack(items,cand.counts,maxStops);
     if(packed){best=packed;bestCost=cand.cost;break}
   }
@@ -668,8 +657,7 @@ async function buildDeliveryProgram(date='',force=false){
     if(!(exact||(overdue&&cityDay))){notToday.push(r);continue}
     if(!r.cidade){review.push({...r,reviewReason:'Sem cidade de destino'});continue}
     if(!(r.peso>0)){review.push({...r,reviewReason:'Peso não informado'});continue}
-    if(!(r.m3>0)){review.push({...r,reviewReason:'Cubagem (m³) não encontrada no SSW/BI2'});continue}
-    if(r.peso>1500||r.m3>15){review.push({...r,reviewReason:'Carga excede 1.500 kg ou 15 m³ em uma única entrega'});continue}
+    if(r.peso>1500){review.push({...r,reviewReason:'Carga excede 1.500 kg em uma única entrega'});continue}
     eligible.push({...r,serviceWeekday:cityRule?.weekdayLabel||deliveryProgramDowLabel(targetDow)})
   }
   const geo=await deliveryProgramGeo(eligible),geoOk=[];
@@ -693,9 +681,9 @@ async function buildDeliveryProgram(date='',force=false){
       loadNo++;
       loads.push({
         id:loadNo,groupKey,vehicleId:b.type.id,vehicle:b.type.label,cost:b.type.cost,
-        kgCapacity:b.type.kg,m3Capacity:b.type.m3,maxStops,
-        kg:Number(b.kg.toFixed(2)),m3:Number(b.m3.toFixed(3)),deliveries:ordered.length,
-        kgUtil:Number((b.kg/b.type.kg*100).toFixed(1)),m3Util:Number((b.m3/b.type.m3*100).toFixed(1)),
+        kgCapacity:b.type.kg,maxStops,
+        kg:Number(b.kg.toFixed(2)),deliveries:ordered.length,
+        kgUtil:Number((b.kg/b.type.kg*100).toFixed(1)),
         region:ordered[0]?.far?'Mais de 100 km':'Até 100 km',sector:ordered[0]?.sector||'',
         distanceBand:ordered[0]?.distanceBand||'',maxDistanceKm:Number(Math.max(...ordered.map(x=>x.distanceKm)).toFixed(1)),
         cities:[...new Set(ordered.map(x=>x.cidade))],items:ordered
@@ -709,11 +697,11 @@ async function buildDeliveryProgram(date='',force=false){
     rules:{nearMaxStops:30,farMaxStops:20,distanceCutoffKm:100,fleet:DELIVERY_FLEET},
     source:base.source,totalOpen:enriched.length,eligibleBeforeReview:eligible.length,programmed,
     notScheduledToday:notToday.length,reviewCount:review.length,vehicles:loads.length,totalCost,
-    totalKg:Number(loads.reduce((a,x)=>a+x.kg,0).toFixed(2)),totalM3:Number(loads.reduce((a,x)=>a+x.m3,0).toFixed(3)),
+    totalKg:Number(loads.reduce((a,x)=>a+x.kg,0).toFixed(2)),
     loads,review:review.slice(0,500),
     cityRules:[...schedule.entries()].map(([city,x])=>({city,weekday:x.weekdayLabel,samples:x.samples})).slice(0,300),
     generatedAt:new Date().toISOString(),
-    note:'A programação usa as pendências da opção 38. Para entregas vencidas, o dia da cidade é inferido pela previsão de entrega do SSW. Registros sem cubagem confiável ficam em revisão e não são alocados automaticamente.'
+    note:'A programação usa as pendências da opção 38 e considera somente o peso para capacidade dos veículos. Para entregas vencidas, o dia da cidade é inferido pela previsão de entrega do SSW.'
   };
   DELIVERY_PROGRAM_CACHE.set(key,{at:Date.now(),value});
   console.log('PROGRAMAÇÃO ENTREGAS RESULTADO: '+JSON.stringify({date:target,totalOpen:value.totalOpen,programmed,review:value.reviewCount,vehicles:value.vehicles,totalCost,notToday:value.notScheduledToday}));
