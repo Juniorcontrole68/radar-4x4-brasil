@@ -743,7 +743,7 @@ async function start() {
             where.push('motorista ILIKE $' + params.length);
           }
           if (data) {
-            if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(data)) {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) {
               return sendJson(res, 400, { ok: false, error: 'Data de consulta inválida.' });
             }
             params.push(data);
