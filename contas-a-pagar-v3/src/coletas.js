@@ -710,6 +710,108 @@ try{
           }});
           return result?.data?.text||''
         }
+
+        function groupPdfTextLines(items){
+          const rows=[];
+          (items||[]).forEach(it=>{
+            const str=String(it?.str||'').replace(/\s+/g,' ').trim();if(!str)return;
+            const tr=it.transform||[],x=Number(tr[4]||0),y=Number(tr[5]||0),w=Number(it.width||0),h=Math.abs(Number(it.height||tr[0]||10));
+            let row=rows.find(r=>Math.abs(r.y-y)<=Math.max(2.5,Math.min(7,h*.55)));
+            if(!row){row={y,items:[]};rows.push(row)}
+            row.items.push({str,x,y,w,h})
+          });
+          rows.sort((a,b)=>b.y-a.y);
+          return rows.map(r=>{
+            r.items.sort((a,b)=>a.x-b.x);
+            return {y:r.y,text:r.items.map(i=>i.str).join(' ').replace(/\s+/g,' ').trim(),items:r.items}
+          }).filter(r=>r.text)
+        }
+        function isDriverLabelLine(v){
+          const n=norm(v);
+          return /(?:NOME(?: E SOBRENOME| DO CONDUTOR| COMPLETO)?|DOC(?:UMENTO)?(?: DE)? IDENTIDADE|IDENTIDADE|ORGAO EMISSOR|CPF|DATA DE NASCIMENTO|NASCIMENTO|FILIACAO|VALIDADE|CATEGORIA|REGISTRO|NACIONALIDADE|ASSINATURA)/.test(n)
+        }
+        function driverNameFromRows(rows){
+          for(let i=0;i<rows.length;i++){
+            const n=norm(rows[i].text);
+            if(/\bNOME(?: E SOBRENOME| DO CONDUTOR| COMPLETO)?\b/.test(n)&&!/PAI|MAE|FILIACAO/.test(n)){
+              const inline=cleanPersonName(rows[i].text);
+              if(plausiblePersonName(inline)&&!/\bNOME\b/.test(norm(inline)))return titleCase(inline);
+              for(let j=i+1;j<Math.min(rows.length,i+5);j++){
+                const cand=cleanPersonName(rows[j].text);
+                if(isDriverLabelLine(cand))continue;
+                if(plausiblePersonName(cand))return titleCase(cand)
+              }
+            }
+          }
+          return''
+        }
+        function driverRgFromRows(rows){
+          for(let i=0;i<rows.length;i++){
+            const n=norm(rows[i].text);
+            if(/\b(?:DOC(?:UMENTO)?(?: DE)? IDENTIDADE|IDENTIDADE|RG)\b/.test(n)){
+              const same=parseRg(rows[i].text);if(same)return same;
+              for(let j=i+1;j<Math.min(rows.length,i+5);j++){
+                if(/\b(?:DATA|NASCIMENTO|CPF|VALIDADE|CATEGORIA|REGISTRO)\b/.test(norm(rows[j].text)))break;
+                const rg=extractRgCandidate(rows[j].text);if(rg)return rg
+              }
+            }
+          }
+          return''
+        }
+        async function extractDriverFromPdfLayout(file,statusId){
+          try{
+            setStatus(statusId,'<span class="doc-reading">Lendo campos internos da CNH…</span>');
+            const pdfjs=await ensurePdf(),buf=await file.arrayBuffer(),pdf=await pdfjs.getDocument({data:buf}).promise;
+            let nome='',rg='',allText='';
+            for(let n=1;n<=Math.min(pdf.numPages,2);n++){
+              const page=await pdf.getPage(n),tc=await page.getTextContent(),rows=groupPdfTextLines(tc.items);
+              const pageText=rows.map(r=>r.text).join('\n');
+              allText+='\n'+pageText;
+              if(!nome)nome=driverNameFromRows(rows);
+              if(!rg)rg=driverRgFromRows(rows);
+              if(nome&&rg)break
+            }
+            if(!nome||!rg){
+              const parsed=parseDriver(allText);
+              nome=nome||parsed.nome||'';
+              rg=rg||parsed.rg||''
+            }
+            return{nome,rg,text:allText}
+          }catch{return{nome:'',rg:'',text:''}}
+        }
+        function enhanceOcrCanvas(canvas){
+          try{
+            const ctx=canvas.getContext('2d',{willReadFrequently:true}),img=ctx.getImageData(0,0,canvas.width,canvas.height),d=img.data;
+            for(let i=0;i<d.length;i+=4){
+              const g=Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2]);
+              const v=g<205?Math.max(0,Math.round((g-128)*1.55+128)):255;
+              d[i]=d[i+1]=d[i+2]=v
+            }
+            ctx.putImageData(img,0,0)
+          }catch{}
+          return canvas
+        }
+        async function extractDriverByOcr(file,statusId){
+          if(file.type==='application/pdf'){
+            const pdfjs=await ensurePdf(),buf=await file.arrayBuffer(),pdf=await pdfjs.getDocument({data:buf}).promise;
+            let text='';
+            for(let n=1;n<=Math.min(pdf.numPages,2);n++){
+              setStatus(statusId,'<span class="doc-reading">OCR reforçado da CNH • página '+n+'…</span>');
+              const page=await pdf.getPage(n),vp=page.getViewport({scale:3.4}),canvas=document.createElement('canvas');
+              canvas.width=Math.round(vp.width);canvas.height=Math.round(vp.height);
+              await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
+              enhanceOcrCanvas(canvas);
+              text+='\n'+await ocrSource(canvas,statusId)
+            }
+            return parseDriver(text)
+          }
+          const src=await fileDataUrl(file);
+          const img=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=src});
+          const max=3200,scale=Math.min(2.5,max/Math.max(img.naturalWidth,img.naturalHeight)),canvas=document.createElement('canvas');
+          canvas.width=Math.max(1,Math.round(img.naturalWidth*scale));canvas.height=Math.max(1,Math.round(img.naturalHeight*scale));
+          canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);enhanceOcrCanvas(canvas);
+          return parseDriver(await ocrSource(canvas,statusId))
+        }
         async function extractText(file,statusId,forceOcr=false){
           if(file.type==='application/pdf'){
             const pdfjs=await ensurePdf(),buf=await file.arrayBuffer(),pdf=await pdfjs.getDocument({data:buf}).promise;
@@ -951,15 +1053,23 @@ try{
             pendingDocs[tipo]={tipo,nome_arquivo:file.name||('documento-'+tipo),arquivo:stored};
             let text=await extractText(file,statusId);
             if(tipo==='motorista'){
-              let d=parseDriver(text);
-              if(file.type==='application/pdf'&&(!d.nome||!d.rg)){
-                const ocr=await extractText(file,statusId,true);
-                const od=parseDriver(ocr);
-                d={nome:od.nome||d.nome,rg:od.rg||d.rg}
+              let d={nome:'',rg:''};
+              if(file.type==='application/pdf'){
+                const layout=await extractDriverFromPdfLayout(file,statusId);
+                d={nome:layout.nome||'',rg:layout.rg||''};
+              }else{
+                d=parseDriver(text)
               }
+              if(!d.nome||!d.rg){
+                const od=await extractDriverByOcr(file,statusId);
+                d={nome:d.nome||od.nome||'',rg:d.rg||od.rg||''}
+              }
+              if(d.nome&&!plausiblePersonName(d.nome))d.nome='';
               applyDriver(d);
               const found=[d.nome?'nome':'',d.rg?'RG':''].filter(Boolean);
-              setStatus(statusId,found.length?'✓ '+esc(found.join(' e '))+' preenchido(s). Confira antes de salvar.':'Documento anexado, mas nome/RG não foram reconhecidos. Preencha manualmente.','ok');
+              setStatus(statusId,found.length
+                ?'✓ '+esc(found.join(' e '))+' preenchido(s). Confira antes de salvar.'
+                :'Documento anexado, mas nome/RG não foram reconhecidos com segurança. Preencha manualmente.','ok');
               return found.length>0
             }else{
               let d=parseVehicle(text);
@@ -1042,7 +1152,7 @@ try{
             if(status){
               if(ok){
                 status.className='doc-status ok';
-                status.textContent='✓ Dados atualizados por '+ok+' documento(s). Confira nome, CPF, placas, capacidades e eixos antes de salvar.'
+                status.textContent='✓ Dados atualizados por '+ok+' documento(s). Confira nome, RG, placas, capacidades e eixos antes de salvar.'
               }else{
                 status.className='doc-status err';
                 status.textContent='Os documentos foram encontrados, mas nenhum dado pôde ser reconhecido. Veja a mensagem exibida abaixo de cada documento.'
