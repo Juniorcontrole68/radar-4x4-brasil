@@ -683,7 +683,7 @@ function renderSswReceita(){
   const d=S.receita,set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
   if(!d||!d.ok){
     set('#hubRevenueTotal','—');set('#hubRevenueClients','—');set('#hubRevenueTop','—');
-    const msg=d?.error||'Receita SSW aguardando relatório 083.';
+    const msg=d?.error||'Receita SSW aguardando relatório 073.';
     set('#hubRevenueInfo',msg);set('#revenueMeta',msg);
     set('#revenueTotal','—');set('#revenueClients','—');set('#revenueRows','—');set('#revenueField','—');
     if($('#sswRevenueChart'))empty('#sswRevenueChart');
@@ -694,12 +694,12 @@ function renderSswReceita(){
   set('#hubRevenueTotal',brl(total));set('#hubRevenueClients',nf(d.totalClientes||0));set('#hubRevenueTop',top?top.cliente:'—');
   set('#hubRevenueInfo',(top?('Maior faturamento: '+top.cliente+' • '+brl(top.faturamento)):'Sem clientes')+' • '+(d.aliasRule||''));
   set('#revenueTotal',brl(total));set('#revenueClients',nf(d.totalClientes||0));set('#revenueRows',nf(d.totalRegistros||0));set('#revenueField',d.revenueField||'—');
-  const meta=[d.sourceName||'Relatório 083',d.meta?.data,d.meta?.hora,'Cliente: '+(d.clientField||'—'),'Receita: '+(d.revenueField||'—'),d.aliasRule].filter(Boolean).join(' • ');
+  const meta=[d.sourceName||'Relatório 073',d.periodo?('Referência: '+d.periodo):'',d.meta?.data,d.meta?.hora,'Cliente: '+(d.clientField||'—'),'Receita: '+(d.revenueField||'—'),d.aliasRule].filter(Boolean).join(' • ');
   set('#revenueMeta',meta);
   const top10=C.slice(0,10);
   bars('#sswRevenueChart',top10.map(x=>x.cliente),top10.map(x=>x.faturamento),top10.map(x=>brl(x.faturamento)));
   const rows=C.map((x,i)=>({pos:String(i+1),cliente:x.cliente,faturamento:brl(x.faturamento),participacao:(total?x.faturamento/total*100:0).toFixed(1).replace('.',',')+'%',registros:nf(x.registros)}));
-  table('#sswRevenueTable',[['#','pos'],['Cliente','cliente'],['Faturamento','faturamento'],['Participação','participacao'],['Registros','registros']],rows)
+  table('#sswRevenueTable',[['#','pos'],['Cliente','cliente'],['Faturamento','faturamento'],['Participação','participacao'],['CT-es','registros']],rows)
 }
 async function refreshSswReceita(){
   if(!hasPerm('receita_ssw'))return;
