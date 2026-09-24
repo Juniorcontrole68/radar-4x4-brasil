@@ -15,8 +15,7 @@ try{
     const mvStart='<div class="section-title">Motorista e veículo</div>\n      <div class="grid three">';
     if(html.includes(mvStart) && !html.includes('id="doc_motorista_file"')){
       const staticDocs=
-        '<label>RG / Documento de identidade<input id="motorista_rg" placeholder="Ex.: 12.345.678-9 / SSP-SP" maxlength="50" /></label>'+
-        '<label class="full doc-field" style="grid-column:1/-1"><span class="doc-title">Importar documento do motorista</span><input id="doc_motorista_file" type="file" accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/*" /><span id="doc_motorista_status" class="doc-status">PDF ou foto. O sistema tenta preencher nome e RG automaticamente.</span></label>'+
+        '<label class="full doc-field" style="grid-column:1/-1"><span class="doc-title">Importar documento do motorista</span><input id="doc_motorista_file" type="file" accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/*" /><span id="doc_motorista_status" class="doc-status">PDF ou foto. O sistema tenta preencher somente o nome do motorista.</span></label>'+
         '<label>Capacidade de carga do caminhão / cavalo<input id="capacidade_carga_cavalo" placeholder="Ex.: 16.000 kg" /></label>'+
         '<label>Eixos do caminhão / cavalo<input id="eixos_cavalo" type="number" min="0" max="20" /></label>'+
         '<label class="full doc-field" style="grid-column:1/-1"><span class="doc-title">Subir documento do caminhão / cavalo mecânico</span><input id="doc_cavalo_file" type="file" accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/*" /><span id="doc_cavalo_status" class="doc-status">PDF ou foto. O sistema tenta preencher placa, capacidade e eixos.</span></label>'+
@@ -340,7 +339,7 @@ try{
 
           make('Coleta',['os_numero','cliente','endereco_coleta','data_carregamento','hora_carregamento']);
           make('Entrega',['destinatario','endereco_entrega','previsao_entrega','data_descarga','status','comprovante']);
-          make('Dados do Motorista',['motorista','motorista_rg','telefone_motorista','transportadora_agregado','doc_motorista_file']);
+          make('Dados do Motorista',['motorista','telefone_motorista','transportadora_agregado','doc_motorista_file']);
           make('Dados do Caminhão',['placa','tipo_caminhao','implemento','eixos','capacidade_carga_cavalo','eixos_cavalo','doc_cavalo_file','placa_carreta','capacidade_carga_carreta','eixos_carreta','doc_carreta_file','doc_refresh_data']);
           make('Dados da Carga',['quantidade_paletes','peso_total','observacoes']);
           make('Financeiro',['frete_cobrado','frete_pago','percentual_adiantamento','valor_adiantamento','tarifa_rota_por_eixo','pedagio','lucro','recebido_financeiro','data_recebimento_financeiro','previsao_pagamento_fatura']);
@@ -571,10 +570,7 @@ try{
 
           const sm=byId('historico_motorista'),sr=byId('historico_remetente'),sd=byId('historico_destinatario');
           window.__coletaHistoryProfiles={drivers,senders,recipients};
-          fillHistorySelect(sm,drivers,'motorista',r=>{
-            const rg=String(r.motorista_rg||'').trim();
-            return String(r.motorista||'')+(rg?' • RG '+rg:'')
-          });
+          fillHistorySelect(sm,drivers,'motorista',r=>String(r.motorista||''));
           fillHistorySelect(sr,senders,'cliente',r=>String(r.cliente||'')+(r.endereco_coleta?' • '+r.endereco_coleta:''));
           fillHistorySelect(sd,recipients,'destinatario',r=>String(r.destinatario||'')+(r.endereco_entrega?' • '+r.endereco_entrega:''));
 
@@ -583,7 +579,6 @@ try{
             sm.addEventListener('change',()=>{
               const r=(window.__coletaHistoryProfiles?.drivers||[]).find(x=>String(x.id||'')===sm.value);if(!r)return;
               setField('motorista',r.motorista);
-              setField('motorista_rg',String(r.motorista_rg||''));
               setField('telefone_motorista',r.telefone_motorista);
               setField('transportadora_agregado',r.transportadora_agregado)
             })
@@ -638,8 +633,6 @@ try{
           }
           if(motorGrid){
             addHistorySelect(motorGrid,'historico_motorista','Escolher motorista já utilizado','Escolha um motorista do histórico');
-            const rg=addInput(motorGrid,'motorista_rg','RG / Documento de identidade','text',{placeholder:'Ex.: 12.345.678-9 / SSP-SP',noTitlecase:true});
-            rg.maxLength=50;
             const up=addUpload(motorGrid,'doc_motorista_file','Importar documento do motorista','doc_motorista_status');
             bindUpload(up,'motorista','doc_motorista_status')
           }
@@ -733,12 +726,12 @@ try{
         function driverNameFromRows(rows){
           for(let i=0;i<rows.length;i++){
             const n=norm(rows[i].text);
-            if(/\bNOME(?: E SOBRENOME| DO CONDUTOR| COMPLETO)?\b/.test(n)&&!/PAI|MAE|FILIACAO/.test(n)){
+            if(/\b(?:NOME E SOBRENOME|NOME DO CONDUTOR)\b/.test(n)&&!/PAI|MAE|FILIACAO/.test(n)){
               const inline=cleanPersonName(rows[i].text);
               if(plausiblePersonName(inline)&&!/\bNOME\b/.test(norm(inline)))return titleCase(inline);
-              for(let j=i+1;j<Math.min(rows.length,i+5);j++){
+              for(let j=i+1;j<Math.min(rows.length,i+3);j++){
                 const cand=cleanPersonName(rows[j].text);
-                if(isDriverLabelLine(cand))continue;
+                if(isDriverLabelLine(cand))break;
                 if(plausiblePersonName(cand))return titleCase(cand)
               }
             }
@@ -762,22 +755,20 @@ try{
           try{
             setStatus(statusId,'<span class="doc-reading">Lendo campos internos da CNH…</span>');
             const pdfjs=await ensurePdf(),buf=await file.arrayBuffer(),pdf=await pdfjs.getDocument({data:buf}).promise;
-            let nome='',rg='',allText='';
+            let nome='',allText='';
             for(let n=1;n<=Math.min(pdf.numPages,2);n++){
               const page=await pdf.getPage(n),tc=await page.getTextContent(),rows=groupPdfTextLines(tc.items);
               const pageText=rows.map(r=>r.text).join('\n');
               allText+='\n'+pageText;
               if(!nome)nome=driverNameFromRows(rows);
-              if(!rg)rg=driverRgFromRows(rows);
-              if(nome&&rg)break
+              if(nome)break
             }
-            if(!nome||!rg){
+            if(!nome){
               const parsed=parseDriver(allText);
-              nome=nome||parsed.nome||'';
-              rg=rg||parsed.rg||''
+              nome=parsed.nome||''
             }
-            return{nome,rg,text:allText}
-          }catch{return{nome:'',rg:'',text:''}}
+            return{nome,text:allText}
+          }catch{return{nome:'',text:''}}
         }
         function enhanceOcrCanvas(canvas){
           try{
@@ -898,9 +889,9 @@ try{
             .replace(/[^A-Za-zÀ-ÿ'\-\s]/g,' ').replace(/\s+/g,' ').trim()
         }
         function plausiblePersonName(v){
-          const n=cleanPersonName(v),parts=n.split(' ').filter(Boolean);
+          const n=cleanPersonName(v),parts=n.split(' ').filter(Boolean),u=norm(n);
           if(n.length<6||n.length>90||parts.length<2||parts.length>8)return false;
-          if(/\b(?:CARTEIRA|HABILITACAO|REPUBLICA|FEDERATIVA|BRASIL|DETRAN|SECRETARIA|ASSINATURA|CONDUTOR|CPF|RG|REGISTRO|VALIDADE|CATEGORIA|IDENTIDADE)\b/i.test(norm(n)))return false;
+          if(/\b(?:CARTEIRA|HABILITACAO|REPUBLICA|FEDERATIVA|BRASIL|DETRAN|SECRETARIA|ASSINATURA|CONDUTOR|CPF|RG|REGISTRO|VALIDADE|CATEGORIA|IDENTIDADE|MINISTERIO|INFRAESTRUTURA|TRANSPORTES|TRANSITO|DEPARTAMENTO|NACIONAL|GOVERNO|ESTADO|MUNICIPIO|DOCUMENTO|ORGAO|EMISSOR)\b/.test(u))return false;
           if(!parts.every(p=>p.length>=2))return false;
           const long=parts.filter(p=>p.length>=4).length;
           if(parts.length>=4&&long===0)return false;
@@ -908,33 +899,31 @@ try{
           return true
         }
         function parseDriver(text){
-          const raw=String(text||''),lines=linesOf(raw),flat=raw.replace(/\s+/g,' ').trim(),rg=parseRg(raw);let nome='';
+          const raw=String(text||''),lines=linesOf(raw),flat=raw.replace(/\s+/g,' ').trim();let nome='';
           const labelPatterns=[
-            /(?:^|\s)(?:\d+\s*)?NOME(?:\s+E\s+SOBRENOME)?\s*[:\-]?\s*([A-ZÀ-Ü][A-ZÀ-Ü'\- ]{5,90}?)(?=\s+(?:CPF|RG|DATA\s+DE\s+NASCIMENTO|NASCIMENTO|DOC(?:UMENTO)?|IDENTIDADE|FILIA[CÇ][AÃ]O|VALIDADE|CAT(?:EGORIA)?|REGISTRO|NACIONALIDADE)\b|$)/i,
+            /(?:^|\s)(?:\d+\s*)?NOME\s+E\s+SOBRENOME\s*[:\-]?\s*([A-ZÀ-Ü][A-ZÀ-Ü'\- ]{5,90}?)(?=\s+(?:CPF|RG|DATA\s+DE\s+NASCIMENTO|NASCIMENTO|DOC(?:UMENTO)?|IDENTIDADE|FILIA[CÇ][AÃ]O|VALIDADE|CAT(?:EGORIA)?|REGISTRO|NACIONALIDADE)\b|$)/i,
             /(?:^|\s)NOME\s+DO\s+CONDUTOR\s*[:\-]?\s*([A-ZÀ-Ü][A-ZÀ-Ü'\- ]{5,90}?)(?=\s+(?:CPF|RG|DATA|DOC|IDENTIDADE|FILIA|VALIDADE|REGISTRO)\b|$)/i
           ];
           for(const re of labelPatterns){
-            const m=flat.match(re);if(m&&plausiblePersonName(m[1])){nome=titleCase(cleanPersonName(m[1]));break}
+            const m=flat.match(re);
+            if(m&&plausiblePersonName(m[1])){nome=titleCase(cleanPersonName(m[1]));break}
           }
           if(!nome){
             for(let i=0;i<lines.length;i++){
               const n=norm(lines[i]);
-              if(/\bNOME(?: E SOBRENOME| DO CONDUTOR| COMPLETO)?\b/.test(n)&&!/PAI|MAE|FILIA/.test(n)){
-                const same=cleanPersonName(lines[i]);
-                const next=cleanPersonName(lines[i+1]||'');
-                if(plausiblePersonName(same)){nome=titleCase(same);break}
-                if(plausiblePersonName(next)){nome=titleCase(next);break}
+              if(/\b(?:NOME E SOBRENOME|NOME DO CONDUTOR)\b/.test(n)&&!/PAI|MAE|FILIA/.test(n)){
+                const inline=cleanPersonName(lines[i]);
+                if(plausiblePersonName(inline)&&!/\bNOME\b/.test(norm(inline))){nome=titleCase(inline);break}
+                for(let j=i+1;j<Math.min(lines.length,i+3);j++){
+                  const cand=cleanPersonName(lines[j]);
+                  if(isDriverLabelLine(cand))break;
+                  if(plausiblePersonName(cand)){nome=titleCase(cand);break}
+                }
+                if(nome)break
               }
             }
           }
-          if(!nome){
-            const docLine=lines.findIndex(x=>/\b(?:RG|DOC(?:UMENTO)?(?: DE)? IDENTIDADE|IDENTIDADE)\b/.test(norm(x)));
-            const start=docLine>0?Math.max(0,docLine-4):0,end=docLine>=0?docLine:Math.min(lines.length,14);
-            for(let i=start;i<end;i++){
-              if(plausiblePersonName(lines[i])){nome=titleCase(cleanPersonName(lines[i]));break}
-            }
-          }
-          return{nome,rg}
+          return{nome}
         }
         function parsePlate(text){
           const lines=linesOf(text);
@@ -1015,8 +1004,7 @@ try{
           return{placa:parsePlate(text),eixos,capacidade:parseCapacity(text),tipoVeiculo:parseVehicleType(text,eixos)}
         }
         function applyDriver(d){
-          if(d.nome&&byId('motorista'))setField('motorista',d.nome);
-          if(d.rg&&byId('motorista_rg'))setField('motorista_rg',d.rg)
+          if(d.nome&&byId('motorista'))setField('motorista',d.nome)
         }
         function setTruckType(value){
           const el=byId('tipo_caminhao');if(!el||!value)return;
@@ -1053,24 +1041,23 @@ try{
             pendingDocs[tipo]={tipo,nome_arquivo:file.name||('documento-'+tipo),arquivo:stored};
             let text=await extractText(file,statusId);
             if(tipo==='motorista'){
-              let d={nome:'',rg:''};
+              if(byId('motorista'))setField('motorista','');
+              let d={nome:''};
               if(file.type==='application/pdf'){
                 const layout=await extractDriverFromPdfLayout(file,statusId);
-                d={nome:layout.nome||'',rg:layout.rg||''};
-              }else{
-                d=parseDriver(text)
-              }
-              if(!d.nome||!d.rg){
+                d={nome:layout.nome||''}
+              }else d=parseDriver(text);
+              if(!d.nome){
                 const od=await extractDriverByOcr(file,statusId);
-                d={nome:d.nome||od.nome||'',rg:d.rg||od.rg||''}
+                d={nome:od.nome||''}
               }
               if(d.nome&&!plausiblePersonName(d.nome))d.nome='';
               applyDriver(d);
-              const found=[d.nome?'nome':'',d.rg?'RG':''].filter(Boolean);
-              setStatus(statusId,found.length
-                ?'✓ '+esc(found.join(' e '))+' preenchido(s). Confira antes de salvar.'
-                :'Documento anexado, mas nome/RG não foram reconhecidos com segurança. Preencha manualmente.','ok');
-              return found.length>0
+              setStatus(statusId,d.nome
+                ?'✓ Nome do motorista preenchido. Confira antes de salvar.'
+                :'Não foi possível identificar o nome do motorista com segurança. O campo foi deixado em branco para preenchimento manual.',
+                d.nome?'ok':'err');
+              return !!d.nome
             }else{
               let d=parseVehicle(text);
               if(file.type==='application/pdf'&&(!d.placa||d.eixos===null||!d.capacidade||!d.tipoVeiculo)){
@@ -1152,7 +1139,7 @@ try{
             if(status){
               if(ok){
                 status.className='doc-status ok';
-                status.textContent='✓ Dados atualizados por '+ok+' documento(s). Confira nome, RG, placas, capacidades e eixos antes de salvar.'
+                status.textContent='✓ Dados atualizados por '+ok+' documento(s). Confira nome, placas, capacidades e eixos antes de salvar.'
               }else{
                 status.className='doc-status err';
                 status.textContent='Os documentos foram encontrados, mas nenhum dado pôde ser reconhecido. Veja a mensagem exibida abaixo de cada documento.'
@@ -1184,7 +1171,6 @@ try{
         }
         async function saveExtras(id){
           const body={
-            motorista_rg:String(byId('motorista_rg')?.value||'').trim(),
             placa_carreta:byId('placa_carreta')?.value||'',
             capacidade_carga_cavalo:byId('capacidade_carga_cavalo')?.value||'',
             eixos_cavalo:byId('eixos_cavalo')?.value||'',
@@ -1224,8 +1210,8 @@ try{
           lastOpenKey=key;pendingDocs={motorista:null,cavalo:null,carreta:null};
           ['doc_motorista_file','doc_cavalo_file','doc_carreta_file'].forEach(x=>{const el=byId(x);if(el)el.value=''});
           if(!id){
-            ['motorista_rg','placa_carreta','capacidade_carga_cavalo','eixos_cavalo','capacidade_carga_carreta','eixos_carreta'].forEach(x=>{const el=byId(x);if(el)el.value=''});
-            setStatus('doc_motorista_status','PDF ou foto. O sistema tenta preencher nome e RG automaticamente.');
+            ['placa_carreta','capacidade_carga_cavalo','eixos_cavalo','capacidade_carga_carreta','eixos_carreta'].forEach(x=>{const el=byId(x);if(el)el.value=''});
+            setStatus('doc_motorista_status','PDF ou foto. O sistema tenta preencher somente o nome do motorista.');
             setStatus('doc_cavalo_status','PDF ou foto. O sistema tenta preencher placa, capacidade e eixos.');
             setStatus('doc_carreta_status','PDF ou foto. O sistema tenta preencher placa, capacidade e eixos.');
             return
@@ -1234,7 +1220,6 @@ try{
             const r=await docBaseFetch('/coletas/api/coletas',{cache:'no-store'}),rows=await r.json();
             const co=(Array.isArray(rows)?rows:[]).find(x=>String(x.id)===id);
             if(co){
-              if(byId('motorista_rg'))byId('motorista_rg').value=String(co.motorista_rg||'');
               if(byId('placa_carreta'))byId('placa_carreta').value=String(co.placa_carreta||'').toUpperCase();
               if(byId('capacidade_carga_cavalo'))byId('capacidade_carga_cavalo').value=co.capacidade_carga_cavalo||'';
               if(byId('eixos_cavalo'))byId('eixos_cavalo').value=co.eixos_cavalo??'';
