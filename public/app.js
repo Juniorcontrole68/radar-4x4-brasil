@@ -1098,7 +1098,7 @@ function printDeliveryProgram(){
   const d=DELIVERY_PROGRAM;if(!d){alert('Gere a programação antes de imprimir.');return}
   const loads=(d.loads||[]).map((l,idx)=>{
     const rows=(l.items||[]).map((r,i)=>'<tr><td>'+(i+1)+'</td><td>'+safe(r.nf||'')+'</td><td>'+safe(r.ctrc||'')+'</td><td>'+safe(r.cliente||'')+'</td><td>'+safe(r.cidade||'')+'</td><td>'+programFmtNumber(r.peso||0,0)+'</td></tr>').join('');
-    return '<h2>Veículo '+(idx+1)+' • '+safe(l.vehicle)+' • '+brl(Number(l.cost||0))+'</h2><div class="meta">'+safe(l.region||'')+' • '+safe(l.distanceBand||'')+' • '+nf(l.deliveries||0)+' entregas • '+programFmtNumber(l.kg||0,0)+' kg • '+programFmtNumber(l.m3||0,2)+' m³</div><table><thead><tr><th>#</th><th>NF</th><th>CT-e</th><th>Cliente</th><th>Cidade</th><th>kg</th></tr></thead><tbody>'+rows+'</tbody></table>'
+    return '<h2>Veículo '+(idx+1)+' • '+safe(l.vehicle)+' • '+brl(Number(l.cost||0))+'</h2><div class="meta">'+safe(l.region||'')+' • '+safe(l.distanceBand||'')+' • '+nf(l.deliveries||0)+' entregas • '+programFmtNumber(l.kg||0,0)+' kg</div><table><thead><tr><th>#</th><th>NF</th><th>CT-e</th><th>Cliente</th><th>Cidade</th><th>kg</th></tr></thead><tbody>'+rows+'</tbody></table>'
   }).join('');
   const w=window.open('','_blank','noopener,noreferrer');
   if(!w){alert('Libere pop-ups para imprimir o relatório.');return}
