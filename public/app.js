@@ -431,7 +431,8 @@ function agCopyReportRows(){
     notaFiscal:agCopyField(o,'NF','NOTA FISCAL','Nº NF','NUMERO NF','NÚMERO NF','NOTA','COL_1'),
     cliente:agCopyField(o,'NOME CLIENTE','CLIENTE','NOME DO CLIENTE'),
     cidade:agCopyField(o,'CIDADE','CIDADE DESTINO','MUNICIPIO','MUNICÍPIO'),
-    mercadoria:agCopyField(o,'MERCADORIA','PRODUTO','DESCRIÇÃO MERCADORIA','DESCRICAO MERCADORIA')
+    mercadoria:agCopyField(o,'MERCADORIA','PRODUTO','DESCRIÇÃO MERCADORIA','DESCRICAO MERCADORIA'),
+    observacao:agCopyField(o,'OBSERVAÇÃO','OBSERVACAO','OBS','OBSERVAÇÕES','OBSERVACOES')
   }))
 }
 function renderAgCopy(){
@@ -439,14 +440,29 @@ function renderAgCopy(){
   const info=$('#agcInfo');
   if(info)info.textContent=nf(rows.length)+' registro(s) encontrado(s) de '+nf((S.agCopy||[]).length)+' na aba Cópia de AGENDAMENTOS • entregues anteriores a hoje não entram no relatório'+(rows.length>1000?' • exibindo os 1.000 primeiros':'');
   renderAgStatusCards('#agcStatusSummary',rows);
-  if($('#agcTable'))table('#agcTable',[
-    ['Última movimentação','ultimaMovimentacao'],
-    ['Status','status'],
-    ['Nota Fiscal','notaFiscal'],
-    ['Nome do cliente','cliente'],
-    ['Cidade','cidade'],
-    ['Mercadoria','mercadoria']
-  ],agCopyReportRows())
+  const reportRows=agCopyReportRows();
+  window.__agCopyReportRows=reportRows;
+  const reportTable=$('#agcTable');
+  if(reportTable){
+    reportTable.innerHTML='<thead><tr><th>Última movimentação</th><th>Status</th><th>Nota Fiscal</th><th>Nome do cliente</th><th>Cidade</th><th>Mercadoria</th></tr></thead><tbody>'+reportRows.map((r,i)=>{
+      const cliente=r.observacao
+        ?'<button type="button" class="ag-observation-link" data-ag-observation="'+i+'" title="Ver observação">'+safe(r.cliente||'Cliente sem nome')+'</button>'
+        :safe(r.cliente);
+      return '<tr><td>'+safe(r.ultimaMovimentacao)+'</td><td>'+safe(r.status)+'</td><td>'+safe(r.notaFiscal)+'</td><td>'+cliente+'</td><td>'+safe(r.cidade)+'</td><td>'+safe(r.mercadoria)+'</td></tr>'
+    }).join('')+'</tbody>';
+    reportTable.querySelectorAll('[data-ag-observation]').forEach(btn=>btn.onclick=()=>openAgObservation(Number(btn.dataset.agObservation)))
+  }
+function openAgObservation(index){
+  const r=(window.__agCopyReportRows||[])[index];if(!r||!r.observacao)return;
+  const modal=$('#agObservationModal'),client=$('#agObservationClient'),textEl=$('#agObservationText');
+  if(client)client.textContent=r.cliente||'Cliente sem nome';
+  if(textEl)textEl.textContent=r.observacao;
+  if(modal){modal.classList.add('open');document.body.style.overflow='hidden'}
+}
+function closeAgObservation(){
+  const modal=$('#agObservationModal');
+  if(modal)modal.classList.remove('open');
+  document.body.style.overflow=''
 }
 function printAgCopyReport(){
   const rows=agCopyReportRows();
@@ -484,14 +500,17 @@ async function refreshAgCopy(force=false){
   }finally{window.__agCopyLoading=false}
 }
 function setupAgCopy(){
-  const apply=$('#agcApply'),print=$('#agcPrint'),today=$('#agcToday'),clear=$('#agcClear'),refresh=$('#agcRefresh');
+  const apply=$('#agcApply'),print=$('#agcPrint'),today=$('#agcToday'),clear=$('#agcClear'),refresh=$('#agcRefresh'),obsClose=$('#agObservationClose'),obsModal=$('#agObservationModal');
   if(apply)apply.onclick=renderAgCopy;
   if(print)print.onclick=printAgCopyReport;
   if(today)today.onclick=()=>{const d=iso(new Date());if($('#agcDate'))$('#agcDate').value=d;renderAgCopy()};
   if(clear)clear.onclick=()=>{if($('#agcDate'))$('#agcDate').value='';if($('#agcStatus'))$('#agcStatus').value='';renderAgCopy()};
   if(refresh)refresh.onclick=()=>refreshAgCopy(true);
   if($('#agcDate'))$('#agcDate').onchange=renderAgCopy;
-  if($('#agcStatus'))$('#agcStatus').onchange=renderAgCopy
+  if($('#agcStatus'))$('#agcStatus').onchange=renderAgCopy;
+  if(obsClose)obsClose.onclick=closeAgObservation;
+  if(obsModal)obsModal.onclick=e=>{if(e.target===obsModal)closeAgObservation()};
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&obsModal?.classList.contains('open'))closeAgObservation()})
 }
 function init(){const t=new Date(),f=new Date(t.getFullYear(),t.getMonth(),1);$('#from').value=iso(f);$('#to').value=iso(t)}
 function setDashboardToday(){
