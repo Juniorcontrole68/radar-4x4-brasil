@@ -32,13 +32,14 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
  html,body{height:100%;height:100dvh;overflow:hidden}
  .top{padding:9px 10px;display:flex;min-height:48px;flex-wrap:nowrap}
  .brand{min-width:0;flex:1}.brand strong{font-size:17px}.brand span{display:none}
- .tabs{position:fixed;left:0;right:0;bottom:0;z-index:40;width:100%;height:68px;padding:6px;gap:5px;background:var(--nav);display:grid;grid-template-columns:repeat(5,minmax(0,1fr));box-shadow:0 -3px 14px #0003}
+ .tabs{position:fixed;left:0;right:0;bottom:0;z-index:40;width:100%;height:68px;padding:6px;gap:5px;background:var(--nav);display:grid;grid-template-columns:repeat(6,minmax(0,1fr));box-shadow:0 -3px 14px #0003}
  .tab{min-width:0;padding:7px 3px;border-radius:8px;font-size:10px;line-height:1.15;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;white-space:normal}
  .tab:before{font-size:18px;line-height:1}
  .tab[data-module="coletas"]:before{content:"🚚"}
  .tab[data-module="financeiro"]:before{content:"💰"}
  .tab[data-module="dashboard"]:before{content:"📊"}
  .tab[data-module="dashboards"]:before{content:"▦"}
+ .tab[data-module="programacao"]:before{content:"📋"}
  .tab[data-module="contas"]:before{content:"🧾"}
  .bar{padding:6px 9px;font-size:11px;min-height:35px}
  .bar>span:nth-of-type(3){display:none}
@@ -59,6 +60,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
       <button class="tab" data-module="financeiro" data-src="/coletas?embed=1&v=20260924fmt1" data-name="Financeiro">Financeiro</button>
       <button class="tab" data-module="dashboard" data-src="https://construlog-dashboard.onrender.com/?embed=1&view=dashboard" data-name="Visão Geral">Visão Geral</button>
       <button class="tab" data-module="dashboards" data-src="https://construlog-dashboard.onrender.com/?embed=1&view=dashboards" data-name="Dashboards">Dashboards</button>
+      <button class="tab" data-module="programacao" data-src="https://construlog-dashboard.onrender.com/?embed=1&view=programacao" data-name="Programação">Programação</button>
       <button class="tab" data-module="contas" data-src="/contas?embed=1" data-name="Contas a Pagar">Contas a Pagar</button>
     </div>
     <div class="session-actions"><span id="sessionUser" class="session-user"></span><button id="logoutBtn" class="logout-btn" type="button">Sair</button></div>
@@ -113,6 +115,7 @@ function moduleAllowed(mod){
   if(mod==='financeiro')return hasPerm('financeiro');
   if(mod==='dashboard')return hasPerm('dashboard');
   if(mod==='dashboards')return (AUTH?.permissions||[]).some(p=>!['coletas','contas_pagar','dashboard'].includes(p));
+  if(mod==='programacao')return hasPerm('programacao');
   if(mod==='contas')return hasPerm('contas_pagar');
   return false
 }
@@ -142,7 +145,7 @@ async function abrirModulo(btn){
   try{
     let src=btn.dataset.src;
     const sep=src.includes('?')?'&':'?';
-    if(mod==='dashboard'||mod==='dashboards'){
+    if(mod==='dashboard'||mod==='dashboards'||mod==='programacao'){
       DASH_FRAME_TOKEN='';
       const ticket=await dashboardTicket();
       src += sep+'ticket='+encodeURIComponent(ticket)+'&refresh='+Date.now();
@@ -483,7 +486,7 @@ function abrirFinanceiroNoModulo(){
 
 frame.addEventListener('load',()=>{
   moduleLoading.classList.remove('show');
-  if((frame.dataset.module==='dashboard'||frame.dataset.module==='dashboards') && AUTH?.is_admin && DASH_FRAME_TOKEN){
+  if((frame.dataset.module==='dashboard'||frame.dataset.module==='dashboards'||frame.dataset.module==='programacao') && AUTH?.is_admin && DASH_FRAME_TOKEN){
     const sendAuth=()=>{
       try{
         frame.contentWindow.postMessage(
