@@ -1980,7 +1980,7 @@ function receitaClientName(v){
   const raw=String(v||'').trim();
   if(!raw)return'Não informado';
   const n=normKey(raw);
-  if(n.includes('FASTSHOP')||n.includes('FAST SHOP'))return'Somerlog';
+  if(n.includes('FASTSHOP')||n.includes('FAST SHOP')||n.includes('SOMERLOG'))return'Somerlog';
   return raw
 }
 function receitaFindHeader(headers,aliases){
@@ -2002,38 +2002,95 @@ function receitaInRange(row,from,to){
   if(!iso)return true;
   return(!from||iso>=from)&&(!to||iso<=to)
 }
-async function buildBi2Receita(from='',to=''){
-  let rep,p;
-  try{
-    rep=await fetchBi2Report(83);
-    p=parseBi2Csv(rep.text)
-  }catch(e){
-    return{ok:false,available:false,sourceCode:83,error:'Relatório 083 não disponível na conexão BI2/SSW: '+String(e.message||e),clientes:[]}
-  }
-  const headers=p.headers||[],all=p.rows||[];
-  const clientField=receitaFindHeader(headers,['CLIENTE EMITENTE','CLIENTE','REMETENTE','PAGADOR','RAZAO SOCIAL','EMITENTE']);
-  const revenueField=receitaFindHeader(headers,['FATURAMENTO','VALOR FATURAMENTO','FATURADO','RECEITA','VALOR RECEITA','FRETE TOTAL','VALOR FRETE','FRETE']);
-  if(!clientField||!revenueField){
-    return{
-      ok:false,available:true,sourceCode:83,sourceName:p.meta?.relatorio||'Relatório 083',
-      error:'Relatório 083 recebido, mas não foi possível identificar automaticamente as colunas de cliente e faturamento.',
-      headers,clientes:[]
+
+const SSW_RECEITA_CACHE={at:0,text:'',meta:null};
+async function fetchSswReceita73Text(){
+  if(SSW_RECEITA_CACHE.text&&Date.now()-SSW_RECEITA_CACHE.at<5*60*1000)return{...SSW_RECEITA_CACHE.meta,text:SSW_RECEITA_CACHE.text};
+  if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
+  const jar=new Map();
+  const apply=headers=>{const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);for(const raw of list){const pair=String(raw).split(';')[0],i=pair.indexOf('=');if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())}};
+  const cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
+  const hdr=ref=>({'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':ref||'https://sistema.ssw.inf.br/bin/menu01'});
+  let r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
+  const login=new URLSearchParams({act:'L',f1:process.env.SSW_INTERNAL_DOMINIO||'',f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),f3:process.env.SSW_INTERNAL_USUARIO||'',f4:process.env.SSW_INTERNAL_SENHA||''});
+  r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/ssw0422','Cookie':cookie()},body:login.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);await r.text();
+  if(!jar.has('token'))throw new Error('Login interno SSW não aceito');
+
+  r=await fetch('https://sistema.ssw.inf.br/bin/ssw0082',{headers:hdr(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
+  const listHtml=await r.text(),plain=htmlText38(listHtml);
+  const pm=plain.match(/(\d+\|(?:ssw\d+\s*-\s*)?\d+\|M@\d+\|\d+\|M\|73\|[^|]*\|MONITORACAO DE CLIENTES[^0-9]*?)(?=\s+\d{3}\s+|$)/i);
+  let payload=pm?String(pm[1]).trim():'';
+  if(!payload){
+    const pos=plain.indexOf('073 MONITORACAO DE CLIENTES');
+    if(pos>=0){
+      const ctx=plain.slice(pos,pos+700);
+      const q=ctx.match(/(\d+\|(?:ssw\d+\s*-\s*)?\d+\|M@\d+\|\d+\|M\|73\|[^|]*\|[^0-9]+?)(?=\s+\d{3}\s+|$)/i);
+      if(q)payload=String(q[1]).trim()
     }
   }
-  const rows=all.filter(r=>receitaInRange(r,from,to));
-  const groups=new Map();
-  for(const r of rows){
-    const nome=receitaClientName(r[clientField]||pickField(r,clientField));
-    if(!groups.has(nome))groups.set(nome,{cliente:nome,faturamento:0,registros:0});
-    const g=groups.get(nome);g.faturamento+=bi2Number(r[revenueField]||pickField(r,revenueField));g.registros++
+  if(!payload)throw new Error('Relatório 073 não localizado em Relatórios Gerenciais do SSW');
+
+  const u=new URL('https://sistema.ssw.inf.br/bin/ssw0082');u.searchParams.set('act',payload);
+  r=await fetch(u,{headers:hdr('https://sistema.ssw.inf.br/bin/ssw0082'),redirect:'manual',signal:AbortSignal.timeout(20000)});apply(r.headers);
+  const wrapper=await r.text(),wm=(wrapper.match(/name=["']?web_body["']?[^>]*value=["']([^"']+)["']/i)||[])[1]||'';
+  let decoded='';try{decoded=decodeURIComponent(wm.replace(/&amp;/g,'&'))}catch{decoded=wm}
+  const am=decoded.match(/abrir\(['"]([^'"]+)['"],\s*['"]([^'"]+)['"],\s*(\d+),\s*(\d+),\s*['"]([^'"]+)['"]/i);
+  if(!am)throw new Error('Arquivo do relatório 073 não foi gerado pelo SSW');
+  const fu=new URL('/bin/ssw0424','https://sistema.ssw.inf.br');
+  fu.searchParams.set('act',am[1]);fu.searchParams.set('filename',am[2]);fu.searchParams.set('path',am[5]);fu.searchParams.set('down',am[3]);fu.searchParams.set('nw',am[4]);
+  r=await fetch(fu,{headers:hdr(u.toString()),redirect:'manual',signal:AbortSignal.timeout(20000)});apply(r.headers);
+  const buf=Buffer.from(await r.arrayBuffer());
+  if(!r.ok||buf.length<100)throw new Error('Arquivo do relatório 073 retornou vazio');
+  const text=buf.toString('latin1').replace(/\r/g,'');
+  const meta={source:'SSW',sourceCode:73,sourceName:'073 - Monitoramento de Clientes',payload};
+  SSW_RECEITA_CACHE.at=Date.now();SSW_RECEITA_CACHE.text=text;SSW_RECEITA_CACHE.meta=meta;
+  return{...meta,text}
+}
+function parseSswReceita73(text,from='',to=''){
+  const lines=String(text||'').replace(/\r/g,'').split('\n');
+  const months=[];
+  for(const m of String(text||'').matchAll(/\b(0[1-9]|1[0-2])\/(20\d{2})\b/g)){const x=m[1]+'/'+m[2];if(!months.includes(x))months.push(x);if(months.length===3)break}
+  if(!months.length)throw new Error('Períodos mensais não identificados no relatório 073');
+  const refIso=to||from||spDateISO(),ref=refIso.slice(5,7)+'/'+refIso.slice(0,4);
+  let monthIndex=months.indexOf(ref);
+  if(monthIndex<0){
+    if(from||to)throw Object.assign(new Error('O relatório 073 disponível contém '+months.join(', ')+'. Ajuste o período do dashboard para um desses meses.'),{status:422});
+    monthIndex=0
   }
-  const clientes=[...groups.values()].sort((a,b)=>b.faturamento-a.faturamento);
-  const total=clientes.reduce((a,x)=>a+x.faturamento,0);
+  const cols=[
+    {q:[58,65],f:[85,98]},
+    {q:[113,120],f:[140,152]},
+    {q:[162,169],f:[189,200]}
+  ][monthIndex]||{q:[58,65],f:[85,98]};
+  const groups=new Map();
+  let sourceRows=0;
+  for(const line of lines){
+    if(!/^\d{5}\s+[A-Z]{3}\s+\d{4}\s+\d{14}\s+/i.test(line))continue;
+    sourceRows++;
+    const cnpj=line.slice(15,29).trim(),rawName=line.slice(30,43).trim();
+    const cliente=receitaClientName(rawName),ctes=Number(line.slice(cols.q[0],cols.q[1]).replace(/\D/g,''))||0;
+    const faturamento=bi2Number(line.slice(cols.f[0],cols.f[1]));
+    if(!groups.has(cliente))groups.set(cliente,{cliente,faturamento:0,registros:0,cnpjs:new Set()});
+    const g=groups.get(cliente);g.faturamento+=faturamento;g.registros+=ctes;if(cnpj)g.cnpjs.add(cnpj)
+  }
+  const clientes=[...groups.values()].map(g=>({cliente:g.cliente,faturamento:g.faturamento,registros:g.registros,cnpjs:[...g.cnpjs]})).sort((a,b)=>b.faturamento-a.faturamento);
+  const total=clientes.reduce((a,x)=>a+x.faturamento,0),totalCtrcs=clientes.reduce((a,x)=>a+x.registros,0);
+  const stamp=lines.find(x=>/073 - MONITORACAO DE CLIENTES/i.test(norm38(x)))||'';
+  const sm=stamp.match(/(\d{2}\/\d{2}\/\d{2})\s+(\d{2}:\d{2})/);
   return{
-    ok:true,available:true,source:'SSW BI2',sourceCode:83,sourceName:p.meta?.relatorio||'Performance por cliente emitente',
-    meta:p.meta||{},from,to,totalFaturamento:total,totalClientes:clientes.length,totalRegistros:rows.length,
-    clientField,revenueField,headers,clientes,
-    aliasRule:'FastShop consolidada como Somerlog'
+    ok:true,available:true,source:'SSW',sourceCode:73,sourceName:'073 - Monitoramento de Clientes',
+    from,to,periodo:months[monthIndex],availableMonths:months,totalFaturamento:total,totalClientes:clientes.length,totalRegistros:totalCtrcs,
+    clientField:'CLIENTE',revenueField:'FRETE TOTAL',clientes,
+    meta:{data:sm?sm[1]:'',hora:sm?sm[2]:'',periodo:months[monthIndex],sourceRows},
+    aliasRule:'FastShop e Somerlog consolidados como Somerlog'
+  }
+}
+async function buildBi2Receita(from='',to=''){
+  try{
+    const rep=await fetchSswReceita73Text();
+    return parseSswReceita73(rep.text,from,to)
+  }catch(e){
+    return{ok:false,available:false,source:'SSW',sourceCode:73,sourceName:'073 - Monitoramento de Clientes',error:String(e.message||e),clientes:[]}
   }
 }
 
@@ -2241,16 +2298,9 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
 }
 let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.join(PUB,p));if(!p.startsWith(PUB)){res.writeHead(403);return res.end()}fs.readFile(p,(e,d)=>{if(e){res.writeHead(404);return res.end('Not found')}const ext=path.extname(p);res.writeHead(200,{'Content-Type':ext==='.js'?'application/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate','Pragma':'no-cache','Expires':'0'});res.end(d)})}catch(e){res.writeHead(500);res.end(e.message)}}).listen(PORT,'0.0.0.0',()=>{
   console.log('CONSTRULOG em '+PORT);probeSswAbrirScripts().then(x=>console.log('SSW abrir probe isolado: '+JSON.stringify(x))).catch(()=>{});
-  probeSsw83().then(x=>console.log('SSW83 PROBE: '+JSON.stringify(x))).catch(e=>console.log('SSW83 PROBE ERRO: '+String(e.message||e)));
-  probeSswRevenueMenu().then(x=>console.log('SSW RECEITA MENU: '+JSON.stringify(x))).catch(e=>console.log('SSW RECEITA MENU ERRO: '+String(e.message||e)));
-  probeSswRevenueCandidates().then(x=>console.log('SSW RECEITA CANDIDATOS: '+JSON.stringify(x))).catch(e=>console.log('SSW RECEITA CANDIDATOS ERRO: '+String(e.message||e)));
-  probeSsw0082Catalog().then(x=>console.log('SSW0082 CATALOGO RECEITA: '+JSON.stringify(x))).catch(e=>console.log('SSW0082 CATALOGO RECEITA ERRO: '+String(e.message||e)));
-  probeSsw0082Reports().then(x=>console.log('SSW0082 RELATORIOS TESTE: '+JSON.stringify(x))).catch(e=>console.log('SSW0082 RELATORIOS TESTE ERRO: '+String(e.message||e)));
 
   refreshBi2State().catch(e=>console.error('BI2 SFTP monitor ERRO: '+e.message));
   refreshBi2ApiState().catch(e=>console.error('BI2 WebAPI monitor ERRO: '+e.message));
-  (async()=>{try{const rep=await fetchBi2Report(83),p=parseBi2Csv(rep.text);console.log('VALIDACAO BI2 83: '+JSON.stringify({linhas:(p.rows||[]).length,relatorio:p.meta?.relatorio||'',headers:p.headers.slice(0,40)}))}catch(e){console.log('VALIDACAO BI2 83 ERRO: '+String(e.message||e))}})();
-  (async()=>{try{const rep=await fetchBi2Report(16),p=parseBi2Csv(rep.text);console.log('VALIDACAO BI2 16: '+JSON.stringify({linhas:(p.rows||[]).length,relatorio:p.meta?.relatorio||'',headers:p.headers.slice(0,50)}))}catch(e){console.log('VALIDACAO BI2 16 ERRO: '+String(e.message||e))}})();
   (async()=>{try{const rep=await fetchBi2ReportFolder(17,'',bi2Auth().pasta),p=parseBi2Csv(rep.text),today=new Date().toISOString().slice(0,10),todayRows=(p.rows||[]).filter(r=>brDateToIso(pickField(r,'DATA ENTREGA','ENTREGA','DT ENTREGA'))===today);console.log('VALIDACAO BI2 17: '+JSON.stringify({arquivo:(p.rows||[]).length,hoje:todayRows.length,headers:p.headers.slice(0,25)}))}catch(e){console.log('VALIDACAO BI2 17 ERRO: '+String(e.message||e))}})();
   setInterval(refreshBi2State,15*60*1000);
   setInterval(refreshBi2ApiState,60*1000);
