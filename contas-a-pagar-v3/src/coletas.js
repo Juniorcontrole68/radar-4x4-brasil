@@ -446,9 +446,337 @@ try{
         });
       })();
       <\/script>`;
+
+      const documentoAddon=`<style id="documentos-coleta-addon">
+      .doc-field{grid-column:1/-1;border:1px dashed #94a3b8;border-radius:12px;padding:12px;background:#fff}
+      .doc-field .doc-title{display:block;font-weight:700;color:#334155;margin-bottom:5px}
+      .doc-field input[type=file]{width:100%;padding:9px;border:1px solid #dbe4ee;border-radius:9px;background:#f8fafc}
+      .doc-status{display:block;margin-top:7px;font-size:11px;color:#64748b;line-height:1.4}
+      .doc-status.ok{color:#15803d;font-weight:600}.doc-status.err{color:#b91c1c;font-weight:600}
+      .doc-status a{color:#0f766e;font-weight:700;text-decoration:none}
+      .doc-reading{display:inline-flex;align-items:center;gap:6px}
+      .doc-reading:before{content:"";width:10px;height:10px;border:2px solid #cbd5e1;border-top-color:#0f766e;border-radius:50%;animation:docSpin .8s linear infinite}
+      @keyframes docSpin{to{transform:rotate(360deg)}}
+      </style>
+      <script id="documentos-coleta-script">
+      (() => {
+        const docBaseFetch=window.fetch.bind(window);
+        let pendingDocs={motorista:null,cavalo:null,carreta:null};
+        let lastOpenKey='';
+
+        const byId=id=>document.getElementById(id);
+        const titleCase=v=>String(v||'').toLocaleLowerCase('pt-BR').replace(/(^|[\s\-'])\p{L}/gu,m=>m.toLocaleUpperCase('pt-BR'));
+        const digits=v=>String(v||'').replace(/\D/g,'');
+        const formatCpf=v=>{const d=digits(v).slice(0,11);return d.length===11?d.slice(0,3)+'.'+d.slice(3,6)+'.'+d.slice(6,9)+'-'+d.slice(9):d};
+        const norm=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\s+/g,' ').trim();
+        const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+        const currentId=()=>String(byId('id')?.value||'').trim();
+
+        function cardByTitle(title){
+          return [...document.querySelectorAll('.coleta-form-card')].find(x=>norm(x.querySelector('h3')?.textContent||'')===norm(title));
+        }
+        function addInput(grid,id,label,type='text',opts={}){
+          let el=byId(id);if(el)return el;
+          const lbl=document.createElement('label');
+          if(opts.wide)lbl.className='form-wide';
+          const sp=document.createElement('span');sp.textContent=label;
+          el=document.createElement('input');el.id=id;el.type=type;
+          if(opts.placeholder)el.placeholder=opts.placeholder;
+          if(opts.inputmode)el.inputMode=opts.inputmode;
+          if(opts.max)el.max=opts.max;
+          if(opts.min)el.min=opts.min;
+          if(opts.noTitlecase)el.dataset.noTitlecase='true';
+          lbl.append(sp,el);grid.appendChild(lbl);return el
+        }
+        function addUpload(grid,id,label,statusId){
+          let input=byId(id);if(input)return input;
+          const box=document.createElement('label');box.className='doc-field form-wide';
+          const title=document.createElement('span');title.className='doc-title';title.textContent=label;
+          input=document.createElement('input');input.id=id;input.type='file';input.accept='.pdf,application/pdf,image/jpeg,image/png,image/webp,image/*';
+          input.dataset.noTitlecase='true';
+          const st=document.createElement('span');st.id=statusId;st.className='doc-status';st.textContent='PDF ou foto. O sistema tenta preencher os campos automaticamente.';
+          box.append(title,input,st);grid.appendChild(box);return input
+        }
+        function setStatus(id,msg,kind=''){
+          const el=byId(id);if(!el)return;
+          el.className='doc-status'+(kind?' '+kind:'');el.innerHTML=msg
+        }
+        function ensureFields(){
+          const motorCard=cardByTitle('Dados do Motorista'),truckCard=cardByTitle('Dados do Caminhão');
+          if(motorCard){
+            const grid=motorCard.querySelector('.coleta-form-grid');
+            const cpf=addInput(grid,'motorista_cpf','CPF do motorista','text',{placeholder:'000.000.000-00',inputmode:'numeric',noTitlecase:true});
+            cpf.maxLength=14;
+            if(!cpf.dataset.docBound){cpf.dataset.docBound='1';cpf.addEventListener('input',()=>{cpf.value=formatCpf(cpf.value)})}
+            const up=addUpload(grid,'doc_motorista_file','Importar documento do motorista','doc_motorista_status');
+            bindUpload(up,'motorista','doc_motorista_status')
+          }
+          if(truckCard){
+            const grid=truckCard.querySelector('.coleta-form-grid');
+            const placa=byId('placa');if(placa){placa.dataset.noTitlecase='true';const s=placa.closest('label')?.querySelector('span');if(s)s.textContent='Placa do cavalo mecânico'}
+            const total=byId('eixos');if(total){const s=total.closest('label')?.querySelector('span');if(s)s.textContent='Total de eixos';total.min='0';total.max='20'}
+            const capC=addInput(grid,'capacidade_carga_cavalo','Capacidade de carga do cavalo','text',{placeholder:'Ex.: 16.000 kg',noTitlecase:true});
+            const eixC=addInput(grid,'eixos_cavalo','Eixos do cavalo','number',{min:'0',max:'20',noTitlecase:true});
+            const docC=addUpload(grid,'doc_cavalo_file','Subir documento do cavalo mecânico','doc_cavalo_status');
+            const placaT=addInput(grid,'placa_carreta','Placa da carreta','text',{placeholder:'ABC1D23',noTitlecase:true});
+            placaT.maxLength=8;
+            const capT=addInput(grid,'capacidade_carga_carreta','Capacidade de carga da carreta','text',{placeholder:'Ex.: 28.000 kg',noTitlecase:true});
+            const eixT=addInput(grid,'eixos_carreta','Eixos da carreta','number',{min:'0',max:'20',noTitlecase:true});
+            const docT=addUpload(grid,'doc_carreta_file','Subir documento da carreta','doc_carreta_status');
+            if(!placaT.dataset.docBound){placaT.dataset.docBound='1';placaT.addEventListener('input',()=>{placaT.value=placaT.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,7)})}
+            if(placa&&!placa.dataset.docPlateBound){placa.dataset.docPlateBound='1';placa.addEventListener('input',()=>{placa.value=placa.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,7)})}
+            [eixC,eixT].forEach(x=>{if(x&&!x.dataset.sumBound){x.dataset.sumBound='1';x.addEventListener('input',sumAxes)}});
+            bindUpload(docC,'cavalo','doc_cavalo_status');bindUpload(docT,'carreta','doc_carreta_status')
+          }
+        }
+        function sumAxes(){
+          const a=Number(byId('eixos_cavalo')?.value||0),b=Number(byId('eixos_carreta')?.value||0);
+          if((byId('eixos_cavalo')?.value||'')!==''||(byId('eixos_carreta')?.value||'')!==''){
+            const total=byId('eixos');if(total)total.value=String(a+b)
+          }
+        }
+        function loadScript(src,id){
+          return new Promise((resolve,reject)=>{
+            if(window[id])return resolve(window[id]);
+            const prior=document.querySelector('script[data-doc-lib="'+id+'"]');
+            if(prior){prior.addEventListener('load',()=>resolve(window[id]));prior.addEventListener('error',reject);return}
+            const s=document.createElement('script');s.src=src;s.async=true;s.dataset.docLib=id;
+            s.onload=()=>resolve(window[id]);s.onerror=()=>reject(new Error('Não foi possível carregar o leitor automático.'));
+            document.head.appendChild(s)
+          })
+        }
+        async function ensurePdf(){
+          if(window.pdfjsLib)return window.pdfjsLib;
+          await loadScript('https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js','pdfjsLib');
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+          return window.pdfjsLib
+        }
+        async function ensureOcr(){
+          if(window.Tesseract)return window.Tesseract;
+          await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js','Tesseract');
+          return window.Tesseract
+        }
+        function fileDataUrl(file){
+          return new Promise((resolve,reject)=>{const fr=new FileReader();fr.onload=()=>resolve(fr.result);fr.onerror=()=>reject(new Error('Não foi possível ler o arquivo.'));fr.readAsDataURL(file)})
+        }
+        async function storageDataUrl(file){
+          if(file.type==='application/pdf'){
+            if(file.size>7*1024*1024)throw new Error('PDF maior que 7 MB.');
+            return fileDataUrl(file)
+          }
+          if(!String(file.type||'').startsWith('image/'))throw new Error('Use PDF ou imagem.');
+          const src=await fileDataUrl(file);
+          const img=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=()=>reject(new Error('Imagem inválida.'));im.src=src});
+          const max=2200,scale=Math.min(1,max/Math.max(img.naturalWidth,img.naturalHeight)),w=Math.max(1,Math.round(img.naturalWidth*scale)),h=Math.max(1,Math.round(img.naturalHeight*scale));
+          const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;canvas.getContext('2d').drawImage(img,0,0,w,h);
+          return canvas.toDataURL('image/jpeg',.86)
+        }
+        async function ocrSource(source,statusId){
+          const T=await ensureOcr();
+          const result=await T.recognize(source,'por',{logger:m=>{
+            if(m.status==='recognizing text')setStatus(statusId,'<span class="doc-reading">Lendo documento '+Math.round((m.progress||0)*100)+'%</span>')
+          }});
+          return result?.data?.text||''
+        }
+        async function extractText(file,statusId){
+          if(file.type==='application/pdf'){
+            const pdfjs=await ensurePdf(),buf=await file.arrayBuffer(),pdf=await pdfjs.getDocument({data:buf}).promise;
+            let text='';
+            const maxPages=Math.min(pdf.numPages,3);
+            for(let n=1;n<=maxPages;n++){
+              const page=await pdf.getPage(n),tc=await page.getTextContent();
+              text+='\n'+tc.items.map(x=>x.str||'').join(' ')
+            }
+            if(norm(text).length>80)return text;
+            for(let n=1;n<=Math.min(pdf.numPages,2);n++){
+              const page=await pdf.getPage(n),vp=page.getViewport({scale:1.7}),canvas=document.createElement('canvas');
+              canvas.width=Math.round(vp.width);canvas.height=Math.round(vp.height);
+              await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
+              text+='\n'+await ocrSource(canvas,statusId)
+            }
+            return text
+          }
+          return ocrSource(file,statusId)
+        }
+        function linesOf(text){return String(text||'').split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean)}
+        function parseCpf(text){
+          const t=String(text||''),m=t.match(/\b(\d{3})[.\s]?(\d{3})[.\s]?(\d{3})[-\s]?(\d{2})\b/);
+          return m?m[1]+m[2]+m[3]+m[4]:''
+        }
+        function cleanPersonName(v){
+          return String(v||'').replace(/^(NOME(?: E SOBRENOME)?|NOME DO CONDUTOR)\s*[:\-]?\s*/i,'').replace(/[^A-Za-zÀ-ÿ'\-\s]/g,' ').replace(/\s+/g,' ').trim()
+        }
+        function parseDriver(text){
+          const lines=linesOf(text),cpf=parseCpf(text);let nome='';
+          for(let i=0;i<lines.length;i++){
+            const n=norm(lines[i]);
+            if(/^(NOME|NOME E SOBRENOME|NOME DO CONDUTOR)\b/.test(n)&&!/PAI|MAE|FILIA/.test(n)){
+              let cand=cleanPersonName(lines[i]);
+              if(norm(cand)==='NOME'||norm(cand)==='NOME E SOBRENOME'||cand.length<5)cand=cleanPersonName(lines[i+1]||'');
+              if(cand.split(' ').filter(Boolean).length>=2&&cand.length>=6){nome=titleCase(cand);break}
+            }
+          }
+          return{nome,cpf}
+        }
+        function parsePlate(text){
+          const lines=linesOf(text);
+          for(let i=0;i<lines.length;i++){
+            if(/PLACA/i.test(norm(lines[i]))){
+              const s=(lines[i]+' '+(lines[i+1]||'')).toUpperCase().replace(/[^A-Z0-9]/g,' ');
+              const m=s.match(/\b[A-Z]{3}[0-9][A-Z0-9][0-9]{2}\b/);if(m)return m[0]
+            }
+          }
+          const all=String(text||'').toUpperCase().replace(/[^A-Z0-9]/g,' ');
+          const m=all.match(/\b[A-Z]{3}[0-9][A-Z0-9][0-9]{2}\b/);return m?m[0]:''
+        }
+        function parseAxes(text){
+          const t=norm(text),m=t.match(/(?:QTD\.?\s*)?EIXOS?\s*[:\-]?\s*(\d{1,2})\b/);
+          return m?Number(m[1]):null
+        }
+        function parseCapacity(text){
+          const t=norm(text);
+          const labels=['CAPACIDADE DE CARGA','CAPACIDADE CARGA','CAP CARGA','CARGA UTIL'];
+          for(const label of labels){
+            const p=t.indexOf(label);if(p<0)continue;
+            const frag=t.slice(p+label.length,p+label.length+80);
+            const m=frag.match(/([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]+)?)\s*(KG|T|TON|TONELADAS?)?/);
+            if(m)return m[1]+(m[2]?' '+m[2]:'')
+          }
+          return''
+        }
+        function parseVehicle(text){return{placa:parsePlate(text),eixos:parseAxes(text),capacidade:parseCapacity(text)}}
+        function applyDriver(d){
+          if(d.nome&&byId('motorista'))byId('motorista').value=d.nome;
+          if(d.cpf&&byId('motorista_cpf'))byId('motorista_cpf').value=formatCpf(d.cpf)
+        }
+        function applyVehicle(tipo,d){
+          if(tipo==='cavalo'){
+            if(d.placa&&byId('placa'))byId('placa').value=d.placa;
+            if(d.capacidade&&byId('capacidade_carga_cavalo'))byId('capacidade_carga_cavalo').value=d.capacidade;
+            if(d.eixos!==null&&byId('eixos_cavalo'))byId('eixos_cavalo').value=String(d.eixos)
+          }else{
+            if(d.placa&&byId('placa_carreta'))byId('placa_carreta').value=d.placa;
+            if(d.capacidade&&byId('capacidade_carga_carreta'))byId('capacidade_carga_carreta').value=d.capacidade;
+            if(d.eixos!==null&&byId('eixos_carreta'))byId('eixos_carreta').value=String(d.eixos)
+          }
+          sumAxes()
+        }
+        function bindUpload(input,tipo,statusId){
+          if(!input||input.dataset.boundDoc==='1')return;
+          input.dataset.boundDoc='1';
+          input.addEventListener('change',async()=>{
+            const file=input.files?.[0];if(!file)return;
+            try{
+              setStatus(statusId,'<span class="doc-reading">Preparando documento…</span>');
+              const stored=await storageDataUrl(file);
+              pendingDocs[tipo]={tipo,nome_arquivo:file.name||('documento-'+tipo),arquivo:stored};
+              const text=await extractText(file,statusId);
+              if(tipo==='motorista'){
+                const d=parseDriver(text);applyDriver(d);
+                const found=[d.nome?'nome':'',d.cpf?'CPF':''].filter(Boolean);
+                setStatus(statusId,found.length?'✓ '+esc(found.join(' e '))+' preenchido(s). Confira antes de salvar.':'Documento anexado, mas nome/CPF não foram reconhecidos. Preencha manualmente.','ok')
+              }else{
+                const d=parseVehicle(text);applyVehicle(tipo,d);
+                const found=[d.placa?'placa':'',d.capacidade?'capacidade':'',d.eixos!==null?'eixos':''].filter(Boolean);
+                setStatus(statusId,found.length?'✓ '+esc(found.join(', '))+' preenchido(s). Confira antes de salvar.':'Documento anexado, mas os dados não foram reconhecidos. Preencha manualmente.','ok')
+              }
+            }catch(e){
+              setStatus(statusId,'Documento selecionado. Leitura automática indisponível: '+esc(e.message)+'. Você pode preencher os campos manualmente e salvar.','err')
+              try{pendingDocs[tipo]={tipo,nome_arquivo:file.name||('documento-'+tipo),arquivo:await storageDataUrl(file)}}catch{}
+            }
+          })
+        }
+        async function saveExtras(id){
+          const body={
+            motorista_cpf:digits(byId('motorista_cpf')?.value||''),
+            placa_carreta:byId('placa_carreta')?.value||'',
+            capacidade_carga_cavalo:byId('capacidade_carga_cavalo')?.value||'',
+            eixos_cavalo:byId('eixos_cavalo')?.value||'',
+            capacidade_carga_carreta:byId('capacidade_carga_carreta')?.value||'',
+            eixos_carreta:byId('eixos_carreta')?.value||'',
+            eixos_total:byId('eixos')?.value||''
+          };
+          const r=await docBaseFetch('/api/painel/coletas-documentais/'+encodeURIComponent(id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+          if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error(j.error||'Falha ao salvar dados dos documentos.')}
+        }
+        async function uploadPending(id){
+          for(const tipo of ['motorista','cavalo','carreta']){
+            const doc=pendingDocs[tipo];if(!doc)continue;
+            const r=await docBaseFetch('/api/painel/coletas-documentos/'+encodeURIComponent(id),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(doc)});
+            if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error(j.error||('Falha ao salvar documento '+tipo+'.'))}
+            const st=tipo==='motorista'?'doc_motorista_status':(tipo==='cavalo'?'doc_cavalo_status':'doc_carreta_status');
+            setStatus(st,'✓ Documento salvo com a coleta.','ok')
+          }
+          pendingDocs={motorista:null,cavalo:null,carreta:null}
+        }
+        async function loadExistingDocs(id){
+          if(!id)return;
+          try{
+            const r=await docBaseFetch('/api/painel/coletas-documentos/'+encodeURIComponent(id),{cache:'no-store'});
+            const j=await r.json();if(!r.ok||!j.ok)return;
+            (j.rows||[]).forEach(d=>{
+              const st=d.tipo==='motorista'?'doc_motorista_status':(d.tipo==='cavalo'?'doc_cavalo_status':'doc_carreta_status');
+              const href='/api/painel/coletas-documentos/'+encodeURIComponent(id)+'/'+encodeURIComponent(d.tipo);
+              setStatus(st,'✓ Documento salvo: <a href="'+href+'" target="_blank" rel="noopener">'+esc(d.nome_arquivo||'Abrir documento')+'</a>','ok')
+            })
+          }catch{}
+        }
+        async function loadFields(){
+          ensureFields();
+          const modal=byId('modal');if(!modal?.open)return;
+          const id=currentId(),key=String(Date.now())+'|'+id;
+          lastOpenKey=key;pendingDocs={motorista:null,cavalo:null,carreta:null};
+          ['doc_motorista_file','doc_cavalo_file','doc_carreta_file'].forEach(x=>{const el=byId(x);if(el)el.value=''});
+          if(!id){
+            ['motorista_cpf','placa_carreta','capacidade_carga_cavalo','eixos_cavalo','capacidade_carga_carreta','eixos_carreta'].forEach(x=>{const el=byId(x);if(el)el.value=''});
+            setStatus('doc_motorista_status','PDF ou foto. O sistema tenta preencher nome e CPF automaticamente.');
+            setStatus('doc_cavalo_status','PDF ou foto. O sistema tenta preencher placa, capacidade e eixos.');
+            setStatus('doc_carreta_status','PDF ou foto. O sistema tenta preencher placa, capacidade e eixos.');
+            return
+          }
+          try{
+            const r=await docBaseFetch('/coletas/api/coletas',{cache:'no-store'}),rows=await r.json();
+            const co=(Array.isArray(rows)?rows:[]).find(x=>String(x.id)===id);
+            if(co){
+              if(byId('motorista_cpf'))byId('motorista_cpf').value=formatCpf(co.motorista_cpf||'');
+              if(byId('placa_carreta'))byId('placa_carreta').value=String(co.placa_carreta||'').toUpperCase();
+              if(byId('capacidade_carga_cavalo'))byId('capacidade_carga_cavalo').value=co.capacidade_carga_cavalo||'';
+              if(byId('eixos_cavalo'))byId('eixos_cavalo').value=co.eixos_cavalo??'';
+              if(byId('capacidade_carga_carreta'))byId('capacidade_carga_carreta').value=co.capacidade_carga_carreta||'';
+              if(byId('eixos_carreta'))byId('eixos_carreta').value=co.eixos_carreta??''
+            }
+          }catch{}
+          await loadExistingDocs(id)
+        }
+
+        window.fetch=async function(input,init={}){
+          const res=await docBaseFetch(input,init);
+          try{
+            const url=typeof input==='string'?input:(input?.url||'');
+            const method=String(init?.method||'GET').toUpperCase();
+            if(res.ok&&/^\/coletas\/api\/coletas(?:\/\d+)?$/.test(url)&&(method==='POST'||method==='PUT')){
+              const data=await res.clone().json();
+              if(data?.id){await saveExtras(data.id);await uploadPending(data.id)}
+            }
+          }catch(e){console.warn('Documentos da coleta:',e);alert('A coleta foi salva, mas houve problema ao salvar os dados/documentos: '+e.message)}
+          return res
+        };
+
+        document.addEventListener('DOMContentLoaded',()=>{
+          setTimeout(ensureFields,80);
+          const modal=byId('modal');
+          if(modal){
+            const obs=new MutationObserver(()=>{if(modal.open)setTimeout(loadFields,100)});
+            obs.observe(modal,{attributes:true,attributeFilter:['open']})
+          }
+          document.addEventListener('click',()=>setTimeout(ensureFields,80),true)
+        })
+      })();
+      </script>`;
+
       const bodyClose=html.lastIndexOf('</body>');
       if(bodyClose>=0){
-        html=html.slice(0,bodyClose)+recebimentoAddon+html.slice(bodyClose);
+        html=html.slice(0,bodyClose)+recebimentoAddon+documentoAddon+html.slice(bodyClose);
       }
     }
 
