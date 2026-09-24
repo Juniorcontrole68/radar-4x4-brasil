@@ -23,12 +23,13 @@ try{
         '<label>Placa da carreta<input id="placa_carreta" placeholder="ABC1D23" maxlength="8" /></label>'+
         '<label>Capacidade de carga da carreta<input id="capacidade_carga_carreta" placeholder="Ex.: 28.000 kg" /></label>'+
         '<label>Eixos da carreta<input id="eixos_carreta" type="number" min="0" max="20" /></label>'+
-        '<label class="full doc-field" style="grid-column:1/-1"><span class="doc-title">Subir documento da carreta</span><input id="doc_carreta_file" type="file" accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/*" /><span id="doc_carreta_status" class="doc-status">PDF ou foto. O sistema tenta preencher placa, capacidade e eixos.</span></label>';
+        '<label class="full doc-field" style="grid-column:1/-1"><span class="doc-title">Subir documento da carreta</span><input id="doc_carreta_file" type="file" accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/*" /><span id="doc_carreta_status" class="doc-status">PDF ou foto. O sistema tenta preencher placa, capacidade e eixos.</span></label>'+
+        '<label class="full doc-refresh-field" style="grid-column:1/-1"><span class="doc-title">Preencher dados pelos documentos anexados</span><button id="doc_refresh_data" type="button">↻ Atualizar dados dos documentos</button><span id="doc_refresh_status" class="doc-status">Anexe os documentos acima e clique em Atualizar.</span></label>';
       html=html.replace(mvStart,mvStart+staticDocs);
     }
 
     if(!html.includes('coletas-doc-static-css')){
-      html=html.replace('</head>','<style id="coletas-doc-static-css">.doc-field{border:1px dashed #94a3b8;border-radius:12px;padding:12px;background:#fff}.doc-field .doc-title{display:block;font-weight:700;color:#334155;margin-bottom:6px}.doc-field input[type=file]{width:100%;box-sizing:border-box;padding:9px;border:1px solid #dbe4ee;border-radius:9px;background:#f8fafc}.doc-status{display:block;margin-top:7px;font-size:11px;color:#64748b;line-height:1.4}</style></head>');
+      html=html.replace('</head>','<style id="coletas-doc-static-css">.doc-field{border:1px dashed #94a3b8;border-radius:12px;padding:12px;background:#fff}.doc-field .doc-title{display:block;font-weight:700;color:#334155;margin-bottom:6px}.doc-field input[type=file]{width:100%;box-sizing:border-box;padding:9px;border:1px solid #dbe4ee;border-radius:9px;background:#f8fafc}.doc-status{display:block;margin-top:7px;font-size:11px;color:#64748b;line-height:1.4}.doc-refresh-field{border:1px solid #99f6e4;border-radius:12px;padding:12px;background:#f0fdfa}.doc-refresh-field .doc-title{display:block;font-weight:700;color:#115e59;margin-bottom:7px}#doc_refresh_data{width:100%;border:0;border-radius:9px;padding:11px 14px;background:#0f766e;color:#fff;font-weight:700;cursor:pointer}</style></head>');
     }
 
 
@@ -340,7 +341,7 @@ try{
           make('Coleta',['os_numero','cliente','endereco_coleta','data_carregamento','hora_carregamento']);
           make('Entrega',['destinatario','endereco_entrega','previsao_entrega','data_descarga','status','comprovante']);
           make('Dados do Motorista',['motorista','motorista_cpf','telefone_motorista','transportadora_agregado','doc_motorista_file']);
-          make('Dados do Caminhão',['placa','tipo_caminhao','implemento','eixos','capacidade_carga_cavalo','eixos_cavalo','doc_cavalo_file','placa_carreta','capacidade_carga_carreta','eixos_carreta','doc_carreta_file']);
+          make('Dados do Caminhão',['placa','tipo_caminhao','implemento','eixos','capacidade_carga_cavalo','eixos_cavalo','doc_cavalo_file','placa_carreta','capacidade_carga_carreta','eixos_carreta','doc_carreta_file','doc_refresh_data']);
           make('Dados da Carga',['quantidade_paletes','peso_total','observacoes']);
           make('Financeiro',['frete_cobrado','frete_pago','percentual_adiantamento','valor_adiantamento','tarifa_rota_por_eixo','pedagio','lucro','recebido_financeiro','data_recebimento_financeiro','previsao_pagamento_fatura']);
 
@@ -473,6 +474,10 @@ try{
       .doc-status{display:block;margin-top:7px;font-size:11px;color:#64748b;line-height:1.4}
       .doc-status.ok{color:#15803d;font-weight:600}.doc-status.err{color:#b91c1c;font-weight:600}
       .doc-status a{color:#0f766e;font-weight:700;text-decoration:none}
+      .doc-refresh-field{grid-column:1/-1;border:1px solid #99f6e4;border-radius:12px;padding:12px;background:#f0fdfa}
+      .doc-refresh-field .doc-title{display:block;font-weight:700;color:#115e59;margin-bottom:7px}
+      #doc_refresh_data{width:100%;border:0;border-radius:9px;padding:11px 14px;background:#0f766e;color:#fff;font-weight:700;cursor:pointer}
+      #doc_refresh_data:disabled{opacity:.55;cursor:wait}
       .doc-reading{display:inline-flex;align-items:center;gap:6px}
       .history-select-wrap{grid-column:1/-1;border:1px solid #cbd5e1;border-radius:11px;padding:11px;background:#fff}
       .history-select-wrap>span{display:block;font-weight:700;color:#334155;margin-bottom:6px}
@@ -655,6 +660,7 @@ try{
             [eixC,eixT].forEach(x=>{if(x&&!x.dataset.sumBound){x.dataset.sumBound='1';x.addEventListener('input',sumAxes)}});
             bindUpload(docC,'cavalo','doc_cavalo_status');bindUpload(docT,'carreta','doc_carreta_status')
           }
+          bindRefreshDocumentButton()
         }
         function sumAxes(){
           const a=Number(byId('eixos_cavalo')?.value||0),b=Number(byId('eixos_carreta')?.value||0);
@@ -788,30 +794,73 @@ try{
           }
           sumAxes()
         }
+        async function processDocumentFile(file,tipo,statusId){
+          if(!file)return false;
+          try{
+            setStatus(statusId,'<span class="doc-reading">Lendo documento…</span>');
+            const stored=await storageDataUrl(file);
+            pendingDocs[tipo]={tipo,nome_arquivo:file.name||('documento-'+tipo),arquivo:stored};
+            const text=await extractText(file,statusId);
+            if(tipo==='motorista'){
+              const d=parseDriver(text);applyDriver(d);
+              const found=[d.nome?'nome':'',d.cpf?'CPF':''].filter(Boolean);
+              setStatus(statusId,found.length?'✓ '+esc(found.join(' e '))+' preenchido(s). Confira antes de salvar.':'Documento anexado, mas nome/CPF não foram reconhecidos. Preencha manualmente.','ok');
+              return found.length>0
+            }else{
+              const d=parseVehicle(text);applyVehicle(tipo,d);
+              const found=[d.placa?'placa':'',d.capacidade?'capacidade':'',d.eixos!==null?'eixos':''].filter(Boolean);
+              setStatus(statusId,found.length?'✓ '+esc(found.join(', '))+' preenchido(s). Confira antes de salvar.':'Documento anexado, mas os dados não foram reconhecidos. Preencha manualmente.','ok');
+              return found.length>0
+            }
+          }catch(e){
+            setStatus(statusId,'Documento selecionado. Leitura automática indisponível: '+esc(e.message)+'. Você pode preencher os campos manualmente e salvar.','err');
+            try{pendingDocs[tipo]={tipo,nome_arquivo:file.name||('documento-'+tipo),arquivo:await storageDataUrl(file)}}catch{}
+            return false
+          }
+        }
         function bindUpload(input,tipo,statusId){
           if(!input||input.dataset.boundDoc==='1')return;
           input.dataset.boundDoc='1';
           input.addEventListener('change',async()=>{
             const file=input.files?.[0];if(!file)return;
-            try{
-              setStatus(statusId,'<span class="doc-reading">Preparando documento…</span>');
-              const stored=await storageDataUrl(file);
-              pendingDocs[tipo]={tipo,nome_arquivo:file.name||('documento-'+tipo),arquivo:stored};
-              const text=await extractText(file,statusId);
-              if(tipo==='motorista'){
-                const d=parseDriver(text);applyDriver(d);
-                const found=[d.nome?'nome':'',d.cpf?'CPF':''].filter(Boolean);
-                setStatus(statusId,found.length?'✓ '+esc(found.join(' e '))+' preenchido(s). Confira antes de salvar.':'Documento anexado, mas nome/CPF não foram reconhecidos. Preencha manualmente.','ok')
-              }else{
-                const d=parseVehicle(text);applyVehicle(tipo,d);
-                const found=[d.placa?'placa':'',d.capacidade?'capacidade':'',d.eixos!==null?'eixos':''].filter(Boolean);
-                setStatus(statusId,found.length?'✓ '+esc(found.join(', '))+' preenchido(s). Confira antes de salvar.':'Documento anexado, mas os dados não foram reconhecidos. Preencha manualmente.','ok')
-              }
-            }catch(e){
-              setStatus(statusId,'Documento selecionado. Leitura automática indisponível: '+esc(e.message)+'. Você pode preencher os campos manualmente e salvar.','err')
-              try{pendingDocs[tipo]={tipo,nome_arquivo:file.name||('documento-'+tipo),arquivo:await storageDataUrl(file)}}catch{}
-            }
+            await processDocumentFile(file,tipo,statusId)
           })
+        }
+        async function refreshDocumentData(){
+          const btn=byId('doc_refresh_data'),status=byId('doc_refresh_status');
+          const items=[
+            {input:byId('doc_motorista_file'),tipo:'motorista',status:'doc_motorista_status'},
+            {input:byId('doc_cavalo_file'),tipo:'cavalo',status:'doc_cavalo_status'},
+            {input:byId('doc_carreta_file'),tipo:'carreta',status:'doc_carreta_status'}
+          ];
+          const selected=items.filter(x=>x.input?.files?.[0]);
+          if(!selected.length){
+            if(status){status.className='doc-status err';status.textContent='Anexe pelo menos um documento antes de atualizar.'}
+            return
+          }
+          if(btn){btn.disabled=true;btn.textContent='Atualizando dados…'}
+          if(status){status.className='doc-status';status.innerHTML='<span class="doc-reading">Lendo '+selected.length+' documento(s)…</span>'}
+          let ok=0;
+          try{
+            for(const item of selected){
+              if(await processDocumentFile(item.input.files[0],item.tipo,item.status))ok++
+            }
+            sumAxes();
+            if(status){
+              status.className='doc-status '+(ok?'ok':'err');
+              status.textContent=ok
+                ?'✓ Dados atualizados a partir de '+ok+' documento(s). Confira os campos antes de salvar.'
+                :'Os documentos foram lidos, mas nenhum dado pôde ser reconhecido automaticamente.'
+            }
+          }finally{
+            if(btn){btn.disabled=false;btn.textContent='↻ Atualizar dados dos documentos'}
+          }
+        }
+        function bindRefreshDocumentButton(){
+          const btn=byId('doc_refresh_data');
+          if(!btn||btn.dataset.boundRefresh==='1')return;
+          btn.dataset.boundRefresh='1';
+          btn.addEventListener('click',refreshDocumentData)
         }
         async function saveExtras(id){
           const body={
