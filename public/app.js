@@ -1071,7 +1071,7 @@ function renderDeliveryProgram(data){
     previsao:r.previsao||'',peso:r.peso?programFmtNumber(r.peso,0)+' kg':'—',
     status:r.status||''
   }));
-  if($('#programReviewTable'))table('#programReviewTable',[['Motivo','motivo'],['NF','nf'],['CT-e','ctrc'],['Cliente','cliente'],['Cidade','cidade'],['Previsão SSW','previsao'],['Peso','peso'],['m³','m3'],['Status','status']],review)
+  if($('#programReviewTable'))table('#programReviewTable',[['Motivo','motivo'],['NF','nf'],['CT-e','ctrc'],['Cliente','cliente'],['Cidade','cidade'],['Previsão SSW','previsao'],['Peso','peso'],['Status','status']],review)
 }
 async function refreshDeliveryProgram(force=false){
   if(!hasAnyPerm(['programacao','roteirizador','dashboard','ssw_saidas']))return;
@@ -1097,7 +1097,7 @@ async function refreshDeliveryProgram(force=false){
 function printDeliveryProgram(){
   const d=DELIVERY_PROGRAM;if(!d){alert('Gere a programação antes de imprimir.');return}
   const loads=(d.loads||[]).map((l,idx)=>{
-    const rows=(l.items||[]).map((r,i)=>'<tr><td>'+(i+1)+'</td><td>'+safe(r.nf||'')+'</td><td>'+safe(r.ctrc||'')+'</td><td>'+safe(r.cliente||'')+'</td><td>'+safe(r.cidade||'')+'</td><td>'+programFmtNumber(r.peso||0,0)+'</td><td>'+programFmtNumber(r.m3||0,2)+'</td></tr>').join('');
+    const rows=(l.items||[]).map((r,i)=>'<tr><td>'+(i+1)+'</td><td>'+safe(r.nf||'')+'</td><td>'+safe(r.ctrc||'')+'</td><td>'+safe(r.cliente||'')+'</td><td>'+safe(r.cidade||'')+'</td><td>'+programFmtNumber(r.peso||0,0)+'</td></tr>').join('');
     return '<h2>Veículo '+(idx+1)+' • '+safe(l.vehicle)+' • '+brl(Number(l.cost||0))+'</h2><div class="meta">'+safe(l.region||'')+' • '+safe(l.distanceBand||'')+' • '+nf(l.deliveries||0)+' entregas • '+programFmtNumber(l.kg||0,0)+' kg • '+programFmtNumber(l.m3||0,2)+' m³</div><table><thead><tr><th>#</th><th>NF</th><th>CT-e</th><th>Cliente</th><th>Cidade</th><th>kg</th></tr></thead><tbody>'+rows+'</tbody></table>'
   }).join('');
   const w=window.open('','_blank','noopener,noreferrer');
