@@ -12,6 +12,25 @@ try{
     );
     html=html.replaceAll('Nome do Cliente da Entrega','Remetente');
     html=html.replaceAll('Cliente / Entrega','Remetente / Endereço');
+    const mvStart='<div class="section-title">Motorista e veículo</div>\n      <div class="grid three">';
+    if(html.includes(mvStart) && !html.includes('id="doc_motorista_file"')){
+      const staticDocs=
+        '<label>CPF do motorista<input id="motorista_cpf" placeholder="000.000.000-00" inputmode="numeric" maxlength="14" /></label>'+
+        '<label class="full doc-field" style="grid-column:1/-1"><span class="doc-title">Importar documento do motorista</span><input id="doc_motorista_file" type="file" accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/*" /><span id="doc_motorista_status" class="doc-status">PDF ou foto. O sistema tenta preencher nome e CPF automaticamente.</span></label>'+
+        '<label>Capacidade de carga do cavalo<input id="capacidade_carga_cavalo" placeholder="Ex.: 16.000 kg" /></label>'+
+        '<label>Eixos do cavalo<input id="eixos_cavalo" type="number" min="0" max="20" /></label>'+
+        '<label class="full doc-field" style="grid-column:1/-1"><span class="doc-title">Subir documento do cavalo mecânico</span><input id="doc_cavalo_file" type="file" accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/*" /><span id="doc_cavalo_status" class="doc-status">PDF ou foto. O sistema tenta preencher placa, capacidade e eixos.</span></label>'+
+        '<label>Placa da carreta<input id="placa_carreta" placeholder="ABC1D23" maxlength="8" /></label>'+
+        '<label>Capacidade de carga da carreta<input id="capacidade_carga_carreta" placeholder="Ex.: 28.000 kg" /></label>'+
+        '<label>Eixos da carreta<input id="eixos_carreta" type="number" min="0" max="20" /></label>'+
+        '<label class="full doc-field" style="grid-column:1/-1"><span class="doc-title">Subir documento da carreta</span><input id="doc_carreta_file" type="file" accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/*" /><span id="doc_carreta_status" class="doc-status">PDF ou foto. O sistema tenta preencher placa, capacidade e eixos.</span></label>';
+      html=html.replace(mvStart,mvStart+staticDocs);
+    }
+
+    if(!html.includes('coletas-doc-static-css')){
+      html=html.replace('</head>','<style id="coletas-doc-static-css">.doc-field{border:1px dashed #94a3b8;border-radius:12px;padding:12px;background:#fff}.doc-field .doc-title{display:block;font-weight:700;color:#334155;margin-bottom:6px}.doc-field input[type=file]{width:100%;box-sizing:border-box;padding:9px;border:1px solid #dbe4ee;border-radius:9px;background:#f8fafc}.doc-status{display:block;margin-top:7px;font-size:11px;color:#64748b;line-height:1.4}</style></head>');
+    }
+
 
 
     html=html.replace("<td><div class=\"os\">${esc(c.os_numero||String(c.id))}</div><div class=\"muted\">#${c.id}</div></td>\n    <td><strong>${esc(c.cliente||'-')}</strong><div class=\"muted\">${esc(c.endereco_entrega||'-')}</div></td>","<td><div style=\"display:flex;align-items:center;gap:10px;flex-wrap:wrap\"><div class=\"os\">${esc(c.os_numero||String(c.id))}</div><strong>${esc(c.cliente||'-')}</strong></div><div class=\"muted\">#${c.id}</div></td>\n    <td><div><strong>Coleta:</strong> ${esc(c.endereco_coleta||'-')}</div><div style=\"margin-top:5px\"><strong>Destinatário:</strong> ${esc(c.destinatario||'-')}</div><div class=\"muted\" style=\"margin-top:3px\"><strong>Entrega:</strong> ${esc(c.endereco_entrega||'-')}</div></td>");
@@ -882,6 +901,14 @@ try{
         })
       })();
       </script>`;
+
+      try{
+        const sm=documentoAddon.match(/<script[^>]*>([\s\S]*?)<\/script>/i);
+        if(sm){new Function(sm[1]);console.log('COLETAS DOC SCRIPT SYNTAX: OK')}
+        else console.log('COLETAS DOC SCRIPT SYNTAX: script não localizado');
+      }catch(e){
+        console.log('COLETAS DOC SCRIPT SYNTAX ERRO: '+String(e.message||e));
+      }
 
       const bodyClose=html.lastIndexOf('</body>');
       if(bodyClose>=0){
