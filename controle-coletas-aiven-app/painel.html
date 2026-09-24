@@ -85,8 +85,11 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
 <div id="deleteModal" class="modal" aria-hidden="true">
   <div class="modal-box">
     <h3>Excluir coleta</h3>
-    <p>Selecione a coleta que deseja excluir. A exclusão é definitiva e será feita no banco Aiven.</p>
-    <select id="deleteSelect"><option value="">Carregando coletas...</option></select>
+    <p>Digite o <b>número da coleta / OS</b> que deseja excluir. Confira os dados antes de confirmar.</p>
+    <label for="deleteColetaNumber" style="display:block;font-weight:600;margin-bottom:6px">Número da coleta / OS</label>
+    <input id="deleteColetaNumber" list="deleteColetaOptions" inputmode="numeric" autocomplete="off" placeholder="Ex.: 12345" style="width:100%;box-sizing:border-box;padding:11px 12px;border:1px solid #cbd5e1;border-radius:9px">
+    <datalist id="deleteColetaOptions"></datalist>
+    <div id="deleteMatch" style="margin-top:12px;padding:11px 12px;border-radius:9px;background:#f8fafc;border:1px solid #e2e8f0;color:#64748b;font-size:13px">Informe o número da coleta.</div>
     <div class="modal-actions">
       <button id="cancelDelete" class="cancel" type="button">Cancelar</button>
       <button id="confirmDelete" class="confirm-delete" type="button" disabled>Excluir definitivamente</button>
@@ -100,7 +103,8 @@ let DASH_FRAME_TOKEN='';
 const DASHBOARD_ORIGIN='https://construlog-dashboard.onrender.com';
 const frame=document.getElementById('frame'), moduleName=document.getElementById('module'), moduleLoading=document.getElementById('moduleLoading');
 const duplicateBtn=document.getElementById('duplicateColeta'), duplicateModal=document.getElementById('duplicateModal'), duplicateSelect=document.getElementById('duplicateSelect'), duplicateDate=document.getElementById('duplicateDate'), cancelDuplicate=document.getElementById('cancelDuplicate'), confirmDuplicate=document.getElementById('confirmDuplicate');
-const deleteBtn=document.getElementById('deleteColeta'), deleteModal=document.getElementById('deleteModal'), deleteSelect=document.getElementById('deleteSelect'), cancelDelete=document.getElementById('cancelDelete'), confirmDelete=document.getElementById('confirmDelete');
+const deleteBtn=document.getElementById('deleteColeta'), deleteModal=document.getElementById('deleteModal'), deleteColetaNumber=document.getElementById('deleteColetaNumber'), deleteColetaOptions=document.getElementById('deleteColetaOptions'), deleteMatch=document.getElementById('deleteMatch'), cancelDelete=document.getElementById('cancelDelete'), confirmDelete=document.getElementById('confirmDelete');
+let DELETE_COLETAS=[], DELETE_SELECTED=null;
 
 function hasPerm(p){return !!(AUTH&&(AUTH.is_admin||AUTH.permissions?.includes('*')||AUTH.permissions?.includes(p)))}
 function moduleAllowed(mod){
@@ -249,40 +253,81 @@ confirmDuplicate.addEventListener('click',async()=>{
 async function abrirExclusao(){
   deleteModal.classList.add('show');
   deleteModal.setAttribute('aria-hidden','false');
-  deleteSelect.innerHTML='<option value="">Carregando coletas...</option>';
+  deleteColetaNumber.value='';
+  deleteColetaOptions.innerHTML='';
+  deleteMatch.textContent='Carregando coletas...';
+  deleteMatch.style.color='#64748b';
+  DELETE_SELECTED=null;
   confirmDelete.disabled=true;
   try{
     const r=await fetch('/api/painel/coletas-resumo',{cache:'no-store'});
     if(!r.ok) throw new Error('Não foi possível carregar as coletas.');
-    const list=await r.json();
-    deleteSelect.innerHTML='<option value="">Selecione uma coleta</option>';
-    list.forEach(c=>{
+    DELETE_COLETAS=await r.json();
+    DELETE_COLETAS.forEach(co=>{
+      const numero=String(co.os||'').trim();
+      if(!numero)return;
       const opt=document.createElement('option');
-      opt.value=c.id;
-      opt.textContent=coletaLabel(c);
-      deleteSelect.appendChild(opt);
+      opt.value=numero;
+      opt.label=coletaLabel(co);
+      deleteColetaOptions.appendChild(opt);
     });
-    if(!list.length) deleteSelect.innerHTML='<option value="">Nenhuma coleta cadastrada</option>';
+    deleteMatch.textContent=DELETE_COLETAS.length?'Digite o número da coleta / OS para localizar.':'Nenhuma coleta cadastrada.';
+    setTimeout(()=>deleteColetaNumber.focus(),50);
   }catch(e){
-    deleteSelect.innerHTML='<option value="">Erro ao carregar coletas</option>';
+    DELETE_COLETAS=[];
+    deleteMatch.textContent='Erro ao carregar coletas.';
+    deleteMatch.style.color='#b91c1c';
     alert(e.message);
   }
+}
+
+function localizarColetaParaExcluir(){
+  const typed=String(deleteColetaNumber.value||'').trim().toUpperCase();
+  DELETE_SELECTED=null;
+  confirmDelete.disabled=true;
+  if(!typed){
+    deleteMatch.textContent='Informe o número da coleta.';
+    deleteMatch.style.color='#64748b';
+    return;
+  }
+  const normalize=v=>String(v||'').trim().toUpperCase().replace(/^0+(?=\d)/,'');
+  const wanted=normalize(typed);
+  const found=DELETE_COLETAS.find(c=>normalize(c.os)===wanted) || DELETE_COLETAS.find(c=>normalize(c.id)===wanted && !String(c.os||'').trim());
+  if(!found){
+    deleteMatch.innerHTML='<b>Nenhuma coleta encontrada com o número '+typed.replace(/[<>&"]/g,'')+'.</b>';
+    deleteMatch.style.color='#b91c1c';
+    return;
+  }
+  DELETE_SELECTED=found;
+  const numero=String(found.os||found.id||'—');
+  deleteMatch.innerHTML='<b>Coleta '+numero+'</b><br>'+
+    (found.cliente?'Remetente: '+String(found.cliente).replace(/[<>&"]/g,'')+'<br>':'')+
+    (found.destinatario?'Destinatário: '+String(found.destinatario).replace(/[<>&"]/g,'')+'<br>':'')+
+    (found.destino?'Entrega: '+String(found.destino).replace(/[<>&"]/g,'')+'<br>':'')+
+    (found.placa?'Placa: '+String(found.placa).replace(/[<>&"]/g,''):'');
+  deleteMatch.style.color='#166534';
+  confirmDelete.disabled=false;
 }
 
 function fecharExclusao(){
   deleteModal.classList.remove('show');
   deleteModal.setAttribute('aria-hidden','true');
+  DELETE_SELECTED=null;
 }
 
 deleteBtn.addEventListener('click',abrirExclusao);
 cancelDelete.addEventListener('click',fecharExclusao);
 deleteModal.addEventListener('click',e=>{if(e.target===deleteModal)fecharExclusao();});
-deleteSelect.addEventListener('change',()=>{confirmDelete.disabled=!deleteSelect.value;});
+deleteColetaNumber.addEventListener('input',localizarColetaParaExcluir);
+deleteColetaNumber.addEventListener('change',localizarColetaParaExcluir);
+deleteColetaNumber.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();localizarColetaParaExcluir();if(DELETE_SELECTED&&!confirmDelete.disabled)confirmDelete.click()}});
 confirmDelete.addEventListener('click',async()=>{
-  const id=deleteSelect.value;
-  if(!id) return;
-  const descricao=deleteSelect.options[deleteSelect.selectedIndex]?.textContent||'esta coleta';
-  if(!confirm('Tem certeza que deseja excluir definitivamente?\n\n'+descricao+'\n\nEsta ação não pode ser desfeita.')) return;
+  const coleta=DELETE_SELECTED;
+  if(!coleta)return;
+  const id=coleta.id;
+  const numero=String(coleta.os||coleta.id||'');
+  const descricao=coletaLabel(coleta);
+  if(!confirm('Excluir definitivamente a coleta '+numero+'?\n\n'+descricao+'\n\nEsta ação não pode ser desfeita.')) return;
   confirmDelete.disabled=true;
   const oldText=confirmDelete.textContent;
   confirmDelete.textContent='Excluindo...';
@@ -292,15 +337,14 @@ confirmDelete.addEventListener('click',async()=>{
     if(!r.ok) throw new Error(body.error||'Não foi possível excluir a coleta.');
     fecharExclusao();
     frame.src='/coletas?embed=1&v=20260924docs3&refresh='+Date.now();
-    alert('Coleta excluída com sucesso.');
+    alert('Coleta '+numero+' excluída com sucesso.');
   }catch(e){
     alert(e.message);
   }finally{
     confirmDelete.textContent=oldText;
-    confirmDelete.disabled=!deleteSelect.value;
+    confirmDelete.disabled=!DELETE_SELECTED;
   }
 });
-
 
 function titleCasePt(value){
   return String(value||'')
