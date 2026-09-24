@@ -15,8 +15,8 @@ try{
     const mvStart='<div class="section-title">Motorista e veículo</div>\n      <div class="grid three">';
     if(html.includes(mvStart) && !html.includes('id="doc_motorista_file"')){
       const staticDocs=
-        '<label>CPF do motorista<input id="motorista_cpf" placeholder="000.000.000-00" inputmode="numeric" maxlength="14" /></label>'+
-        '<label class="full doc-field" style="grid-column:1/-1"><span class="doc-title">Importar documento do motorista</span><input id="doc_motorista_file" type="file" accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/*" /><span id="doc_motorista_status" class="doc-status">PDF ou foto. O sistema tenta preencher nome e CPF automaticamente.</span></label>'+
+        '<label>RG / Documento de identidade<input id="motorista_rg" placeholder="Ex.: 12.345.678-9 / SSP-SP" maxlength="50" /></label>'+
+        '<label class="full doc-field" style="grid-column:1/-1"><span class="doc-title">Importar documento do motorista</span><input id="doc_motorista_file" type="file" accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/*" /><span id="doc_motorista_status" class="doc-status">PDF ou foto. O sistema tenta preencher nome e RG automaticamente.</span></label>'+
         '<label>Capacidade de carga do caminhão / cavalo<input id="capacidade_carga_cavalo" placeholder="Ex.: 16.000 kg" /></label>'+
         '<label>Eixos do caminhão / cavalo<input id="eixos_cavalo" type="number" min="0" max="20" /></label>'+
         '<label class="full doc-field" style="grid-column:1/-1"><span class="doc-title">Subir documento do caminhão / cavalo mecânico</span><input id="doc_cavalo_file" type="file" accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/*" /><span id="doc_cavalo_status" class="doc-status">PDF ou foto. O sistema tenta preencher placa, capacidade e eixos.</span></label>'+
@@ -340,7 +340,7 @@ try{
 
           make('Coleta',['os_numero','cliente','endereco_coleta','data_carregamento','hora_carregamento']);
           make('Entrega',['destinatario','endereco_entrega','previsao_entrega','data_descarga','status','comprovante']);
-          make('Dados do Motorista',['motorista','motorista_cpf','telefone_motorista','transportadora_agregado','doc_motorista_file']);
+          make('Dados do Motorista',['motorista','motorista_rg','telefone_motorista','transportadora_agregado','doc_motorista_file']);
           make('Dados do Caminhão',['placa','tipo_caminhao','implemento','eixos','capacidade_carga_cavalo','eixos_cavalo','doc_cavalo_file','placa_carreta','capacidade_carga_carreta','eixos_carreta','doc_carreta_file','doc_refresh_data']);
           make('Dados da Carga',['quantidade_paletes','peso_total','observacoes']);
           make('Financeiro',['frete_cobrado','frete_pago','percentual_adiantamento','valor_adiantamento','tarifa_rota_por_eixo','pedagio','lucro','recebido_financeiro','data_recebimento_financeiro','previsao_pagamento_fatura']);
@@ -572,8 +572,8 @@ try{
           const sm=byId('historico_motorista'),sr=byId('historico_remetente'),sd=byId('historico_destinatario');
           window.__coletaHistoryProfiles={drivers,senders,recipients};
           fillHistorySelect(sm,drivers,'motorista',r=>{
-            const cpf=formatCpf(r.motorista_cpf||'');
-            return String(r.motorista||'')+(cpf?' • CPF '+cpf:'')
+            const rg=String(r.motorista_rg||'').trim();
+            return String(r.motorista||'')+(rg?' • RG '+rg:'')
           });
           fillHistorySelect(sr,senders,'cliente',r=>String(r.cliente||'')+(r.endereco_coleta?' • '+r.endereco_coleta:''));
           fillHistorySelect(sd,recipients,'destinatario',r=>String(r.destinatario||'')+(r.endereco_entrega?' • '+r.endereco_entrega:''));
@@ -583,7 +583,7 @@ try{
             sm.addEventListener('change',()=>{
               const r=(window.__coletaHistoryProfiles?.drivers||[]).find(x=>String(x.id||'')===sm.value);if(!r)return;
               setField('motorista',r.motorista);
-              setField('motorista_cpf',formatCpf(r.motorista_cpf||''));
+              setField('motorista_rg',String(r.motorista_rg||''));
               setField('telefone_motorista',r.telefone_motorista);
               setField('transportadora_agregado',r.transportadora_agregado)
             })
@@ -638,9 +638,8 @@ try{
           }
           if(motorGrid){
             addHistorySelect(motorGrid,'historico_motorista','Escolher motorista já utilizado','Escolha um motorista do histórico');
-            const cpf=addInput(motorGrid,'motorista_cpf','CPF do motorista','text',{placeholder:'000.000.000-00',inputmode:'numeric',noTitlecase:true});
-            cpf.maxLength=14;
-            if(!cpf.dataset.docBound){cpf.dataset.docBound='1';cpf.addEventListener('input',()=>{cpf.value=formatCpf(cpf.value)})}
+            const rg=addInput(motorGrid,'motorista_rg','RG / Documento de identidade','text',{placeholder:'Ex.: 12.345.678-9 / SSP-SP',noTitlecase:true});
+            rg.maxLength=50;
             const up=addUpload(motorGrid,'doc_motorista_file','Importar documento do motorista','doc_motorista_status');
             bindUpload(up,'motorista','doc_motorista_status')
           }
@@ -874,7 +873,7 @@ try{
         }
         function applyDriver(d){
           if(d.nome&&byId('motorista'))setField('motorista',d.nome);
-          if(d.cpf&&byId('motorista_cpf'))setField('motorista_cpf',formatCpf(d.cpf))
+          if(d.cpf&&byId('motorista_rg'))setField('motorista_rg',formatCpf(d.cpf))
         }
         function setTruckType(value){
           const el=byId('tipo_caminhao');if(!el||!value)return;
@@ -1033,7 +1032,7 @@ try{
         }
         async function saveExtras(id){
           const body={
-            motorista_cpf:digits(byId('motorista_cpf')?.value||''),
+            motorista_rg:String(byId('motorista_rg')?.value||'').trim(),
             placa_carreta:byId('placa_carreta')?.value||'',
             capacidade_carga_cavalo:byId('capacidade_carga_cavalo')?.value||'',
             eixos_cavalo:byId('eixos_cavalo')?.value||'',
@@ -1073,8 +1072,8 @@ try{
           lastOpenKey=key;pendingDocs={motorista:null,cavalo:null,carreta:null};
           ['doc_motorista_file','doc_cavalo_file','doc_carreta_file'].forEach(x=>{const el=byId(x);if(el)el.value=''});
           if(!id){
-            ['motorista_cpf','placa_carreta','capacidade_carga_cavalo','eixos_cavalo','capacidade_carga_carreta','eixos_carreta'].forEach(x=>{const el=byId(x);if(el)el.value=''});
-            setStatus('doc_motorista_status','PDF ou foto. O sistema tenta preencher nome e CPF automaticamente.');
+            ['motorista_rg','placa_carreta','capacidade_carga_cavalo','eixos_cavalo','capacidade_carga_carreta','eixos_carreta'].forEach(x=>{const el=byId(x);if(el)el.value=''});
+            setStatus('doc_motorista_status','PDF ou foto. O sistema tenta preencher nome e RG automaticamente.');
             setStatus('doc_cavalo_status','PDF ou foto. O sistema tenta preencher placa, capacidade e eixos.');
             setStatus('doc_carreta_status','PDF ou foto. O sistema tenta preencher placa, capacidade e eixos.');
             return
@@ -1083,7 +1082,7 @@ try{
             const r=await docBaseFetch('/coletas/api/coletas',{cache:'no-store'}),rows=await r.json();
             const co=(Array.isArray(rows)?rows:[]).find(x=>String(x.id)===id);
             if(co){
-              if(byId('motorista_cpf'))byId('motorista_cpf').value=formatCpf(co.motorista_cpf||'');
+              if(byId('motorista_rg'))byId('motorista_rg').value=String(co.motorista_rg||'');
               if(byId('placa_carreta'))byId('placa_carreta').value=String(co.placa_carreta||'').toUpperCase();
               if(byId('capacidade_carga_cavalo'))byId('capacidade_carga_cavalo').value=co.capacidade_carga_cavalo||'';
               if(byId('eixos_cavalo'))byId('eixos_cavalo').value=co.eixos_cavalo??'';
