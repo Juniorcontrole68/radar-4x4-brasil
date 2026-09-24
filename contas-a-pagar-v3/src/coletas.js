@@ -227,7 +227,17 @@ try{
           const moneyCols=[
             {idx:colIndex(headRow,['frete cobrado','valor cobrado']),key:'frete_cobrado'},
             {idx:colIndex(headRow,['frete pago','valor pago']),key:'frete_pago'},
-            {idx:colIndex(headRow,['valor adiantamento','adiantamento r
+            {idx:colIndex(headRow,['valor adiantamento','adiantamento']),key:'valor_adiantamento'},
+            {idx:colIndex(headRow,['tarifa rota','tarifa por eixo','rota por eixo']),key:'tarifa_rota_por_eixo'},
+            {idx:colIndex(headRow,['pedagio']),key:'pedagio'},
+            {idx:colIndex(headRow,['lucro']),key:'lucro'}
+          ];
+          [...tbody.querySelectorAll('tr')].forEach(tr=>{
+            const coleta=acharPorLinha(tr);
+            if(!coleta) return;
+            moneyCols.forEach(m=>{if(m.idx>=0&&tr.cells?.[m.idx])tr.cells[m.idx].textContent=fmtBRL(coleta[m.key])});
+            if(tr.dataset.recebidoDecorado==='1') return;
+            tr.dataset.recebidoDecorado='1';
 
             const tdCheck=document.createElement('td');
             tdCheck.className='recebido-cell';
