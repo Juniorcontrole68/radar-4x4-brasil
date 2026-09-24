@@ -732,21 +732,60 @@ try{
           return ocrSource(file,statusId)
         }
         function linesOf(text){return String(text||'').split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean)}
+        function validCpf(v){
+          const d=digits(v);if(d.length!==11||/^(\d)\1{10}$/.test(d))return false;
+          let s=0;for(let i=0;i<9;i++)s+=Number(d[i])*(10-i);
+          let x=(s*10)%11;if(x===10)x=0;if(x!==Number(d[9]))return false;
+          s=0;for(let i=0;i<10;i++)s+=Number(d[i])*(11-i);
+          x=(s*10)%11;if(x===10)x=0;return x===Number(d[10])
+        }
         function parseCpf(text){
-          const t=String(text||''),m=t.match(/\b(\d{3})[.\s]?(\d{3})[.\s]?(\d{3})[-\s]?(\d{2})\b/);
-          return m?m[1]+m[2]+m[3]+m[4]:''
+          const raw=String(text||''),flat=raw.replace(/\s+/g,' ');
+          const perto=flat.match(/\bCPF\b[^0-9]{0,30}(\d{3})[\.\s]?(\d{3})[\.\s]?(\d{3})[-\s]?(\d{2})/i);
+          if(perto){
+            const d=perto.slice(1,5).join('');if(validCpf(d))return d
+          }
+          const all=[...flat.matchAll(/\b(\d{3})[\.\s]?(\d{3})[\.\s]?(\d{3})[-\s]?(\d{2})\b/g)];
+          for(const m of all){const d=m.slice(1,5).join('');if(validCpf(d))return d}
+          return perto?perto.slice(1,5).join(''):''
         }
         function cleanPersonName(v){
-          return String(v||'').replace(/^(NOME(?: E SOBRENOME)?|NOME DO CONDUTOR)\s*[:\-]?\s*/i,'').replace(/[^A-Za-zÀ-ÿ'\-\s]/g,' ').replace(/\s+/g,' ').trim()
+          return String(v||'')
+            .replace(/^\s*(?:\d+\s*)?(?:NOME(?: E SOBRENOME)?|NOME DO CONDUTOR|NOME COMPLETO)\s*[:\-]?\s*/i,'')
+            .replace(/\b(?:CPF|DATA DE NASCIMENTO|NASCIMENTO|DOC(?:UMENTO)?(?: DE)? IDENTIDADE|FILIA[CÇ][AÃ]O|VALIDADE|CAT(?:EGORIA)?|REGISTRO|NACIONALIDADE)\b.*$/i,'')
+            .replace(/[^A-Za-zÀ-ÿ'\-\s]/g,' ').replace(/\s+/g,' ').trim()
+        }
+        function plausiblePersonName(v){
+          const n=cleanPersonName(v),parts=n.split(' ').filter(Boolean);
+          if(n.length<6||n.length>90||parts.length<2||parts.length>8)return false;
+          if(/\b(?:CARTEIRA|HABILITACAO|REPUBLICA|FEDERATIVA|BRASIL|DETRAN|SECRETARIA|ASSINATURA|CONDUTOR|CPF|REGISTRO|VALIDADE|CATEGORIA)\b/i.test(norm(n)))return false;
+          return parts.every(p=>p.length>=2)
         }
         function parseDriver(text){
-          const lines=linesOf(text),cpf=parseCpf(text);let nome='';
-          for(let i=0;i<lines.length;i++){
-            const n=norm(lines[i]);
-            if(/^(NOME|NOME E SOBRENOME|NOME DO CONDUTOR)\b/.test(n)&&!/PAI|MAE|FILIA/.test(n)){
-              let cand=cleanPersonName(lines[i]);
-              if(norm(cand)==='NOME'||norm(cand)==='NOME E SOBRENOME'||cand.length<5)cand=cleanPersonName(lines[i+1]||'');
-              if(cand.split(' ').filter(Boolean).length>=2&&cand.length>=6){nome=titleCase(cand);break}
+          const raw=String(text||''),lines=linesOf(raw),flat=raw.replace(/\s+/g,' ').trim(),cpf=parseCpf(raw);let nome='';
+          const labelPatterns=[
+            /(?:^|\s)(?:\d+\s*)?NOME(?:\s+E\s+SOBRENOME)?\s*[:\-]?\s*([A-ZÀ-Ü][A-ZÀ-Ü'\- ]{5,90}?)(?=\s+(?:CPF|DATA\s+DE\s+NASCIMENTO|NASCIMENTO|DOC(?:UMENTO)?|FILIA[CÇ][AÃ]O|VALIDADE|CAT(?:EGORIA)?|REGISTRO|NACIONALIDADE)\b|$)/i,
+            /(?:^|\s)NOME\s+DO\s+CONDUTOR\s*[:\-]?\s*([A-ZÀ-Ü][A-ZÀ-Ü'\- ]{5,90}?)(?=\s+(?:CPF|DATA|DOC|FILIA|VALIDADE|REGISTRO)\b|$)/i
+          ];
+          for(const re of labelPatterns){
+            const m=flat.match(re);if(m&&plausiblePersonName(m[1])){nome=titleCase(cleanPersonName(m[1]));break}
+          }
+          if(!nome){
+            for(let i=0;i<lines.length;i++){
+              const n=norm(lines[i]);
+              if(/\bNOME(?: E SOBRENOME| DO CONDUTOR| COMPLETO)?\b/.test(n)&&!/PAI|MAE|FILIA/.test(n)){
+                const same=cleanPersonName(lines[i]);
+                const next=cleanPersonName(lines[i+1]||'');
+                if(plausiblePersonName(same)){nome=titleCase(same);break}
+                if(plausiblePersonName(next)){nome=titleCase(next);break}
+              }
+            }
+          }
+          if(!nome){
+            const cpfLine=lines.findIndex(x=>/\bCPF\b/.test(norm(x)));
+            const start=cpfLine>0?Math.max(0,cpfLine-3):0,end=cpfLine>=0?cpfLine:Math.min(lines.length,12);
+            for(let i=start;i<end;i++){
+              if(plausiblePersonName(lines[i])){nome=titleCase(cleanPersonName(lines[i]));break}
             }
           }
           return{nome,cpf}
@@ -763,34 +802,100 @@ try{
           const m=all.match(/\b[A-Z]{3}[0-9][A-Z0-9][0-9]{2}\b/);return m?m[0]:''
         }
         function parseAxes(text){
-          const t=norm(text),m=t.match(/(?:QTD\.?\s*)?EIXOS?\s*[:\-]?\s*(\d{1,2})\b/);
-          return m?Number(m[1]):null
+          const t=norm(text)
+            .replace(/\bE1XOS?\b/g,'EIXOS')
+            .replace(/\bEIX0S?\b/g,'EIXOS');
+          const patterns=[
+            /(?:N(?:UMERO|º|°)?\s+DE\s+)?EIXOS?\s*[:\-]?\s*(\d{1,2})\b/,
+            /(\d{1,2})\s+EIXOS?\b/
+          ];
+          for(const re of patterns){
+            const m=t.match(re);if(m){const n=Number(m[1]);if(n>=1&&n<=12)return n}
+          }
+          return null
+        }
+        function parseNumberPt(v){
+          let s=String(v||'').trim().replace(/\s/g,'');
+          if(!s)return null;
+          if(s.includes(',')&&s.includes('.'))s=s.lastIndexOf(',')>s.lastIndexOf('.')?s.replace(/\./g,'').replace(',','.'):s.replace(/,/g,'');
+          else if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');
+          else if((s.match(/\./g)||[]).length>1)s=s.replace(/\./g,'');
+          const n=Number(s);return Number.isFinite(n)?n:null
+        }
+        function formatCapacityValue(raw,unit=''){
+          const n=parseNumberPt(raw);if(n===null||n<=0)return'';
+          let u=norm(unit).replace(/\./g,'');
+          if(!u)u=n<=100?'T':'KG';
+          if(/^TON/.test(u)||u==='T')return String(raw).trim()+' t';
+          return String(raw).trim()+' kg'
         }
         function parseCapacity(text){
-          const t=norm(text);
-          const labels=['CAPACIDADE DE CARGA','CAPACIDADE CARGA','CAP CARGA','CARGA UTIL'];
+          const t=norm(text).replace(/\s+/g,' ');
+          const labels=[
+            'CAPACIDADE DE CARGA','CAPACIDADE MAXIMA DE CARGA','CAPACIDADE CARGA',
+            'CAP CARGA','CARGA UTIL','CARGA LIQUIDA','CAPACIDADE'
+          ];
           for(const label of labels){
             const p=t.indexOf(label);if(p<0)continue;
-            const frag=t.slice(p+label.length,p+label.length+80);
-            const m=frag.match(/([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]+)?)\s*(KG|T|TON|TONELADAS?)?/);
-            if(m)return m[1]+(m[2]?' '+m[2]:'')
+            const frag=t.slice(p+label.length,p+label.length+100);
+            const m=frag.match(/(?:[:\-]\s*)?([0-9]{1,6}(?:[.,][0-9]{1,3})?)\s*(KG|QUILOS?|T|TON|TONELADAS?)?\b/);
+            if(m){
+              const v=formatCapacityValue(m[1],m[2]||'');
+              if(v)return v
+            }
+          }
+          const tara=t.match(/\bTARA\s*[:\-]?\s*([0-9]{2,6}(?:[.,][0-9]{1,3})?)\s*(KG|T|TON|TONELADAS?)?/);
+          const pbt=t.match(/\b(?:PBT|PESO BRUTO TOTAL)\s*[:\-]?\s*([0-9]{2,6}(?:[.,][0-9]{1,3})?)\s*(KG|T|TON|TONELADAS?)?/);
+          if(tara&&pbt){
+            let a=parseNumberPt(tara[1]),b=parseNumberPt(pbt[1]);
+            const ta=norm(tara[2]||''),tb=norm(pbt[2]||'');
+            if(/^T|TON/.test(ta))a*=1000;if(/^T|TON/.test(tb))b*=1000;
+            const payload=b-a;if(payload>0)return Math.round(payload).toLocaleString('pt-BR')+' kg'
           }
           return''
         }
-        function parseVehicle(text){return{placa:parsePlate(text),eixos:parseAxes(text),capacidade:parseCapacity(text)}}
+        function parseVehicleType(text,eixos){
+          const t=norm(text).replace(/\s+/g,' ');
+          if(/\b(?:CAVALO MECANICO|CAMINHAO[\s\-]+TRATOR|CAMINHAO TRATOR|TRATOR RODOVIARIO)\b/.test(t))return'Cavalo mecânico';
+          if(/\b(?:TRUCK|TRUCADO)\b/.test(t))return'Truck';
+          if(/\bTOCO\b/.test(t))return'Toco';
+          const rigid=/\bCAMINHAO\b/.test(t)&&!/\b(?:SEMI[\s\-]?REBOQUE|REBOQUE|CAMINHAO[\s\-]+TRATOR)\b/.test(t);
+          if(rigid&&eixos===2)return'Toco';
+          if(rigid&&eixos>=3)return'Truck';
+          return''
+        }
+        function parseVehicle(text){
+          const eixos=parseAxes(text);
+          return{placa:parsePlate(text),eixos,capacidade:parseCapacity(text),tipoVeiculo:parseVehicleType(text,eixos)}
+        }
         function applyDriver(d){
-          if(d.nome&&byId('motorista'))byId('motorista').value=d.nome;
-          if(d.cpf&&byId('motorista_cpf'))byId('motorista_cpf').value=formatCpf(d.cpf)
+          if(d.nome&&byId('motorista'))setField('motorista',d.nome);
+          if(d.cpf&&byId('motorista_cpf'))setField('motorista_cpf',formatCpf(d.cpf))
+        }
+        function setTruckType(value){
+          const el=byId('tipo_caminhao');if(!el||!value)return;
+          if(el.tagName==='SELECT'){
+            const want=norm(value);
+            const aliases=value==='Cavalo mecânico'?['CAVALO MECANICO','CAVALO','CAMINHAO TRATOR','TRATOR']:
+              value==='Truck'?['TRUCK','TRUCADO']:['TOCO'];
+            const opt=[...el.options].find(o=>aliases.some(a=>norm(o.value)===a||norm(o.textContent)===a||norm(o.value).includes(a)||norm(o.textContent).includes(a)));
+            if(opt)el.value=opt.value;
+            else{
+              const o=document.createElement('option');o.value=value;o.textContent=value;el.appendChild(o);el.value=value
+            }
+          }else el.value=value;
+          try{el.dispatchEvent(new Event('change',{bubbles:true}))}catch{}
         }
         function applyVehicle(tipo,d){
           if(tipo==='cavalo'){
-            if(d.placa&&byId('placa'))byId('placa').value=d.placa;
-            if(d.capacidade&&byId('capacidade_carga_cavalo'))byId('capacidade_carga_cavalo').value=d.capacidade;
-            if(d.eixos!==null&&byId('eixos_cavalo'))byId('eixos_cavalo').value=String(d.eixos)
+            if(d.placa&&byId('placa'))setField('placa',d.placa);
+            if(d.tipoVeiculo)setTruckType(d.tipoVeiculo);
+            if(d.capacidade&&byId('capacidade_carga_cavalo'))setField('capacidade_carga_cavalo',d.capacidade);
+            if(d.eixos!==null&&byId('eixos_cavalo'))setField('eixos_cavalo',String(d.eixos))
           }else{
-            if(d.placa&&byId('placa_carreta'))byId('placa_carreta').value=d.placa;
-            if(d.capacidade&&byId('capacidade_carga_carreta'))byId('capacidade_carga_carreta').value=d.capacidade;
-            if(d.eixos!==null&&byId('eixos_carreta'))byId('eixos_carreta').value=String(d.eixos)
+            if(d.placa&&byId('placa_carreta'))setField('placa_carreta',d.placa);
+            if(d.capacidade&&byId('capacidade_carga_carreta'))setField('capacidade_carga_carreta',d.capacidade);
+            if(d.eixos!==null&&byId('eixos_carreta'))setField('eixos_carreta',String(d.eixos))
           }
           sumAxes()
         }
@@ -808,7 +913,7 @@ try{
               return found.length>0
             }else{
               const d=parseVehicle(text);applyVehicle(tipo,d);
-              const found=[d.placa?'placa':'',d.capacidade?'capacidade':'',d.eixos!==null?'eixos':''].filter(Boolean);
+              const found=[d.placa?'placa':'',d.tipoVeiculo?'tipo do caminhão':'',d.capacidade?'capacidade':'',d.eixos!==null?'eixos':''].filter(Boolean);
               setStatus(statusId,found.length?'✓ '+esc(found.join(', '))+' preenchido(s). Confira antes de salvar.':'Documento anexado, mas os dados não foram reconhecidos. Preencha manualmente.','ok');
               return found.length>0
             }
