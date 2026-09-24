@@ -339,8 +339,8 @@ try{
 
           make('Coleta',['os_numero','cliente','endereco_coleta','data_carregamento','hora_carregamento']);
           make('Entrega',['destinatario','endereco_entrega','previsao_entrega','data_descarga','status','comprovante']);
-          make('Dados do Motorista',['motorista','telefone_motorista','transportadora_agregado']);
-          make('Dados do Caminhão',['placa','tipo_caminhao','implemento','eixos']);
+          make('Dados do Motorista',['motorista','motorista_cpf','telefone_motorista','transportadora_agregado','doc_motorista_file']);
+          make('Dados do Caminhão',['placa','tipo_caminhao','implemento','eixos','capacidade_carga_cavalo','eixos_cavalo','doc_cavalo_file','placa_carreta','capacidade_carga_carreta','eixos_carreta','doc_carreta_file']);
           make('Dados da Carga',['quantidade_paletes','peso_total','observacoes']);
           make('Financeiro',['frete_cobrado','frete_pago','percentual_adiantamento','valor_adiantamento','tarifa_rota_por_eixo','pedagio','lucro','recebido_financeiro','data_recebimento_financeiro','previsao_pagamento_fatura']);
 
