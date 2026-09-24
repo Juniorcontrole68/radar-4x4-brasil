@@ -459,6 +459,44 @@ function quickSsw38Progress(base,from,to){
 
 
 
+
+async function probeSsw0082Reports(){
+  if(!internalSswConfigured())return{ok:false,error:'Credenciais internas SSW não configuradas'};
+  const jar=new Map();
+  const apply=headers=>{const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);for(const raw of list){const pair=String(raw).split(';')[0],i=pair.indexOf('=');if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())}};
+  const cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
+  const headers=ref=>({'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':ref||'https://sistema.ssw.inf.br/bin/menu01'});
+  let r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
+  const login=new URLSearchParams({act:'L',f1:process.env.SSW_INTERNAL_DOMINIO||'',f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),f3:process.env.SSW_INTERNAL_USUARIO||'',f4:process.env.SSW_INTERNAL_SENHA||''});
+  r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/ssw0422','Cookie':cookie()},body:login.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);await r.text();
+  if(!jar.has('token'))return{ok:false,error:'Login interno SSW não aceito'};
+  r=await fetch('https://sistema.ssw.inf.br/bin/ssw0082',{headers:headers(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
+  const listHtml=await r.text(),listPlain=htmlText38(listHtml),reports=[];
+  const extractPayload=code=>{
+    const re=new RegExp('(\\d+\\|(?:ssw\\d+\\s*-\\s*)?\\d+\\|[DMU]@\\d+\\|\\d+\\|[DMU]\\|'+code+'\\|[^|]*\\|[^<]+)','i');
+    const m=listHtml.match(re)||listPlain.match(re);
+    return m?htmlText38(m[1]).trim():''
+  };
+  for(const code of ['73','167']){
+    const payload=extractPayload(code);
+    if(!payload){reports.push({code,error:'payload não localizado'});continue}
+    try{
+      const u=new URL('https://sistema.ssw.inf.br/bin/ssw0082');u.searchParams.set('act',payload);
+      const rr=await fetch(u,{headers:headers('https://sistema.ssw.inf.br/bin/ssw0082'),redirect:'manual',signal:AbortSignal.timeout(20000)});apply(rr.headers);
+      const type=rr.headers.get('content-type')||'',buf=Buffer.from(await rr.arrayBuffer()),magic=buf.subarray(0,12).toString('latin1');
+      let info={code,payload,status:rr.status,type,bytes:buf.length,magic};
+      if(type.includes('text')||type.includes('html')||magic.startsWith('<')){
+        const txt=buf.toString('latin1'),plain=htmlText38(txt);
+        const wm=(txt.match(/name=["']?web_body["']?[^>]*value=["']([^"']+)["']/i)||[])[1]||'';
+        let decoded='';try{decoded=decodeURIComponent(wm.replace(/&amp;/g,'&'))}catch{decoded=wm}
+        info={...info,title:htmlText38((txt.match(/<title[^>]*>([\s\S]*?)<\/title>/i)||[])[1]||''),webBody:decoded.slice(0,1200),text:plain.slice(0,5000)};
+      }
+      reports.push(info)
+    }catch(e){reports.push({code,payload,error:String(e.message||e)})}
+  }
+  return{ok:true,reports}
+}
+
 async function probeSsw0082Catalog(){
   if(!internalSswConfigured())return{ok:false,error:'Credenciais internas SSW não configuradas'};
   const jar=new Map();
@@ -2196,6 +2234,7 @@ let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.jo
   probeSswRevenueMenu().then(x=>console.log('SSW RECEITA MENU: '+JSON.stringify(x))).catch(e=>console.log('SSW RECEITA MENU ERRO: '+String(e.message||e)));
   probeSswRevenueCandidates().then(x=>console.log('SSW RECEITA CANDIDATOS: '+JSON.stringify(x))).catch(e=>console.log('SSW RECEITA CANDIDATOS ERRO: '+String(e.message||e)));
   probeSsw0082Catalog().then(x=>console.log('SSW0082 CATALOGO RECEITA: '+JSON.stringify(x))).catch(e=>console.log('SSW0082 CATALOGO RECEITA ERRO: '+String(e.message||e)));
+  probeSsw0082Reports().then(x=>console.log('SSW0082 RELATORIOS TESTE: '+JSON.stringify(x))).catch(e=>console.log('SSW0082 RELATORIOS TESTE ERRO: '+String(e.message||e)));
 
   refreshBi2State().catch(e=>console.error('BI2 SFTP monitor ERRO: '+e.message));
   refreshBi2ApiState().catch(e=>console.error('BI2 WebAPI monitor ERRO: '+e.message));
