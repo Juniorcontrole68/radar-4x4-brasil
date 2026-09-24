@@ -54,6 +54,7 @@ const PERMISSION_OPTIONS=[
   ['evolucao','Evolução e previsão por motorista'],
   ['cidade_destino','Entregas por cidade destino'],
   ['roteirizador','Roteirizador de romaneios'],
+  ['programacao','Programação de Entregas'],
   ['final_carregamento','Registro de Carga e Descarga'],
   ['operacional','Operacional / Entregas'],
   ['financeiro','Financeiro'],
@@ -74,7 +75,7 @@ function hasPerm(p){return !!(AUTH&&(AUTH.is_admin||AUTH.permissions?.includes('
 function hasAnyPerm(list){return list.some(hasPerm)}
 function tabAllowed(tab){
   const map={
-    dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',
+    dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',
     agendamentos:'agendamentos',ajudantes:'ajudantes',
     'ssw-motoristas':'ssw_saidas','motoristas-evolucao':'evolucao',
     'ssw-atrasos':'ssw_atrasos','ssw-remetentes':'remetentes',
@@ -87,7 +88,7 @@ function tabAllowed(tab){
   return map[tab]?hasPerm(map[tab]):false
 }
 function applyPermissions(){
-  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',agendamentos:'agendamentos',ajudantes:'ajudantes'};
+  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',agendamentos:'agendamentos',ajudantes:'ajudantes'};
   document.querySelectorAll('.nav button').forEach(b=>{
     let show=true;
     if(b.dataset.adminOnly==='1')show=!!AUTH?.is_admin;
@@ -102,6 +103,7 @@ function applyPermissions(){
     'Evolução e Previsão por Motorista':'evolucao',
     'Entregas por Cidade Destino':'cidade_destino',
     'Registro de Carga e Descarga':'final_carregamento',
+    'Programação de Entregas':'programacao',
     'Operacional':'operacional',
     'Financeiro':'financeiro',
     'Receita SSW':'receita_ssw',
@@ -224,6 +226,7 @@ async function showAuthenticatedApp(user){
   setupUserAdmin();
   setupLoadingForm();
   setupAgCopy();
+  setupDeliveryProgram();
   setupRoteirizador();
   if(AUTH.is_admin)loadDashboardUsers();
   if(!window.__appStarted){
@@ -1020,6 +1023,97 @@ function setupLoadingForm(){
 }
 
 
+
+let DELIVERY_PROGRAM=null;
+function programTomorrowLocal(){
+  const d=new Date();d.setDate(d.getDate()+1);return iso(d)
+}
+function programFmtNumber(v,d=0){
+  return Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d})
+}
+function programSet(id,v){const e=$(id);if(e)e.textContent=v}
+function renderDeliveryProgram(data){
+  DELIVERY_PROGRAM=data;
+  programSet('#programOpen',nf(data.totalOpen||0));
+  programSet('#programDeliveries',nf(data.programmed||0));
+  programSet('#programVehicles',nf(data.vehicles||0));
+  programSet('#programCost',brl(Number(data.totalCost||0)));
+  programSet('#programKg',programFmtNumber(data.totalKg||0,0));
+  programSet('#programM3',programFmtNumber(data.totalM3||0,2));
+  programSet('#programReview',nf(data.reviewCount||0));
+  programSet('#hubProgVehicles',nf(data.vehicles||0));
+  programSet('#hubProgDeliveries',nf(data.programmed||0));
+  programSet('#hubProgCost',brl(Number(data.totalCost||0)));
+  const hub=$('#hubProgInfo');
+  if(hub)hub.textContent=(data.weekday||'')+' • '+nf(data.programmed||0)+' entrega(s) • '+nf(data.reviewCount||0)+' para revisão • '+brl(Number(data.totalCost||0));
+  const status=$('#programStatus');
+  if(status)status.textContent='Programação de '+String(data.date||'').split('-').reverse().join('/')+' ('+(data.weekday||'')+') • '+nf(data.programmed||0)+' de '+nf(data.totalOpen||0)+' entrega(s) em aberto alocadas • '+nf(data.notScheduledToday||0)+' pertencem a outros dias de atendimento.';
+  const box=$('#programLoads');
+  const loads=Array.isArray(data.loads)?data.loads:[];
+  if(box){
+    if(!loads.length)box.innerHTML='<div class="card program-empty">Nenhuma carga pôde ser programada automaticamente para esta data.</div>';
+    else box.innerHTML=loads.map((load,idx)=>{
+      const rows=(load.items||[]).map((r,i)=>'<tr><td>'+(i+1)+'</td><td>'+safe(r.nf||'—')+'</td><td>'+safe(r.ctrc||'—')+'</td><td>'+safe(r.cliente||'—')+'</td><td>'+safe(r.cidade||'—')+'</td><td>'+safe(r.previsao||'—')+'</td><td>'+programFmtNumber(r.peso||0,0)+' kg</td><td>'+programFmtNumber(r.m3||0,2)+' m³</td><td>'+programFmtNumber(r.distanceKm||0,0)+' km</td></tr>').join('');
+      const kg=Math.max(0,Math.min(100,Number(load.kgUtil||0))),m3=Math.max(0,Math.min(100,Number(load.m3Util||0)));
+      return '<div class="card program-load"><div class="program-load-head"><div><div class="program-load-title">Veículo '+(idx+1)+' • '+safe(load.vehicle)+'</div><div class="program-load-tags"><span>'+safe(load.region||'')+'</span><span>Setor '+safe(load.sector||'—')+'</span><span>'+safe(load.distanceBand||'')+'</span><span>'+nf(load.deliveries||0)+' entrega(s)</span></div></div><div class="program-load-title">'+brl(Number(load.cost||0))+'</div></div>'+
+        '<div class="program-load-kpis">'+
+        '<div class="program-load-mini"><span>Peso</span><b>'+programFmtNumber(load.kg||0,0)+' / '+programFmtNumber(load.kgCapacity||0,0)+' kg</b><div class="program-bar"><span style="width:'+kg+'%"></span></div></div>'+
+        '<div class="program-load-mini"><span>Cubagem</span><b>'+programFmtNumber(load.m3||0,2)+' / '+programFmtNumber(load.m3Capacity||0,0)+' m³</b><div class="program-bar"><span style="width:'+m3+'%"></span></div></div>'+
+        '<div class="program-load-mini"><span>Ocupação peso</span><b>'+programFmtNumber(load.kgUtil||0,1)+'%</b></div>'+
+        '<div class="program-load-mini"><span>Ocupação m³</span><b>'+programFmtNumber(load.m3Util||0,1)+'%</b></div>'+
+        '<div class="program-load-mini"><span>Limite entregas</span><b>'+nf(load.deliveries||0)+' / '+nf(load.maxStops||0)+'</b></div>'+
+        '<div class="program-load-mini"><span>Destino mais distante</span><b>'+programFmtNumber(load.maxDistanceKm||0,0)+' km</b></div></div>'+
+        '<div class="scroll"><table><thead><tr><th>Ordem</th><th>NF</th><th>CT-e</th><th>Cliente</th><th>Cidade</th><th>Previsão SSW</th><th>Peso</th><th>m³</th><th>Distância</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>'
+    }).join('')
+  }
+  const review=(data.review||[]).map(r=>({
+    motivo:r.reviewReason||'Revisar',
+    nf:r.nf||'',ctrc:r.ctrc||'',cliente:r.cliente||'',cidade:r.cidade||'',
+    previsao:r.previsao||'',peso:r.peso?programFmtNumber(r.peso,0)+' kg':'—',
+    m3:r.m3?programFmtNumber(r.m3,2)+' m³':'—',status:r.status||''
+  }));
+  if($('#programReviewTable'))table('#programReviewTable',[['Motivo','motivo'],['NF','nf'],['CT-e','ctrc'],['Cliente','cliente'],['Cidade','cidade'],['Previsão SSW','previsao'],['Peso','peso'],['m³','m3'],['Status','status']],review)
+}
+async function refreshDeliveryProgram(force=false){
+  if(!hasAnyPerm(['programacao','roteirizador','dashboard','ssw_saidas']))return;
+  if(window.__programBusy)return;
+  window.__programBusy=true;
+  const date=$('#programDate')?.value||programTomorrowLocal(),status=$('#programStatus');
+  if(status)status.textContent='Consultando entregas em aberto no SSW, cubagem e distância das cidades…';
+  const btn=$('#programGenerate'),rf=$('#programRefresh');
+  if(btn)btn.disabled=true;if(rf)rf.disabled=true;
+  try{
+    const q=new URLSearchParams({date});if(force)q.set('force','1');q.set('t',Date.now());
+    const r=await fetch('/api/programacao-entregas?'+q.toString(),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível gerar a programação.');
+    renderDeliveryProgram(j)
+  }catch(e){
+    if(status)status.textContent='Erro ao gerar programação: '+e.message;
+    const hub=$('#hubProgInfo');if(hub)hub.textContent='Programação indisponível: '+e.message
+  }finally{
+    window.__programBusy=false;if(btn)btn.disabled=false;if(rf)rf.disabled=false
+  }
+}
+function printDeliveryProgram(){
+  const d=DELIVERY_PROGRAM;if(!d){alert('Gere a programação antes de imprimir.');return}
+  const loads=(d.loads||[]).map((l,idx)=>{
+    const rows=(l.items||[]).map((r,i)=>'<tr><td>'+(i+1)+'</td><td>'+safe(r.nf||'')+'</td><td>'+safe(r.ctrc||'')+'</td><td>'+safe(r.cliente||'')+'</td><td>'+safe(r.cidade||'')+'</td><td>'+programFmtNumber(r.peso||0,0)+'</td><td>'+programFmtNumber(r.m3||0,2)+'</td></tr>').join('');
+    return '<h2>Veículo '+(idx+1)+' • '+safe(l.vehicle)+' • '+brl(Number(l.cost||0))+'</h2><div class="meta">'+safe(l.region||'')+' • '+safe(l.distanceBand||'')+' • '+nf(l.deliveries||0)+' entregas • '+programFmtNumber(l.kg||0,0)+' kg • '+programFmtNumber(l.m3||0,2)+' m³</div><table><thead><tr><th>#</th><th>NF</th><th>CT-e</th><th>Cliente</th><th>Cidade</th><th>kg</th><th>m³</th></tr></thead><tbody>'+rows+'</tbody></table>'
+  }).join('');
+  const w=window.open('','_blank','noopener,noreferrer');
+  if(!w){alert('Libere pop-ups para imprimir o relatório.');return}
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Programação de Entregas</title><style>body{font-family:Arial,sans-serif;margin:20px;color:#111827}h1{font-size:22px}h2{font-size:16px;margin:22px 0 5px}.meta{font-size:11px;color:#475569;margin-bottom:7px}table{width:100%;border-collapse:collapse;font-size:10px;margin-bottom:15px}th,td{border:1px solid #cbd5e1;padding:5px;text-align:left}th{background:#f1f5f9}@media print{body{margin:8mm}}</style></head><body><h1>Programação de Entregas • '+safe(String(d.date||'').split('-').reverse().join('/'))+'</h1><div class="meta">'+safe(d.weekday||'')+' • '+nf(d.programmed||0)+' entregas • '+nf(d.vehicles||0)+' veículos • custo previsto '+brl(Number(d.totalCost||0))+'</div>'+loads+'<script>window.onload=()=>window.print()<\/script></body></html>');
+  w.document.close()
+}
+function setupDeliveryProgram(){
+  const date=$('#programDate'),gen=$('#programGenerate'),rf=$('#programRefresh'),pr=$('#programPrint');
+  if(date&&!date.value)date.value=programTomorrowLocal();
+  if(gen)gen.onclick=()=>refreshDeliveryProgram(false);
+  if(rf)rf.onclick=()=>refreshDeliveryProgram(true);
+  if(pr)pr.onclick=printDeliveryProgram;
+}
+
 let ROUTE_MANIFESTS=[],ROUTE_PLAN=null,ROUTE_MANUAL_ORDER=[],ROUTE_EXTRA_STOPS=[],ROUTE_MAP=null,ROUTE_LAYER=null;
 function routeFmtKm(m){return Number.isFinite(Number(m))?(Number(m)/1000).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})+' km':'—'}
 function routeDistance(order,m){
@@ -1270,6 +1364,8 @@ function loadHeavyForTab(tab){
   }else if(tab==='conferencia'&&hasPerm('final_carregamento')){
     loadingDriverOptions();
     setTimeout(()=>refreshLoadingRecords(true),50);
+  }else if(tab==='programacao'&&hasAnyPerm(['programacao','roteirizador','dashboard','ssw_saidas'])){
+    setTimeout(()=>refreshDeliveryProgram(false),60);
   }else if(tab==='agendamentos-copia'&&hasAnyPerm(['dashboard','agendamentos','agendamentos_copia'])){
     setTimeout(()=>refreshAgCopy(false),50);
   }else if(tab==='roteirizador'&&hasPerm('roteirizador')){
@@ -1334,6 +1430,7 @@ function openTab(tab){
     'ssw-motoristas':'SSW • Saídas x Baixas',
     'motoristas-evolucao':'Evolução por Motorista',
     'conferencia':'Registro de Carga e Descarga',
+    'programacao':'Programação de Entregas',
     'roteirizador':'Roteirizador SSW',
     'agendamentos-copia':'Consulta de Agendamentos',
     'usuarios':'Usuários e Acessos'
