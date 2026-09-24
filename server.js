@@ -19,6 +19,9 @@ const SSW_TRACK_CACHE=new Map();
 const SSW_DRIVER_CONFIRMED_DAY=new Map();
 let SSW38_QUICK_CACHE={at:0,value:null};
 let SSW38_QUICK_INFLIGHT=null;
+let SSW_PENDING_CACHE={at:0,value:null};
+let SSW_PENDING_INFLIGHT=null;
+let DELIVERY_PROGRAM_CACHE=new Map();
 async function fetchMotoristasVeiculos(){
   const u=new URL('/api/painel/motoristas-veiculos',COLETAS_PORTAL_URL);
   const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Dashboard/1.0','Cache-Control':'no-cache'},signal:AbortSignal.timeout(15000)});
@@ -435,6 +438,279 @@ async function fetchSsw38Quick(){
     return value
   })().finally(()=>{SSW38_QUICK_INFLIGHT=null});
   return SSW38_QUICK_INFLIGHT
+}
+
+
+const DELIVERY_FLEET=[
+  {id:'fiorino',label:'Fiorino',kg:600,m3:3,cost:400},
+  {id:'van_furgao',label:'Van Furgão',kg:1500,m3:10,cost:700},
+  {id:'van_bau',label:'Van Baú',kg:1500,m3:15,cost:800}
+];
+function deliveryProgramTomorrow(){
+  const p=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(Date.now()+86400000));
+  const o=Object.fromEntries(p.map(x=>[x.type,x.value]));
+  return o.year+'-'+o.month+'-'+o.day
+}
+function deliveryProgramDow(ymd){
+  const d=new Date(String(ymd||'')+'T12:00:00-03:00');
+  return Number.isFinite(d.getTime())?d.getDay():-1
+}
+function deliveryProgramDowLabel(n){return['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'][n]||'—'}
+function deliveryProgramParseM3Text(v){
+  const s=String(v||'');
+  const m=s.match(/(?:M3|M³|CUBAGEM|METRAGEM\s*C[ÚU]BICA)\s*[:=]?\s*([\d.,]+)/i)||s.match(/([\d.,]+)\s*(?:M3|M³)\b/i);
+  return m?bi2Number(m[1]):0
+}
+function deliveryProgramFormParams(html){
+  const p=new URLSearchParams();
+  for(const m of String(html||'').matchAll(/<input\b([^>]*)>/gi)){
+    const a=m[1]||'',name=(a.match(/\bname=["']?([^"'\s>]+)/i)||[])[1],
+      val=(a.match(/\bvalue=["']([^"']*)["']/i)||a.match(/\bvalue=([^\s>]+)/i)||[])[1]||'',
+      type=(a.match(/\btype=["']?([^"'\s>]+)/i)||[])[1]||'';
+    if(name&&!/^(?:button|submit)$/i.test(type))p.set(name,htmlText38(val))
+  }
+  return p
+}
+async function fetchSswPendingDeliveries(){
+  if(SSW_PENDING_CACHE.value&&Date.now()-SSW_PENDING_CACHE.at<90000)return SSW_PENDING_CACHE.value;
+  if(SSW_PENDING_INFLIGHT)return SSW_PENDING_INFLIGHT;
+  SSW_PENDING_INFLIGHT=(async()=>{
+    if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
+    const jar=new Map();
+    const apply=headers=>{
+      const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);
+      for(const raw of list){const pair=String(raw).split(';')[0],i=pair.indexOf('=');if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())}
+    };
+    const cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
+    let r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
+    const login=new URLSearchParams({act:'L',f1:process.env.SSW_INTERNAL_DOMINIO||'',f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),f3:process.env.SSW_INTERNAL_USUARIO||'',f4:process.env.SSW_INTERNAL_SENHA||''});
+    r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/ssw0422','Cookie':cookie()},body:login.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);await r.text();
+    if(!jar.has('token'))throw new Error('Login interno SSW não aceito');
+    r=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2=AMR&f3=38',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
+    const nav=await r.text(),prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0198';
+    r=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
+    const html=await r.text(),params=deliveryProgramFormParams(html);params.set('act','PEN');
+    const pr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/'+prog,'Cookie':cookie()},body:params.toString(),redirect:'manual',signal:AbortSignal.timeout(25000)});apply(pr.headers);
+    const body=await pr.text(),rows=[];
+    for(const rm of body.matchAll(/<r\b[^>]*>([\s\S]*?)<\/r>/gi)){
+      const f={};
+      for(const fm of rm[1].matchAll(/<f(\d+)\b[^>]*>([\s\S]*?)<\/f\1>/gi))f[fm[1]]=htmlText38(fm[2]);
+      const ctrc=String(f['0']||'').trim(),nf=String(f['1']||'').trim(),cidade=String(f['4']||'').trim();
+      if(!ctrc&&!nf&&!cidade)continue;
+      const detalhes=String(f['11']||'');
+      rows.push({
+        ctrc,nf,remetente:String(f['2']||'').trim(),cliente:String(f['3']||'').trim(),
+        cidade,uf:'SP',volumes:bi2Number(f['6']),peso:bi2Number(f['7']),
+        previsao:String(f['8']||'').trim(),diasAtraso:bi2Number(f['9']),
+        status:String(f['10']||'').trim(),detalhes,m3:deliveryProgramParseM3Text(detalhes),
+        seq:String(f['12']||'').trim()
+      })
+    }
+    if(!rows.length)throw new Error('O SSW não retornou entregas em aberto na opção 38.');
+    const value={ok:true,source:'SSW opção 38 • Pendências',rows,total:rows.length,at:new Date().toISOString()};
+    SSW_PENDING_CACHE={at:Date.now(),value};
+    console.log('SSW38 PENDENCIAS PROGRAMAÇÃO: '+JSON.stringify({total:rows.length,cidades:new Set(rows.map(x=>x.cidade).filter(Boolean)).size,comPeso:rows.filter(x=>x.peso>0).length,comM3Direto:rows.filter(x=>x.m3>0).length}));
+    return value
+  })().finally(()=>{SSW_PENDING_INFLIGHT=null});
+  return SSW_PENDING_INFLIGHT
+}
+function deliveryProgramIndexRows(rows){
+  const ctrc=new Map(),nf=new Map();
+  for(const r of rows||[]){
+    const ck=normCtrc(r.numero_ctrc||r.CTRC||pickField(r,'CTRC','NUMERO CTRC','NUMERO_CTRC'));
+    const lk=normCtrcLoose(r.numero_ctrc||r.CTRC||pickField(r,'CTRC','NUMERO CTRC','NUMERO_CTRC'));
+    const nk=normNf(r.numero_nf||r.NF||pickField(r,'NF','NUMERO NF','NUMERO_NF'));
+    if(ck)ctrc.set(ck,r);if(lk)ctrc.set('#'+lk,r);if(nk&&!nf.has(nk))nf.set(nk,r)
+  }
+  return{ctrc,nf}
+}
+function deliveryProgramLookup(index,row){
+  const ck=normCtrc(row.ctrc),lk=normCtrcLoose(row.ctrc),nk=normNf(row.nf);
+  return index.ctrc.get(ck)||index.ctrc.get('#'+lk)||index.nf.get(nk)||null
+}
+async function deliveryProgramEnrich(rows){
+  let r174=[],r13=[];
+  try{r174=parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text).rows||[]}catch(e){console.log('PROGRAMAÇÃO BI2 174: '+String(e.message||e))}
+  try{r13=parseBi2Csv((await fetchBi2Report(13)).text).rows||[]}catch(e){console.log('PROGRAMAÇÃO BI2 13: '+String(e.message||e))}
+  const i174=deliveryProgramIndexRows(r174),i13=deliveryProgramIndexRows(r13);
+  let m3From174=0,m3From13=0;
+  const out=rows.map(x=>{
+    const a=deliveryProgramLookup(i174,x),b=deliveryProgramLookup(i13,x);
+    const m3a=bi2Number(pickField(a,'M3','M³','CUBAGEM','METRAGEM CUBICA','METRAGEM CÚBICA','VOLUME M3','M3 TOTAL'));
+    const m3b=bi2Number(pickField(b,'M3','M³','CUBAGEM','METRAGEM CUBICA','METRAGEM CÚBICA','VOLUME M3','M3 TOTAL'));
+    const m3=x.m3>0?x.m3:(m3a>0?(m3From174++,m3a):(m3b>0?(m3From13++,m3b):0));
+    const peso=x.peso>0?x.peso:(bi2Number(pickField(a,'PESO','PESO REAL','PESO KG','PESO_REAL'))||bi2Number(pickField(b,'PESO','PESO REAL','PESO KG','PESO_REAL')));
+    const volumes=x.volumes>0?x.volumes:(bi2Number(pickField(a,'QTD VOLUMES','QTDE VOLUME','QTDE_VOLUME'))||bi2Number(pickField(b,'QTD VOLUMES','QTDE VOLUME','QTDE_VOLUME')));
+    return{
+      ...x,m3,peso,volumes,
+      cliente:x.cliente||pickField(a,'DESTINATARIO','DESTINATARIO NOME','DESTINATARIO_NOME')||pickField(b,'DESTINATARIO'),
+      cidade:x.cidade||pickField(a,'CIDADE DESTINO','CIDADE_DESTINO')||pickField(b,'CIDADE DESTINO'),
+      uf:pickField(a,'UF DESTINO','UF_DESTINO')||pickField(b,'UF DESTINO')||x.uf||'SP',
+      mercadoria:pickField(a,'TIPO MERCADORIA','TIPO_MERCADORIA','MERCADORIA')||pickField(b,'MERCADORIA','TIPO MERCADORIA'),
+      m3Known:m3>0
+    }
+  });
+  console.log('PROGRAMAÇÃO CUBAGEM: '+JSON.stringify({pendencias:rows.length,bi174:r174.length,bi13:r13.length,m3From174,m3From13,comM3:out.filter(x=>x.m3>0).length}));
+  return out
+}
+function deliveryProgramCitySchedule(rows){
+  const map=new Map();
+  for(const r of rows){
+    const iso=brDateToIso(r.previsao),d=deliveryProgramDow(iso),k=normKey(r.cidade);
+    if(!k||d<0)continue;
+    if(!map.has(k))map.set(k,{counts:new Map(),dates:[]});
+    const x=map.get(k);x.counts.set(d,(x.counts.get(d)||0)+1);x.dates.push(iso)
+  }
+  const out=new Map();
+  for(const [k,x] of map){
+    const ranked=[...x.counts.entries()].sort((a,b)=>b[1]-a[1]||a[0]-b[0]);
+    out.set(k,{weekday:ranked[0]?.[0]??-1,weekdayLabel:deliveryProgramDowLabel(ranked[0]?.[0]),samples:x.dates.slice().sort().reverse().slice(0,5)})
+  }
+  return out
+}
+function deliveryProgramBearing(base,p){
+  const a=base.lat*Math.PI/180,b=p.lat*Math.PI/180,dl=(p.lon-base.lon)*Math.PI/180;
+  const y=Math.sin(dl)*Math.cos(b),x=Math.cos(a)*Math.sin(b)-Math.sin(a)*Math.cos(b)*Math.cos(dl);
+  return(Math.atan2(y,x)*180/Math.PI+360)%360
+}
+function deliveryProgramSector(bearing){
+  const labels=['N','NE','L','SE','S','SO','O','NO'];
+  return labels[Math.round(bearing/45)%8]
+}
+async function deliveryProgramGeo(rows){
+  const base=await routeGeocode(ROUTE_BASE_ADDRESS);
+  if(!base)throw new Error('Não foi possível localizar a base de Americana.');
+  const keys=new Map();
+  for(const r of rows){
+    const key=normKey(r.cidade)+'|'+normKey(r.uf||'SP');
+    if(r.cidade&&!keys.has(key))keys.set(key,{key,cidade:r.cidade,uf:r.uf||'SP'})
+  }
+  const cities=[];
+  for(const city of keys.values()){
+    const geo=await routeGeocode(city.cidade+', '+(city.uf||'SP')+', Brasil',base,650000);
+    if(geo)cities.push({...city,lat:geo.lat,lon:geo.lon,airKm:routeHaversine(base,geo)/1000})
+    else cities.push({...city,lat:null,lon:null,airKm:null})
+  }
+  const valid=cities.filter(x=>Number.isFinite(x.lat)&&Number.isFinite(x.lon));
+  for(let i=0;i<valid.length;i+=45){
+    const part=valid.slice(i,i+45),mt=await routeOsrmTable([base,...part]);
+    part.forEach((x,j)=>{
+      const d=Number(mt.matrix?.[0]?.[j+1]);
+      x.distanceKm=Number.isFinite(d)?d/1000:x.airKm*1.25;
+      x.sector=deliveryProgramSector(deliveryProgramBearing(base,x))
+    })
+  }
+  const map=new Map(cities.map(x=>[x.key,x]));
+  return{base,map}
+}
+function deliveryProgramPack(items,counts,maxStops){
+  const bins=[];
+  for(const t of DELIVERY_FLEET){
+    for(let i=0;i<(counts[t.id]||0);i++)bins.push({type:t,items:[],kg:0,m3:0})
+  }
+  const sorted=items.slice().sort((a,b)=>{
+    const sa=Math.max(a.peso/1500,a.m3/15),sb=Math.max(b.peso/1500,b.m3/15);
+    return sb-sa||b.m3-a.m3||b.peso-a.peso
+  });
+  for(const item of sorted){
+    const feasible=bins.filter(b=>b.items.length<maxStops&&b.kg+item.peso<=b.type.kg+1e-9&&b.m3+item.m3<=b.type.m3+1e-9);
+    if(!feasible.length)return null;
+    feasible.sort((a,b)=>{
+      const aa=(a.type.kg-(a.kg+item.peso))/a.type.kg+(a.type.m3-(a.m3+item.m3))/a.type.m3;
+      const bb=(b.type.kg-(b.kg+item.peso))/b.type.kg+(b.type.m3-(b.m3+item.m3))/b.type.m3;
+      return aa-bb||a.type.cost-b.type.cost
+    });
+    const bin=feasible[0];bin.items.push(item);bin.kg+=item.peso;bin.m3+=item.m3
+  }
+  if(bins.some(b=>!b.items.length))return null;
+  return bins
+}
+function deliveryProgramOptimizeGroup(items,maxStops){
+  if(!items.length)return[];
+  const kg=items.reduce((a,x)=>a+x.peso,0),m3=items.reduce((a,x)=>a+x.m3,0),n=items.length;
+  const vb=Math.max(1,Math.ceil(kg/1500),Math.ceil(m3/15),Math.ceil(n/maxStops));
+  let best=deliveryProgramPack(items,{fiorino:0,van_furgao:0,van_bau:vb},maxStops),bestCost=vb*800;
+  const fMax=Math.floor(bestCost/400),vfMax=Math.floor(bestCost/700),vbMax=Math.floor(bestCost/800);
+  const candidates=[];
+  for(let f=0;f<=fMax;f++)for(let vf=0;vf<=vfMax;vf++)for(let b=0;b<=vbMax;b++){
+    if(f+vf+b===0)continue;
+    const cost=f*400+vf*700+b*800;if(cost>bestCost)continue;
+    const capKg=f*600+(vf+b)*1500,capM3=f*3+vf*10+b*15,capStops=(f+vf+b)*maxStops;
+    if(capKg+1e-9<kg||capM3+1e-9<m3||capStops<n)continue;
+    candidates.push({cost,bins:f+vf+b,counts:{fiorino:f,van_furgao:vf,van_bau:b}})
+  }
+  candidates.sort((a,b)=>a.cost-b.cost||a.bins-b.bins||a.counts.van_bau-b.counts.van_bau);
+  for(const cand of candidates){
+    if(cand.cost>bestCost)break;
+    const packed=deliveryProgramPack(items,cand.counts,maxStops);
+    if(packed){best=packed;bestCost=cand.cost;break}
+  }
+  return(best||[]).map(b=>({...b,cost:b.type.cost}))
+}
+async function buildDeliveryProgram(date='',force=false){
+  const target=/^\d{4}-\d{2}-\d{2}$/.test(date||'')?date:deliveryProgramTomorrow(),key=target;
+  const hit=DELIVERY_PROGRAM_CACHE.get(key);
+  if(!force&&hit&&Date.now()-hit.at<2*60*1000)return hit.value;
+  if(force){SSW_PENDING_CACHE={at:0,value:null};DELIVERY_PROGRAM_CACHE.delete(key)}
+  const base=await fetchSswPendingDeliveries(),enriched=await deliveryProgramEnrich(base.rows||[]);
+  const schedule=deliveryProgramCitySchedule(enriched),targetDow=deliveryProgramDow(target),eligible=[],notToday=[],review=[];
+  for(const r of enriched){
+    const f=brDateToIso(r.previsao),cityRule=schedule.get(normKey(r.cidade)),exact=f===target;
+    const overdue=f&&f<target,cityDay=cityRule?.weekday===targetDow;
+    if(!f){review.push({...r,reviewReason:'Sem previsão/dia de entrega no SSW'});continue}
+    if(!(exact||(overdue&&cityDay))){notToday.push(r);continue}
+    if(!r.cidade){review.push({...r,reviewReason:'Sem cidade de destino'});continue}
+    if(!(r.peso>0)){review.push({...r,reviewReason:'Peso não informado'});continue}
+    if(!(r.m3>0)){review.push({...r,reviewReason:'Cubagem (m³) não encontrada no SSW/BI2'});continue}
+    if(r.peso>1500||r.m3>15){review.push({...r,reviewReason:'Carga excede 1.500 kg ou 15 m³ em uma única entrega'});continue}
+    eligible.push({...r,serviceWeekday:cityRule?.weekdayLabel||deliveryProgramDowLabel(targetDow)})
+  }
+  const geo=await deliveryProgramGeo(eligible),geoOk=[];
+  for(const r of eligible){
+    const key=normKey(r.cidade)+'|'+normKey(r.uf||'SP'),g=geo.map.get(key);
+    if(!g||!Number.isFinite(g.distanceKm)){review.push({...r,reviewReason:'Cidade não localizada para calcular a distância'});continue}
+    const far=g.distanceKm>100,band=far?(g.distanceKm<=200?'101–200 km':(g.distanceKm<=300?'201–300 km':'acima de 300 km')):'até 100 km';
+    geoOk.push({...r,distanceKm:g.distanceKm,lat:g.lat,lon:g.lon,sector:g.sector||'N',far,distanceBand:band,maxStops:far?20:30})
+  }
+  const groups=new Map();
+  for(const r of geoOk){
+    const k=(r.far?'distante':'proxima')+'|'+r.sector+'|'+r.distanceBand;
+    if(!groups.has(k))groups.set(k,[]);
+    groups.get(k).push(r)
+  }
+  const loads=[];let loadNo=0;
+  for(const [groupKey,items] of groups){
+    const maxStops=items.some(x=>x.far)?20:30,packed=deliveryProgramOptimizeGroup(items,maxStops);
+    for(const b of packed){
+      const ordered=b.items.slice().sort((a,z)=>a.distanceKm-z.distanceKm||String(a.cidade).localeCompare(String(z.cidade),'pt-BR'));
+      loadNo++;
+      loads.push({
+        id:loadNo,groupKey,vehicleId:b.type.id,vehicle:b.type.label,cost:b.type.cost,
+        kgCapacity:b.type.kg,m3Capacity:b.type.m3,maxStops,
+        kg:Number(b.kg.toFixed(2)),m3:Number(b.m3.toFixed(3)),deliveries:ordered.length,
+        kgUtil:Number((b.kg/b.type.kg*100).toFixed(1)),m3Util:Number((b.m3/b.type.m3*100).toFixed(1)),
+        region:ordered[0]?.far?'Mais de 100 km':'Até 100 km',sector:ordered[0]?.sector||'',
+        distanceBand:ordered[0]?.distanceBand||'',maxDistanceKm:Number(Math.max(...ordered.map(x=>x.distanceKm)).toFixed(1)),
+        cities:[...new Set(ordered.map(x=>x.cidade))],items:ordered
+      })
+    }
+  }
+  loads.sort((a,b)=>a.region.localeCompare(b.region,'pt-BR')||a.sector.localeCompare(b.sector,'pt-BR')||a.maxDistanceKm-b.maxDistanceKm);
+  const programmed=loads.reduce((a,x)=>a+x.deliveries,0),totalCost=loads.reduce((a,x)=>a+x.cost,0);
+  const value={
+    ok:true,date:target,weekday:deliveryProgramDowLabel(targetDow),baseAddress:ROUTE_BASE_ADDRESS,
+    rules:{nearMaxStops:30,farMaxStops:20,distanceCutoffKm:100,fleet:DELIVERY_FLEET},
+    source:base.source,totalOpen:enriched.length,eligibleBeforeReview:eligible.length,programmed,
+    notScheduledToday:notToday.length,reviewCount:review.length,vehicles:loads.length,totalCost,
+    totalKg:Number(loads.reduce((a,x)=>a+x.kg,0).toFixed(2)),totalM3:Number(loads.reduce((a,x)=>a+x.m3,0).toFixed(3)),
+    loads,review:review.slice(0,500),
+    cityRules:[...schedule.entries()].map(([city,x])=>({city,weekday:x.weekdayLabel,samples:x.samples})).slice(0,300),
+    generatedAt:new Date().toISOString(),
+    note:'A programação usa as pendências da opção 38. Para entregas vencidas, o dia da cidade é inferido pela previsão de entrega do SSW. Registros sem cubagem confiável ficam em revisão e não são alocados automaticamente.'
+  };
+  DELIVERY_PROGRAM_CACHE.set(key,{at:Date.now(),value});
+  console.log('PROGRAMAÇÃO ENTREGAS RESULTADO: '+JSON.stringify({date:target,totalOpen:value.totalOpen,programmed,review:value.reviewCount,vehicles:value.vehicles,totalCost,notToday:value.notScheduledToday}));
+  return value
 }
 
 function quickSsw38Progress(base,from,to){
@@ -2166,7 +2442,7 @@ http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.
       .replace('<div id="loading" class="loading">Carregando dados do Google Sheets…</div>','<div id="loading" class="loading hide" style="display:none!important"></div>');
   }
   const bootstrap='<script>window.__DASHBOARD_SESSION_TOKEN__='+JSON.stringify(String(x.token||''))+';window.__DASHBOARD_SESSION_USER__='+JSON.stringify(x.user||null)+';<\/script>';
-  html=html.replace(/<script src="\/app\.js(?:\?[^"]*)?"><\/script>/,bootstrap+'<script src="/app.js?v=20260924cargo2"></script>');
+  html=html.replace(/<script src="\/app\.js(?:\?[^"]*)?"><\/script>/,bootstrap+'<script src="/app.js?v=20260924prog1"></script>');
   res.writeHead(200,{
     'Content-Type':'text/html; charset=utf-8',
     'Cache-Control':'no-store, no-cache, must-revalidate',
@@ -2217,6 +2493,15 @@ if(carregamentoFoto&&req.method==='GET'){try{if(!dashboardHas(authUser,'final_ca
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
 
+if(u.pathname==='/api/programacao-entregas'&&req.method==='GET'){try{
+  if(!dashboardHasAny(authUser,['programacao','roteirizador','dashboard','ssw_saidas']))return dashboardDeny(res);
+  const x=await buildDeliveryProgram(u.searchParams.get('date')||'',u.searchParams.get('force')==='1');
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){
+  res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}
 if(u.pathname==='/api/roteirizador/lista'){try{
   if(!dashboardHasAny(authUser,['dashboard','roteirizador','ssw_saidas','evolucao']))return dashboardDeny(res);
   const date=u.searchParams.get('date')||spDateISO();
