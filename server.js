@@ -2074,6 +2074,7 @@ let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.jo
   refreshBi2State().catch(e=>console.error('BI2 SFTP monitor ERRO: '+e.message));
   refreshBi2ApiState().catch(e=>console.error('BI2 WebAPI monitor ERRO: '+e.message));
   (async()=>{try{const rep=await fetchBi2Report(83),p=parseBi2Csv(rep.text);console.log('VALIDACAO BI2 83: '+JSON.stringify({linhas:(p.rows||[]).length,relatorio:p.meta?.relatorio||'',headers:p.headers.slice(0,40)}))}catch(e){console.log('VALIDACAO BI2 83 ERRO: '+String(e.message||e))}})();
+  (async()=>{try{const rep=await fetchBi2Report(16),p=parseBi2Csv(rep.text);console.log('VALIDACAO BI2 16: '+JSON.stringify({linhas:(p.rows||[]).length,relatorio:p.meta?.relatorio||'',headers:p.headers.slice(0,50)}))}catch(e){console.log('VALIDACAO BI2 16 ERRO: '+String(e.message||e))}})();
   (async()=>{try{const rep=await fetchBi2ReportFolder(17,'',bi2Auth().pasta),p=parseBi2Csv(rep.text),today=new Date().toISOString().slice(0,10),todayRows=(p.rows||[]).filter(r=>brDateToIso(pickField(r,'DATA ENTREGA','ENTREGA','DT ENTREGA'))===today);console.log('VALIDACAO BI2 17: '+JSON.stringify({arquivo:(p.rows||[]).length,hoje:todayRows.length,headers:p.headers.slice(0,25)}))}catch(e){console.log('VALIDACAO BI2 17 ERRO: '+String(e.message||e))}})();
   setInterval(refreshBi2State,15*60*1000);
   setInterval(refreshBi2ApiState,60*1000);
