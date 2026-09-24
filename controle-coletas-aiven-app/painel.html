@@ -55,8 +55,8 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
   <div class="top">
     <div class="brand"><strong>CONSTRULOG</strong><span>Todos os módulos da transportadora em um único sistema</span></div>
     <div class="tabs">
-      <button class="tab active" data-module="coletas" data-src="/coletas?embed=1&v=20260924docs5" data-name="Coletas">Coletas</button>
-      <button class="tab" data-module="financeiro" data-src="/coletas?embed=1&v=20260924docs5" data-name="Financeiro">Financeiro</button>
+      <button class="tab active" data-module="coletas" data-src="/coletas?embed=1&v=20260924docs6" data-name="Coletas">Coletas</button>
+      <button class="tab" data-module="financeiro" data-src="/coletas?embed=1&v=20260924docs6" data-name="Financeiro">Financeiro</button>
       <button class="tab" data-module="dashboard" data-src="https://construlog-dashboard.onrender.com/?embed=1&view=dashboard" data-name="Visão Geral">Visão Geral</button>
       <button class="tab" data-module="dashboards" data-src="https://construlog-dashboard.onrender.com/?embed=1&view=dashboards" data-name="Dashboards">Dashboards</button>
       <button class="tab" data-module="contas" data-src="/contas?embed=1" data-name="Contas a Pagar">Contas a Pagar</button>
@@ -64,7 +64,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
     <div class="session-actions"><span id="sessionUser" class="session-user"></span><button id="logoutBtn" class="logout-btn" type="button">Sair</button></div>
   </div>
   <div class="bar"><span class="dot"></span><span id="module">Controle de Coletas</span><span>• Banco Aiven conectado</span><button id="duplicateColeta" class="duplicate-btn" type="button">⧉ Duplicar coleta</button><button id="deleteColeta" class="delete-btn" type="button">🗑 Excluir coleta</button></div>
-  <div class="body"><div id="moduleLoading" class="module-loading">Abrindo módulo…</div><iframe id="frame" src="/coletas?embed=1&v=20260924docs5" title="Módulo CONSTRULOG"></iframe></div>
+  <div class="body"><div id="moduleLoading" class="module-loading">Abrindo módulo…</div><iframe id="frame" src="/coletas?embed=1&v=20260924docs6" title="Módulo CONSTRULOG"></iframe></div>
 </div>
 
 <div id="duplicateModal" class="modal" aria-hidden="true">
@@ -240,7 +240,7 @@ confirmDuplicate.addEventListener('click',async()=>{
     const body=await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(body.error||'Não foi possível duplicar a coleta.');
     fecharDuplicacao();
-    frame.src='/coletas?embed=1&v=20260924docs5&refresh='+Date.now();
+    frame.src='/coletas?embed=1&v=20260924docs6&refresh='+Date.now();
     alert('Coleta duplicada com sucesso para '+data.split('-').reverse().join('/')+'.');
   }catch(e){
     alert(e.message);
@@ -336,7 +336,7 @@ confirmDelete.addEventListener('click',async()=>{
     const body=await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(body.error||'Não foi possível excluir a coleta.');
     fecharExclusao();
-    frame.src='/coletas?embed=1&v=20260924docs5&refresh='+Date.now();
+    frame.src='/coletas?embed=1&v=20260924docs6&refresh='+Date.now();
     alert('Coleta '+numero+' excluída com sucesso.');
   }catch(e){
     alert(e.message);
