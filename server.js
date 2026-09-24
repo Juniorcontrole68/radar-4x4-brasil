@@ -490,6 +490,17 @@ async function probeSsw0082Reports(){
         const wm=(txt.match(/name=["']?web_body["']?[^>]*value=["']([^"']+)["']/i)||[])[1]||'';
         let decoded='';try{decoded=decodeURIComponent(wm.replace(/&amp;/g,'&'))}catch{decoded=wm}
         info={...info,title:htmlText38((txt.match(/<title[^>]*>([\s\S]*?)<\/title>/i)||[])[1]||''),webBody:decoded.slice(0,1200),text:plain.slice(0,5000)};
+        const am=decoded.match(/abrir\(['"]([^'"]+)['"],\s*['"]([^'"]+)['"],\s*(\d+),\s*(\d+),\s*['"]([^'"]+)['"]/i);
+        if(am){
+          try{
+            const fu=new URL('/bin/ssw0424','https://sistema.ssw.inf.br');
+            fu.searchParams.set('act',am[1]);fu.searchParams.set('filename',am[2]);fu.searchParams.set('path',am[5]);fu.searchParams.set('down',am[3]);fu.searchParams.set('nw',am[4]);
+            const fr=await fetch(fu,{headers:headers(u.toString()),redirect:'manual',signal:AbortSignal.timeout(20000)});apply(fr.headers);
+            const fb=Buffer.from(await fr.arrayBuffer()),ft=fr.headers.get('content-type')||'',fmagic=fb.subarray(0,12).toString('latin1');
+            const ftext=fb.toString('latin1').replace(/\r/g,'');
+            info.generated={status:fr.status,type:ft,bytes:fb.length,magic:fmagic,lines:ftext.split('\n').slice(0,160),text:ftext.slice(0,18000)}
+          }catch(e){info.generated={error:String(e.message||e)}}
+        }
       }
       reports.push(info)
     }catch(e){reports.push({code,payload,error:String(e.message||e)})}
