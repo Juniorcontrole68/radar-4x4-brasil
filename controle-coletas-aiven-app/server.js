@@ -715,12 +715,12 @@ async function start() {
         const result = await pool.query(`
           SELECT
             id::text AS id,
-            COALESCE(to_jsonb(c)->>'numero_os', to_jsonb(c)->>'os', to_jsonb(c)->>'numero_coleta', to_jsonb(c)->>'collection_number', '') AS os,
+            COALESCE(to_jsonb(c)->>'os_numero', to_jsonb(c)->>'numero_os', to_jsonb(c)->>'os', to_jsonb(c)->>'numero_coleta', to_jsonb(c)->>'collection_number', '') AS os,
             COALESCE(to_jsonb(c)->>'cliente', to_jsonb(c)->>'client', to_jsonb(c)->>'nome_cliente', to_jsonb(c)->>'customer', '') AS cliente,
             COALESCE(to_jsonb(c)->>'destinatario', '') AS destinatario,
             COALESCE(to_jsonb(c)->>'destino', to_jsonb(c)->>'cidade_entrega', to_jsonb(c)->>'endereco_entrega', to_jsonb(c)->>'delivery_address', '') AS destino,
             COALESCE(to_jsonb(c)->>'placa', to_jsonb(c)->>'plate', '') AS placa,
-            COALESCE(to_jsonb(c)->>'data_coleta', to_jsonb(c)->>'collection_date', to_jsonb(c)->>'created_at', '') AS data,
+            COALESCE(to_jsonb(c)->>'data_carregamento', to_jsonb(c)->>'data_coleta', to_jsonb(c)->>'collection_date', to_jsonb(c)->>'created_at', '') AS data,
             previsao_pagamento_fatura
           FROM coletas c
           LIMIT 500
