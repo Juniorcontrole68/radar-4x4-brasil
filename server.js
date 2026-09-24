@@ -47,17 +47,30 @@ async function readJsonLimited(req,maxBytes=2*1024*1024){
   try{return JSON.parse(Buffer.concat(chunks).toString('utf8'))}
   catch{const e=new Error('Dados inválidos.');e.status=400;throw e}
 }
-async function portalJson(pathname,{method='GET',body=null,timeout=25000}={}){
+async function portalJson(pathname,{method='GET',body=null,timeout=45000}={}){
   const u=new URL(pathname,COLETAS_PORTAL_URL);
   const headers={'User-Agent':'CONSTRULOG-Dashboard/1.0','Cache-Control':'no-cache'};
   let payload;
   if(body!==null){headers['Content-Type']='application/json';payload=JSON.stringify(body)}
-  const r=await fetch(u,{method,headers,body:payload,signal:AbortSignal.timeout(timeout)});
-  const j=await r.json().catch(()=>({}));
-  if(!r.ok||j.ok===false){
-    const e=new Error(j.error||('HTTP '+r.status));e.status=r.status;throw e
+  let lastErr=null;
+  for(let attempt=0;attempt<2;attempt++){
+    try{
+      const r=await fetch(u,{method,headers,body:payload,signal:AbortSignal.timeout(timeout)});
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok||j.ok===false){
+        const e=new Error(j.error||('HTTP '+r.status));e.status=r.status;
+        if(r.status<500)throw e;
+        lastErr=e
+      }else return j
+    }catch(e){
+      lastErr=e;
+      if(e.status&&e.status<500)throw e
+    }
+    if(attempt===0)await new Promise(resolve=>setTimeout(resolve,1800))
   }
-  return j
+  const e=lastErr||new Error('Serviço do banco de dados indisponível.');
+  if(!e.status)e.status=502;
+  throw e
 }
 const DASH_AUTH_CACHE=new Map();
 function parseCookies(req){
