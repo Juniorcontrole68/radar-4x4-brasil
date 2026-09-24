@@ -788,14 +788,49 @@ async function compressLoadingPhoto(file){
   }
   return result
 }
+function clearLoadingPhotoUrls(){
+  const urls=Array.isArray(window.__loadingPhotoObjectUrls)?window.__loadingPhotoObjectUrls:[];
+  urls.forEach(u=>{try{URL.revokeObjectURL(u)}catch{}});
+  window.__loadingPhotoObjectUrls=[]
+}
+async function hydrateLoadingPhotos(){
+  const box=$('#loadRecords');if(!box)return;
+  const imgs=[...box.querySelectorAll('img[data-loading-photo-id]')];
+  await Promise.all(imgs.map(async img=>{
+    const id=img.dataset.loadingPhotoId;
+    if(!id)return;
+    const wrap=img.closest('a');
+    try{
+      const r=await fetch('/api/carregamentos-finais/'+encodeURIComponent(id)+'/foto?t='+Date.now(),{cache:'no-store'});
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      const blob=await r.blob();
+      if(!blob.size)throw new Error('Foto vazia');
+      const url=URL.createObjectURL(blob);
+      if(!Array.isArray(window.__loadingPhotoObjectUrls))window.__loadingPhotoObjectUrls=[];
+      window.__loadingPhotoObjectUrls.push(url);
+      img.src=url;
+      img.classList.remove('load-photo-pending','load-photo-error');
+      if(wrap){wrap.href=url;wrap.target='_blank';wrap.rel='noopener'}
+    }catch(e){
+      img.classList.remove('load-photo-pending');
+      img.classList.add('load-photo-error');
+      img.alt='Não foi possível carregar a foto';
+      if(wrap){wrap.removeAttribute('href');wrap.removeAttribute('target');wrap.title='Não foi possível carregar esta foto.'}
+    }
+  }))
+}
 function renderLoadingRecords(rows){
   const box=$('#loadRecords');
+  clearLoadingPhotoUrls();
   if(box){
     if(!rows.length)box.innerHTML='<div class="muted">Nenhum final de carregamento registrado ainda.</div>';
-    else box.innerHTML=rows.map(r=>{
-      const dt=loadingDateTime(r.capturada_em);
-      return '<div class="load-record"><a href="/api/carregamentos-finais/'+encodeURIComponent(r.id)+'/foto" target="_blank" rel="noopener"><img loading="lazy" src="/api/carregamentos-finais/'+encodeURIComponent(r.id)+'/foto" alt="Foto final do carregamento"></a><div><b>'+safe(r.motorista||'Motorista não informado')+'</b><div class="meta">Conferente: '+safe(r.conferente||'—')+'<br>Entregas: <b>'+nf(Number(r.quantidade_entregas||0))+'</b><br>Foto: '+safe(dt)+'</div></div></div>'
-    }).join('')
+    else{
+      box.innerHTML=rows.map(r=>{
+        const dt=loadingDateTime(r.capturada_em);
+        return '<div class="load-record"><a class="load-photo-link" data-loading-photo-id="'+safe(r.id)+'" title="Abrir foto"><img class="load-photo-pending" data-loading-photo-id="'+safe(r.id)+'" alt="Carregando foto do final do carregamento"></a><div><b>'+safe(r.motorista||'Motorista não informado')+'</b><div class="meta">Conferente: '+safe(r.conferente||'—')+'<br>Entregas: <b>'+nf(Number(r.quantidade_entregas||0))+'</b><br>Foto: '+safe(dt)+'</div></div></div>'
+      }).join('');
+      hydrateLoadingPhotos().catch(()=>{})
+    }
   }
   const today=iso(new Date()),todayRows=rows.filter(r=>{
     const d=new Date(r.capturada_em);return !isNaN(d)&&iso(d)===today
