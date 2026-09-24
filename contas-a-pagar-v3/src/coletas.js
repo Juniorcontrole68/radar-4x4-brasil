@@ -595,35 +595,42 @@ try{
           const el=byId(id);if(!el)return;
           el.className='doc-status'+(kind?' '+kind:'');el.innerHTML=msg
         }
+        function fieldGrid(id){
+          const el=byId(id);if(!el)return null;
+          return el.closest('.coleta-form-grid')||el.closest('.coleta-form-card')?.querySelector('.coleta-form-grid')||el.closest('form')||el.parentElement?.parentElement||null
+        }
         function ensureFields(){
           const motorCard=cardByTitle('Dados do Motorista'),truckCard=cardByTitle('Dados do Caminhão'),senderCard=cardByTitle('Coleta'),recipientCard=cardByTitle('Entrega');
-          if(senderCard){
-            addHistorySelect(senderCard.querySelector('.coleta-form-grid'),'historico_remetente','Escolher remetente já utilizado','Escolha um remetente do histórico')
+          const senderGrid=fieldGrid('cliente')||fieldGrid('endereco_coleta')||senderCard?.querySelector('.coleta-form-grid');
+          const recipientGrid=fieldGrid('destinatario')||fieldGrid('endereco_entrega')||recipientCard?.querySelector('.coleta-form-grid');
+          const motorGrid=fieldGrid('motorista')||fieldGrid('telefone_motorista')||motorCard?.querySelector('.coleta-form-grid');
+          const truckGrid=fieldGrid('placa')||fieldGrid('eixos')||truckCard?.querySelector('.coleta-form-grid');
+
+          if(senderGrid){
+            addHistorySelect(senderGrid,'historico_remetente','Escolher remetente já utilizado','Escolha um remetente do histórico')
           }
-          if(recipientCard){
-            addHistorySelect(recipientCard.querySelector('.coleta-form-grid'),'historico_destinatario','Escolher destinatário já utilizado','Escolha um destinatário do histórico')
+          if(recipientGrid){
+            addHistorySelect(recipientGrid,'historico_destinatario','Escolher destinatário já utilizado','Escolha um destinatário do histórico')
           }
-          if(motorCard){
-            const grid=motorCard.querySelector('.coleta-form-grid');
-            addHistorySelect(grid,'historico_motorista','Escolher motorista já utilizado','Escolha um motorista do histórico');
-            const cpf=addInput(grid,'motorista_cpf','CPF do motorista','text',{placeholder:'000.000.000-00',inputmode:'numeric',noTitlecase:true});
+          if(motorGrid){
+            addHistorySelect(motorGrid,'historico_motorista','Escolher motorista já utilizado','Escolha um motorista do histórico');
+            const cpf=addInput(motorGrid,'motorista_cpf','CPF do motorista','text',{placeholder:'000.000.000-00',inputmode:'numeric',noTitlecase:true});
             cpf.maxLength=14;
             if(!cpf.dataset.docBound){cpf.dataset.docBound='1';cpf.addEventListener('input',()=>{cpf.value=formatCpf(cpf.value)})}
-            const up=addUpload(grid,'doc_motorista_file','Importar documento do motorista','doc_motorista_status');
+            const up=addUpload(motorGrid,'doc_motorista_file','Importar documento do motorista','doc_motorista_status');
             bindUpload(up,'motorista','doc_motorista_status')
           }
-          if(truckCard){
-            const grid=truckCard.querySelector('.coleta-form-grid');
+          if(truckGrid){
             const placa=byId('placa');if(placa){placa.dataset.noTitlecase='true';const s=placa.closest('label')?.querySelector('span');if(s)s.textContent='Placa do cavalo mecânico'}
             const total=byId('eixos');if(total){const s=total.closest('label')?.querySelector('span');if(s)s.textContent='Total de eixos';total.min='0';total.max='20'}
-            const capC=addInput(grid,'capacidade_carga_cavalo','Capacidade de carga do cavalo','text',{placeholder:'Ex.: 16.000 kg',noTitlecase:true});
-            const eixC=addInput(grid,'eixos_cavalo','Eixos do cavalo','number',{min:'0',max:'20',noTitlecase:true});
-            const docC=addUpload(grid,'doc_cavalo_file','Subir documento do cavalo mecânico','doc_cavalo_status');
-            const placaT=addInput(grid,'placa_carreta','Placa da carreta','text',{placeholder:'ABC1D23',noTitlecase:true});
+            const capC=addInput(truckGrid,'capacidade_carga_cavalo','Capacidade de carga do cavalo','text',{placeholder:'Ex.: 16.000 kg',noTitlecase:true});
+            const eixC=addInput(truckGrid,'eixos_cavalo','Eixos do cavalo','number',{min:'0',max:'20',noTitlecase:true});
+            const docC=addUpload(truckGrid,'doc_cavalo_file','Subir documento do cavalo mecânico','doc_cavalo_status');
+            const placaT=addInput(truckGrid,'placa_carreta','Placa da carreta','text',{placeholder:'ABC1D23',noTitlecase:true});
             placaT.maxLength=8;
-            const capT=addInput(grid,'capacidade_carga_carreta','Capacidade de carga da carreta','text',{placeholder:'Ex.: 28.000 kg',noTitlecase:true});
-            const eixT=addInput(grid,'eixos_carreta','Eixos da carreta','number',{min:'0',max:'20',noTitlecase:true});
-            const docT=addUpload(grid,'doc_carreta_file','Subir documento da carreta','doc_carreta_status');
+            const capT=addInput(truckGrid,'capacidade_carga_carreta','Capacidade de carga da carreta','text',{placeholder:'Ex.: 28.000 kg',noTitlecase:true});
+            const eixT=addInput(truckGrid,'eixos_carreta','Eixos da carreta','number',{min:'0',max:'20',noTitlecase:true});
+            const docT=addUpload(truckGrid,'doc_carreta_file','Subir documento da carreta','doc_carreta_status');
             if(!placaT.dataset.docBound){placaT.dataset.docBound='1';placaT.addEventListener('input',()=>{placaT.value=placaT.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,7)})}
             if(placa&&!placa.dataset.docPlateBound){placa.dataset.docPlateBound='1';placa.addEventListener('input',()=>{placa.value=placa.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,7)})}
             [eixC,eixT].forEach(x=>{if(x&&!x.dataset.sumBound){x.dataset.sumBound='1';x.addEventListener('input',sumAxes)}});
@@ -864,14 +871,14 @@ try{
         };
 
         document.addEventListener('DOMContentLoaded',()=>{
-          setTimeout(ensureFields,80);
+          [50,150,350,700,1200].forEach(ms=>setTimeout(()=>{ensureFields();if(ms>=350)refreshHistorySelectors()},ms));
           const modal=byId('modal');
           if(modal){
             const obs=new MutationObserver(()=>{if(modal.open)setTimeout(()=>{loadFields();refreshHistorySelectors()},100)});
             obs.observe(modal,{attributes:true,attributeFilter:['open']})
           }
           setTimeout(refreshHistorySelectors,180);
-          document.addEventListener('click',()=>setTimeout(ensureFields,80),true)
+          document.addEventListener('click',()=>{[40,150,400].forEach(ms=>setTimeout(()=>{ensureFields();if(byId('modal')?.open)refreshHistorySelectors()},ms))},true)
         })
       })();
       </script>`;
