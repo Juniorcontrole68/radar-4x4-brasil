@@ -456,6 +456,46 @@ function quickSsw38Progress(base,from,to){
 }
 
 
+
+async function probeSswRevenueMenu(){
+  if(!internalSswConfigured())return{ok:false,error:'Credenciais internas SSW não configuradas'};
+  const jar=new Map();
+  const apply=headers=>{const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);for(const raw of list){const pair=String(raw).split(';')[0],i=pair.indexOf('=');if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())}};
+  const cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
+  let r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
+  const body=new URLSearchParams({act:'L',f1:process.env.SSW_INTERNAL_DOMINIO||'',f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),f3:process.env.SSW_INTERNAL_USUARIO||'',f4:process.env.SSW_INTERNAL_SENHA||''});
+  r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/ssw0422','Cookie':cookie()},body:body.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);await r.text();
+  if(!jar.has('token'))return{ok:false,error:'Login interno SSW não aceito'};
+  const urls=[
+    'https://sistema.ssw.inf.br/bin/menu01',
+    'https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2=AMR'
+  ];
+  const out=[];
+  for(const url of urls){
+    try{
+      const rr=await fetch(url,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});
+      apply(rr.headers);const html=await rr.text(),plain=htmlText38(html),hits=[];
+      const keywords=['FATUR','RECEITA','PERFORMANCE','CLIENTE','EMITENTE','COMERCIAL','RESULTADO','FRETE'];
+      for(const kw of keywords){
+        const re=new RegExp(kw,'ig');let m,n=0;
+        while((m=re.exec(plain))&&n<12){hits.push({kw,context:plain.slice(Math.max(0,m.index-100),Math.min(plain.length,m.index+220))});n++}
+      }
+      const rawMatches=[];
+      for(const m of html.matchAll(/.{0,220}(?:FATUR|RECEITA|PERFORMANCE|CLIENTE|EMITENTE|COMERCIAL|RESULTADO|FRETE).{0,320}/gi)){
+        const raw=String(m[0]||'');
+        rawMatches.push({
+          text:htmlText38(raw).slice(0,420),
+          options:[...new Set([...raw.matchAll(/(?:f3=|op(?:cao)?=)(\d{1,4})/gi)].map(x=>x[1]))],
+          programs:[...new Set([...raw.matchAll(/ssw\d{3,6}/gi)].map(x=>x[0]))]
+        });
+        if(rawMatches.length>=40)break
+      }
+      out.push({url,status:rr.status,bytes:Buffer.byteLength(html),hits:hits.slice(0,50),rawMatches})
+    }catch(e){out.push({url,error:String(e.message||e)})}
+  }
+  return{ok:true,pages:out}
+}
+
 async function probeSsw83(){
   if(!internalSswConfigured())return{ok:false,error:'Credenciais internas SSW não configuradas'};
   const jar=new Map();
@@ -2094,6 +2134,7 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
 let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.join(PUB,p));if(!p.startsWith(PUB)){res.writeHead(403);return res.end()}fs.readFile(p,(e,d)=>{if(e){res.writeHead(404);return res.end('Not found')}const ext=path.extname(p);res.writeHead(200,{'Content-Type':ext==='.js'?'application/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate','Pragma':'no-cache','Expires':'0'});res.end(d)})}catch(e){res.writeHead(500);res.end(e.message)}}).listen(PORT,'0.0.0.0',()=>{
   console.log('CONSTRULOG em '+PORT);probeSswAbrirScripts().then(x=>console.log('SSW abrir probe isolado: '+JSON.stringify(x))).catch(()=>{});
   probeSsw83().then(x=>console.log('SSW83 PROBE: '+JSON.stringify(x))).catch(e=>console.log('SSW83 PROBE ERRO: '+String(e.message||e)));
+  probeSswRevenueMenu().then(x=>console.log('SSW RECEITA MENU: '+JSON.stringify(x))).catch(e=>console.log('SSW RECEITA MENU ERRO: '+String(e.message||e)));
 
   refreshBi2State().catch(e=>console.error('BI2 SFTP monitor ERRO: '+e.message));
   refreshBi2ApiState().catch(e=>console.error('BI2 WebAPI monitor ERRO: '+e.message));
