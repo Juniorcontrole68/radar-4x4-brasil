@@ -796,6 +796,62 @@ function setupDriverPerformanceDashboard(){
   if($('#driverPerfTo'))$('#driverPerfTo').onchange=renderDriverPerformanceDashboard
 }
 
+function checkerRoleNorm(o){
+  return String(g(o,'FUNÇÃO','FUNCAO','Função','Funcao')||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase()
+}
+function checkerValueRowsBetween(fromIso,toIso){
+  const from=fromIso?new Date(fromIso+'T00:00:00'):null,to=toIso?new Date(toIso+'T23:59:59'):null;
+  return(S.help||[]).filter(o=>{
+    if(!checkerRoleNorm(o).includes('CONFER'))return false;
+    const d=pd(g(o,'Data','DATA'));if(!d)return false;
+    return(!from||d>=from)&&(!to||d<=to)
+  })
+}
+function checkerValueAggregate(rows){
+  const map=new Map();
+  for(const o of rows||[]){
+    const nome=String(g(o,'NOME','Nome','nome')||'Sem nome').trim()||'Sem nome';
+    if(!map.has(nome))map.set(nome,{nome,valor:0,lancamentos:0,dias:new Set()});
+    const x=map.get(nome);
+    x.valor+=num(g(o,'Valor','VALOR'));
+    x.lancamentos++;
+    const d=g(o,'Data','DATA');if(d)x.dias.add(String(d))
+  }
+  return[...map.values()].map(x=>({
+    nome:x.nome,valor:x.valor,lancamentos:x.lancamentos,dias:x.dias.size,
+    media:x.lancamentos?x.valor/x.lancamentos:0
+  })).sort((a,b)=>b.valor-a.valor||a.nome.localeCompare(b.nome,'pt-BR'))
+}
+function renderCheckerValueReport(){
+  if(!$('#checkerValueTable'))return;
+  const from=$('#checkerValueFrom')?.value||'',to=$('#checkerValueTo')?.value||'';
+  const rows=checkerValueRowsBetween(from,to),agg=checkerValueAggregate(rows),total=agg.reduce((s,x)=>s+x.valor,0);
+  $('#checkerValueTotal').textContent=brl(total);
+  $('#checkerValuePeople').textContent=nf(agg.length);
+  $('#checkerValueEntries').textContent=nf(rows.length);
+  const info=$('#checkerValueInfo');
+  if(info)info.textContent=nf(rows.length)+' lançamento(s) • '+nf(agg.length)+' conferente(s) • '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje');
+  $('#checkerValueTable').innerHTML='<thead><tr><th>Conferente</th><th>Lançamentos</th><th>Dias</th><th>Valor total</th><th>Média / lançamento</th></tr></thead><tbody>'+
+    (agg.length?agg.map(x=>'<tr><td><b>'+safe(x.nome)+'</b></td><td>'+nf(x.lancamentos)+'</td><td>'+nf(x.dias)+'</td><td><b>'+brl(x.valor)+'</b></td><td>'+brl(x.media)+'</td></tr>').join(''):'<tr><td colspan="5" class="muted">Sem registros de conferentes no período selecionado.</td></tr>')+
+    '</tbody>'
+}
+function checkerValueSetToday(){
+  const d=iso(new Date());
+  if($('#checkerValueFrom'))$('#checkerValueFrom').value=d;
+  if($('#checkerValueTo'))$('#checkerValueTo').value=d;
+  renderCheckerValueReport()
+}
+function setupCheckerValueReport(){
+  if(!$('#checkerValuePanel'))return;
+  const d=iso(new Date());
+  if($('#checkerValueFrom')&&!$('#checkerValueFrom').value)$('#checkerValueFrom').value=d;
+  if($('#checkerValueTo')&&!$('#checkerValueTo').value)$('#checkerValueTo').value=d;
+  if($('#checkerValueApply'))$('#checkerValueApply').onclick=renderCheckerValueReport;
+  if($('#checkerValueToday'))$('#checkerValueToday').onclick=checkerValueSetToday;
+  if($('#checkerValueFrom'))$('#checkerValueFrom').onchange=renderCheckerValueReport;
+  if($('#checkerValueTo'))$('#checkerValueTo').onchange=renderCheckerValueReport
+}
+
 function update(){const O=ops(),H=help(),A=sch(),roleNorm=o=>String(g(o,'FUNÇÃO','FUNCAO','Função','Funcao')||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase(),HCf=H.filter(o=>roleNorm(o).includes('CONFER')),HA=H.filter(o=>!roleNorm(o).includes('CONFER')),delSheet=O.reduce((a,o)=>a+num(g(o,'Entregas')),0),doneSheet=O.reduce((a,o)=>a+num(g(o,'Realizadas')),0),co=S.coletas&&S.coletas.ok?S.coletas:null,del=co?num(co.ativas):delSheet,done=co?num(co.entregues):doneSheet,km=O.reduce((a,o)=>a+num(g(o,'KM')),0),rev=O.reduce((a,o)=>a+num(g(o,'Frete Vialog Liq',' Frete Vialog Liq')),0),dc=O.reduce((a,o)=>a+num(g(o,'Frete Mot Liq',' Frete Mot Liq')),0),helperCost=HA.reduce((a,o)=>a+num(g(o,'Valor')),0),checkerCost=HCf.reduce((a,o)=>a+num(g(o,'Valor')),0),hc=helperCost+checkerCost,gross=rev-dc,margin=rev?gross/rev*100:0,net=gross-hc,ret=O.reduce((a,o)=>a+num(g(o,'Retorno')),0),pending=co?num(co.pendentes):Math.max(del-done,0);
 $('#del').textContent=nf(del);$('#done').textContent=nf(done);$('#rate').textContent=(del?done/del*100:0).toFixed(1).replace('.',',')+'%';$('#km').textContent=nf(km);$('#revenue').textContent=brl(rev);$('#driverCost').textContent=brl(dc);$('#gross').textContent=brl(gross);$('#margin').textContent=margin.toFixed(1).replace('.',',')+'%';$('#helpersCost').textContent=brl(helperCost);$('#checkersCost').textContent=brl(checkerCost);$('#net').textContent=brl(net);mood($('#gross'),gross);mood($('#margin'),margin);mood($('#net'),net);
 const sla=del?done/del*100:0;
@@ -814,6 +870,7 @@ set('#hubIssue',nf(ret));set('#hubIssueRate',(del?ret/del*100:0).toFixed(1).repl
 const active=$('.section.active')?.id||'dashboard';
 if(active==='dashboard'){
   renderDriverPerformanceDashboard();
+  renderCheckerValueReport();
   renderAgStatusCards('#agStatusCards',(S.agCopy||[]).filter(o=>!agCopyOldDelivered(o)));
   financeRender();
   const hdA={},hdC={};HA.forEach(o=>{const k=g(o,'Data')||'Sem data';hdA[k]??={valor:0,nomes:new Set()};hdA[k].valor+=num(g(o,'Valor'));const nome=String(g(o,'NOME')||'').trim();if(nome)hdA[k].nomes.add(nome)});HCf.forEach(o=>{const k=g(o,'Data')||'Sem data';hdC[k]??={valor:0,nomes:new Set()};hdC[k].valor+=num(g(o,'Valor'));const nome=String(g(o,'NOME')||'').trim();if(nome)hdC[k].nomes.add(nome)});const HK=[...new Set([...Object.keys(hdA),...Object.keys(hdC)])].sort((a,b)=>(pd(a)||0)-(pd(b)||0));groupedBars('#helpersChart',HK,HK.map(k=>hdA[k]?.valor||0),HK.map(k=>hdC[k]?.valor||0),HK.map(k=>nf(hdA[k]?.nomes.size||0)),HK.map(k=>nf(hdC[k]?.nomes.size||0)));
@@ -2402,6 +2459,7 @@ async function start(){
   init();
   setupFinanceDashboard();
   setupDriverPerformanceDashboard();
+  setupCheckerValueReport();
   $('#err').style.display='none';
   if(hasAnyPerm(['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo','receita_ssw']))checkSsw();
   if(DASH_EMBEDDED){
