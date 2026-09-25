@@ -3158,7 +3158,7 @@ if(u.pathname==='/api/programacao-entregas'&&req.method==='GET'){try{
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
 if(u.pathname==='/api/roteirizador/lista'){try{
-  if(!dashboardHasAny(authUser,['dashboard','roteirizador','ssw_saidas','evolucao']))return dashboardDeny(res);
+  if(!dashboardHasAny(authUser,['dashboard','roteirizador','ssw_saidas','evolucao','tracking']))return dashboardDeny(res);
   const date=u.searchParams.get('date')||spDateISO();
   let rows=[];
   if(date===spDateISO()){try{rows=(await fetchSsw38Quick()).rows||[]}catch{}}
