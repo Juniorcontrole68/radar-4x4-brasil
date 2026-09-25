@@ -397,7 +397,6 @@ function renderAgStatusCards(id,rows){
   const counts=new Map();
   for(const o of (rows||[])){
     const raw=String(g(o,'STATUS')||'').trim()||'Sem status';
-    if(agCopyNorm(raw).includes('entregue'))continue;
     counts.set(raw,(counts.get(raw)||0)+1)
   }
   const items=[...counts.entries()].sort((x,y)=>y[1]-x[1]||x[0].localeCompare(y[0],'pt-BR'));
@@ -489,7 +488,7 @@ function renderAgCopyHub(){
 async function refreshAgCopy(force=false){
   if(!hasAnyPerm(['dashboard','agendamentos','agendamentos_copia']))return;
   if(window.__agCopyLoading)return;
-  if(!force&&S.agCopy.length&&Date.now()-(window.__agCopyLoadedAt||0)<60000){agCopyPopulateFilters();renderAgCopy();renderAgCopyHub();renderAgStatusCards('#agStatusCards',S.agCopy||[]);return}
+  if(!force&&S.agCopy.length&&Date.now()-(window.__agCopyLoadedAt||0)<60000){agCopyPopulateFilters();renderAgCopy();renderAgCopyHub();renderAgStatusCards('#agStatusCards',(S.agCopy||[]).filter(o=>!agCopyOldDelivered(o)));return}
   window.__agCopyLoading=true;
   const info=$('#agcInfo');if(info)info.textContent='Atualizando dados da Cópia de AGENDAMENTOS…';
   try{
@@ -497,7 +496,7 @@ async function refreshAgCopy(force=false){
     const j=await r.json();
     if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível carregar a Cópia de AGENDAMENTOS.');
     S.agCopy=j.rows||[];window.__agCopyLoadedAt=Date.now();
-    agCopyPopulateFilters();renderAgCopy();renderAgCopyHub();renderAgStatusCards('#agStatusCards',S.agCopy||[])
+    agCopyPopulateFilters();renderAgCopy();renderAgCopyHub();renderAgStatusCards('#agStatusCards',(S.agCopy||[]).filter(o=>!agCopyOldDelivered(o)))
   }catch(e){
     if(info)info.textContent='Não foi possível carregar os agendamentos: '+e.message;
     const h=$('#hubAgCopyInfo');if(h)h.textContent='Consulta de agendamentos indisponível: '+e.message
@@ -559,6 +558,142 @@ function lines(id,L,A,B){if(!L.length)return empty(id);const{x,w,h}=cv(id),p={l:
 function donut(id,L,D){if(!D.length)return empty(id);const{x,w,h}=cv(id),sum=D.reduce((a,b)=>a+b,0),cx=Math.min(w*.33,150),cy=h/2,r=Math.min(75,h*.28),C=['#0f766e','#0284c7','#d97706','#dc2626','#7c3aed','#64748b'];let a=-Math.PI/2;D.forEach((v,i)=>{const z=v/sum*Math.PI*2;x.strokeStyle=C[i%C.length];x.lineWidth=25;x.beginPath();x.arc(cx,cy,r,a,a+z);x.stroke();a+=z});x.fillStyle='#172033';x.textAlign='center';x.font='700 18px Segoe UI';x.fillText(nf(sum),cx,cy+5);x.font='11px Segoe UI';x.textAlign='left';L.slice(0,7).forEach((l,i)=>{const y=24+i*25,xx=Math.max(cx+r+30,w*.53);x.fillStyle=C[i%C.length];x.fillRect(xx,y-9,9,9);x.fillStyle='#475569';x.fillText(String(l).slice(0,24)+' ('+D[i]+')',xx+14,y)})}
 function mood(el,v){el.classList.remove('positive','negative');el.classList.add(v>=0?'positive':'negative')}
 function table(id,cols,rows){$(id).innerHTML='<thead><tr>'+cols.map(c=>'<th>'+c[0]+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+cols.map(c=>'<td>'+safe(g(r,...c.slice(1)))+'</td>').join('')+'</tr>').join('')+'</tbody>'}
+
+function financeDateOfRow(o){return pd(g(o,'Data','  Data'))}
+function financePaid(o){return num(g(o,'Frete Mot Liq',' Frete Mot Liq'))}
+function financeReceive(o){return num(g(o,'Frete Vialog Liq',' Frete Vialog Liq'))}
+function financeRowsBetween(fromIso,toIso){
+  const from=fromIso?new Date(fromIso+'T00:00:00'):null,to=toIso?new Date(toIso+'T23:59:59'):null;
+  return (S.ops||[]).filter(o=>{
+    const d=financeDateOfRow(o);if(!d)return false;
+    return(!from||d>=from)&&(!to||d<=to)
+  })
+}
+function financeAgg(rows){
+  const receive=(rows||[]).reduce((s,o)=>s+financeReceive(o),0),paid=(rows||[]).reduce((s,o)=>s+financePaid(o),0),profit=receive-paid;
+  return{receive,paid,profit,profitPct:receive?profit/receive*100:0,costPct:receive?paid/receive*100:0}
+}
+function financeDriverRows(rows){
+  const map=new Map();
+  for(const o of rows||[]){
+    const name=String(g(o,'Motorista')||'Sem motorista').trim()||'Sem motorista';
+    if(!map.has(name))map.set(name,{motorista:name,receive:0,paid:0,registros:0});
+    const x=map.get(name);x.receive+=financeReceive(o);x.paid+=financePaid(o);x.registros++
+  }
+  return[...map.values()].map(x=>{
+    const profit=x.receive-x.paid;
+    return{...x,profit,profitPct:x.receive?profit/x.receive*100:0,costPct:x.receive?x.paid/x.receive*100:0}
+  }).sort((x,y)=>y.receive-x.receive||x.motorista.localeCompare(y.motorista,'pt-BR'))
+}
+function financeWeekIndex(d){return Math.min(5,Math.floor((d.getDate()-1)/7)+1)}
+function financeMonthLabel(d){return d.toLocaleDateString('pt-BR',{month:'short',year:'2-digit'}).replace('.','')}
+function financeMonthRows(year,month){
+  return(S.ops||[]).filter(o=>{const d=financeDateOfRow(o);return d&&d.getFullYear()===year&&d.getMonth()===month})
+}
+function financeWeeksForMonth(year,month,maxDateIso=''){
+  const rows=financeMonthRows(year,month),weeks=Array.from({length:5},()=>[]);
+  const maxDate=maxDateIso?new Date(maxDateIso+'T23:59:59'):null;
+  for(const o of rows){
+    const d=financeDateOfRow(o);if(!d||maxDate&&d>maxDate)continue;
+    weeks[financeWeekIndex(d)-1].push(o)
+  }
+  return weeks.map(financeAgg)
+}
+function financeDualBars(id,labels,A,B,legendA='A receber',legendB='Pago'){
+  if(!labels.length)return empty(id);
+  const{x,w,h}=cv(id),p={l:52,r:12,t:52,b:62},cw=w-p.l-p.r,ch=h-p.t-p.b,m=Math.max(...A,...B,1),groupW=cw/Math.max(labels.length,1),gap=Math.max(3,Math.min(8,groupW*.08)),bw=Math.max(4,Math.min(24,(groupW-gap*3)/2));
+  x.strokeStyle='#e2e8f0';x.strokeRect(p.l,p.t,cw,ch);
+  x.font='700 11px Segoe UI';x.textAlign='left';x.textBaseline='middle';
+  x.fillStyle='#0f766e';x.fillRect(p.l,16,12,12);x.fillStyle='#475569';x.fillText(legendA,p.l+18,22);
+  x.fillStyle='#0284c7';x.fillRect(p.l+120,16,12,12);x.fillStyle='#475569';x.fillText(legendB,p.l+138,22);
+  labels.forEach((label,i)=>{
+    const cx=p.l+(i+.5)*groupW,va=Number(A[i]||0),vb=Number(B[i]||0),ha=va/m*ch,hb=vb/m*ch;
+    x.fillStyle='#0f766e';x.fillRect(cx-gap/2-bw,h-p.b-ha,bw,ha);
+    x.fillStyle='#0284c7';x.fillRect(cx+gap/2,h-p.b-hb,bw,hb);
+    x.save();x.translate(cx,h-p.b+9);x.rotate(-Math.PI/4);x.textAlign='right';x.fillStyle='#64748b';x.font='11px Segoe UI';x.fillText(String(label).slice(0,18),0,0);x.restore()
+  })
+}
+function financeMultiLines(id,labels,series){
+  if(!labels.length||!series.length)return empty(id);
+  const{x,w,h}=cv(id),p={l:48,r:14,t:62,b:42},cw=w-p.l-p.r,ch=h-p.t-p.b;
+  const vals=series.flatMap(s=>(s.values||[]).filter(v=>v!==null&&v!==undefined&&Number.isFinite(Number(v))).map(Number));
+  if(!vals.length)return empty(id);
+  const min=Math.min(0,...vals),max=Math.max(10,...vals),span=Math.max(1,max-min),colors=['#0f766e','#0284c7','#d97706','#7c3aed'];
+  x.strokeStyle='#e2e8f0';x.strokeRect(p.l,p.t,cw,ch);
+  x.font='700 10px Segoe UI';x.textBaseline='middle';
+  let lx=p.l;
+  series.forEach((s,i)=>{x.fillStyle=colors[i%colors.length];x.fillRect(lx,18,12,12);x.fillStyle='#475569';x.fillText(s.label,lx+17,24);lx+=Math.max(88,x.measureText(s.label).width+32)});
+  const py=v=>p.t+ch-(Number(v)-min)/span*ch;
+  series.forEach((s,si)=>{
+    x.strokeStyle=colors[si%colors.length];x.fillStyle=colors[si%colors.length];x.lineWidth=2;x.beginPath();let started=false;
+    (s.values||[]).forEach((v,i)=>{
+      if(v===null||v===undefined||!Number.isFinite(Number(v)))return;
+      const px=p.l+(labels.length===1?cw/2:i*cw/(labels.length-1)),yy=py(v);
+      if(!started){x.moveTo(px,yy);started=true}else x.lineTo(px,yy)
+    });x.stroke();
+    (s.values||[]).forEach((v,i)=>{
+      if(v===null||v===undefined||!Number.isFinite(Number(v)))return;
+      const px=p.l+(labels.length===1?cw/2:i*cw/(labels.length-1)),yy=py(v);
+      x.beginPath();x.arc(px,yy,3,0,Math.PI*2);x.fill()
+    })
+  });
+  labels.forEach((label,i)=>{const px=p.l+(labels.length===1?cw/2:i*cw/(labels.length-1));x.fillStyle='#64748b';x.textAlign='center';x.font='11px Segoe UI';x.fillText(label,px,h-16)});
+  x.textAlign='right';x.fillStyle='#64748b';x.font='10px Segoe UI';x.fillText(max.toFixed(0)+'%',p.l-5,p.t+4);x.fillText(min.toFixed(0)+'%',p.l-5,p.t+ch)
+}
+function financeSet(id,v){const e=$(id);if(e)e.textContent=v}
+function financeRender(){
+  if(!$('#financeDriverPanel'))return;
+  const from=$('#financeFrom')?.value||'',to=$('#financeTo')?.value||'';
+  const rows=financeRowsBetween(from,to),tot=financeAgg(rows),drivers=financeDriverRows(rows);
+  financeSet('#financeReceive',brl(tot.receive));financeSet('#financePaid',brl(tot.paid));financeSet('#financeProfit',brl(tot.profit));
+  financeSet('#financeProfitPct',tot.profitPct.toFixed(1).replace('.',',')+'%');financeSet('#financeDriverPct',tot.costPct.toFixed(1).replace('.',',')+'%');
+  const info=$('#financeInfo');
+  if(info)info.textContent=nf(rows.length)+' lançamento(s) • '+nf(drivers.length)+' motorista(s) • período '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje');
+  const tableRows=drivers.map(x=>({
+    motorista:x.motorista,pago:brl(x.paid),receber:brl(x.receive),lucro:brl(x.profit),
+    lucroPct:x.profitPct.toFixed(1).replace('.',',')+'%',custoPct:x.costPct.toFixed(1).replace('.',',')+'%'
+  }));
+  if($('#financeDriverTable'))table('#financeDriverTable',[['Motorista','motorista'],['Frete pago','pago'],['Frete a receber','receber'],['Lucro','lucro'],['% lucro','lucroPct'],['% custo motorista','custoPct']],tableRows);
+
+  const top=drivers.slice(0,12);
+  financeDualBars('#financeDriverChart',top.map(x=>x.motorista),top.map(x=>x.receive),top.map(x=>x.paid),'A receber','Pago');
+
+  const anchor=to?new Date(to+'T12:00:00'):new Date(),ay=anchor.getFullYear(),am=anchor.getMonth();
+  const monthWeeks=financeWeeksForMonth(ay,am,to);
+  financeDualBars('#financeWeeksChart',['Semana 1','Semana 2','Semana 3','Semana 4','Semana 5'],monthWeeks.map(x=>x.receive),monthWeeks.map(x=>x.paid),'A receber','Pago');
+
+  const compare=[];
+  for(let back=0;back<4;back++){
+    const d=new Date(ay,am-back,1),isCurrent=back===0;
+    const weeks=financeWeeksForMonth(d.getFullYear(),d.getMonth(),isCurrent?to:'');
+    compare.push({label:financeMonthLabel(d),values:weeks.map((x,i)=>{
+      if(isCurrent&&i+1>financeWeekIndex(anchor))return null;
+      return x.receive?x.profitPct:null
+    })})
+  }
+  financeMultiLines('#financeCompareChart',['Sem 1','Sem 2','Sem 3','Sem 4','Sem 5'],compare);
+  const ci=$('#financeCompareInfo');
+  if(ci)ci.textContent='Comparação da margem de lucro semanal de '+financeMonthLabel(anchor)+' com os 3 meses anteriores. Cada ponto usa (frete a receber − frete pago) ÷ frete a receber.'
+}
+function financeSetMonthCurrent(){
+  const t=new Date(),f=new Date(t.getFullYear(),t.getMonth(),1);
+  if($('#financeFrom'))$('#financeFrom').value=iso(f);if($('#financeTo'))$('#financeTo').value=iso(t);financeRender()
+}
+function financeSetToday(){
+  const d=iso(new Date());if($('#financeFrom'))$('#financeFrom').value=d;if($('#financeTo'))$('#financeTo').value=d;financeRender()
+}
+function setupFinanceDashboard(){
+  if(!$('#financeDriverPanel'))return;
+  const t=new Date(),f=new Date(t.getFullYear(),t.getMonth(),1);
+  if($('#financeFrom')&&!$('#financeFrom').value)$('#financeFrom').value=iso(f);
+  if($('#financeTo')&&!$('#financeTo').value)$('#financeTo').value=iso(t);
+  if($('#financeApply'))$('#financeApply').onclick=financeRender;
+  if($('#financeMonth'))$('#financeMonth').onclick=financeSetMonthCurrent;
+  if($('#financeToday'))$('#financeToday').onclick=financeSetToday;
+  if($('#financeFrom'))$('#financeFrom').onchange=financeRender;
+  if($('#financeTo'))$('#financeTo').onchange=financeRender
+}
+
 function update(){const O=ops(),H=help(),A=sch(),roleNorm=o=>String(g(o,'FUNÇÃO','FUNCAO','Função','Funcao')||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase(),HCf=H.filter(o=>roleNorm(o).includes('CONFER')),HA=H.filter(o=>!roleNorm(o).includes('CONFER')),delSheet=O.reduce((a,o)=>a+num(g(o,'Entregas')),0),doneSheet=O.reduce((a,o)=>a+num(g(o,'Realizadas')),0),co=S.coletas&&S.coletas.ok?S.coletas:null,del=co?num(co.ativas):delSheet,done=co?num(co.entregues):doneSheet,km=O.reduce((a,o)=>a+num(g(o,'KM')),0),rev=O.reduce((a,o)=>a+num(g(o,'Frete Vialog Liq',' Frete Vialog Liq')),0),dc=O.reduce((a,o)=>a+num(g(o,'Frete Mot Liq',' Frete Mot Liq')),0),helperCost=HA.reduce((a,o)=>a+num(g(o,'Valor')),0),checkerCost=HCf.reduce((a,o)=>a+num(g(o,'Valor')),0),hc=helperCost+checkerCost,gross=rev-dc,margin=rev?gross/rev*100:0,net=gross-hc,ret=O.reduce((a,o)=>a+num(g(o,'Retorno')),0),pending=co?num(co.pendentes):Math.max(del-done,0);
 $('#del').textContent=nf(del);$('#done').textContent=nf(done);$('#rate').textContent=(del?done/del*100:0).toFixed(1).replace('.',',')+'%';$('#km').textContent=nf(km);$('#revenue').textContent=brl(rev);$('#driverCost').textContent=brl(dc);$('#gross').textContent=brl(gross);$('#margin').textContent=margin.toFixed(1).replace('.',',')+'%';$('#helpersCost').textContent=brl(helperCost);$('#checkersCost').textContent=brl(checkerCost);$('#net').textContent=brl(net);mood($('#gross'),gross);mood($('#margin'),margin);mood($('#net'),net);
 const sla=del?done/del*100:0;
@@ -568,6 +703,7 @@ set('#hubOpPlan',nf(del));set('#hubOpDone',nf(done));set('#hubOpPend',nf(pending
 set('#hubFinRev',brl(rev));set('#hubFinDriver',brl(dc));set('#hubFinHelp',brl(helperCost));set('#hubFinChecker',brl(checkerCost));set('#hubFinMargin',margin.toFixed(1).replace('.',',')+'%');
 set('#hubHelpCost',brl(helperCost));set('#hubHelpPeople',nf(new Set(HA.map(o=>g(o,'NOME')).filter(Boolean)).size));set('#hubCheckerCost',brl(checkerCost));set('#hubCheckerPeople',nf(new Set(HCf.map(o=>g(o,'NOME')).filter(Boolean)).size));
 set('#hubSchN',nf(A.length));
+set('#schDelivered',nf(A.filter(o=>agCopyNorm(g(o,'STATUS')).includes('entregue')).length));
 const hs={};A.forEach(o=>{const k=(g(o,'STATUS')||'SEM STATUS').trim();hs[k]=(hs[k]||0)+1});set('#hubSchStatus',nf(Object.keys(hs).length));const hsTop=Object.entries(hs).sort((a,b)=>b[1]-a[1]).slice(0,4);set('#hubSchList',hsTop.length?hsTop.map(x=>x[0]+': '+nf(x[1])).join(' • '):'Sem agendamentos no período');
 const hdm={};O.forEach(o=>{const k=g(o,'Motorista')||'Sem motorista';hdm[k]=(hdm[k]||0)+num(g(o,'Realizadas'))});const hdTop=Object.entries(hdm).sort((a,b)=>b[1]-a[1]).slice(0,5);set('#hubDrivers',hdTop.length?hdTop.map((x,i)=>(i+1)+'. '+x[0]+' — '+nf(x[1])).join(' | '):'Sem dados de motoristas');
 const hbm={};O.forEach(o=>{const k=g(o,'Filial')||'Sem filial';hbm[k]??={p:0,d:0};hbm[k].p+=num(g(o,'Entregas'));hbm[k].d+=num(g(o,'Realizadas'))});const hbTop=Object.entries(hbm).sort((a,b)=>b[1].d-a[1].d).slice(0,5);set('#hubBranches',hbTop.length?hbTop.map(x=>x[0]+': '+nf(x[1].d)+'/'+nf(x[1].p)).join(' | '):'Sem dados de filiais');
@@ -577,7 +713,8 @@ const active=$('.section.active')?.id||'dashboard';
 if(active==='dashboard'){
   const bd={};O.forEach(o=>{const k=gd(o)||'Sem data';bd[k]??={d:0,r:0};bd[k].d+=num(g(o,'Realizadas'));bd[k].r+=num(g(o,'Retorno'))});const K=Object.keys(bd).sort((a,b)=>(pd(a)||0)-(pd(b)||0));lines('#trend',K,K.map(k=>bd[k].d),K.map(k=>bd[k].r));
   const dm={};O.forEach(o=>{const k=g(o,'Motorista')||'Sem motorista';dm[k]=(dm[k]||0)+num(g(o,'Entregas'))});const T=Object.entries(dm).sort((a,b)=>b[1]-a[1]).slice(0,10);bars('#drivers',T.map(x=>x[0]),T.map(x=>x[1]),T.map(x=>nf(x[1])),true);
-  renderAgStatusCards('#agStatusCards',S.agCopy||[]);
+  renderAgStatusCards('#agStatusCards',(S.agCopy||[]).filter(o=>!agCopyOldDelivered(o)));
+  financeRender();
   const hdA={},hdC={};HA.forEach(o=>{const k=g(o,'Data')||'Sem data';hdA[k]??={valor:0,nomes:new Set()};hdA[k].valor+=num(g(o,'Valor'));const nome=String(g(o,'NOME')||'').trim();if(nome)hdA[k].nomes.add(nome)});HCf.forEach(o=>{const k=g(o,'Data')||'Sem data';hdC[k]??={valor:0,nomes:new Set()};hdC[k].valor+=num(g(o,'Valor'));const nome=String(g(o,'NOME')||'').trim();if(nome)hdC[k].nomes.add(nome)});const HK=[...new Set([...Object.keys(hdA),...Object.keys(hdC)])].sort((a,b)=>(pd(a)||0)-(pd(b)||0));groupedBars('#helpersChart',HK,HK.map(k=>hdA[k]?.valor||0),HK.map(k=>hdC[k]?.valor||0),HK.map(k=>nf(hdA[k]?.nomes.size||0)),HK.map(k=>nf(hdC[k]?.nomes.size||0)));
 }
 $('#hc').textContent=brl(helperCost);$('#hcc').textContent=brl(checkerCost);$('#hn').textContent=nf(H.length);$('#hp').textContent=new Set(HA.map(o=>g(o,'NOME')).filter(Boolean)).size;$('#hcp').textContent=new Set(HCf.map(o=>g(o,'NOME')).filter(Boolean)).size;
@@ -1644,6 +1781,7 @@ function loadHeavyForTab(tab){
 }
 async function start(){
   init();
+  setupFinanceDashboard();
   $('#err').style.display='none';
   if(hasAnyPerm(['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo','receita_ssw']))checkSsw();
   if(DASH_EMBEDDED){
