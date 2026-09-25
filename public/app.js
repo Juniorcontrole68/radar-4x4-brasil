@@ -799,10 +799,16 @@ function setupDriverPerformanceDashboard(){
 function checkerRoleNorm(o){
   return String(g(o,'FUNÇÃO','FUNCAO','Função','Funcao')||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase()
 }
+function checkerRoleLabel(o){
+  const r=checkerRoleNorm(o);
+  if(r.includes('CONFER'))return'Conferente';
+  if(r.includes('AJUD'))return'Ajudante';
+  return''
+}
 function checkerValueRowsBetween(fromIso,toIso){
   const from=fromIso?new Date(fromIso+'T00:00:00'):null,to=toIso?new Date(toIso+'T23:59:59'):null;
   return(S.help||[]).filter(o=>{
-    if(!checkerRoleNorm(o).includes('CONFER'))return false;
+    if(!checkerRoleLabel(o))return false;
     const d=pd(g(o,'Data','DATA'));if(!d)return false;
     return(!from||d>=from)&&(!to||d<=to)
   })
@@ -810,29 +816,37 @@ function checkerValueRowsBetween(fromIso,toIso){
 function checkerValueAggregate(rows){
   const map=new Map();
   for(const o of rows||[]){
+    const funcao=checkerRoleLabel(o);if(!funcao)continue;
     const nome=String(g(o,'NOME','Nome','nome')||'Sem nome').trim()||'Sem nome';
-    if(!map.has(nome))map.set(nome,{nome,valor:0,lancamentos:0,dias:new Set()});
-    const x=map.get(nome);
+    const key=funcao+'|'+nome.toLocaleUpperCase('pt-BR');
+    if(!map.has(key))map.set(key,{funcao,nome,valor:0,lancamentos:0,dias:new Set()});
+    const x=map.get(key);
     x.valor+=num(g(o,'Valor','VALOR'));
     x.lancamentos++;
     const d=g(o,'Data','DATA');if(d)x.dias.add(String(d))
   }
+  const rank={Conferente:0,Ajudante:1};
   return[...map.values()].map(x=>({
-    nome:x.nome,valor:x.valor,lancamentos:x.lancamentos,dias:x.dias.size,
+    funcao:x.funcao,nome:x.nome,valor:x.valor,lancamentos:x.lancamentos,dias:x.dias.size,
     media:x.lancamentos?x.valor/x.lancamentos:0
-  })).sort((a,b)=>b.valor-a.valor||a.nome.localeCompare(b.nome,'pt-BR'))
+  })).sort((a,b)=>(rank[a.funcao]??9)-(rank[b.funcao]??9)||b.valor-a.valor||a.nome.localeCompare(b.nome,'pt-BR'))
 }
 function renderCheckerValueReport(){
   if(!$('#checkerValueTable'))return;
   const from=$('#checkerValueFrom')?.value||'',to=$('#checkerValueTo')?.value||'';
-  const rows=checkerValueRowsBetween(from,to),agg=checkerValueAggregate(rows),total=agg.reduce((s,x)=>s+x.valor,0);
+  const rows=checkerValueRowsBetween(from,to),agg=checkerValueAggregate(rows);
+  const conferentes=agg.filter(x=>x.funcao==='Conferente'),ajudantes=agg.filter(x=>x.funcao==='Ajudante');
+  const totalConferentes=conferentes.reduce((s,x)=>s+x.valor,0),totalAjudantes=ajudantes.reduce((s,x)=>s+x.valor,0),total=totalConferentes+totalAjudantes;
+  const people=new Set(agg.map(x=>x.nome.toLocaleUpperCase('pt-BR')));
   $('#checkerValueTotal').textContent=brl(total);
-  $('#checkerValuePeople').textContent=nf(agg.length);
+  $('#checkerValueConferenceTotal').textContent=brl(totalConferentes);
+  $('#checkerValueHelperTotal').textContent=brl(totalAjudantes);
+  $('#checkerValuePeople').textContent=nf(people.size);
   $('#checkerValueEntries').textContent=nf(rows.length);
   const info=$('#checkerValueInfo');
-  if(info)info.textContent=nf(rows.length)+' lançamento(s) • '+nf(agg.length)+' conferente(s) • '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje');
-  $('#checkerValueTable').innerHTML='<thead><tr><th>Conferente</th><th>Lançamentos</th><th>Dias</th><th>Valor total</th><th>Média / lançamento</th></tr></thead><tbody>'+
-    (agg.length?agg.map(x=>'<tr><td><b>'+safe(x.nome)+'</b></td><td>'+nf(x.lancamentos)+'</td><td>'+nf(x.dias)+'</td><td><b>'+brl(x.valor)+'</b></td><td>'+brl(x.media)+'</td></tr>').join(''):'<tr><td colspan="5" class="muted">Sem registros de conferentes no período selecionado.</td></tr>')+
+  if(info)info.textContent=nf(rows.length)+' lançamento(s) • '+nf(conferentes.length)+' conferente(s) • '+nf(ajudantes.length)+' ajudante(s) • '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje');
+  $('#checkerValueTable').innerHTML='<thead><tr><th>Função</th><th>Nome</th><th>Lançamentos</th><th>Dias</th><th>Valor total</th><th>Média / lançamento</th></tr></thead><tbody>'+
+    (agg.length?agg.map(x=>'<tr><td><b>'+safe(x.funcao)+'</b></td><td><b>'+safe(x.nome)+'</b></td><td>'+nf(x.lancamentos)+'</td><td>'+nf(x.dias)+'</td><td><b>'+brl(x.valor)+'</b></td><td>'+brl(x.media)+'</td></tr>').join(''):'<tr><td colspan="6" class="muted">Sem registros de conferentes ou ajudantes no período selecionado.</td></tr>')+
     '</tbody>'
 }
 function checkerValueSetToday(){
