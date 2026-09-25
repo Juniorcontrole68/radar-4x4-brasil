@@ -3140,7 +3140,7 @@ if(u.pathname==='/api/nf-materiais/import'&&req.method==='POST'){try{
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
 if(u.pathname==='/api/programacao-simulacao'&&req.method==='GET'){try{
-  if(!dashboardHasAny(authUser,['programacao','roteirizador','dashboard','ssw_saidas']))return dashboardDeny(res);
+  if(!dashboardHasAny(authUser,['programacao','roteirizador','dashboard','ssw_saidas','tracking']))return dashboardDeny(res);
   const x=await buildRomaneioSimulation(u.searchParams.get('force')==='1');
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
