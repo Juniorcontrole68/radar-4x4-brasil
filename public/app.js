@@ -663,6 +663,9 @@ function financeRender(){
   const rows=financeRowsBetween(from,to),tot=financeAgg(rows),drivers=financeDriverRows(rows);
   financeSet('#financeReceive',brl(tot.receive));financeSet('#financePaid',brl(tot.paid));financeSet('#financeProfit',brl(tot.profit));
   financeSet('#financeProfitPct',tot.profitPct.toFixed(1).replace('.',',')+'%');financeSet('#financeDriverPct',tot.costPct.toFixed(1).replace('.',',')+'%');
+  const profitPctEl=$('#financeProfitPct'),driverPctEl=$('#financeDriverPct');
+  if(profitPctEl)profitPctEl.classList.toggle('finance-target-bad',tot.profitPct<55);
+  if(driverPctEl)driverPctEl.classList.toggle('finance-target-bad',tot.costPct>45);
   const info=$('#financeInfo');
   if(info)info.textContent=nf(rows.length)+' lançamento(s) • '+nf(drivers.length)+' motorista(s) • período '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje');
   const tableRows=drivers.map(x=>({
