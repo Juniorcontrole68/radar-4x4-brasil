@@ -555,6 +555,10 @@ async function deliveryProgramEnrich(rows){
       cidade:x.cidade||pickField(a,'CIDADE DESTINO','CIDADE_DESTINO')||pickField(b,'CIDADE DESTINO'),
       uf:pickField(a,'UF DESTINO','UF_DESTINO')||pickField(b,'UF DESTINO')||x.uf||'SP',
       mercadoria:pickField(a,'TIPO MERCADORIA','TIPO_MERCADORIA','MERCADORIA')||pickField(b,'MERCADORIA','TIPO MERCADORIA'),
+      frete:bi2Number(
+        pickField(a,'FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO','FRETE VIAG LIQ','FRETE VIAGEM LIQ','FRETE') ||
+        pickField(b,'FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO','FRETE VIAG LIQ','FRETE VIAGEM LIQ','FRETE')
+      ),
       m3Known:m3>0
     }
   });
@@ -605,45 +609,99 @@ async function deliveryProgramGeo(rows){
     part.forEach((x,j)=>{
       const d=Number(mt.matrix?.[0]?.[j+1]);
       x.distanceKm=Number.isFinite(d)?d/1000:x.airKm*1.25;
-      x.sector=deliveryProgramSector(deliveryProgramBearing(base,x))
+      x.bearing=deliveryProgramBearing(base,x);
+      x.sector=deliveryProgramSector(x.bearing)
     })
   }
   const map=new Map(cities.map(x=>[x.key,x]));
   return{base,map}
 }
-function deliveryProgramPack(items,counts,maxStops){
-  const bins=[];
-  for(const t of DELIVERY_FLEET)for(let i=0;i<(counts[t.id]||0);i++)bins.push({type:t,items:[],kg:0});
-  const sorted=items.slice().sort((a,b)=>b.peso-a.peso);
-  for(const item of sorted){
-    const feasible=bins.filter(b=>b.items.length<maxStops&&b.kg+item.peso<=b.type.kg+1e-9);
-    if(!feasible.length)return null;
-    feasible.sort((a,b)=>(a.type.kg-(a.kg+item.peso))-(b.type.kg-(b.kg+item.peso))||a.type.cost-b.type.cost);
-    const bin=feasible[0];bin.items.push(item);bin.kg+=item.peso
+function deliveryProgramAngleDiff(a,b){
+  const d=Math.abs(Number(a||0)-Number(b||0))%360;
+  return Math.min(d,360-d)
+}
+function deliveryProgramBearingSpan(items){
+  const vals=(items||[]).map(x=>Number(x.bearing)).filter(Number.isFinite).map(x=>(x%360+360)%360).sort((a,b)=>a-b);
+  if(vals.length<=1)return 0;
+  let maxGap=0;
+  for(let i=0;i<vals.length;i++){
+    const next=i===vals.length-1?vals[0]+360:vals[i+1];
+    maxGap=Math.max(maxGap,next-vals[i])
   }
-  if(bins.some(b=>!b.items.length))return null;
+  return 360-maxGap
+}
+function deliveryProgramBinFeasible(items){
+  if(!items.length)return true;
+  const kg=items.reduce((a,x)=>a+Number(x.peso||0),0);
+  const far=items.some(x=>Number(x.distanceKm||0)>100);
+  const maxStops=far?20:30;
+  return kg<=1500+1e-9&&items.length<=maxStops&&deliveryProgramBearingSpan(items)<=60+1e-9
+}
+function deliveryProgramBinStats(items){
+  const kg=items.reduce((a,x)=>a+Number(x.peso||0),0);
+  const frete=items.reduce((a,x)=>a+Number(x.frete||0),0);
+  const freteKnown=items.filter(x=>Number(x.frete||0)>0).length;
+  const far=items.some(x=>Number(x.distanceKm||0)>100);
+  return{kg,frete,freteKnown,far,maxStops:far?20:30,span:deliveryProgramBearingSpan(items)}
+}
+function deliveryProgramPackOrder(items,order){
+  const bins=[];
+  for(const item of order(items.slice())){
+    let best=null,bestScore=Infinity;
+    for(const bin of bins){
+      const next=[...bin,item];
+      if(!deliveryProgramBinFeasible(next))continue;
+      const st=deliveryProgramBinStats(next);
+      const radial=Math.abs(Math.max(...bin.map(x=>Number(x.distanceKm||0)))-Number(item.distanceKm||0));
+      const score=(1500-st.kg)*1.2+st.span*3+radial*.25-(st.frete/50);
+      if(score<bestScore){bestScore=score;best=bin}
+    }
+    if(best)best.push(item);else bins.push([item])
+  }
+  let merged=true;
+  while(merged){
+    merged=false;
+    let bestPair=null,bestScore=Infinity;
+    for(let i=0;i<bins.length;i++)for(let j=i+1;j<bins.length;j++){
+      const combo=[...bins[i],...bins[j]];
+      if(!deliveryProgramBinFeasible(combo))continue;
+      const st=deliveryProgramBinStats(combo);
+      const score=(1500-st.kg)+st.span*2-(st.frete/100);
+      if(score<bestScore){bestScore=score;bestPair=[i,j]}
+    }
+    if(bestPair){
+      const [i,j]=bestPair;bins[i]=[...bins[i],...bins[j]];bins.splice(j,1);merged=true
+    }
+  }
   return bins
 }
-function deliveryProgramOptimizeGroup(items,maxStops){
+function deliveryProgramOptimizeAll(items){
   if(!items.length)return[];
-  const kg=items.reduce((a,x)=>a+x.peso,0),n=items.length;
-  const vf=Math.max(1,Math.ceil(kg/1500),Math.ceil(n/maxStops));
-  let best=deliveryProgramPack(items,{fiorino:0,van_furgao:vf,van_bau:0},maxStops),bestCost=vf*700;
-  const fMax=Math.floor(bestCost/400),vfMax=Math.floor(bestCost/700),vbMax=Math.floor(bestCost/800),candidates=[];
-  for(let f=0;f<=fMax;f++)for(let v=0;v<=vfMax;v++)for(let b=0;b<=vbMax;b++){
-    if(f+v+b===0)continue;
-    const cost=f*400+v*700+b*800;if(cost>bestCost)continue;
-    const capKg=f*600+(v+b)*1500,capStops=(f+v+b)*maxStops;
-    if(capKg+1e-9<kg||capStops<n)continue;
-    candidates.push({cost,bins:f+v+b,counts:{fiorino:f,van_furgao:v,van_bau:b}})
-  }
-  candidates.sort((a,b)=>a.cost-b.cost||a.bins-b.bins||a.counts.van_bau-b.counts.van_bau);
-  for(const cand of candidates){
-    const packed=deliveryProgramPack(items,cand.counts,maxStops);
-    if(packed){best=packed;bestCost=cand.cost;break}
-  }
-  return(best||[]).map(b=>({...b,cost:b.type.cost}))
+  const orders=[
+    x=>x.sort((a,b)=>Number(b.peso||0)-Number(a.peso||0)||Number(a.bearing||0)-Number(b.bearing||0)),
+    x=>x.sort((a,b)=>Number(a.bearing||0)-Number(b.bearing||0)||Number(b.distanceKm||0)-Number(a.distanceKm||0)),
+    x=>x.sort((a,b)=>Number(b.distanceKm||0)-Number(a.distanceKm||0)||Number(b.peso||0)-Number(a.peso||0)),
+    x=>x.sort((a,b)=>Number(b.frete||0)-Number(a.frete||0)||Number(b.peso||0)-Number(a.peso||0))
+  ];
+  const candidates=orders.map(order=>deliveryProgramPackOrder(items,order));
+  candidates.sort((a,b)=>{
+    if(a.length!==b.length)return a.length-b.length;
+    const ae=a.reduce((s,bin)=>{const st=deliveryProgramBinStats(bin),cost=st.kg<=600?400:700;return s+(st.frete>0?Math.max(0,cost/st.frete-.4):1)},0);
+    const be=b.reduce((s,bin)=>{const st=deliveryProgramBinStats(bin),cost=st.kg<=600?400:700;return s+(st.frete>0?Math.max(0,cost/st.frete-.4):1)},0);
+    if(ae!==be)return ae-be;
+    const ac=a.reduce((s,bin)=>s+(deliveryProgramBinStats(bin).kg<=600?400:700),0);
+    const bc=b.reduce((s,bin)=>s+(deliveryProgramBinStats(bin).kg<=600?400:700),0);
+    return ac-bc
+  });
+  const bins=candidates[0]||[];
+  return bins.map(items=>{
+    const st=deliveryProgramBinStats(items);
+    const type=st.kg<=600?DELIVERY_FLEET.find(x=>x.id==='fiorino'):DELIVERY_FLEET.find(x=>x.id==='van_furgao');
+    const cost=type.cost,freightPct=st.frete>0?cost/st.frete*100:null;
+    return{type,items,kg:st.kg,cost,frete:st.frete,freteKnown:st.freteKnown,freightPct,economicOk:freightPct!==null&&freightPct<=40,maxStops:st.maxStops,bearingSpan:st.span}
+  })
 }
+
 async function buildDeliveryProgram(date='',force=false){
   const target=/^\d{4}-\d{2}-\d{2}$/.test(date||'')?date:deliveryProgramTomorrow(),key=target;
   const hit=DELIVERY_PROGRAM_CACHE.get(key);
@@ -666,47 +724,52 @@ async function buildDeliveryProgram(date='',force=false){
     const key=normKey(r.cidade)+'|'+normKey(r.uf||'SP'),g=geo.map.get(key);
     if(!g||!Number.isFinite(g.distanceKm)){review.push({...r,reviewReason:'Cidade não localizada para calcular a distância'});continue}
     const far=g.distanceKm>100,band=far?(g.distanceKm<=200?'101–200 km':(g.distanceKm<=300?'201–300 km':'acima de 300 km')):'até 100 km';
-    geoOk.push({...r,distanceKm:g.distanceKm,lat:g.lat,lon:g.lon,sector:g.sector||'N',far,distanceBand:band,maxStops:far?20:30})
-  }
-  const groups=new Map();
-  for(const r of geoOk){
-    const k=(r.far?'distante':'proxima')+'|'+r.sector+'|'+r.distanceBand;
-    if(!groups.has(k))groups.set(k,[]);
-    groups.get(k).push(r)
+    geoOk.push({...r,distanceKm:g.distanceKm,lat:g.lat,lon:g.lon,bearing:Number(g.bearing||0),sector:g.sector||'N',far,distanceBand:band,maxStops:far?20:30})
   }
   const loads=[];let loadNo=0;
-  for(const [groupKey,items] of groups){
-    const maxStops=items.some(x=>x.far)?20:30,packed=deliveryProgramOptimizeGroup(items,maxStops);
-    for(const b of packed){
-      const ordered=b.items.slice().sort((a,z)=>a.distanceKm-z.distanceKm||String(a.cidade).localeCompare(String(z.cidade),'pt-BR'));
-      loadNo++;
-      loads.push({
-        id:loadNo,groupKey,vehicleId:b.type.id,vehicle:b.type.label,cost:b.type.cost,
-        kgCapacity:b.type.kg,maxStops,
-        kg:Number(b.kg.toFixed(2)),deliveries:ordered.length,
-        kgUtil:Number((b.kg/b.type.kg*100).toFixed(1)),
-        region:ordered[0]?.far?'Mais de 100 km':'Até 100 km',sector:ordered[0]?.sector||'',
-        distanceBand:ordered[0]?.distanceBand||'',maxDistanceKm:Number(Math.max(...ordered.map(x=>x.distanceKm)).toFixed(1)),
-        cities:[...new Set(ordered.map(x=>x.cidade))],items:ordered
-      })
-    }
+  const packed=deliveryProgramOptimizeAll(geoOk);
+  for(const b of packed){
+    const ordered=b.items.slice().sort((a,z)=>a.distanceKm-z.distanceKm||String(a.cidade).localeCompare(String(z.cidade),'pt-BR'));
+    loadNo++;
+    const maxDistance=Math.max(...ordered.map(x=>Number(x.distanceKm||0)));
+    const far=maxDistance>100;
+    const minBearing=ordered.length?ordered[0].bearing:0;
+    loads.push({
+      id:loadNo,groupKey:'corredor-'+loadNo,vehicleId:b.type.id,vehicle:b.type.label,cost:b.cost,
+      kgCapacity:b.type.kg,maxStops:b.maxStops,
+      kg:Number(b.kg.toFixed(2)),deliveries:ordered.length,
+      kgUtil:Number((b.kg/b.type.kg*100).toFixed(1)),
+      freight:Number(b.frete.toFixed(2)),freightKnown:b.freteKnown,
+      costFreightPct:b.freightPct===null?null:Number(b.freightPct.toFixed(1)),
+      economicOk:b.economicOk,bearingSpan:Number(b.bearingSpan.toFixed(1)),
+      region:far?'Mais de 100 km':'Até 100 km',
+      sector:deliveryProgramSector(Number.isFinite(minBearing)?minBearing:0),
+      distanceBand:far?(maxDistance<=200?'101–200 km':(maxDistance<=300?'201–300 km':'acima de 300 km')):'até 100 km',
+      maxDistanceKm:Number(maxDistance.toFixed(1)),
+      cities:[...new Set(ordered.map(x=>x.cidade))],items:ordered
+    })
   }
   loads.sort((a,b)=>a.region.localeCompare(b.region,'pt-BR')||a.sector.localeCompare(b.sector,'pt-BR')||a.maxDistanceKm-b.maxDistanceKm);
   const programmed=loads.reduce((a,x)=>a+x.deliveries,0),totalCost=loads.reduce((a,x)=>a+x.cost,0);
+  const totalFreight=loads.reduce((a,x)=>a+Number(x.freight||0),0);
+  const economicRoutes=loads.filter(x=>x.costFreightPct!==null&&x.costFreightPct<=40).length;
+  const routesWithFreight=loads.filter(x=>x.costFreightPct!==null).length;
   const value={
     ok:true,date:target,weekday:deliveryProgramDowLabel(targetDow),baseAddress:ROUTE_BASE_ADDRESS,
     rules:{nearMaxStops:30,farMaxStops:20,distanceCutoffKm:100,fleet:DELIVERY_FLEET},
     source:base.source,totalOpen:enriched.length,eligibleBeforeReview:eligible.length,programmed,
     notScheduledToday:notToday.length,reviewCount:review.length,vehicles:loads.length,totalCost,
     totalKg:Number(loads.reduce((a,x)=>a+x.kg,0).toFixed(2)),
+    totalFreight:Number(totalFreight.toFixed(2)),costFreightPct:totalFreight>0?Number((totalCost/totalFreight*100).toFixed(1)):null,
+    economicRoutes,routesWithFreight,
     openRows:enriched.map(x=>({
       nf:x.nf||'',ctrc:x.ctrc||'',cliente:x.cliente||'',cidade:x.cidade||'',uf:x.uf||'SP',
-      peso:Number(x.peso||0),previsao:x.previsao||'',status:x.status||''
+      peso:Number(x.peso||0),frete:Number(x.frete||0),previsao:x.previsao||'',status:x.status||''
     })).slice(0,3000),
     loads,review:review.slice(0,500),
     cityRules:[...schedule.entries()].map(([city,x])=>({city,weekday:x.weekdayLabel,samples:x.samples})).slice(0,300),
     generatedAt:new Date().toISOString(),
-    note:'A programação usa as pendências da opção 38, ignora CT-es iniciados por AMS e considera somente o peso para capacidade dos veículos. Para entregas vencidas, o dia da cidade é inferido pela previsão de entrega do SSW.'
+    note:'A programação usa as pendências da opção 38, ignora CT-es iniciados por AMS e considera somente o peso. O otimizador prioriza a menor quantidade de veículos, permite unir corredores geográficos coerentes (até 60° de abertura) e busca manter o custo de cada carro em até 40% do frete das entregas alocadas.'
   };
   DELIVERY_PROGRAM_CACHE.set(key,{at:Date.now(),value});
   console.log('PROGRAMAÇÃO ENTREGAS RESULTADO: '+JSON.stringify({date:target,totalOpen:value.totalOpen,programmed,review:value.reviewCount,vehicles:value.vehicles,totalCost,notToday:value.notScheduledToday}));
