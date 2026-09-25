@@ -122,7 +122,7 @@ function dashboardHasAny(user,perms){return !!(user&&(user.is_admin||user.permis
 function dashboardDeny(res,msg='Acesso não autorizado.'){res.writeHead(403,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:msg}))}
 function filterLancamentosForUser(rows,user){
   if(user?.is_admin||dashboardHas(user,'dashboard'))return rows;
-  const allow=new Set(['Data','  Data']);
+  const allow=new Set(['ENTREGUE','Entregue','Data','  Data','DATA']);
   const add=(arr)=>arr.forEach(x=>allow.add(x));
   if(dashboardHas(user,'operacional'))add(['Motorista','Veiculo','Veículo','Filial','Entregas','Realizadas','KM','Retorno','Rota']);
   if(dashboardHas(user,'financeiro'))add(['Frete Vialog Liq',' Frete Vialog Liq','Frete Mot Liq',' Frete Mot Liq']);
@@ -3073,7 +3073,7 @@ async function rows(gid){
       const x=csv(await fetchText(u));
       if(x.length){
         if(gid===GIDS.lancamentos){
-          const dates=x.map(r=>String(r['  Data']||r.Data||'').trim()).filter(Boolean);
+          const dates=x.map(r=>String(r.ENTREGUE||r.Entregue||r['  Data']||r.Data||r.DATA||'').trim()).filter(Boolean);
           console.log('SHEET operações atualizado: '+JSON.stringify({rows:x.length,ultimaData:dates[dates.length-1]||'',fonte:u.includes('/gviz/')?'gviz':'export'}));
         }
         return x
