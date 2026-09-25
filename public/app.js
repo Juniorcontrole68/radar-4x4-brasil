@@ -1829,6 +1829,7 @@ async function calculateRoute(){
 }
 
 let TRACKING_MAP=null,TRACKING_LAYER=null,TRACKING_DATA=null,TRACKING_ROUTE_DATA=null,TRACKING_DRIVER_ROWS=[];
+let TRACKING_MAP_VIEW_READY=false;
 let TRACKING_AUTO_SECONDS=Math.max(5,Math.min(300,Number(localStorage.getItem('construlog_tracking_refresh_seconds')||30)));
 let TRACKING_NEXT_REFRESH=0;
 const TRACKING_COLORS=['#2563eb','#dc2626','#16a34a','#9333ea','#ea580c','#0891b2','#ca8a04','#db2777','#4f46e5','#059669'];
@@ -1937,12 +1938,40 @@ function trackingStatus(row){
     ?{key:'ok',label:'Na rota',distance:d}
     :{key:'bad',label:'Desvio de '+d.toFixed(1).replace('.',',')+' km',distance:d}
 }
+function trackingLoadMapView(){
+  try{
+    const x=JSON.parse(localStorage.getItem('construlog_tracking_map_view')||'null');
+    const lat=Number(x?.lat),lng=Number(x?.lng),zoom=Number(x?.zoom);
+    if(Number.isFinite(lat)&&lat>=-90&&lat<=90&&Number.isFinite(lng)&&lng>=-180&&lng<=180&&Number.isFinite(zoom)&&zoom>=3&&zoom<=19){
+      return{lat,lng,zoom}
+    }
+  }catch{}
+  return null
+}
+function trackingSaveMapView(){
+  if(!TRACKING_MAP)return;
+  const p=TRACKING_MAP.getCenter(),z=TRACKING_MAP.getZoom();
+  if(!p||!Number.isFinite(p.lat)||!Number.isFinite(p.lng)||!Number.isFinite(z))return;
+  localStorage.setItem('construlog_tracking_map_view',JSON.stringify({lat:p.lat,lng:p.lng,zoom:z}));
+  TRACKING_MAP_VIEW_READY=true
+}
+function trackingFirstName(v){
+  return String(v||'Motorista').trim().split(/\s+/).filter(Boolean)[0]||'Motorista'
+}
 function renderTrackingMap(rows){
   const box=$('#trackingMap');if(!box)return;
   if(typeof L==='undefined'){box.innerHTML='<div class="muted" style="padding:22px">Mapa indisponível.</div>';return}
   if(!TRACKING_MAP){
     TRACKING_MAP=L.map(box,{zoomControl:true});
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(TRACKING_MAP)
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(TRACKING_MAP);
+    const savedView=trackingLoadMapView();
+    if(savedView){
+      TRACKING_MAP.setView([savedView.lat,savedView.lng],savedView.zoom);
+      TRACKING_MAP_VIEW_READY=true
+    }else{
+      TRACKING_MAP.setView([-22.739,-47.331],9)
+    }
+    TRACKING_MAP.on('moveend zoomend',trackingSaveMapView)
   }
   if(TRACKING_LAYER)TRACKING_LAYER.remove();
   TRACKING_LAYER=L.layerGroup().addTo(TRACKING_MAP);
@@ -1955,13 +1984,23 @@ function renderTrackingMap(rows){
     }
     const lat=Number(row.latitude),lon=Number(row.longitude);
     if(Number.isFinite(lat)&&Number.isFinite(lon)){
-      const icon=L.divIcon({className:'',html:'<div style="width:30px;height:30px;border-radius:50%;background:'+color+';border:3px solid #fff;box-shadow:0 2px 7px #0006;display:grid;place-items:center;color:#fff;font-size:15px">🚚</div>',iconSize:[30,30],iconAnchor:[15,15]});
+      const firstName=trackingFirstName(row.driver_name);
+      const iconHtml='<div style="width:100px;height:54px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;pointer-events:none">'+
+        '<div style="max-width:96px;padding:2px 6px;margin-bottom:2px;border-radius:7px;background:rgba(255,255,255,.96);border:1px solid #cbd5e1;box-shadow:0 1px 4px #0003;color:#0f172a;font-size:11px;font-weight:800;line-height:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+safe(firstName)+'</div>'+
+        '<div style="width:30px;height:30px;border-radius:50%;background:'+color+';border:3px solid #fff;box-shadow:0 2px 7px #0006;display:grid;place-items:center;color:#fff;font-size:15px">🚚</div>'+
+        '</div>';
+      const icon=L.divIcon({className:'',html:iconHtml,iconSize:[100,54],iconAnchor:[50,49]});
       L.marker([lat,lon],{icon}).addTo(TRACKING_LAYER).bindPopup('<b>'+safe(row.driver_name)+'</b><br>'+safe(row.vehicle_plate||'')+'<br>'+safe(status.label)+'<br>Última posição: '+safe(trackingAgeLabel(row.age_seconds)));
       bounds.push([lat,lon])
     }
   });
-  if(bounds.length){const bb=L.latLngBounds(bounds);if(bb.isValid())TRACKING_MAP.fitBounds(bb.pad(.12))}
-  else TRACKING_MAP.setView([-22.739,-47.331],9);
+  if(!TRACKING_MAP_VIEW_READY&&bounds.length){
+    const bb=L.latLngBounds(bounds);
+    if(bb.isValid()){
+      TRACKING_MAP.fitBounds(bb.pad(.12));
+      TRACKING_MAP_VIEW_READY=true
+    }
+  }
   setTimeout(()=>TRACKING_MAP.invalidateSize(),100)
 }
 function renderTracking(rows){
