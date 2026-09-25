@@ -26,6 +26,9 @@ const { handler } = require('../contas-a-pagar-v3/src/handler');
 const PORT = process.env.PORT || 10000;
 const PANEL = path.join(__dirname, 'painel.html');
 const ACCOUNTS_INDEX = path.join(__dirname, '..', 'contas-a-pagar-v3', 'public', 'index.html');
+const DRIVER_DOWNLOADS = path.join(__dirname, 'downloads');
+const DRIVER_UPDATE_FILE = path.join(DRIVER_DOWNLOADS, 'update.json');
+const DRIVER_PUBLIC_BASE = 'https://controle-coletas-jr.onrender.com';
 
 function sendHtml(res, file) {
   res.writeHead(200, {
@@ -451,6 +454,42 @@ async function start() {
   http.createServer(async (req, res) => {
     try {
       const u = new URL(req.url, 'http://localhost');
+
+      if (req.method === 'GET' && u.pathname === '/api/tracking/app-update') {
+        try {
+          const channel=String(u.searchParams.get('channel')||'normal').toLowerCase()==='teste'?'teste':'normal';
+          const current=Number(u.searchParams.get('version_code')||0);
+          if(!fs.existsSync(DRIVER_UPDATE_FILE))return sendJson(res,200,{ok:true,available:false,currentVersionCode:current});
+          const meta=JSON.parse(fs.readFileSync(DRIVER_UPDATE_FILE,'utf8'));
+          const item=meta[channel]||null;
+          if(!item)return sendJson(res,200,{ok:true,available:false,currentVersionCode:current});
+          const latest=Number(item.versionCode||0);
+          return sendJson(res,200,{
+            ok:true,
+            available:latest>current,
+            currentVersionCode:current,
+            latestVersionCode:latest,
+            latestVersionName:String(item.versionName||''),
+            apkUrl:DRIVER_PUBLIC_BASE+String(item.url||''),
+            notes:String(item.notes||'Atualização do CONSTRULOG Motorista.')
+          });
+        } catch(e){return sendJson(res,500,{ok:false,error:'Não foi possível verificar atualização.'});}
+      }
+
+      if (req.method === 'GET' && /^\/downloads\/CONSTRULOG-Motorista-(NORMAL|TESTE)\.apk$/i.test(u.pathname)) {
+        try {
+          const file=path.join(DRIVER_DOWNLOADS,path.basename(u.pathname));
+          if(!fs.existsSync(file))return sendJson(res,404,{ok:false,error:'APK ainda não publicado.'});
+          const st=fs.statSync(file);
+          res.writeHead(200,{
+            'Content-Type':'application/vnd.android.package-archive',
+            'Content-Length':st.size,
+            'Content-Disposition':'attachment; filename="'+path.basename(file)+'"',
+            'Cache-Control':'no-store'
+          });
+          return fs.createReadStream(file).pipe(res);
+        } catch(e){return sendJson(res,500,{ok:false,error:'Falha ao baixar atualização.'});}
+      }
 
       if (req.method === 'POST' && u.pathname === '/api/auth/login') {
         try {
