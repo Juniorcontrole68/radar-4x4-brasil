@@ -1044,7 +1044,20 @@ async function probeSsw101Cte(ctrc){
     const prodHtml=await prodRes.text();productProbeBytes=Buffer.byteLength(prodHtml);productProbeText=htmlText38(prodHtml).slice(0,9000);
     const prodRaw=prodHtml.slice(0,3000).replace(/\s+/g,' ');
     const prodWebBody=(prodHtml.match(/name=web_body[^>]*value=["']([^"']+)["']/i)||[])[1]||'';
-    productProbeText+=' RAW:'+prodRaw+' WEBBODY:'+prodWebBody
+    productProbeText+=' RAW:'+prodRaw+' WEBBODY:'+prodWebBody;
+    if(prodWebBody){
+      const decoded=decodeURIComponent(prodWebBody.replace(/&amp;/g,'&'));
+      const am=decoded.match(/abrir\(['"]([^'"]+)['"],\s*['"]([^'"]+)['"],\s*(\d+),\s*(\d+),\s*['"]([^'"]*)['"]/i);
+      if(am){
+        const pu=new URL('/bin/ssw0424','https://sistema.ssw.inf.br');
+        pu.searchParams.set('act',am[1]);pu.searchParams.set('filename',am[2]);pu.searchParams.set('path',am[5]||'');pu.searchParams.set('down',am[3]);pu.searchParams.set('nw',am[4]);
+        const fileRes=await fetch(pu,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/'+prog},redirect:'manual',signal:AbortSignal.timeout(20000)});
+        apply(fileRes.headers);
+        const fileBuf=Buffer.from(await fileRes.arrayBuffer());
+        const type=fileRes.headers.get('content-type')||'';
+        productProbeText+=' FILE:'+JSON.stringify({status:fileRes.status,type,bytes:fileBuf.length,magic:fileBuf.subarray(0,30).toString('latin1'),text:fileBuf.toString('latin1').slice(0,12000)})
+      }
+    }
   }catch(e){productProbeText='ERRO '+String(e.message||e)}
   const terms=['PRODUTO PREDOMINANTE','PRODUTO','VALOR DO FRETE','VALOR TOTAL DO SERVICO','VALOR TOTAL DO SERVIÇO','VALOR A RECEBER','FRETE'];
   const contexts={};
