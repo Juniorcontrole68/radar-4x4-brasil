@@ -1,4 +1,4 @@
-name: Build Motorista APK
+name: Build Motorista TESTE APK
 
 on:
   push:
@@ -30,6 +30,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: construlog-motorista-apk
+          name: construlog-motorista-teste-apk
           path: motorista-tracker-android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
