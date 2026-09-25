@@ -319,7 +319,7 @@ function bootstrapEmbeddedAuth(){
 }
 
 const S={ops:[],sch:[],help:[],agCopy:[],ssw:null,remetentes:null,receita:null,coletas:null,sswMotoristas:null},$=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
-const gd=o=>o['Data']??o['  Data']??'',g=(o,...k)=>{for(const x of k)if(o[x]!==undefined)return o[x];return''};
+const gd=o=>o['ENTREGUE']??o['Entregue']??o['Data']??o['  Data']??o['DATA']??'',g=(o,...k)=>{for(const x of k)if(o[x]!==undefined)return o[x];return''};
 const pd=s=>{if(!s)return null;const p=String(s).trim().split('/');if(p.length!==3)return null;const d=new Date(+p[2],+p[1]-1,+p[0]);return isNaN(d)?null:d};
 const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 const num=v=>{if(v==null||v==='')return 0;let s=String(v).replace(/R\$/g,'').trim();if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');s=s.replace(/[^0-9.-]/g,'');return Number(s)||0};
@@ -561,9 +561,9 @@ function donut(id,L,D){if(!D.length)return empty(id);const{x,w,h}=cv(id),sum=D.r
 function mood(el,v){el.classList.remove('positive','negative');el.classList.add(v>=0?'positive':'negative')}
 function table(id,cols,rows){$(id).innerHTML='<thead><tr>'+cols.map(c=>'<th>'+c[0]+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+cols.map(c=>'<td>'+safe(g(r,...c.slice(1)))+'</td>').join('')+'</tr>').join('')+'</tbody>'}
 
-function financeDateOfRow(o){return pd(g(o,'Data','  Data'))}
-function financePaid(o){return num(g(o,'Frete Mot Liq',' Frete Mot Liq'))}
-function financeReceive(o){return num(g(o,'Frete Vialog Liq',' Frete Vialog Liq'))}
+function financeDateOfRow(o){return pd(gd(o))}
+function financePaid(o){return num(g(o,'Frete Mot Liq',' Frete Mot Liq','Frete Pago','FRETE PAGO'))}
+function financeReceive(o){return num(g(o,'Frete Vialog Liq',' Frete Vialog Liq','Frete a Receber','Frete A Receber','FRETE A RECEBER'))}
 function financeRowsBetween(fromIso,toIso){
   const from=fromIso?new Date(fromIso+'T00:00:00'):null,to=toIso?new Date(toIso+'T23:59:59'):null;
   return (S.ops||[]).filter(o=>{
@@ -669,7 +669,7 @@ function financeRender(){
   if(profitPctEl)profitPctEl.classList.toggle('finance-target-bad',tot.profitPct<55);
   if(driverPctEl)driverPctEl.classList.toggle('finance-target-bad',tot.costPct>45);
   const info=$('#financeInfo');
-  if(info)info.textContent=nf(rows.length)+' lançamento(s) • '+nf(drivers.length)+' motorista(s) • período '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje');
+  if(info)info.textContent=nf(rows.length)+' lançamento(s) • '+nf(drivers.length)+' motorista(s) • período '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje')+' • base: ENTREGUE / Frete Mot Liq / Frete Vialog Liq';
   const tableRows=drivers.map(x=>({
     motorista:x.motorista,pago:brl(x.paid),receber:brl(x.receive),lucro:brl(x.profit),
     lucroPct:x.profitPct.toFixed(1).replace('.',',')+'%',custoPct:x.costPct.toFixed(1).replace('.',',')+'%'
