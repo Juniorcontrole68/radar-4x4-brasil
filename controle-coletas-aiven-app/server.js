@@ -339,6 +339,25 @@ async function start() {
   await pool.query('CREATE INDEX IF NOT EXISTS idx_carregamentos_finais_capturada_em ON carregamentos_finais (capturada_em DESC)');
   await pool.query("ALTER TABLE carregamentos_finais ADD COLUMN IF NOT EXISTS tipo TEXT NOT NULL DEFAULT 'carregamento'");
   await pool.query("UPDATE carregamentos_finais SET tipo='carregamento' WHERE tipo IS NULL OR trim(tipo)=''");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS nf_materiais (
+      id BIGSERIAL PRIMARY KEY,
+      chave TEXT NOT NULL,
+      nf TEXT NOT NULL,
+      emitente_cnpj TEXT,
+      emitente_nome TEXT,
+      cliente TEXT,
+      cidade TEXT,
+      uf TEXT,
+      classificacao TEXT NOT NULL DEFAULT 'normal',
+      produtos JSONB NOT NULL DEFAULT '[]'::jsonb,
+      importado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_nf_materiais_chave ON nf_materiais (chave)');
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_nf_materiais_nf ON nf_materiais (nf)');
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_nf_materiais_classificacao ON nf_materiais (classificacao)');
   await pool.query("CREATE TABLE IF NOT EXISTS dashboard_users (id BIGSERIAL PRIMARY KEY, username TEXT NOT NULL, password_salt TEXT NOT NULL, password_hash TEXT NOT NULL, is_admin BOOLEAN NOT NULL DEFAULT FALSE, active BOOLEAN NOT NULL DEFAULT TRUE, permissions JSONB NOT NULL DEFAULT '[]'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())");
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_dashboard_users_username_lower ON dashboard_users (lower(username))');
   await pool.query('CREATE TABLE IF NOT EXISTS dashboard_sessions (token_hash TEXT PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES dashboard_users(id) ON DELETE CASCADE, expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
@@ -731,6 +750,62 @@ async function start() {
         return sendJson(res, 200, result.rows);
       }
 
+
+      if (req.method === 'GET' && u.pathname === '/api/painel/nf-materiais') {
+        try {
+          const special = String(u.searchParams.get('special') || '').trim() === '1';
+          const limit = Math.max(1, Math.min(3000, Number(u.searchParams.get('limit') || 1500)));
+          const where = special ? "WHERE classificacao <> 'normal'" : '';
+          const qr = await pool.query(
+            'SELECT id::text AS id, chave, nf, emitente_cnpj, emitente_nome, cliente, cidade, uf, classificacao, produtos, importado_em, atualizado_em ' +
+            'FROM nf_materiais ' + where + ' ORDER BY atualizado_em DESC LIMIT $1',
+            [limit]
+          );
+          return sendJson(res, 200, { ok: true, rows: qr.rows, count: qr.rows.length });
+        } catch (e) {
+          return sendJson(res, 500, { ok: false, error: e.message || 'Não foi possível consultar a classificação das notas.' });
+        }
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/painel/nf-materiais/import') {
+        try {
+          const body = await readJsonBodyLimited(req, 4 * 1024 * 1024);
+          const rows = Array.isArray(body.rows) ? body.rows.slice(0, 1000) : [];
+          if (!rows.length) return sendJson(res, 400, { ok: false, error: 'Nenhuma nota foi enviada para importação.' });
+          let imported = 0;
+          for (const item of rows) {
+            const chave = String(item.chave || '').replace(/\D/g, '').trim();
+            const nf = String(item.nf || '').replace(/\D/g, '').replace(/^0+/, '') || '0';
+            const classificacao = String(item.classificacao || 'normal').trim().toLowerCase();
+            const allowed = ['normal','tubos','caixa_agua','tubos_caixa_agua'];
+            if (chave.length !== 44 || !allowed.includes(classificacao)) continue;
+            const produtos = Array.isArray(item.produtos) ? item.produtos.map(x=>String(x||'').trim()).filter(Boolean).slice(0,250) : [];
+            await pool.query(`
+              INSERT INTO nf_materiais
+                (chave,nf,emitente_cnpj,emitente_nome,cliente,cidade,uf,classificacao,produtos,atualizado_em)
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,NOW())
+              ON CONFLICT (chave) DO UPDATE SET
+                nf=EXCLUDED.nf,
+                emitente_cnpj=EXCLUDED.emitente_cnpj,
+                emitente_nome=EXCLUDED.emitente_nome,
+                cliente=EXCLUDED.cliente,
+                cidade=EXCLUDED.cidade,
+                uf=EXCLUDED.uf,
+                classificacao=EXCLUDED.classificacao,
+                produtos=EXCLUDED.produtos,
+                atualizado_em=NOW()
+            `, [
+              chave,nf,String(item.emitente_cnpj||'').trim(),String(item.emitente_nome||'').trim(),
+              String(item.cliente||'').trim(),String(item.cidade||'').trim(),String(item.uf||'').trim(),
+              classificacao,JSON.stringify(produtos)
+            ]);
+            imported++;
+          }
+          return sendJson(res, 200, { ok: true, imported });
+        } catch (e) {
+          return sendJson(res, e.status || 500, { ok: false, error: e.message || 'Não foi possível importar os XMLs.' });
+        }
+      }
 
       if (req.method === 'GET' && u.pathname === '/api/painel/carregamentos-finais') {
         try {
