@@ -1968,6 +1968,187 @@ function trackingSaveMapView(){
 function trackingFirstName(v){
   return String(v||'Motorista').trim().split(/\s+/).filter(Boolean)[0]||'Motorista'
 }
+function trackingDriverOperationRow(driver,plate){
+  const n=trackingNorm(driver),p=trackingNorm(plate);
+  return (TRACKING_DRIVER_ROWS||[]).find(r=>trackingNorm(r.motorista)===n&&(!p||!trackingNorm(r.veiculo)||trackingNorm(r.veiculo)===p))
+    ||(TRACKING_DRIVER_ROWS||[]).find(r=>{
+      const rn=trackingNorm(r.motorista),rp=trackingNorm(r.veiculo);
+      return rn&&n&&(rn.includes(n)||n.includes(rn))&&(!p||!rp||rp===p)
+    })||null
+}
+function trackingRomaneiosFor(driver,plate){
+  const r=trackingDriverOperationRow(driver,plate);if(!r)return[];
+  const arr=Array.isArray(r.romaneios)?r.romaneios:[r.romaneio].filter(Boolean);
+  return [...new Set(arr.map(x=>String(x||'').trim()).filter(Boolean))]
+}
+function trackingHaversineKm(a,b){
+  const lat1=Number(a?.latitude??a?.lat),lon1=Number(a?.longitude??a?.lon),lat2=Number(b?.latitude??b?.lat),lon2=Number(b?.longitude??b?.lon);
+  if(![lat1,lon1,lat2,lon2].every(Number.isFinite))return Infinity;
+  const R=6371,rad=Math.PI/180,dLat=(lat2-lat1)*rad,dLon=(lon2-lon1)*rad;
+  const h=Math.sin(dLat/2)**2+Math.cos(lat1*rad)*Math.cos(lat2*rad)*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h))
+}
+function trackingParseDateTime(v){
+  const raw=String(v||'').trim();if(!raw)return null;
+  let m=raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if(m){
+    const z=/[zZ]$|[+-]\d{2}:?\d{2}$/.test(raw)?raw:(m[1]+'-'+m[2]+'-'+m[3]+'T'+m[4]+':'+m[5]+':'+(m[6]||'00')+'-03:00');
+    const d=new Date(z);return Number.isFinite(d.getTime())?d:null
+  }
+  m=raw.match(/^(\d{2})\/(\d{2})\/(\d{2,4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if(m&&m[4]){
+    const y=m[3].length===2?String(2000+Number(m[3])):m[3];
+    const d=new Date(y+'-'+m[2]+'-'+m[1]+'T'+m[4]+':'+m[5]+':'+(m[6]||'00')+'-03:00');
+    return Number.isFinite(d.getTime())?d:null
+  }
+  const d=new Date(raw);return Number.isFinite(d.getTime())?d:null
+}
+function trackingTimeLabel(v){
+  const d=v instanceof Date?v:trackingParseDateTime(v);
+  return d?d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'—'
+}
+async function trackingFetchPlan(romaneio,date){
+  const key=date+'|'+romaneio,hit=TRACKING_PLAN_CACHE.get(key);
+  if(hit&&Date.now()-hit.at<5*60*1000)return hit.value;
+  const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(date)+'&romaneio='+encodeURIComponent(romaneio)+'&t='+Date.now(),{cache:'no-store'});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok||!j.ok)throw new Error(j.error||('Falha ao montar rota '+romaneio));
+  TRACKING_PLAN_CACHE.set(key,{at:Date.now(),value:j});
+  return j
+}
+async function trackingBuildLogicalPlan(row,date){
+  const roms=trackingRomaneiosFor(row.driver_name,row.vehicle_plate);
+  if(!roms.length)return null;
+  const plans=[];
+  for(const rom of roms.slice(0,6)){
+    try{plans.push(await trackingFetchPlan(rom,date))}catch(e){console.warn('Rota '+rom,e)}
+  }
+  if(!plans.length)return null;
+  let plan=plans[0];
+  if(plans.length>1){
+    const seen=new Set(),stops=[];
+    plans.forEach(p=>(p.stops||[]).forEach(s=>{
+      const k=trackingNorm(s.ctrc||'')+'|'+String(s.nf||'')+'|'+Number(s.lat).toFixed(5)+'|'+Number(s.lon).toFixed(5);
+      if(seen.has(k))return;seen.add(k);stops.push(s)
+    }));
+    if(stops.length){
+      try{
+        const rr=await fetch('/api/roteirizador/recalcular',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+          date,romaneio:roms.join(' + '),motorista:row.driver_name||'',veiculo:row.vehicle_plate||'',stops
+        })});
+        const jj=await rr.json().catch(()=>({}));
+        if(rr.ok&&jj.ok)plan=jj
+      }catch{}
+    }
+  }
+  plan={...plan,logical:true,romaneios:roms,motorista:row.driver_name||plan.motorista||'',veiculo:row.vehicle_plate||plan.veiculo||''};
+  return plan
+}
+async function trackingHistory(sessionId){
+  if(!sessionId)return[];
+  const hit=TRACKING_HISTORY_CACHE.get(sessionId);
+  if(hit&&Date.now()-hit.at<12000)return hit.rows;
+  const r=await fetch('/api/tracking/history?session_id='+encodeURIComponent(sessionId)+'&t='+Date.now(),{cache:'no-store'});
+  const j=await r.json().catch(()=>({}));
+  const rows=r.ok&&j.ok&&Array.isArray(j.rows)?j.rows:[];
+  TRACKING_HISTORY_CACHE.set(sessionId,{at:Date.now(),rows});
+  return rows
+}
+function trackingArrivalAt(stop,history){
+  for(const p of (history||[])){
+    const acc=Math.max(0,Number(p.accuracy_m)||0);
+    const radiusKm=Math.max(.25,Math.min(.60,.15+acc/1000));
+    if(trackingHaversineKm(p,stop)<=radiusKm){
+      const d=trackingParseDateTime(p.captured_at);
+      if(d)return{date:d,raw:p.captured_at,distanceKm:trackingHaversineKm(p,stop),accuracyM:acc}
+    }
+  }
+  return null
+}
+function trackingAnalyzePlan(row,plan,history){
+  const order=(plan.optimizedOrder&&plan.optimizedOrder.length)?plan.optimizedOrder:Array.from({length:(plan.stops||[]).length},(_,i)=>i+1);
+  const points=plan.points||[{label:'Base'},...(plan.stops||[])],out=[];
+  order.forEach((pointIndex,pos)=>{
+    const s=points[pointIndex]||plan.stops?.[pointIndex-1];if(!s)return;
+    const arrival=trackingArrivalAt(s,history),baixa=trackingParseDateTime(s.baixaAt);
+    let diffMin=null;if(arrival?.date&&baixa)diffMin=Math.round((baixa-arrival.date)/60000);
+    let statusKey='warn',statusLabel='Pendente';
+    if(arrival&&baixa){
+      if(diffMin<-5){statusKey='bad';statusLabel='Baixa antes da chegada GPS'}
+      else{statusKey='ok';statusLabel=diffMin>=0?'Baixa '+diffMin+' min após chegada':'Baixa quase simultânea'}
+    }else if(arrival&&!baixa){statusKey='warn';statusLabel='Chegou • aguardando baixa'}
+    else if(!arrival&&baixa){statusKey='bad';statusLabel='Baixa sem passagem GPS'}
+    const coordSource=String(s.coordinateSource||'').toUpperCase()==='SSW'||String(s.precision||'').includes('ssw')?'SSW':'Endereço';
+    out.push({
+      driver:row.driver_name||'',plate:row.vehicle_plate||'',romaneios:plan.romaneios||[plan.romaneio].filter(Boolean),
+      plannedPos:pos+1,pointIndex,ctrc:s.ctrc||'',nf:s.nf||'',client:s.destinatario||s.label||('Entrega '+(pos+1)),
+      city:s.cidade||'',lat:Number(s.lat),lon:Number(s.lon),coordinateSource:coordSource,
+      arrivalAt:arrival?.date||null,arrivalDistanceKm:arrival?.distanceKm??null,baixaAt:baixa,baixaRaw:s.baixaAt||'',
+      diffMin,statusKey,statusLabel,sequenceKey:'warn',sequenceLabel:'Ainda não visitado'
+    })
+  });
+  const visited=out.filter(x=>x.arrivalAt).sort((a,b)=>a.arrivalAt-b.arrivalAt);
+  visited.forEach((x,i)=>{
+    x.actualPos=i+1;
+    if(x.plannedPos===i+1){x.sequenceKey='ok';x.sequenceLabel='Na ordem prevista'}
+    else{x.sequenceKey='bad';x.sequenceLabel='Visitou como '+(i+1)+'º • previsto '+x.plannedPos+'º'}
+  });
+  return out
+}
+function trackingRenderAnalysis(){
+  const table=$('#trackingRouteCompareTable'),info=$('#trackingRouteCompareInfo'),summary=$('#trackingRouteCompareSummary');
+  if(!table)return;
+  const rows=TRACKING_ANALYSIS_ROWS||[];
+  if(!rows.length){
+    table.innerHTML='<tbody><tr><td class="muted">Aguardando motorista ativo e rota do romaneio para iniciar a comparação.</td></tr></tbody>';
+    if(info)info.textContent='O sistema cruza percurso lógico, passagem GPS pelo cliente e horário da baixa no SSW.';
+    if(summary)summary.textContent='—';
+    return
+  }
+  const visited=rows.filter(x=>x.arrivalAt).length,withBaixa=rows.filter(x=>x.baixaAt).length,outSeq=rows.filter(x=>x.arrivalAt&&x.sequenceKey==='bad').length;
+  if(summary)summary.textContent=visited+' chegada(s) GPS • '+withBaixa+' baixa(s) SSW • '+outSeq+' fora da sequência';
+  if(info)info.textContent='Chegada considerada quando o GPS entra aproximadamente em um raio de 250–600 m do cliente, ajustado pela precisão do celular. Coordenadas SSW têm prioridade; endereço é usado apenas como fallback.';
+  const body=rows.map(x=>{
+    const diff=x.diffMin===null?'—':(x.diffMin>=0?'+':'')+x.diffMin+' min';
+    return '<tr>'+
+      '<td><b>'+safe(trackingFirstName(x.driver))+'</b><div class="muted">'+safe(x.plate||'')+'</div></td>'+
+      '<td><b>'+x.plannedPos+'º</b></td>'+
+      '<td><b>'+safe(x.client)+'</b><div class="muted">'+safe(x.ctrc||('NF '+x.nf))+'</div></td>'+
+      '<td>'+safe(x.city||'—')+'</td>'+
+      '<td>'+safe(x.coordinateSource)+'</td>'+
+      '<td>'+safe(trackingTimeLabel(x.arrivalAt))+'</td>'+
+      '<td>'+safe(trackingTimeLabel(x.baixaAt))+'</td>'+
+      '<td>'+safe(diff)+'</td>'+
+      '<td><span class="tracking-status '+safe(x.sequenceKey)+'">'+safe(x.sequenceLabel)+'</span><br><span class="tracking-status '+safe(x.statusKey)+'" style="margin-top:4px">'+safe(x.statusLabel)+'</span></td>'+
+      '</tr>'
+  }).join('');
+  table.innerHTML='<thead><tr><th>Motorista</th><th>Ordem</th><th>Cliente</th><th>Cidade</th><th>Localização</th><th>Chegada GPS</th><th>Baixa SSW</th><th>Diferença</th><th>Comparação</th></tr></thead><tbody>'+body+'</tbody>'
+}
+async function trackingRefreshLogicalAnalysis(liveRows,date){
+  if(window.__trackingAnalysisBusy)return;
+  const active=(liveRows||[]).filter(r=>r.session_id);
+  if(!active.length){TRACKING_ANALYSIS_ROWS=[];trackingRenderAnalysis();return}
+  window.__trackingAnalysisBusy=true;
+  try{
+    const analysis=[];
+    for(const row of active){
+      try{
+        const plan=await trackingBuildLogicalPlan(row,date);
+        if(!plan)continue;
+        TRACKING_LOGICAL_ROUTES.set(trackingDriverKey(row.driver_name,row.vehicle_plate),plan);
+        const history=await trackingHistory(row.session_id);
+        const rows=trackingAnalyzePlan(row,plan,history);
+        plan.analysisRows=rows;
+        analysis.push(...rows)
+      }catch(e){console.warn('Análise de percurso',row.driver_name,e)}
+    }
+    TRACKING_ANALYSIS_ROWS=analysis;
+    trackingRenderAnalysis();
+    if(TRACKING_DATA)renderTrackingMap(TRACKING_DATA)
+  }finally{
+    window.__trackingAnalysisBusy=false
+  }
+}
 function renderTrackingMap(rows){
   const box=$('#trackingMap');if(!box)return;
   if(typeof L==='undefined'){box.innerHTML='<div class="muted" style="padding:22px">Mapa indisponível.</div>';return}
