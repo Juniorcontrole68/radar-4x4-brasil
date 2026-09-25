@@ -540,32 +540,35 @@ function deliveryProgramLookup(index,row){
   return index.ctrc.get(ck)||index.ctrc.get('#'+lk)||index.nf.get(nk)||null
 }
 async function deliveryProgramEnrich(rows){
-  let r174=[],r13=[];
+  let r174=[],r13=[],r16=[];
   try{r174=parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text).rows||[]}catch(e){console.log('PROGRAMAÇÃO BI2 174: '+String(e.message||e))}
   try{r13=parseBi2Csv((await fetchBi2Report(13)).text).rows||[]}catch(e){console.log('PROGRAMAÇÃO BI2 13: '+String(e.message||e))}
-  const i174=deliveryProgramIndexRows(r174),i13=deliveryProgramIndexRows(r13);
+  try{r16=parseBi2Csv((await fetchBi2Report(16)).text).rows||[]}catch(e){console.log('PROGRAMAÇÃO BI2 16: '+String(e.message||e))}
+  const i174=deliveryProgramIndexRows(r174),i13=deliveryProgramIndexRows(r13),i16=deliveryProgramIndexRows(r16);
   let m3From174=0,m3From13=0;
   const out=rows.map(x=>{
-    const a=deliveryProgramLookup(i174,x),b=deliveryProgramLookup(i13,x);
+    const a=deliveryProgramLookup(i174,x),b=deliveryProgramLookup(i13,x),d=deliveryProgramLookup(i16,x);
     const m3a=bi2Number(pickField(a,'M3','M³','CUBAGEM','METRAGEM CUBICA','METRAGEM CÚBICA','VOLUME M3','M3 TOTAL'));
     const m3b=bi2Number(pickField(b,'M3','M³','CUBAGEM','METRAGEM CUBICA','METRAGEM CÚBICA','VOLUME M3','M3 TOTAL'));
     const m3=x.m3>0?x.m3:(m3a>0?(m3From174++,m3a):(m3b>0?(m3From13++,m3b):0));
-    const peso=x.peso>0?x.peso:(bi2Number(pickField(a,'PESO','PESO REAL','PESO KG','PESO_REAL'))||bi2Number(pickField(b,'PESO','PESO REAL','PESO KG','PESO_REAL')));
-    const volumes=x.volumes>0?x.volumes:(bi2Number(pickField(a,'QTD VOLUMES','QTDE VOLUME','QTDE_VOLUME'))||bi2Number(pickField(b,'QTD VOLUMES','QTDE VOLUME','QTDE_VOLUME')));
+    const peso=x.peso>0?x.peso:(bi2Number(pickField(a,'PESO','PESO REAL','PESO KG','PESO_REAL'))||bi2Number(pickField(b,'PESO','PESO REAL','PESO KG','PESO_REAL'))||bi2Number(pickField(d,'PESO','PESO REAL','PESO KG','PESO_REAL')));
+    const volumes=x.volumes>0?x.volumes:(bi2Number(pickField(a,'QTD VOLUMES','QTDE VOLUME','QTDE_VOLUME'))||bi2Number(pickField(b,'QTD VOLUMES','QTDE VOLUME','QTDE_VOLUME'))||bi2Number(pickField(d,'QTD VOLUMES','QTDE VOLUME','QTDE_VOLUME')));
     return{
       ...x,m3,peso,volumes,
-      cliente:x.cliente||pickField(a,'DESTINATARIO','DESTINATARIO NOME','DESTINATARIO_NOME')||pickField(b,'DESTINATARIO'),
-      cidade:x.cidade||pickField(a,'CIDADE DESTINO','CIDADE_DESTINO')||pickField(b,'CIDADE DESTINO'),
-      uf:pickField(a,'UF DESTINO','UF_DESTINO')||pickField(b,'UF DESTINO')||x.uf||'SP',
-      mercadoria:pickField(a,'TIPO MERCADORIA','TIPO_MERCADORIA','MERCADORIA')||pickField(b,'MERCADORIA','TIPO MERCADORIA'),
+      cliente:x.cliente||pickField(a,'DESTINATARIO','DESTINATARIO NOME','DESTINATARIO_NOME')||pickField(b,'DESTINATARIO')||pickField(d,'DESTINATARIO'),
+      cidade:x.cidade||pickField(a,'CIDADE DESTINO','CIDADE_DESTINO')||pickField(b,'CIDADE DESTINO')||pickField(d,'CIDADE DESTINO'),
+      uf:pickField(a,'UF DESTINO','UF_DESTINO')||pickField(b,'UF DESTINO')||pickField(d,'UF DESTINO')||x.uf||'SP',
+      mercadoria:pickField(a,'TIPO MERCADORIA','TIPO_MERCADORIA','MERCADORIA')||pickField(b,'MERCADORIA','TIPO MERCADORIA')||pickField(d,'MERCADORIA','TIPO MERCADORIA'),
       frete:bi2Number(
-        pickField(a,'FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO','FRETE VIAG LIQ','FRETE VIAGEM LIQ','FRETE') ||
-        pickField(b,'FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO','FRETE VIAG LIQ','FRETE VIAGEM LIQ','FRETE')
+        pickField(d,'FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO','FRETE VIAG LIQ','FRETE VIAGEM LIQ','FRETE TOTAL','FRETE') ||
+        pickField(b,'FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO','FRETE VIAG LIQ','FRETE VIAGEM LIQ','FRETE TOTAL','FRETE') ||
+        pickField(a,'FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO','FRETE VIAG LIQ','FRETE VIAGEM LIQ','FRETE TOTAL','FRETE')
       ),
+      freteSource:bi2Number(pickField(d,'FRETE'))>0?'BI2 16 por NF':(bi2Number(pickField(b,'FRETE'))>0?'BI2 13 por NF':'BI2 174'),
       m3Known:m3>0
     }
   });
-  console.log('PROGRAMAÇÃO CUBAGEM: '+JSON.stringify({pendencias:rows.length,bi174:r174.length,bi13:r13.length,m3From174,m3From13,comM3:out.filter(x=>x.m3>0).length}));
+  console.log('PROGRAMAÇÃO CRUZAMENTO: '+JSON.stringify({pendencias:rows.length,bi174:r174.length,bi13:r13.length,bi16:r16.length,comFrete:out.filter(x=>x.frete>0).length}));
   return out
 }
 function deliveryProgramCitySchedule(rows){
@@ -3066,15 +3069,6 @@ let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.jo
       console.log('VALIDACAO FRETE CTRC101: '+JSON.stringify({nf:row.nf,ctrc:row.ctrc,resultado:x}));
     }
   }catch(e){console.log('VALIDACAO FRETE NF101 ERRO: '+String(e.message||e))}},7000);
-  setTimeout(async()=>{try{
-    const rep=await fetchBi2Report(16),p=parseBi2Csv(rep.text),rows=p.rows||[];
-    console.log('VALIDACAO BI2 16 FRETE: '+JSON.stringify({
-      total:rows.length,headers:p.headers,
-      amostra:rows.slice(0,3),
-      comNf:rows.filter(x=>normNf(pickField(x,'NF','NUMERO NF','NUMERO_NF'))).length,
-      comFrete:rows.filter(x=>bi2Number(pickField(x,'FRETE','FRETE TOTAL','FRETE LIQ','FRETE LIQUIDO','VALOR FRETE'))>0).length
-    }));
-  }catch(e){console.log('VALIDACAO BI2 16 FRETE ERRO: '+String(e.message||e))}},6000);
   refreshBi2State().catch(e=>console.error('BI2 SFTP monitor ERRO: '+e.message));
   refreshBi2ApiState().catch(e=>console.error('BI2 WebAPI monitor ERRO: '+e.message));
   buildBi2Receita().then(x=>console.log('VALIDACAO RECEITA SSW: '+JSON.stringify({ok:x.ok,fonte:x.sourceCode,periodo:x.periodo,total:x.totalFaturamento,clientes:x.totalClientes,ctes:x.totalRegistros,somerlog:(x.clientes||[]).find(y=>y.cliente==='Somerlog')||null,error:x.error||''}))).catch(e=>console.log('VALIDACAO RECEITA SSW ERRO: '+String(e.message||e)));
