@@ -504,6 +504,7 @@ async function fetchSswPendingDeliveries(){
       for(const fm of rm[1].matchAll(/<f(\d+)\b[^>]*>([\s\S]*?)<\/f\1>/gi))f[fm[1]]=htmlText38(fm[2]);
       const ctrc=String(f['0']||'').trim(),nf=String(f['1']||'').trim(),cidade=String(f['4']||'').trim();
       if(!ctrc&&!nf&&!cidade)continue;
+      if(/^AMS/i.test(ctrc))continue;
       const detalhes=String(f['11']||'');
       rows.push({
         ctrc,nf,remetente:String(f['2']||'').trim(),cliente:String(f['3']||'').trim(),
@@ -701,7 +702,7 @@ async function buildDeliveryProgram(date='',force=false){
     loads,review:review.slice(0,500),
     cityRules:[...schedule.entries()].map(([city,x])=>({city,weekday:x.weekdayLabel,samples:x.samples})).slice(0,300),
     generatedAt:new Date().toISOString(),
-    note:'A programação usa as pendências da opção 38 e considera somente o peso para capacidade dos veículos. Para entregas vencidas, o dia da cidade é inferido pela previsão de entrega do SSW.'
+    note:'A programação usa as pendências da opção 38, ignora CT-es iniciados por AMS e considera somente o peso para capacidade dos veículos. Para entregas vencidas, o dia da cidade é inferido pela previsão de entrega do SSW.'
   };
   DELIVERY_PROGRAM_CACHE.set(key,{at:Date.now(),value});
   console.log('PROGRAMAÇÃO ENTREGAS RESULTADO: '+JSON.stringify({date:target,totalOpen:value.totalOpen,programmed,review:value.reviewCount,vehicles:value.vehicles,totalCost,notToday:value.notScheduledToday}));
