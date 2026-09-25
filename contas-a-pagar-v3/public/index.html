@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Contas A Pagar</title>
-  <link rel="stylesheet" href="/styles.css?v=20260925docs4">
+  <link rel="stylesheet" href="/styles.css?v=20260925docs5">
 </head>
 <body>
 <header><div><h2>Contas A Pagar</h2><small>Celular E Notebook • Banco Permanente</small></div></header>
@@ -51,6 +51,7 @@
       <label>Data Limite<input type="date" id="untilDate"></label>
       <button class="btn rec" id="filterBtn">Filtrar</button>
       <button class="btn secondary" id="clearFilter">Limpar</button>
+      <button class="btn secondary" id="viewReportBtn">Ver Relatório</button>
       <button class="btn add" id="printBtn">Imprimir Relatório</button>
       <a class="btn secondary" href="/api/export.csv">Exportar Backup CSV</a>
       <div class="filterResult"><div id="filterLabel">Todas as contas em aberto</div><b id="filterTotal">R$ 0,00</b><div class="hint" id="filterCount">0 conta(s)</div></div>
@@ -59,7 +60,7 @@
 
   <div class="box"><h3>Contas</h3><div class="table"><table class="accountsTable"><thead><tr><th>Vencimento</th><th>Conta</th><th>Classificação</th><th>Valor</th><th>Pagamento</th><th>Status</th><th>Recorrência</th><th>Ações</th></tr></thead><tbody id="billsBody"><tr><td colspan="8" class="empty">Carregando...</td></tr></tbody></table></div></div>
 
-  <div class="box reportBox reportOnly"><h2>Relatório De Contas Em Aberto</h2><p id="printFilterLabel"></p><table><thead><tr><th>Check</th><th>Vencimento</th><th>Descrição</th><th>Fornecedor</th><th>Área</th><th>Categoria</th><th>Valor</th><th>PIX</th><th>Boleto</th><th>Comprovante</th></tr></thead><tbody id="reportBody"></tbody></table><div class="printTotal" id="printTotal"></div></div>
+  <div class="box reportBox reportOnly" id="reportBox"><div class="reportScreenHead"><h2>Relatório De Contas Em Aberto</h2><button type="button" class="btn secondary" id="closeReportBtn">Fechar</button></div><h2 class="printReportTitle">Relatório De Contas Em Aberto</h2><p id="printFilterLabel"></p><table><thead><tr><th>Check</th><th>Vencimento</th><th>Descrição</th><th>Fornecedor</th><th>Área</th><th>Categoria</th><th>Valor</th><th>PIX</th><th>Boleto</th><th>Comprovante</th></tr></thead><tbody id="reportBody"></tbody></table><div class="printTotal" id="printTotal"></div></div>
 
   <dialog id="editBillModal">
     <div class="modalHead"><b>Alterar Conta</b></div>
@@ -91,5 +92,5 @@
 
   <dialog id="postponeModal"><div class="modalHead"><b>Prorrogar Vencimento</b></div><div class="modalBody"><p id="postponeDesc"></p><input type="hidden" id="postponeId"><label>Nova Data<input type="date" id="postponeDate" required></label><div class="modalActions"><button type="button" class="btn secondary" id="cancelPostpone">Cancelar</button><button type="button" class="btn add" id="confirmPostpone">Prorrogar</button></div></div></dialog>
 </main>
-<script src="/app.js?v=20260925docs4"></script>
+<script src="/app.js?v=20260925docs5"></script>
 </body></html>
