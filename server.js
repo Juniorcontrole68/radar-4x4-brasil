@@ -1986,14 +1986,14 @@ function parseTrackingPayload(text){
   return{success,items}
 }
 function trackingFlags(items){
-  let saiu=false,entregue=false,last=null;
+  let saiu=false,entregue=false,last=null,delivery=null;
   for(const it of items||[]){
     const txt=(String(it.ocorrencia||'')+' '+String(it.descricao||'')).toUpperCase();
     if(/SA[IÍ]DA PARA ENTREGA|\(0?85\)|\b085\b/.test(txt))saiu=true;
-    if(/MERCADORIA ENTREGUE|ENTREGA REALIZADA COM RESSALVA|\(0?1\)|\(0?37\)|\b001\b|\b037\b/.test(txt)){entregue=true;saiu=true}
+    if(/MERCADORIA ENTREGUE|ENTREGA REALIZADA COM RESSALVA|\(0?1\)|\(0?37\)|\b001\b|\b037\b/.test(txt)){entregue=true;saiu=true;delivery=it}
     last=it;
   }
-  return{saiu,entregue,last}
+  return{saiu,entregue,last,delivery}
 }
 function postForm(url,params){
   return new Promise((ok,no)=>{
@@ -2012,7 +2012,7 @@ async function trackingDestQuery(cnpj,nf){
   const body=new URLSearchParams();body.append('cnpjdest',doc);body.append('cnpj',doc);body.append('NR',n);body.append('nro_nf',n);body.append('urlori','https://ssw.inf.br/ajuda/rastreamentodestnf.html');
   try{
     const raw=await postForm('https://ssw.inf.br/api/trackingdest',body),p=parseTrackingPayload(raw),f=trackingFlags(p.items);
-    const value={ok:p.success!==false,items:p.items,saiu:f.saiu,entregue:f.entregue,last:f.last||null};
+    const value={ok:p.success!==false,items:p.items,saiu:f.saiu,entregue:f.entregue,last:f.last||null,delivery:f.delivery||null};
     SSW_TRACK_CACHE.set(key,{at:Date.now(),value});return value
   }catch(e){
     const value={ok:false,items:[],saiu:false,entregue:false,error:String(e.message||e)};
@@ -2527,6 +2527,35 @@ function routeField(row,patterns){
   }
   return''
 }
+function routeCoordNumber(v){
+  if(v===null||v===undefined)return null;
+  const s=String(v).trim().replace(/\s+/g,'').replace(',','.');
+  const n=Number(s);
+  return Number.isFinite(n)?n:null
+}
+function routeSswCoordinates(row,meta={}){
+  const get=(obj,patterns)=>{
+    const entries=Object.entries(obj||{});
+    for(const p of patterns)for(const [k,v] of entries){
+      if(v===null||v===undefined||String(v).trim()==='')continue;
+      if(p.test(routeKeyNorm(k)))return v
+    }
+    return null
+  };
+  const latPatterns=[/^lat$/, /^latitude$/, /^lat_dest$/, /^latitude_dest$/, /^lat_destino$/, /^latitude_destino$/, /^dest_lat$/, /^destino_lat$/, /^(?:lat|latitude).*dest/, /^dest.*(?:lat|latitude)$/];
+  const lonPatterns=[/^lon$/, /^lng$/, /^long$/, /^longitude$/, /^lon_dest$/, /^lng_dest$/, /^longitude_dest$/, /^lon_destino$/, /^longitude_destino$/, /^dest_lon$/, /^dest_lng$/, /^destino_lon$/, /^(?:lon|lng|longitude).*dest/, /^dest.*(?:lon|lng|longitude)$/];
+  let lat=routeCoordNumber(get(row,latPatterns)),lon=routeCoordNumber(get(row,lonPatterns));
+  if(!Number.isFinite(lat)||!Number.isFinite(lon)){
+    lat=routeCoordNumber(get(meta,latPatterns));lon=routeCoordNumber(get(meta,lonPatterns))
+  }
+  if((!Number.isFinite(lat)||!Number.isFinite(lon))){
+    const coord=get(row,[/^coordenadas?$/, /^coord(?:enadas?)?_dest/, /^gps_dest$/, /^localizacao_gps$/])||get(meta,[/^coordenadas?$/, /^coord(?:enadas?)?_dest/, /^gps_dest$/, /^localizacao_gps$/]);
+    const m=String(coord||'').match(/(-?\d{1,2}[.,]\d+)\s*[,;| ]\s*(-?\d{2,3}[.,]\d+)/);
+    if(m){lat=routeCoordNumber(m[1]);lon=routeCoordNumber(m[2])}
+  }
+  if(!Number.isFinite(lat)||!Number.isFinite(lon)||lat<-90||lat>90||lon<-180||lon>180)return null;
+  return{lat,lon,source:'SSW'}
+}
 function routeAddressParts(row,meta={}){
   const endereco=routeField(row,[/(dest|destinat).*(end|logradouro|rua|avenida)/,/(end|logradouro).*(dest|destinat)/,/^endereco$/,/^logradouro$/])||meta.endereco||'';
   const numero=routeField(row,[/(dest|destinat).*(numero|nro)/,/(numero|nro).*(dest|destinat)/,/^numero$/,/^nro$/])||'';
@@ -2776,7 +2805,8 @@ async function buildRoutePlan(date='',romaneio=''){
 
   let data;
   if(target===spDateISO()){
-    try{data=await fetchSsw38Quick()}catch{data=null}
+    const prefix=(String(romaneio||'').match(/^([A-Z]{3})/i)||[])[1]||'AMR';
+    try{data=await fetchSsw38QuickPrefix(prefix.toUpperCase())}catch{data=null}
   }
   if(!data||!Array.isArray(data.rows)||!data.rows.length){
     const full=await buildSswMotoristas(target,target);
@@ -2810,6 +2840,15 @@ async function buildRoutePlan(date='',romaneio=''){
   for(const r of biRows){
     const lk=normCtrcLoose(r.numero_ctrc||r.CTRC),nf=normNf(r.numero_nf||r.NF);
     if(lk)byLoose.set(lk,r);if(nf)byNf.set(nf,r)
+  }
+  if(!detailedFull){
+    try{detailedFull=await buildSswMotoristas(target,target)}catch(e){console.log('ROTEIRIZADOR acompanhamento SSW ERRO: '+String(e.message||e))}
+  }
+  const detailByLoose=new Map(),detailByNf=new Map();
+  for(const r of (detailedFull?.rows||[])){
+    if(String(r.romaneio||'')!==String(selected.romaneio||''))continue;
+    const lk=normCtrcLoose(r.ctrcOficial||r.ctrc),nf=normNf(r.nf);
+    if(lk)detailByLoose.set(lk,r);if(nf)detailByNf.set(nf,r)
   }
   let metas=(selected.ctrcMeta&&selected.ctrcMeta.length
     ?selected.ctrcMeta
@@ -2846,15 +2885,23 @@ async function buildRoutePlan(date='',romaneio=''){
     const cidade=r.cidade_destino||r.dest_cidade||r.cidade||routeField(r,[/(cidade).*(dest|destinat)/,/(dest|destinat).*cidade/,/^cidade_destino$/])||'';
     const uf=r.uf_destino||r.dest_uf||r.uf||routeField(r,[/(uf).*(dest|destinat)/,/(dest|destinat).*uf/,/^uf_destino$/])||'SP';
     const parts=routeAddressParts(r,meta);
-    let query='',precision='cidade';
-    if(parts.cep){query=parts.cep+', Brasil';precision='cep'}
-    else if(parts.endereco){query=[parts.endereco,parts.numero,parts.bairro,cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');precision='endereco'}
-    else if(cidade){query=[cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');precision='cidade'}
-    if(!query){rejectedStops.push({ctrc:meta.ctrc||'',nf:meta.nf||'',destinatario,cidade,uf,reason:'sem cidade/endereço'});continue}
-    let geo=await routeGeocode(query,baseGeo,ROUTE_MAX_RADIUS_METERS);
-    if(!geo&&cidade&&String(uf||'').toUpperCase()!=='SP'){
-      geo=await routeGeocode(cidade+', SP, Brasil',baseGeo,ROUTE_MAX_RADIUS_METERS);
-      if(geo){precision='cidade';query=cidade+', SP, Brasil'}
+    const detail=detailByLoose.get(lk)||detailByNf.get(nf)||null;
+    const exactCoord=routeSswCoordinates(r,meta);
+    let query='',precision='cidade',geo=null,coordinateSource='';
+    if(exactCoord){
+      geo=exactCoord;precision='ssw-coordenada';coordinateSource='SSW';
+      query='Coordenada cadastrada no SSW'
+    }else{
+      if(parts.cep){query=parts.cep+', Brasil';precision='cep'}
+      else if(parts.endereco){query=[parts.endereco,parts.numero,parts.bairro,cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');precision='endereco'}
+      else if(cidade){query=[cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');precision='cidade'}
+      if(!query){rejectedStops.push({ctrc:meta.ctrc||'',nf:meta.nf||'',destinatario,cidade,uf,reason:'sem coordenada/cidade/endereço'});continue}
+      geo=await routeGeocode(query,baseGeo,ROUTE_MAX_RADIUS_METERS);
+      if(!geo&&cidade&&String(uf||'').toUpperCase()!=='SP'){
+        geo=await routeGeocode(cidade+', SP, Brasil',baseGeo,ROUTE_MAX_RADIUS_METERS);
+        if(geo){precision='cidade';query=cidade+', SP, Brasil'}
+      }
+      coordinateSource='geocodificacao'
     }
     if(!geo){rejectedStops.push({ctrc:meta.ctrc||'',nf:meta.nf||'',destinatario,cidade,uf,reason:'não localizado dentro de 300 km'});continue}
     const radius=routeHaversine(baseGeo,geo);
@@ -2864,7 +2911,11 @@ async function buildRoutePlan(date='',romaneio=''){
     stops.push({
       originalOrder:idx+1,ctrc:meta.ctrc||'',nf:meta.nf||'',destinatario,cidade,uf,
       endereco:parts.endereco,numero:parts.numero,bairro:parts.bairro,cep:parts.cep,
-      precision,query,lat:geo.lat,lon:geo.lon,radiusKm:radius/1000,label:destinatario+(cidade?' • '+cidade:'')
+      precision,coordinateSource,query,lat:geo.lat,lon:geo.lon,radiusKm:radius/1000,label:destinatario+(cidade?' • '+cidade:''),
+      entregue:!!detail?.entregue,
+      baixaAt:detail?.dataEntrega||((detail?.dataOcorrencia||'')+(detail?.horaOcorrencia?' '+detail.horaOcorrencia:'')),
+      baixaOcorrencia:detail?.ocorrencia||'',
+      baixaCodigo:detail?.ocorrenciaCodigo||''
     })
   }
   if(!stops.length){
@@ -3252,7 +3303,7 @@ if(req.method==='POST'&&u.pathname==='/api/roteirizador/recalcular'){try{
   return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/roteirizador/rota'){try{
-  if(!dashboardHasAny(authUser,['dashboard','roteirizador','ssw_saidas','evolucao']))return dashboardDeny(res);
+  if(!dashboardHasAny(authUser,['dashboard','roteirizador','ssw_saidas','evolucao','tracking']))return dashboardDeny(res);
   const x=await buildRoutePlan(u.searchParams.get('date')||'',u.searchParams.get('romaneio')||'');
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
