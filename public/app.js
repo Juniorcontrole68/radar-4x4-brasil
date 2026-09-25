@@ -1239,15 +1239,138 @@ function printDeliveryProgram(){
   w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Programação de Entregas</title><style>body{font-family:Arial,sans-serif;margin:20px;color:#111827}h1{font-size:22px}h2{font-size:16px;margin:22px 0 5px}.meta{font-size:11px;color:#475569;margin-bottom:7px}table{width:100%;border-collapse:collapse;font-size:10px;margin-bottom:15px}th,td{border:1px solid #cbd5e1;padding:5px;text-align:left}th{background:#f1f5f9}@media print{body{margin:8mm}}</style></head><body><h1>Programação de Entregas • '+safe(String(d.date||'').split('-').reverse().join('/'))+'</h1><div class="meta">'+safe(d.weekday||'')+' • '+nf(d.programmed||0)+' entregas • '+nf(d.vehicles||0)+' veículos • custo previsto '+brl(Number(d.totalCost||0))+'</div>'+loads+'<script>window.onload=()=>window.print()<\/script></body></html>');
   w.document.close()
 }
+
+let PROGRAM_SIMULATION=null,PROGRAM_SIM_MAP=null,PROGRAM_SIM_LAYER=null,PROGRAM_SIM_MODE='actual';
+const PROGRAM_SIM_COLORS=['#2563eb','#dc2626','#16a34a','#9333ea','#ea580c','#0891b2','#ca8a04','#db2777','#4f46e5','#059669','#7c3aed','#c2410c','#0284c7','#be123c','#65a30d','#0f766e'];
+function simSet(id,v){const e=$(id);if(e)e.textContent=v}
+function simPct(v){return v===null||v===undefined?'—':programFmtNumber(v,1)+'%'}
+function simRouteName(r,mode){
+  if(mode==='actual')return (r.romaneio||'Romaneio')+(r.motorista?' • '+r.motorista:'');
+  return 'Simulado '+r.id+' • '+(r.vehicleType||'Veículo')
+}
+function simRenderMap(mode='actual'){
+  PROGRAM_SIM_MODE=mode;
+  const data=PROGRAM_SIMULATION,box=$('#programSimulationMap'),legend=$('#simMapLegend');
+  const b1=$('#simMapActual'),b2=$('#simMapOptimized');
+  if(b1)b1.classList.toggle('active',mode==='actual');
+  if(b2)b2.classList.toggle('active',mode==='simulated');
+  if(!data||!box)return;
+  if(typeof L==='undefined'){box.innerHTML='<div style="padding:24px" class="muted">Mapa indisponível. O comparativo de rotas continua disponível nas tabelas.</div>';return}
+  if(!PROGRAM_SIM_MAP){
+    PROGRAM_SIM_MAP=L.map(box,{zoomControl:true});
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(PROGRAM_SIM_MAP)
+  }
+  if(PROGRAM_SIM_LAYER)PROGRAM_SIM_LAYER.remove();
+  PROGRAM_SIM_LAYER=L.layerGroup().addTo(PROGRAM_SIM_MAP);
+  const routes=mode==='actual'?(data.actual?.routes||[]):(data.simulated?.routes||[]);
+  const bounds=[];
+  const leg=[];
+  routes.forEach((route,idx)=>{
+    const color=PROGRAM_SIM_COLORS[idx%PROGRAM_SIM_COLORS.length],name=simRouteName(route,mode);
+    const coords=(route.geometry?.coordinates||[]).map(x=>[Number(x[1]),Number(x[0])]).filter(x=>Number.isFinite(x[0])&&Number.isFinite(x[1]));
+    if(coords.length){
+      L.polyline(coords,{color,weight:5,opacity:.82}).addTo(PROGRAM_SIM_LAYER).bindTooltip(name);
+      coords.forEach(x=>bounds.push(x))
+    }
+    const pts=route.points||[];
+    pts.forEach((p,pos)=>{
+      const lat=Number(p.lat),lon=Number(p.lon);if(!Number.isFinite(lat)||!Number.isFinite(lon))return;
+      bounds.push([lat,lon]);
+      if(pos===0)return;
+      const icon=L.divIcon({className:'',html:'<div style="background:'+color+';color:#fff;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:10px;font-weight:800;border:2px solid #fff;box-shadow:0 1px 4px #0005">'+pos+'</div>',iconSize:[22,22],iconAnchor:[11,11]});
+      L.marker([lat,lon],{icon}).addTo(PROGRAM_SIM_LAYER).bindPopup('<b>'+safe(name)+'</b><br>'+safe(p.label||'Parada'))
+    });
+    leg.push('<span><i class="simulation-dot" style="background:'+color+'"></i>'+safe(name)+'</span>')
+  });
+  if(legend)legend.innerHTML=leg.join('');
+  if(bounds.length){
+    const bb=L.latLngBounds(bounds);
+    if(bb.isValid())PROGRAM_SIM_MAP.fitBounds(bb.pad(.10))
+  }else PROGRAM_SIM_MAP.setView([-22.739,-47.331],9);
+  setTimeout(()=>PROGRAM_SIM_MAP.invalidateSize(),100)
+}
+function simActualRows(routes){
+  return (routes||[]).map(r=>({
+    romaneio:r.romaneio||'—',motorista:r.motorista||'—',veiculo:r.veiculo||'—',
+    tipo:(r.vehicleType||'—')+(r.vehicleTypeInferred?' *':''),
+    entregas:nf(r.deliveries||0),peso:programFmtNumber(r.kg||0,0)+' kg',
+    ocupacao:programFmtNumber(r.kgUtil||0,1)+'%',
+    cidades:(r.cities||[]).join(', '),km:r.distanceKm!==null&&r.distanceKm!==undefined?programFmtNumber(r.distanceKm,1)+' km':'—',
+    frete:Number(r.freight||0)>0?brl(Number(r.freight||0)):'—',custo:brl(Number(r.cost||0)),pct:simPct(r.costFreightPct)
+  }))
+}
+function simOptimizedRows(routes){
+  return (routes||[]).map(r=>({
+    rota:'Simulado '+r.id,tipo:r.vehicleType||'—',origem:(r.sourceRomaneios||[]).join(' + ')||'—',
+    entregas:nf(r.deliveries||0),peso:programFmtNumber(r.kg||0,0)+' kg',
+    ocupacao:programFmtNumber(r.kgUtil||0,1)+'%',cidades:(r.cities||[]).join(', '),
+    km:r.distanceKm!==null&&r.distanceKm!==undefined?programFmtNumber(r.distanceKm,1)+' km':'—',
+    frete:Number(r.freight||0)>0?brl(Number(r.freight||0)):'—',custo:brl(Number(r.cost||0)),pct:simPct(r.costFreightPct),
+    meta:r.costFreightPct===null||r.costFreightPct===undefined?'Sem frete':(r.economicOk?'Dentro de 40%':'Acima de 40%')
+  }))
+}
+function renderProgramSimulation(data){
+  PROGRAM_SIMULATION=data;
+  simSet('#simActualVehicles',nf(data.actual?.vehicles||0));
+  simSet('#simNewVehicles',nf(data.simulated?.vehicles||0));
+  simSet('#simSavedVehicles',nf(data.savings?.vehicles||0));
+  simSet('#simActualCost',brl(Number(data.actual?.cost||0)));
+  simSet('#simNewCost',brl(Number(data.simulated?.cost||0)));
+  simSet('#simSavings',brl(Number(data.savings?.cost||0))+(Number(data.savings?.costPct||0)>0?' • '+programFmtNumber(data.savings.costPct,1)+'%':''));
+  simSet('#simActualKm',data.actual?.distanceKm?programFmtNumber(data.actual.distanceKm,1)+' km':'—');
+  simSet('#simNewKm',data.simulated?.distanceKm?programFmtNumber(data.simulated.distanceKm,1)+' km':'—');
+  const status=$('#programSimulationStatus');
+  if(status){
+    const diff=Number(data.savings?.vehicles||0);
+    status.textContent='Análise de '+String(data.date||'').split('-').reverse().join('/')+' • '+nf(data.deliveries||0)+' entrega(s) • '+nf(data.actual?.vehicles||0)+' carro(s) emitidos → '+nf(data.simulated?.vehicles||0)+' carro(s) simulados'+(diff>0?' • potencial de eliminar '+nf(diff)+' carro(s)':' • quantidade de carros já próxima do mínimo encontrado')+(data.reviewCount?' • '+nf(data.reviewCount)+' entrega(s) ficaram fora por falta de dados':'');
+  }
+  if($('#simActualTable'))table('#simActualTable',
+    [['Romaneio','romaneio'],['Motorista','motorista'],['Placa','veiculo'],['Tipo','tipo'],['Entregas','entregas'],['Peso','peso'],['Ocupação','ocupacao'],['Cidades','cidades'],['KM','km'],['Frete','frete'],['Custo','custo'],['Custo/Frete','pct']],
+    simActualRows(data.actual?.routes||[]));
+  if($('#simOptimizedTable'))table('#simOptimizedTable',
+    [['Rota','rota'],['Veículo','tipo'],['Romaneios de origem','origem'],['Entregas','entregas'],['Peso','peso'],['Ocupação','ocupacao'],['Cidades','cidades'],['KM','km'],['Frete','frete'],['Custo','custo'],['Custo/Frete','pct'],['Meta','meta']],
+    simOptimizedRows(data.simulated?.routes||[]));
+  const rec=$('#programSimulationRecommendations'),recs=data.recommendations||[];
+  if(rec){
+    const headline=Number(data.savings?.vehicles||0)>0
+      ?'<div class="simulation-rec"><b>Potencial encontrado</b>É possível reduzir de '+nf(data.actual?.vehicles||0)+' para '+nf(data.simulated?.vehicles||0)+' veículos, com economia estimada de <strong>'+brl(Number(data.savings?.cost||0))+'</strong>.</div>'
+      :'<div class="simulation-rec"><b>Quantidade de veículos</b>A simulação não encontrou redução segura na quantidade de carros com as regras atuais de peso, limite de entregas e coerência geográfica.</div>';
+    rec.innerHTML=headline+recs.slice(0,12).map(x=>'<div class="simulation-rec"><b>'+safe(x.title||'Sugestão')+'</b>'+safe(x.detail||'')+'</div>').join('');
+  }
+  simRenderMap('simulated')
+}
+async function refreshProgramSimulation(force=true){
+  if(window.__programSimulationBusy)return;
+  window.__programSimulationBusy=true;
+  const btn=$('#programSimulate'),status=$('#programSimulationStatus');
+  if(btn)btn.disabled=true;
+  if(status)status.textContent='Lendo os romaneios emitidos hoje, cruzando peso/frete e recalculando a frota e as rotas…';
+  try{
+    const q=new URLSearchParams({t:String(Date.now())});if(force)q.set('force','1');
+    const r=await fetch('/api/programacao-simulacao?'+q.toString(),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível simular os romaneios.');
+    renderProgramSimulation(j)
+  }catch(e){
+    if(status)status.textContent='Erro na simulação: '+e.message
+  }finally{
+    window.__programSimulationBusy=false;if(btn)btn.disabled=false
+  }
+}
+
 function setupDeliveryProgram(){
   const date=$('#programDate'),gen=$('#programGenerate'),rf=$('#programRefresh'),pr=$('#programPrint');
   const xml=$('#programXmlFiles'),imp=$('#programImportXml'),rm=$('#programRefreshMaterials');
+  const sim=$('#programSimulate'),mapActual=$('#simMapActual'),mapOptimized=$('#simMapOptimized');
   if(date&&!date.value)date.value=programTomorrowLocal();
   if(gen)gen.onclick=()=>refreshDeliveryProgram(false);
   if(rf)rf.onclick=()=>refreshDeliveryProgram(true);
   if(pr)pr.onclick=printDeliveryProgram;
   if(imp)imp.onclick=programImportXmlFiles;
   if(rm)rm.onclick=loadProgramMaterials;
+  if(sim)sim.onclick=()=>refreshProgramSimulation(true);
+  if(mapActual)mapActual.onclick=()=>simRenderMap('actual');
+  if(mapOptimized)mapOptimized.onclick=()=>simRenderMap('simulated');
   if(xml)xml.onchange=()=>{const n=xml.files?.length||0;const s=$('#programMaterialsStatus');if(s)s.textContent=n?nf(n)+' XML(s) selecionado(s). Clique em Importar e classificar.':'Nenhum XML selecionado.'}
 }
 
