@@ -49,12 +49,12 @@
     <div class="card kpi"><div class="label">% lucro</div><div id="financeProfitPct" class="value">—</div></div>
     <div class="card kpi"><div class="label">% custo motorista</div><div id="financeDriverPct" class="value">—</div></div>
   </div>
+  <div class="card tablecard" style="margin-top:12px"><div class="thead">Resultado por motorista no período selecionado</div><div class="scroll"><table id="financeDriverTable"></table></div></div>
   <div class="grid finance-charts">
     <div class="card"><b>Frete por motorista • a receber x pago</b><div class="chart finance-chart"><canvas id="financeDriverChart"></canvas></div></div>
     <div class="card"><b>Semanas do mês • a receber x pago</b><div class="chart finance-chart"><canvas id="financeWeeksChart"></canvas></div></div>
   </div>
   <div class="card" style="margin-top:12px"><b>Lucro % por semana • mês atual x 3 meses anteriores</b><div id="financeCompareInfo" class="muted" style="margin-top:5px"></div><div class="chart finance-compare-chart"><canvas id="financeCompareChart"></canvas></div></div>
-  <div class="card tablecard" style="margin-top:12px"><div class="thead">Resultado por motorista no período selecionado</div><div class="scroll"><table id="financeDriverTable"></table></div></div>
 </div></section>
 <section id="dashboards" class="section"><div class="dash-intro"><h2>Central de Dashboards</h2><div class="muted">Visões disponíveis com os dados atuais e painéis preparados para receber dados do SSW / BI2.</div></div><div class="dash-hub">
 <div class="dash-card"><div class="dash-icon">🚛</div><div><h3>SSW • Saídas x Baixas</h3><span class="dash-tag wait">RASTREAMENTO PARCIAL</span></div><div class="dash-kpis"><div class="dash-mini"><span class="label">Saíram</span><b id="hubSswOut">—</b></div><div class="dash-mini"><span class="label">Entregues</span><b id="hubSswDown">—</b></div><div class="dash-mini"><span class="label">Pendentes</span><b id="hubSswPend">—</b></div><div class="dash-mini"><span class="label">% concluído</span><b id="hubSswRate">—</b></div></div><div id="hubSswDriverMeta" class="dash-list">Carregando operação do SSW…</div><div class="dash-actions"><button class="dash-open" data-open="ssw-motoristas">Abrir painel</button></div></div>
@@ -355,4 +355,4 @@
   <div class="card tablecard"><div class="thead">Conferentes</div><div class="scroll"><table id="helpCheckers"></table></div></div>
 </div>
 </section>
-</main></div><script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embedded');</script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script><script src="/app.js?v=20260925finance2"></script></body></html>
+</main></div><script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embedded');</script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script><script src="/app.js?v=20260925finance3"></script></body></html>
