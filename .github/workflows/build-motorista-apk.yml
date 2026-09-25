@@ -6,6 +6,9 @@ on:
       - construlog-dashboard
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -24,6 +27,12 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
+      - name: Preservar assinatura do aplicativo
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: construlog-motorista-signing-v1
+
       - name: Build TESTE e NORMAL
         run: gradle -p motorista-tracker-android assembleDebug assembleRelease --stacktrace
 
@@ -40,3 +49,46 @@ jobs:
           name: construlog-motorista-normal-apk
           path: motorista-tracker-android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
+
+      - name: Publicar APKs para atualização automática
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_CODE=$(grep -E '^[[:space:]]*versionCode[[:space:]]+' motorista-tracker-android/app/build.gradle | awk '{print $2}' | head -1)
+          VERSION_NAME=$(grep -E '^[[:space:]]*versionName[[:space:]]+' motorista-tracker-android/app/build.gradle | sed -E 's/.*versionName[[:space:]]+"([^"]+)".*/\1/' | head -1)
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin controle-coletas-aiven
+          rm -rf /tmp/construlog-release
+          git worktree add /tmp/construlog-release origin/controle-coletas-aiven
+
+          mkdir -p /tmp/construlog-release/controle-coletas-aiven-app/downloads
+          cp motorista-tracker-android/app/build/outputs/apk/release/app-release.apk /tmp/construlog-release/controle-coletas-aiven-app/downloads/CONSTRULOG-Motorista-NORMAL.apk
+          cp motorista-tracker-android/app/build/outputs/apk/debug/app-debug.apk /tmp/construlog-release/controle-coletas-aiven-app/downloads/CONSTRULOG-Motorista-TESTE.apk
+
+          cat > /tmp/construlog-release/controle-coletas-aiven-app/downloads/update.json <<EOF
+          {
+            "normal": {
+              "versionCode": ${VERSION_CODE},
+              "versionName": "${VERSION_NAME}",
+              "url": "/downloads/CONSTRULOG-Motorista-NORMAL.apk",
+              "notes": "Nova versão do CONSTRULOG Motorista disponível."
+            },
+            "teste": {
+              "versionCode": ${VERSION_CODE},
+              "versionName": "${VERSION_NAME}-teste",
+              "url": "/downloads/CONSTRULOG-Motorista-TESTE.apk",
+              "notes": "Nova versão TESTE do CONSTRULOG Motorista disponível."
+            }
+          }
+          EOF
+
+          cd /tmp/construlog-release
+          git add controle-coletas-aiven-app/downloads
+          if git diff --cached --quiet; then
+            echo "Nenhuma alteração de APK para publicar."
+            exit 0
+          fi
+          git commit -m "Publica app motorista ${VERSION_NAME} para atualização automática"
+          git push origin HEAD:controle-coletas-aiven
