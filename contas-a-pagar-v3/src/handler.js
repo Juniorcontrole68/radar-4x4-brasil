@@ -5,7 +5,7 @@ const {pool,getBills}=require('./db');
 const {titleCase,today}=require('./utils');
 const {handleColetas}=require('./coletas');
 const PUBLIC=path.join(__dirname,'..','public');
-function sendFile(res,file,type){res.writeHead(200,{'Content-Type':type,'Cache-Control':file==='index.html'?'no-store':'public, max-age=300'});res.end(fs.readFileSync(path.join(PUBLIC,file)));}
+function sendFile(res,file,type){res.writeHead(200,{'Content-Type':type,'Cache-Control':'no-store, max-age=0'});res.end(fs.readFileSync(path.join(PUBLIC,file)));}
 function json(res,status,data){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));}
 function readJson(req,maxBytes=1_000_000){return new Promise((resolve,reject)=>{let d='',done=false;req.on('data',chunk=>{if(done)return;d+=chunk;if(Buffer.byteLength(d,'utf8')>maxBytes){done=true;reject(new Error('Requisicao muito grande'));}});req.on('end',()=>{if(done)return;try{resolve(d?JSON.parse(d):{});}catch{reject(new Error('JSON invalido'));}});req.on('error',reject);});}
 function docPayload(body){
