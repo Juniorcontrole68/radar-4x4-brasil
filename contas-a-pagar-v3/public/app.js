@@ -20,7 +20,44 @@ function chooseDocument(id,kind){
  input.onchange=async()=>{const file=input.files?.[0];if(!file)return;try{await sendDocument(id,kind,file);await load();}catch(e){alert(e.message)}};
  input.click();
 }
-async function copyPix(key){try{await navigator.clipboard.writeText(String(key||''));alert('Chave PIX copiada.');}catch{prompt('Copie a chave PIX:',String(key||''));}}
+async function copyPix(key){
+ const value=String(key||'').trim();
+ if(!value)return alert('Esta conta não possui chave PIX.');
+ let copied=false;
+ try{
+  if(navigator.clipboard&&window.isSecureContext){
+   await navigator.clipboard.writeText(value);
+   copied=true;
+  }
+ }catch{}
+ if(!copied){
+  try{
+   const ta=document.createElement('textarea');
+   ta.value=value;
+   ta.setAttribute('readonly','');
+   ta.style.position='fixed';
+   ta.style.left='-9999px';
+   ta.style.top='0';
+   document.body.appendChild(ta);
+   ta.focus();
+   ta.select();
+   ta.setSelectionRange(0,value.length);
+   copied=document.execCommand('copy');
+   document.body.removeChild(ta);
+  }catch{}
+ }
+ if(copied){
+  const old=document.querySelector('.pixCopyNotice');
+  if(old)old.remove();
+  const n=document.createElement('div');
+  n.className='pixCopyNotice';
+  n.textContent='Chave PIX copiada';
+  document.body.appendChild(n);
+  setTimeout(()=>n.remove(),1800);
+ }else{
+  prompt('Copie a chave PIX:',value);
+ }
+}
 const docFlag=v=>v===true||v===1||v==='1'||String(v).toLowerCase()==='true'||String(v).toLowerCase()==='t';
 const pixText=x=>String(x?.pix_key||'').trim();
 async function editPix(id){
