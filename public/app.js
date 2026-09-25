@@ -1830,6 +1830,10 @@ async function calculateRoute(){
 
 let TRACKING_MAP=null,TRACKING_LAYER=null,TRACKING_DATA=null,TRACKING_ROUTE_DATA=null,TRACKING_DRIVER_ROWS=[];
 let TRACKING_MAP_VIEW_READY=false;
+const TRACKING_LOGICAL_ROUTES=new Map();
+const TRACKING_PLAN_CACHE=new Map();
+const TRACKING_HISTORY_CACHE=new Map();
+let TRACKING_ANALYSIS_ROWS=[];
 let TRACKING_AUTO_SECONDS=Math.max(5,Math.min(300,Number(localStorage.getItem('construlog_tracking_refresh_seconds')||30)));
 let TRACKING_NEXT_REFRESH=0;
 const TRACKING_COLORS=['#2563eb','#dc2626','#16a34a','#9333ea','#ea580c','#0891b2','#ca8a04','#db2777','#4f46e5','#059669'];
@@ -1916,6 +1920,12 @@ function trackingDriverSelectionChanged(resetCode=true){
 }
 function trackingFindRoute(driver,plate){
   const n=trackingNorm(driver),p=trackingNorm(plate);if(!n)return null;
+  const logical=TRACKING_LOGICAL_ROUTES.get(trackingDriverKey(driver,plate));
+  if(logical?.geometry)return logical;
+  for(const [key,plan] of TRACKING_LOGICAL_ROUTES){
+    const [kd,kp]=key.split('|');
+    if(kd===n&&(!p||!kp||kp===p)&&plan?.geometry)return plan
+  }
   const routes=TRACKING_ROUTE_DATA?.actual?.routes||[];
   const sameDriver=routes.filter(r=>trackingNorm(r.motorista)===n);
   if(p){const exact=sameDriver.find(r=>trackingNorm(r.veiculo)===p);if(exact)return exact}
