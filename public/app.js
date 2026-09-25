@@ -1032,6 +1032,110 @@ function programFmtNumber(v,d=0){
   return Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d})
 }
 function programSet(id,v){const e=$(id);if(e)e.textContent=v}
+
+let PROGRAM_MATERIALS=[];
+function programNfKey(v){return String(v||'').replace(/\D/g,'').replace(/^0+/,'')||'0'}
+function programTextNorm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase()}
+function programMaterialClass(products){
+  const s=programTextNorm((products||[]).join(' | '));
+  const tubos=/\bTUBOS?\b|\bTUBULACAO\b/.test(s);
+  const caixa=/\bCAIXAS?\s*(?:D[AE]\s*)?AGUA\b|\bRESERVATORIOS?\b|\bTANQUE[S]?\b[^|]{0,50}\bAGUA\b/.test(s);
+  return tubos&&caixa?'tubos_caixa_agua':(tubos?'tubos':(caixa?'caixa_agua':'normal'))
+}
+function programMaterialLabel(v){
+  if(v==='tubos_caixa_agua')return'Tubos + Caixa d’água';
+  if(v==='tubos')return'Tubos';
+  if(v==='caixa_agua')return'Caixa d’água';
+  return'Carga normal'
+}
+function programXmlFirst(node,name){
+  if(!node)return null;
+  return node.getElementsByTagNameNS?.('*',name)?.[0]||node.getElementsByTagName?.(name)?.[0]||null
+}
+function programXmlText(node,name){return programXmlFirst(node,name)?.textContent?.trim()||''}
+function programParseNfeXml(text){
+  const doc=new DOMParser().parseFromString(text,'application/xml');
+  if(doc.getElementsByTagName('parsererror').length)throw new Error('XML inválido');
+  const inf=programXmlFirst(doc,'infNFe'),ide=programXmlFirst(doc,'ide'),emit=programXmlFirst(doc,'emit'),dest=programXmlFirst(doc,'dest');
+  if(!inf||!ide||!dest)throw new Error('Arquivo não parece ser um XML de NF-e');
+  let chave=String(inf.getAttribute('Id')||'').replace(/^NFe/i,'').replace(/\D/g,'');
+  if(chave.length!==44)chave=programXmlText(doc,'chNFe').replace(/\D/g,'');
+  const nf=programXmlText(ide,'nNF'),emitente_cnpj=programXmlText(emit,'CNPJ'),emitente_nome=programXmlText(emit,'xNome');
+  const cliente=programXmlText(dest,'xNome'),ender=programXmlFirst(dest,'enderDest');
+  const cidade=programXmlText(ender,'xMun'),uf=programXmlText(ender,'UF');
+  const dets=[...(doc.getElementsByTagNameNS?.('*','det')||doc.getElementsByTagName('det')||[])];
+  const produtos=dets.map(d=>programXmlText(d,'xProd')).filter(Boolean);
+  if(chave.length!==44)throw new Error('Chave de acesso de 44 dígitos não encontrada');
+  if(!nf)throw new Error('Número da NF não encontrado');
+  return{chave,nf,emitente_cnpj,emitente_nome,cliente,cidade,uf,produtos,classificacao:programMaterialClass(produtos)}
+}
+async function programImportXmlFiles(){
+  const input=$('#programXmlFiles'),status=$('#programMaterialsStatus'),btn=$('#programImportXml');
+  const files=[...(input?.files||[])];
+  if(!files.length){if(status)status.textContent='Selecione um ou mais arquivos XML de NF-e.';return}
+  if(btn)btn.disabled=true;
+  if(status)status.textContent='Lendo '+nf(files.length)+' XML(s)…';
+  try{
+    const rows=[],errors=[];
+    for(const file of files){
+      try{rows.push(programParseNfeXml(await file.text()))}catch(e){errors.push(file.name+': '+e.message)}
+    }
+    if(!rows.length)throw new Error(errors[0]||'Nenhum XML de NF-e válido foi encontrado.');
+    const resp=await fetch('/api/nf-materiais/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows})});
+    const j=await resp.json().catch(()=>({}));
+    if(!resp.ok||!j.ok)throw new Error(j.error||'Falha ao salvar as classificações.');
+    const especiais=rows.filter(x=>x.classificacao!=='normal').length;
+    if(status)status.textContent='✓ '+nf(j.imported||0)+' NF(s) importada(s) • '+nf(especiais)+' com tubos/caixa d’água'+(errors.length?' • '+nf(errors.length)+' arquivo(s) ignorado(s)':'');
+    if(input)input.value='';
+    await loadProgramMaterials()
+  }catch(e){
+    if(status)status.textContent='Erro na importação: '+e.message
+  }finally{if(btn)btn.disabled=false}
+}
+function renderProgramMaterials(){
+  const open=Array.isArray(DELIVERY_PROGRAM?.openRows)?DELIVERY_PROGRAM.openRows:[];
+  const byNf=new Map();
+  for(const r of open){
+    const k=programNfKey(r.nf);
+    if(!byNf.has(k))byNf.set(k,[]);
+    byNf.get(k).push(r)
+  }
+  const matched=[];
+  for(const m of PROGRAM_MATERIALS){
+    const hits=byNf.get(programNfKey(m.nf))||[];
+    for(const ssw of hits){
+      matched.push({...m,ssw})
+    }
+  }
+  const tubes=matched.filter(x=>x.classificacao==='tubos'||x.classificacao==='tubos_caixa_agua').length;
+  const water=matched.filter(x=>x.classificacao==='caixa_agua'||x.classificacao==='tubos_caixa_agua').length;
+  programSet('#programTubes',nf(tubes));
+  programSet('#programWaterTanks',nf(water));
+  programSet('#programSpecialOpen',nf(matched.length));
+  const tableEl=$('#programMaterialsTable');
+  if(tableEl){
+    tableEl.innerHTML='<thead><tr><th>Tipo</th><th>NF</th><th>CT-e</th><th>Cliente</th><th>Cidade</th><th>Peso</th><th>Produtos identificados</th></tr></thead><tbody>'+
+      (matched.length?matched.map(x=>{
+        const s=x.ssw||{},products=(Array.isArray(x.produtos)?x.produtos:[]).filter(p=>{const n=programTextNorm(p);return /\bTUBOS?\b|\bTUBULACAO\b|\bCAIXAS?\s*(?:D[AE]\s*)?AGUA\b|\bRESERVATORIOS?\b|\bTANQUE[S]?\b/.test(n)}).slice(0,8);
+        return '<tr><td><span class="materials-type">'+safe(programMaterialLabel(x.classificacao))+'</span></td><td><b>'+safe(s.nf||x.nf||'—')+'</b></td><td>'+safe(s.ctrc||'—')+'</td><td>'+safe(s.cliente||x.cliente||'—')+'</td><td>'+safe(s.cidade||x.cidade||'—')+'</td><td>'+programFmtNumber(s.peso||0,0)+' kg</td><td class="materials-products">'+safe(products.join(' • ')||'Produto especial identificado no XML')+'</td></tr>'
+      }).join(''):'<tr><td colspan="7" class="muted">Nenhuma NF com tubos ou caixas d’água foi encontrada entre as notas atualmente abertas no SSW.</td></tr>')+
+      '</tbody>'
+  }
+  const status=$('#programMaterialsStatus');
+  if(status&&PROGRAM_MATERIALS.length&&!matched.length)status.textContent='Há '+nf(PROGRAM_MATERIALS.length)+' NF(s) especiais cadastradas, mas nenhuma coincide com as notas atualmente abertas no SSW.'
+}
+async function loadProgramMaterials(){
+  try{
+    const r=await fetch('/api/nf-materiais?special=1&limit=3000&t='+Date.now(),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao consultar materiais.');
+    PROGRAM_MATERIALS=Array.isArray(j.rows)?j.rows:[];
+    renderProgramMaterials()
+  }catch(e){
+    const status=$('#programMaterialsStatus');if(status)status.textContent='Não foi possível consultar os materiais classificados: '+e.message
+  }
+}
+
 function renderDeliveryProgram(data){
   DELIVERY_PROGRAM=data;
   programSet('#programOpen',nf(data.totalOpen||0));
@@ -1086,7 +1190,8 @@ async function refreshDeliveryProgram(force=false){
     const r=await fetch('/api/programacao-entregas?'+q.toString(),{cache:'no-store'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível gerar a programação.');
-    renderDeliveryProgram(j)
+    renderDeliveryProgram(j);
+    await loadProgramMaterials()
   }catch(e){
     if(status)status.textContent='Erro ao gerar programação: '+e.message;
     const hub=$('#hubProgInfo');if(hub)hub.textContent='Programação indisponível: '+e.message
@@ -1107,10 +1212,14 @@ function printDeliveryProgram(){
 }
 function setupDeliveryProgram(){
   const date=$('#programDate'),gen=$('#programGenerate'),rf=$('#programRefresh'),pr=$('#programPrint');
+  const xml=$('#programXmlFiles'),imp=$('#programImportXml'),rm=$('#programRefreshMaterials');
   if(date&&!date.value)date.value=programTomorrowLocal();
   if(gen)gen.onclick=()=>refreshDeliveryProgram(false);
   if(rf)rf.onclick=()=>refreshDeliveryProgram(true);
   if(pr)pr.onclick=printDeliveryProgram;
+  if(imp)imp.onclick=programImportXmlFiles;
+  if(rm)rm.onclick=loadProgramMaterials;
+  if(xml)xml.onchange=()=>{const n=xml.files?.length||0;const s=$('#programMaterialsStatus');if(s)s.textContent=n?nf(n)+' XML(s) selecionado(s). Clique em Importar e classificar.':'Nenhum XML selecionado.'}
 }
 
 let ROUTE_MANIFESTS=[],ROUTE_PLAN=null,ROUTE_MANUAL_ORDER=[],ROUTE_EXTRA_STOPS=[],ROUTE_MAP=null,ROUTE_LAYER=null;
