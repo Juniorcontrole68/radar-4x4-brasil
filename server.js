@@ -2599,6 +2599,16 @@ let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.jo
   refreshBi2ApiState().catch(e=>console.error('BI2 WebAPI monitor ERRO: '+e.message));
   buildBi2Receita().then(x=>console.log('VALIDACAO RECEITA SSW: '+JSON.stringify({ok:x.ok,fonte:x.sourceCode,periodo:x.periodo,total:x.totalFaturamento,clientes:x.totalClientes,ctes:x.totalRegistros,somerlog:(x.clientes||[]).find(y=>y.cliente==='Somerlog')||null,error:x.error||''}))).catch(e=>console.log('VALIDACAO RECEITA SSW ERRO: '+String(e.message||e)));
   (async()=>{try{const rep=await fetchBi2ReportFolder(17,'',bi2Auth().pasta),p=parseBi2Csv(rep.text),today=new Date().toISOString().slice(0,10),todayRows=(p.rows||[]).filter(r=>brDateToIso(pickField(r,'DATA ENTREGA','ENTREGA','DT ENTREGA'))===today);console.log('VALIDACAO BI2 17: '+JSON.stringify({arquivo:(p.rows||[]).length,hoje:todayRows.length,headers:p.headers.slice(0,25)}))}catch(e){console.log('VALIDACAO BI2 17 ERRO: '+String(e.message||e))}})();
+  setTimeout(async()=>{try{
+    const p=await fetchSswPendingDeliveries();
+    const rows=await deliveryProgramEnrich(p.rows||[]);
+    const rx=/(?:\bTUBOS?\b|CAIXA(?:S)?\s*(?:D['’]?|DE\s*)?AGUA|RESERVAT[OÓ]RIO)/i;
+    const hits=rows.filter(x=>rx.test([x.mercadoria,x.detalhes,x.remetente,x.cliente].filter(Boolean).join(' | '))).map(x=>({
+      nf:x.nf||'',ctrc:x.ctrc||'',cidade:x.cidade||'',cliente:x.cliente||'',
+      mercadoria:x.mercadoria||'',detalhes:String(x.detalhes||'').slice(0,220)
+    }));
+    console.log('VALIDACAO MATERIAIS PENDENTES: '+JSON.stringify({total:hits.length,rows:hits}));
+  }catch(e){console.log('VALIDACAO MATERIAIS PENDENTES ERRO: '+String(e.message||e))}},6000);
   setInterval(refreshBi2State,15*60*1000);
   setInterval(refreshBi2ApiState,60*1000);
   if(internalSswConfigured())setTimeout(()=>{const d=spDateISO();ensureSswMotoristasRefresh(d,d).then(x=>console.log('VALIDACAO MOTORISTAS STARTUP: '+JSON.stringify({total:x.totalRomaneado,entregues:x.entregues38,pendentes:x.pendentes38,ocorrencias:x.ocorrencias38,baixasBi2:x.baixasBi2,candidatos:x.candidatos,trackingOk:x.trackingOk,motoristas:(x.motoristas38||[]).map(m=>({motorista:m.motorista,total:m.total,entregues:m.entregues,pendentes:m.pendentes,ocorrencias:m.ocorrencias}))}))).catch(e=>console.log('VALIDACAO MOTORISTAS STARTUP ERRO: '+String(e.message||e)))},2500);
