@@ -622,7 +622,7 @@ function financeDualBars(id,labels,A,B,legendA='A receber',legendB='Pago'){
       const txt=financeMoneyLabel(v);
       x.save();x.font='700 9px Segoe UI';x.textAlign='center';x.textBaseline='middle';
       x.fillStyle=barH>=18?'#fff':'#172033';
-      x.fillText(txt,barX+bw/2,baseY-barH/2);
+      x.translate(barX+bw/2,baseY-barH/2);x.rotate(-Math.PI/2);x.fillText(txt,0,0);
       x.restore()
     };
     drawValue(va,ax,ha);drawValue(vb,bx,hb);
@@ -746,7 +746,7 @@ function driverPerformanceBars(id,rows){
     x.fillStyle='#0f766e';x.fillRect(px-bw/2,barY,bw,bh);
     if(bh>0){
       x.save();x.fillStyle=bh>=18?'#fff':'#172033';x.textAlign='center';x.textBaseline='middle';x.font='700 10px Segoe UI';
-      x.fillText(r.performance.toFixed(1).replace('.',',')+'%',px,barY+bh/2);x.restore()
+      x.translate(px,barY+bh/2);x.rotate(-Math.PI/2);x.fillText(r.performance.toFixed(1).replace('.',',')+'%',0,0);x.restore()
     }
     x.save();x.translate(px,h-p.b+9);x.rotate(-Math.PI/4);x.textAlign='right';x.fillStyle='#64748b';x.font='11px Segoe UI';x.fillText(r.motorista.slice(0,20),0,0);x.restore()
   })
@@ -763,7 +763,7 @@ function driverFinancialBars(id,rows){
     x.fillStyle=v>=0?'#0f766e':'#b91c1c';x.fillRect(px-bw/2,top,bw,Math.max(1,bh));
     if(Math.abs(v)>0){
       x.save();x.fillStyle=bh>=18?'#fff':'#172033';x.textAlign='center';x.textBaseline='middle';x.font='700 9px Segoe UI';
-      x.fillText(financeMoneyLabel(v),px,top+Math.max(1,bh)/2);x.restore()
+      x.translate(px,top+Math.max(1,bh)/2);x.rotate(-Math.PI/2);x.fillText(financeMoneyLabel(v),0,0);x.restore()
     }
     const label=r.motorista+' • '+r.veiculo;
     x.save();x.translate(px,h-p.b+9);x.rotate(-Math.PI/4);x.textAlign='right';x.fillStyle='#64748b';x.font='10px Segoe UI';x.fillText(label.slice(0,27),0,0);x.restore()
