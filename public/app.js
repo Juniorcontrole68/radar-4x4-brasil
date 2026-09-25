@@ -1092,6 +1092,12 @@ async function programImportXmlFiles(){
     if(status)status.textContent='Erro na importação: '+e.message
   }finally{if(btn)btn.disabled=false}
 }
+function programMergeMaterialClass(a,b){
+  const vals=[a,b];
+  const tube=vals.some(x=>x==='tubos'||x==='tubos_caixa_agua');
+  const water=vals.some(x=>x==='caixa_agua'||x==='tubos_caixa_agua');
+  return tube&&water?'tubos_caixa_agua':(tube?'tubos':(water?'caixa_agua':'normal'))
+}
 function renderProgramMaterials(){
   const open=Array.isArray(DELIVERY_PROGRAM?.openRows)?DELIVERY_PROGRAM.openRows:[];
   const byNf=new Map();
@@ -1100,13 +1106,26 @@ function renderProgramMaterials(){
     if(!byNf.has(k))byNf.set(k,[]);
     byNf.get(k).push(r)
   }
-  const matched=[];
+  const combined=new Map();
+  for(const ssw of open){
+    const cls=String(ssw.specialClass||'normal');
+    if(cls==='normal')continue;
+    const key='cte:'+(ssw.ctrc||programNfKey(ssw.nf));
+    combined.set(key,{classificacao:cls,produtos:Array.isArray(ssw.specialProducts)?ssw.specialProducts:[],ssw,fonte:'SSW'})
+  }
   for(const m of PROGRAM_MATERIALS){
     const hits=byNf.get(programNfKey(m.nf))||[];
     for(const ssw of hits){
-      matched.push({...m,ssw})
+      const key='cte:'+(ssw.ctrc||programNfKey(ssw.nf));
+      const prev=combined.get(key);
+      combined.set(key,{
+        classificacao:programMergeMaterialClass(prev?.classificacao||'normal',m.classificacao||'normal'),
+        produtos:[...new Set([...(prev?.produtos||[]),...(Array.isArray(m.produtos)?m.produtos:[])])].slice(0,30),
+        ssw,fonte:prev?'SSW + XML':'XML',cliente:m.cliente||'',cidade:m.cidade||''
+      })
     }
   }
+  const matched=[...combined.values()].filter(x=>x.classificacao!=='normal');
   const tubes=matched.filter(x=>x.classificacao==='tubos'||x.classificacao==='tubos_caixa_agua').length;
   const water=matched.filter(x=>x.classificacao==='caixa_agua'||x.classificacao==='tubos_caixa_agua').length;
   programSet('#programTubes',nf(tubes));
@@ -1114,15 +1133,18 @@ function renderProgramMaterials(){
   programSet('#programSpecialOpen',nf(matched.length));
   const tableEl=$('#programMaterialsTable');
   if(tableEl){
-    tableEl.innerHTML='<thead><tr><th>Tipo</th><th>NF</th><th>CT-e</th><th>Cliente</th><th>Cidade</th><th>Peso</th><th>Produtos identificados</th></tr></thead><tbody>'+
+    tableEl.innerHTML='<thead><tr><th>Tipo</th><th>NF</th><th>CT-e</th><th>Cliente</th><th>Cidade</th><th>Peso</th><th>Produtos identificados</th><th>Fonte</th></tr></thead><tbody>'+
       (matched.length?matched.map(x=>{
-        const s=x.ssw||{},products=(Array.isArray(x.produtos)?x.produtos:[]).filter(p=>{const n=programTextNorm(p);return /\bTUBOS?\b|\bTUBULACAO\b|\bCAIXAS?\s*(?:D[AE]\s*)?AGUA\b|\bRESERVATORIOS?\b|\bTANQUE[S]?\b/.test(n)}).slice(0,8);
-        return '<tr><td><span class="materials-type">'+safe(programMaterialLabel(x.classificacao))+'</span></td><td><b>'+safe(s.nf||x.nf||'—')+'</b></td><td>'+safe(s.ctrc||'—')+'</td><td>'+safe(s.cliente||x.cliente||'—')+'</td><td>'+safe(s.cidade||x.cidade||'—')+'</td><td>'+programFmtNumber(s.peso||0,0)+' kg</td><td class="materials-products">'+safe(products.join(' • ')||'Produto especial identificado no XML')+'</td></tr>'
-      }).join(''):'<tr><td colspan="7" class="muted">Nenhuma NF com tubos ou caixas d’água foi encontrada entre as notas atualmente abertas no SSW.</td></tr>')+
+        const s=x.ssw||{},products=(x.produtos||[]).filter(Boolean).slice(0,10);
+        return '<tr><td><span class="materials-type">'+safe(programMaterialLabel(x.classificacao))+'</span></td><td><b>'+safe(s.nf||'—')+'</b></td><td>'+safe(s.ctrc||'—')+'</td><td>'+safe(s.cliente||x.cliente||'—')+'</td><td>'+safe(s.cidade||x.cidade||'—')+'</td><td>'+programFmtNumber(s.peso||0,0)+' kg</td><td class="materials-products">'+safe(products.join(' • ')||s.tipoMercadoria||'Produto especial identificado')+'</td><td>'+safe(x.fonte||'SSW')+'</td></tr>'
+      }).join(''):'<tr><td colspan="8" class="muted">Nenhum tubo ou caixa d’água foi identificado nas entregas consultadas para esta programação.</td></tr>')+
       '</tbody>'
   }
   const status=$('#programMaterialsStatus');
-  if(status&&PROGRAM_MATERIALS.length&&!matched.length)status.textContent='Há '+nf(PROGRAM_MATERIALS.length)+' NF(s) especiais cadastradas, mas nenhuma coincide com as notas atualmente abertas no SSW.'
+  if(status){
+    const auto=open.filter(x=>x.specialClass&&x.specialClass!=='normal').length;
+    status.textContent='Leitura automática SSW: '+nf(auto)+' especial(is) • XMLs especiais cadastrados: '+nf(PROGRAM_MATERIALS.length)+' • resultado cruzado: '+nf(matched.length)+'.'
+  }
 }
 async function loadProgramMaterials(){
   try{
