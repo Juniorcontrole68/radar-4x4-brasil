@@ -1034,7 +1034,12 @@ async function probeSsw101Program(){
   const inputs=[...html.matchAll(/<input\b([^>]*)>/gi)].map(m=>{const a=m[1]||'';return{name:(a.match(/\bname=["']?([^"'\s>]+)/i)||[])[1]||'',type:(a.match(/\btype=["']?([^"'\s>]+)/i)||[])[1]||'',max:(a.match(/\bmaxlength=["']?([^"'\s>]+)/i)||[])[1]||'',value:(a.match(/\bvalue=["']([^"']*)["']/i)||[])[1]||''}}).filter(x=>x.name).slice(0,80);
   const forms=[...html.matchAll(/<form\b([^>]*)>/gi)].map(m=>{const a=m[1]||'';return{action:(a.match(/\baction=["']?([^"'\s>]+)/i)||[])[1]||'',method:(a.match(/\bmethod=["']?([^"'\s>]+)/i)||[])[1]||''}}).slice(0,10);
   const links=[...html.matchAll(/(?:href|onclick)=["']([^"']+)["']/gi)].map(m=>m[1]).filter(x=>/ssw\d+|xml|dacte|cte|act=/i.test(x)).slice(0,80);
-  return{ok:true,prog,status:rr.status,bytes:Buffer.byteLength(html),inputs,forms,links,text:htmlText38(html).slice(0,1800)}
+  const buttons=[...html.matchAll(/<(?:button|input)\b([^>]*)>/gi)].map(m=>{const x=m[1]||'';return{type:(x.match(/\btype=["']?([^"'\s>]+)/i)||[])[1]||'',name:(x.match(/\bname=["']?([^"'\s>]+)/i)||[])[1]||'',value:htmlText38((x.match(/\bvalue=["']([^"']*)["']/i)||[])[1]||''),onclick:(x.match(/\bonclick=["']([^"']*)["']/i)||[])[1]||''}}).filter(x=>x.type==='button'||x.type==='submit'||x.onclick).slice(0,60);
+  const contexts={};
+  for(const term of ['t_nro_cte','t_vlr_frete','act.value','ajaxEnvia','submit']){
+    const i=html.indexOf(term);contexts[term]=i>=0?html.slice(Math.max(0,i-1000),Math.min(html.length,i+2500)).replace(/\s+/g,' '):''
+  }
+  return{ok:true,prog,status:rr.status,bytes:Buffer.byteLength(html),inputs,forms,buttons,links,contexts,text:htmlText38(html).slice(0,1800)}
 }
 
 async function fetchSsw38Rows(){
