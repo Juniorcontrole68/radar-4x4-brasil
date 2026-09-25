@@ -6,8 +6,12 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.location.LocationManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
@@ -31,6 +35,10 @@ public class MainActivity extends Activity {
     private Button activate;
     private Button start;
     private Button stop;
+    private Button preciseLocation;
+    private Button gpsSettings;
+    private Button batterySettings;
+    private TextView androidSettingsStatus;
     private boolean pendingStart = false;
     private final android.os.Handler uiHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable uiRefresh = new Runnable() {
@@ -109,8 +117,28 @@ public class MainActivity extends Activity {
         diagnostics.setPadding(0, dp(12), 0, 0);
         root.addView(diagnostics);
 
+        TextView androidTitle = text("Configuração do Android", 17, true);
+        androidTitle.setPadding(0, dp(20), 0, dp(4));
+        root.addView(androidTitle);
+
+        androidSettingsStatus = text("", 13, false);
+        androidSettingsStatus.setTextColor(Color.DKGRAY);
+        root.addView(androidSettingsStatus);
+
+        preciseLocation = button("Ativar localização precisa");
+        preciseLocation.setOnClickListener(v -> openAppSettings());
+        root.addView(preciseLocation, buttonLayout());
+
+        gpsSettings = button("Ativar GPS do aparelho");
+        gpsSettings.setOnClickListener(v -> openLocationSettings());
+        root.addView(gpsSettings, buttonLayout());
+
+        batterySettings = button("Liberar bateria para rastreamento");
+        batterySettings.setOnClickListener(v -> requestBatteryExemption());
+        root.addView(batterySettings, buttonLayout());
+
         TextView hint = text(
-                "Para melhor funcionamento, mantenha o GPS ligado. O Android pode exibir avisos de uso de localização em segundo plano.",
+                "O Android exige sua confirmação para localização precisa e bateria sem restrição. O CONSTRULOG não altera essas permissões silenciosamente.",
                 12, false);
         hint.setTextColor(Color.GRAY);
         hint.setPadding(0, dp(20), 0, 0);
@@ -157,6 +185,67 @@ public class MainActivity extends Activity {
         return new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(new java.util.Date(when));
     }
 
+    private boolean hasPreciseLocation() {
+        return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean isGpsEnabled() {
+        try {
+            LocationManager lm = (LocationManager) getSystemService(LOCATION_SERVICE);
+            return lm != null && lm.isProviderEnabled(LocationManager.GPS_PROVIDER);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean isBatteryUnrestricted() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
+        try {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void openAppSettings() {
+        try {
+            Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+            i.setData(Uri.parse("package:" + getPackageName()));
+            startActivity(i);
+        } catch (Exception e) {
+            status.setText("Abra Configurações > Aplicativos > CONSTRULOG Motorista > Permissões.");
+        }
+    }
+
+    private void openLocationSettings() {
+        try {
+            startActivity(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS));
+        } catch (Exception e) {
+            status.setText("Abra as configurações de Localização do Android.");
+        }
+    }
+
+    private void requestBatteryExemption() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+        try {
+            if (isBatteryUnrestricted()) {
+                status.setText("Bateria já está liberada para o CONSTRULOG.");
+                refreshUi();
+                return;
+            }
+            Intent i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+            i.setData(Uri.parse("package:" + getPackageName()));
+            startActivity(i);
+        } catch (Exception e) {
+            try {
+                startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            } catch (Exception ignored) {
+                openAppSettings();
+            }
+        }
+    }
+
     private void refreshUi() {
         String token = prefs.getString("token", "");
         boolean enrolled = !token.isEmpty();
@@ -164,6 +253,21 @@ public class MainActivity extends Activity {
         activate.setVisibility(enrolled ? View.GONE : View.VISIBLE);
         start.setVisibility(enrolled ? View.VISIBLE : View.GONE);
         stop.setVisibility(enrolled ? View.VISIBLE : View.GONE);
+
+        boolean precise = hasPreciseLocation();
+        boolean gpsOn = isGpsEnabled();
+        boolean batteryOk = isBatteryUnrestricted();
+        if (preciseLocation != null) preciseLocation.setVisibility(precise ? View.GONE : View.VISIBLE);
+        if (gpsSettings != null) gpsSettings.setVisibility(gpsOn ? View.GONE : View.VISIBLE);
+        if (batterySettings != null) batterySettings.setVisibility(batteryOk ? View.GONE : View.VISIBLE);
+        if (androidSettingsStatus != null) {
+            StringBuilder a = new StringBuilder();
+            a.append("Localização precisa: ").append(precise ? "OK" : "AJUSTAR").append("\n");
+            a.append("GPS do aparelho: ").append(gpsOn ? "LIGADO" : "DESLIGADO").append("\n");
+            a.append("Bateria sem restrição: ").append(batteryOk ? "OK" : "AJUSTAR");
+            androidSettingsStatus.setText(a.toString());
+            androidSettingsStatus.setTextColor((precise && gpsOn && batteryOk) ? Color.rgb(22, 101, 52) : Color.rgb(180, 83, 9));
+        }
 
         String session = prefs.getString("session_id", "");
         String state = prefs.getString("tracking_state", "");
@@ -233,6 +337,11 @@ public class MainActivity extends Activity {
     }
 
     private void requestAndStart() {
+        if (!isGpsEnabled()) {
+            status.setText("Ative o GPS do aparelho para iniciar a rota.");
+            openLocationSettings();
+            return;
+        }
         List<String> missing = new ArrayList<>();
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             missing.add(Manifest.permission.ACCESS_FINE_LOCATION);
