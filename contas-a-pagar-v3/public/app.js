@@ -117,6 +117,8 @@ $('#filterBtn').onclick=()=>{
 $('#untilDate').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('#filterBtn').click();}});
 $('#untilDate').addEventListener('change',()=>{if(until){until=$('#untilDate').value;render();}});
 $('#clearFilter').onclick=()=>{until='';$('#untilDate').value='';render();};
+$('#viewReportBtn').onclick=()=>{$('#reportBox').classList.add('screenVisible');$('#reportBox').scrollIntoView({behavior:'smooth',block:'start'});};
+$('#closeReportBtn').onclick=()=>$('#reportBox').classList.remove('screenVisible');
 $('#printBtn').onclick=()=>window.print();
 
 function openEditBill(id){
