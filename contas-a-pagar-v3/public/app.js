@@ -51,44 +51,50 @@ function render(){
  $('#filterLabel').textContent=until?'Em aberto até '+fmt(until):'Todas as contas em aberto';$('#filterTotal').textContent=money(filtered.reduce((s,x)=>s+Number(x.amount),0));$('#filterCount').textContent=filtered.length+' conta(s)';
  $('#printFilterLabel').textContent=until?'Vencimentos até '+fmt(until):'Todas as contas em aberto';$('#printTotal').textContent='Total: '+money(filtered.reduce((s,x)=>s+Number(x.amount),0));
  $('#reportBody').innerHTML=filtered.map(x=>{
+   const due=String(x.due_date||'').slice(0,10),ov=x.status!=='paid'&&due<t,st=x.status==='paid'?'Pago':ov?'Vencido':'Pendente',cl=x.status==='paid'?'ok':ov?'late':'wait';
    const p=pixText(x);
    const pix=p
-     ?'<div class="reportPix"><b>'+esc(x.pix_type||'PIX')+':</b> <span class="reportPixKey">'+esc(p)+'</span> <button type="button" class="reportCopyLink" onclick="copyPix('+JSON.stringify(p)+')">Copiar chave PIX</button></div>'
-     :'<span class="reportMissing">Chave PIX não informada</span>';
+     ?'<span class="detailItem"><b>PIX '+esc(x.pix_type||'')+':</b> <span class="reportPixKey">'+esc(p)+'</span> <button type="button" class="reportCopyLink" onclick="copyPix('+JSON.stringify(p)+')">Copiar</button></span>'
+     :'';
    const boleto=docFlag(x.has_boleto)
-     ?'<button type="button" class="reportDocLink" onclick="openDocument(\''+x.id+'\',\'boleto\')">Abrir boleto</button>'
-     :'<span class="reportMissing">Boleto não carregado</span>';
+     ?'<button type="button" class="reportDocLink" onclick="openDocument(\''+x.id+'\',\'boleto\')">Boleto</button>'
+     :'';
    const comp=docFlag(x.has_comprovante)
-     ?'<button type="button" class="reportDocLink" onclick="openDocument(\''+x.id+'\',\'comprovante\')">Abrir comprovante</button>'
-     :'<span class="reportMissing">Comprovante não carregado</span>';
-   return `<tr><td class="check">☐</td><td>${fmt(x.due_date)}</td><td>${esc(tc(x.description))}</td><td>${esc(tc(x.supplier||'-'))}</td><td>${esc(tc(x.area||'Geral'))}</td><td>${esc(tc(x.category||'-'))}</td><td>${money(x.amount)}</td><td>${pix}</td><td>${boleto}</td><td>${comp}</td></tr>`
- }).join('')||'<tr><td colspan="10">Nenhuma conta em aberto para o filtro informado.</td></tr>';
+     ?'<button type="button" class="reportDocLink" onclick="openDocument(\''+x.id+'\',\'comprovante\')">Comprovante</button>'
+     :'';
+   const rec=x.recurrence_group?'<span class="detailItem"><b>Recorrência:</b> '+recurrenceCount(x)+' parcelas</span>':'';
+   const docs=[boleto,comp].filter(Boolean).join('<span class="dotSep">•</span>');
+   return `<tr class="reportMainRow"><td class="check">☐</td><td><b>${fmt(due)}</b></td><td><b>${esc(tc(x.description))}</b><div class="subInfo">${esc(tc(x.supplier||'-'))}</div></td><td><b>${money(x.amount)}</b></td><td><span class="badge ${cl}">${st}</span></td></tr>
+   <tr class="reportDetailRow"><td></td><td colspan="4"><div class="detailLine"><span class="detailItem"><b>${esc(tc(x.area||'Geral'))}</b> • ${esc(tc(x.category||'-'))}</span>${pix}${rec}${docs?'<span class="detailItem docLinks">'+docs+'</span>':''}</div></td></tr>`
+ }).join('')||'<tr><td colspan="5">Nenhuma conta em aberto para o filtro informado.</td></tr>';
  $('#billsBody').innerHTML=visible.map(x=>{
   const due=String(x.due_date).slice(0,10),ov=x.status!=='paid'&&due<t,st=x.status==='paid'?'Pago':ov?'Vencido':'Pendente',cl=x.status==='paid'?'ok':ov?'late':'wait';
   const currentPix=pixText(x);
   const pix=currentPix
-    ?'<div class="payLine"><b>PIX '+esc(x.pix_type||'')+':</b> <span class="wrapText">'+esc(currentPix)+'</span> <button class="linkBtn" onclick="copyPix('+JSON.stringify(currentPix)+')">Copiar</button></div>'
-    :'<div class="payLine mutedPay">PIX: não informado</div>';
+    ?'<span class="detailItem"><b>PIX '+esc(x.pix_type||'')+':</b> <span class="wrapText">'+esc(currentPix)+'</span> <button class="linkBtn" onclick="copyPix('+JSON.stringify(currentPix)+')">Copiar</button></span>'
+    :'';
   const boleto=docFlag(x.has_boleto)
-    ?'<div class="payLine">Boleto: <button class="linkBtn" onclick="openDocument(\''+x.id+'\',\'boleto\')">Ver</button></div>'
-    :'<div class="payLine mutedPay">Boleto: não anexado</div>';
+    ?'<button class="linkBtn" onclick="openDocument(\''+x.id+'\',\'boleto\')">Boleto</button>'
+    :'';
   const comp=docFlag(x.has_comprovante)
-    ?'<div class="payLine">Comprovante: <button class="linkBtn" onclick="openDocument(\''+x.id+'\',\'comprovante\')">Ver</button></div>'
-    :'<div class="payLine mutedPay">Comprovante: não anexado</div>';
+    ?'<button class="linkBtn" onclick="openDocument(\''+x.id+'\',\'comprovante\')">Comprovante</button>'
+    :'';
+  const docs=[boleto,comp].filter(Boolean).join('<span class="dotSep">•</span>');
   const rec=x.recurrence_group
-    ?'<span class="badge recBadge">Recorrente • '+recurrenceCount(x)+' parcelas</span>'
-    :'<span class="mini">Avulsa</span>';
-  return `<tr>
+    ?'<span class="detailItem"><b>Recorrente:</b> '+recurrenceCount(x)+' parcelas</span>'
+    :'<span class="detailItem mutedPay">Avulsa</span>';
+  return `<tr class="accountMainRow">
     <td data-label="Vencimento"><b>${fmt(due)}</b></td>
-    <td data-label="Conta"><b>${esc(tc(x.description))}</b><div class="subInfo">Fornecedor: ${esc(tc(x.supplier||'-'))}</div>${Number(x.postponed_count)>0?'<div class="mini">Prorrogado '+Number(x.postponed_count)+'x</div>':''}</td>
-    <td data-label="Classificação"><b>${esc(tc(x.area||'Geral'))}</b><div class="subInfo">${esc(tc(x.category||'-'))}</div></td>
+    <td data-label="Conta / Fornecedor"><b>${esc(tc(x.description))}</b><div class="subInfo">${esc(tc(x.supplier||'-'))}</div>${Number(x.postponed_count)>0?'<div class="mini">Prorrogado '+Number(x.postponed_count)+'x</div>':''}</td>
     <td data-label="Valor"><b>${money(x.amount)}</b></td>
-    <td data-label="Pagamento"><div class="paymentCell">${pix}${boleto}${comp}</div></td>
     <td data-label="Status"><span class="badge ${cl}">${st}</span></td>
-    <td data-label="Recorrência">${rec}</td>
     <td data-label="Ações"><div class="actions"><button class="btn edit miniBtn" onclick="openEditBill('${x.id}')">Alterar</button>${x.status!=='paid'?`<button class="btn pay miniBtn" onclick="payBill('${x.id}')">Pagar</button><button class="btn postpone miniBtn" onclick="openPostpone('${x.id}')">Prorrogar</button>`:''}<button class="btn del miniBtn" onclick="deleteBill('${x.id}')">Excluir</button></div></td>
+  </tr>
+  <tr class="accountDetailRow">
+    <td></td>
+    <td colspan="4"><div class="detailLine"><span class="detailItem"><b>${esc(tc(x.area||'Geral'))}</b> • ${esc(tc(x.category||'-'))}</span>${pix}${rec}${docs?'<span class="detailItem docLinks">'+docs+'</span>':''}</div></td>
   </tr>`
- }).join('')||(until?'<tr><td colspan="8" class="empty">Nenhuma conta em aberto até '+fmt(until)+'.</td></tr>':'<tr><td colspan="8" class="empty">Nenhuma Conta Cadastrada.</td></tr>');
+ }).join('')||(until?'<tr><td colspan="5" class="empty">Nenhuma conta em aberto até '+fmt(until)+'.</td></tr>':'<tr><td colspan="5" class="empty">Nenhuma Conta Cadastrada.</td></tr>');
 }
 
 $('#dueDate').value=today();
@@ -161,4 +167,4 @@ async function deleteBill(id){if(!confirm('Excluir esta conta?'))return;await ap
 function openPostpone(id){const x=bills.find(v=>v.id===id);if(!x)return;$('#postponeId').value=id;$('#postponeDesc').textContent=tc(x.description)+' — vencimento atual: '+fmt(x.due_date);$('#postponeDate').value=String(x.due_date).slice(0,10);$('#postponeModal').showModal();}
 $('#cancelPostpone').onclick=()=>$('#postponeModal').close();$('#confirmPostpone').onclick=async()=>{const id=$('#postponeId').value,newDueDate=$('#postponeDate').value;if(!newDueDate)return alert('Informe a nova data.');await api('/api/bills/'+id+'/postpone',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({newDueDate})});$('#postponeModal').close();await load();};
 window.payBill=payBill;window.deleteBill=deleteBill;window.openPostpone=openPostpone;window.openDocument=openDocument;window.chooseDocument=chooseDocument;window.copyPix=copyPix;window.editPix=editPix;window.openEditBill=openEditBill;
-load().catch(e=>{console.error(e);$('#billsBody').innerHTML='<tr><td colspan="8" class="empty">Erro ao carregar. Verifique o banco de dados.</td></tr>';});
+load().catch(e=>{console.error(e);$('#billsBody').innerHTML='<tr><td colspan="5" class="empty">Erro ao carregar. Verifique o banco de dados.</td></tr>';});
