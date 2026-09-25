@@ -26,11 +26,19 @@ public class MainActivity extends Activity {
     private SharedPreferences prefs;
     private TextView status;
     private TextView identity;
+    private TextView diagnostics;
     private EditText code;
     private Button activate;
     private Button start;
     private Button stop;
     private boolean pendingStart = false;
+    private final android.os.Handler uiHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable uiRefresh = new Runnable() {
+        @Override public void run() {
+            refreshUi();
+            uiHandler.postDelayed(this, 2000);
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -96,6 +104,11 @@ public class MainActivity extends Activity {
         status.setPadding(0, dp(18), 0, 0);
         root.addView(status);
 
+        diagnostics = text("", 13, false);
+        diagnostics.setTextColor(Color.DKGRAY);
+        diagnostics.setPadding(0, dp(12), 0, 0);
+        root.addView(diagnostics);
+
         TextView hint = text(
                 "Para melhor funcionamento, mantenha o GPS ligado. O Android pode exibir avisos de uso de localização em segundo plano.",
                 12, false);
@@ -139,6 +152,11 @@ public class MainActivity extends Activity {
         return Math.round(v * getResources().getDisplayMetrics().density);
     }
 
+    private String timeLabel(long when) {
+        if (when <= 0) return "—";
+        return new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(new java.util.Date(when));
+    }
+
     private void refreshUi() {
         String token = prefs.getString("token", "");
         boolean enrolled = !token.isEmpty();
@@ -147,17 +165,35 @@ public class MainActivity extends Activity {
         start.setVisibility(enrolled ? View.VISIBLE : View.GONE);
         stop.setVisibility(enrolled ? View.VISIBLE : View.GONE);
 
+        String session = prefs.getString("session_id", "");
+        String state = prefs.getString("tracking_state", "");
+        String lastGps = prefs.getString("last_gps", "");
+        long lastGpsAt = prefs.getLong("last_gps_at", 0L);
+        long lastSendAt = prefs.getLong("last_send_at", 0L);
+        String lastError = prefs.getString("last_error", "");
+
         if (enrolled) {
             String driver = prefs.getString("driver_name", "");
             String plate = prefs.getString("vehicle_plate", "");
             identity.setText(driver + (plate.isEmpty() ? "" : " • " + plate));
-            String session = prefs.getString("session_id", "");
-            status.setText(session.isEmpty()
-                    ? "Celular ativado. Toque em Iniciar rota quando sair para as entregas."
-                    : "Rota ativa. O GPS está sendo enviado à central.");
+            if (!state.isEmpty()) status.setText(state);
+            else status.setText(session.isEmpty()
+                    ? "Celular ativado. Toque em Iniciar rota."
+                    : "Rota ativa. Aguardando atualização do GPS.");
         } else {
             identity.setText("Primeiro acesso");
             status.setText("Digite o código fornecido pela central.");
+        }
+
+        if (diagnostics != null) {
+            StringBuilder d = new StringBuilder();
+            d.append("DIAGNÓSTICO\n");
+            d.append("Ativado: ").append(enrolled ? "SIM" : "NÃO").append("\n");
+            d.append("Sessão: ").append(session.isEmpty() ? "NÃO INICIADA" : "ATIVA").append("\n");
+            d.append("Último GPS: ").append(lastGps.isEmpty() ? "—" : lastGps).append(" • ").append(timeLabel(lastGpsAt)).append("\n");
+            d.append("Último envio ao servidor: ").append(timeLabel(lastSendAt));
+            if (!lastError.isEmpty()) d.append("\nErro: ").append(lastError);
+            diagnostics.setText(d.toString());
         }
     }
 
@@ -178,6 +214,8 @@ public class MainActivity extends Activity {
                         .putString("token", j.getString("token"))
                         .putString("driver_name", j.optString("driver_name", "Motorista"))
                         .putString("vehicle_plate", j.optString("vehicle_plate", ""))
+                        .putString("tracking_state", "Celular ativado • pronto para iniciar rota")
+                        .remove("last_error")
                         .apply();
                 runOnUiThread(() -> {
                     code.setText("");
@@ -216,8 +254,9 @@ public class MainActivity extends Activity {
         i.setAction(TrackingService.ACTION_START);
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
         else startService(i);
+        prefs.edit().putString("tracking_state","Comando enviado • iniciando rota e GPS…").remove("last_error").apply();
         status.setText("Iniciando rota e GPS…");
-        getWindow().getDecorView().postDelayed(this::refreshUi, 1800);
+        getWindow().getDecorView().postDelayed(this::refreshUi, 800);
     }
 
     private void stopTracking() {
@@ -245,5 +284,13 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (prefs != null) refreshUi();
+        uiHandler.removeCallbacks(uiRefresh);
+        uiHandler.postDelayed(uiRefresh, 1200);
+    }
+
+    @Override
+    protected void onPause() {
+        uiHandler.removeCallbacks(uiRefresh);
+        super.onPause();
     }
 }
