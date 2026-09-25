@@ -22,6 +22,7 @@ let SSW38_QUICK_INFLIGHT=null;
 let SSW_PENDING_CACHE={at:0,value:null};
 let SSW_PENDING_INFLIGHT=null;
 let DELIVERY_PROGRAM_CACHE=new Map();
+let SSW101_NF_CACHE=new Map();
 const SSW101_DETAIL_CACHE=new Map();
 async function fetchMotoristasVeiculos(){
   const u=new URL('/api/painel/motoristas-veiculos',COLETAS_PORTAL_URL);
@@ -747,7 +748,9 @@ async function buildDeliveryProgram(date='',force=false){
   const hit=DELIVERY_PROGRAM_CACHE.get(key);
   if(!force&&hit&&Date.now()-hit.at<2*60*1000)return hit.value;
   if(force){SSW_PENDING_CACHE={at:0,value:null};DELIVERY_PROGRAM_CACHE.delete(key)}
-  const base=await fetchSswPendingDeliveries(),enriched=await deliveryProgramEnrich(base.rows||[]);
+  const base=await fetchSswPendingDeliveries();
+  let enriched=await deliveryProgramEnrich(base.rows||[]);
+  enriched=await fillFreightByNf(enriched);
   const schedule=deliveryProgramCitySchedule(enriched),targetDow=deliveryProgramDow(target),eligible=[],notToday=[],review=[];
   for(const r of enriched){
     const f=brDateToIso(r.previsao),cityRule=schedule.get(normKey(r.cidade)),exact=f===target;
@@ -810,7 +813,7 @@ async function buildDeliveryProgram(date='',force=false){
     economicRoutes,routesWithFreight,
     openRows:enriched.map(x=>({
       nf:x.nf||'',ctrc:x.ctrc||'',cliente:x.cliente||'',cidade:x.cidade||'',uf:x.uf||'SP',
-      peso:Number(x.peso||0),frete:Number(x.frete||0),previsao:x.previsao||'',status:x.status||'',
+      peso:Number(x.peso||0),frete:Number(x.frete||0),freteSource:x.freteSource||'',previsao:x.previsao||'',status:x.status||'',
       tipoMercadoria:x.tipoMercadoria||x.mercadoria||'',especieMercadoria:x.especieMercadoria||'',
       specialClass:x.specialClass||'normal',specialProducts:Array.isArray(x.specialProducts)?x.specialProducts:[]
     })).slice(0,3000),
@@ -1226,6 +1229,98 @@ async function probeSsw101Program(){
     const i=html.indexOf(term);contexts[term]=i>=0?html.slice(Math.max(0,i-1000),Math.min(html.length,i+2500)).replace(/\s+/g,' '):''
   }
   return{ok:true,prog,status:rr.status,bytes:Buffer.byteLength(html),inputs,forms,buttons,links,contexts,text:htmlText38(html).slice(0,1800)}
+}
+
+
+function sswFormParamsFromHtml(html){
+  const p=new URLSearchParams();
+  for(const m of String(html||'').matchAll(/<input\b([^>]*)>/gi)){
+    const a=m[1]||'',
+      name=(a.match(/\bname=["']?([^"'\s>]+)/i)||[])[1],
+      val=(a.match(/\bvalue=["']([^"']*)["']/i)||a.match(/\bvalue=([^\s>]+)/i)||[])[1]||'',
+      type=(a.match(/\btype=["']?([^"'\s>]+)/i)||[])[1]||'';
+    if(name&&!/^(?:button|submit)$/i.test(type))p.set(name,htmlText38(val))
+  }
+  return p
+}
+function parseSsw101Freight(html,nf=''){
+  const plain=htmlText38(html);
+  let freight=0,ctrc='',cte='';
+  const moneyPatterns=[
+    /VALOR\s+DO\s+FRETE\s*[:\-]?\s*R?\$?\s*([\d.]+,\d{2})/i,
+    /FRETE\s+TOTAL\s*[:\-]?\s*R?\$?\s*([\d.]+,\d{2})/i,
+    /\bFRETE\b.{0,80}?R?\$?\s*([\d.]+,\d{2})/i
+  ];
+  for(const re of moneyPatterns){const m=plain.match(re);if(m){freight=bi2Number(m[1]);if(freight>0)break}}
+  const ctrcMatch=plain.match(/\b([A-Z]{3}\d{4,9}-\d)\b/i);
+  if(ctrcMatch)ctrc=ctrcMatch[1].toUpperCase();
+  const cteMatch=plain.match(/\bCT-?E\b.{0,30}?(\d{4,10})\b/i);
+  if(cteMatch)cte=cteMatch[1];
+  if(!freight){
+    const vals=[...String(html||'').matchAll(/(?:t_vlr_frete|valor_frete|vlr_frete)[^>]{0,120}value=["']([^"']+)["']/gi)].map(m=>bi2Number(htmlText38(m[1])));
+    freight=vals.find(v=>v>0)||0
+  }
+  return{nf:normNf(nf),freight,ctrc,cte,plain:plain.slice(0,2500)}
+}
+async function ssw101Session(){
+  if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
+  const jar=new Map();
+  const apply=headers=>{const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);for(const raw of list){const pair=String(raw).split(';')[0],i=pair.indexOf('=');if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())}};
+  const cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
+  let rr=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
+  const login=new URLSearchParams({act:'L',f1:process.env.SSW_INTERNAL_DOMINIO||'',f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),f3:process.env.SSW_INTERNAL_USUARIO||'',f4:process.env.SSW_INTERNAL_SENHA||''});
+  rr=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/ssw0422','Cookie':cookie()},body:login.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);await rr.text();
+  if(!jar.has('token'))throw new Error('Login interno SSW não aceito');
+  rr=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2=AMR&f3=101',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
+  const nav=await rr.text(),prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0053';
+  rr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
+  const html=await rr.text();
+  return{jar,apply,cookie,prog,html}
+}
+async function fetchSsw101ByNf(nf,session=null){
+  const key=normNf(nf);if(!key)return{nf:key,freight:0,ctrc:'',cte:'',source:'none'};
+  const hit=SSW101_NF_CACHE.get(key);if(hit&&Date.now()-hit.at<30*60*1000)return hit.value;
+  const s=session||await ssw101Session(),params=sswFormParamsFromHtml(s.html);
+  params.set('t_nro_nf',key);
+  params.set('t_ser_nf',params.get('t_ser_nf')||'');
+  params.set('act','PES');
+  let rr=await fetch('https://sistema.ssw.inf.br/bin/'+s.prog,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/'+s.prog,'Cookie':s.cookie()},body:params.toString(),redirect:'manual',signal:AbortSignal.timeout(20000)});s.apply(rr.headers);
+  let html=await rr.text(),parsed=parseSsw101Freight(html,key);
+  // Some SSW pages return a result list first; follow a single CTRC link if present.
+  if(!parsed.freight){
+    const m=html.match(/(?:href|onclick)=["'][^"']*(ssw\d+[^"']*(?:ctrc|nro_ctrc|t_nro_ctrc)[^"']*)["']/i);
+    if(m){
+      try{
+        const url=new URL(m[1].replace(/&amp;/g,'&'),'https://sistema.ssw.inf.br/bin/'+s.prog);
+        const d=await fetch(url,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':s.cookie(),'Referer':'https://sistema.ssw.inf.br/bin/'+s.prog},redirect:'manual',signal:AbortSignal.timeout(15000)});
+        s.apply(d.headers);const detail=await d.text(),p2=parseSsw101Freight(detail,key);
+        if(p2.freight>0)parsed=p2
+      }catch{}
+    }
+  }
+  const value={...parsed,source:parsed.freight>0?'SSW 101 por NF':'SSW 101 sem valor'};
+  SSW101_NF_CACHE.set(key,{at:Date.now(),value});
+  return value
+}
+async function fillFreightByNf(rows){
+  const missing=rows.filter(x=>!(Number(x.frete)>0)&&normNf(x.nf));
+  if(!missing.length)return rows;
+  let session=null;try{session=await ssw101Session()}catch(e){console.log('SSW101 sessão para frete ERRO: '+String(e.message||e));return rows}
+  const uniq=[...new Set(missing.map(x=>normNf(x.nf)).filter(Boolean))];
+  const values=new Map();
+  const results=await mapLimit(uniq,3,async nf=>{
+    try{return await fetchSsw101ByNf(nf,session)}catch(e){return{nf,freight:0,error:String(e.message||e)}}
+  });
+  results.forEach(x=>values.set(normNf(x.nf),x));
+  let found=0;
+  const out=rows.map(x=>{
+    if(Number(x.frete)>0)return x;
+    const v=values.get(normNf(x.nf));
+    if(v&&Number(v.freight)>0){found++;return{...x,frete:Number(v.freight),freteSource:v.source||'SSW 101 por NF',ctrcValor:v.ctrc||v.cte||''}}
+    return x
+  });
+  console.log('PROGRAMAÇÃO FRETE POR NF: '+JSON.stringify({consultadas:uniq.length,encontradas:found,amostra:results.filter(x=>x.freight>0).slice(0,5)}));
+  return out
 }
 
 async function fetchSsw38Rows(){
