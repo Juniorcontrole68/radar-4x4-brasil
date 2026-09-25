@@ -699,6 +699,10 @@ async function buildDeliveryProgram(date='',force=false){
     source:base.source,totalOpen:enriched.length,eligibleBeforeReview:eligible.length,programmed,
     notScheduledToday:notToday.length,reviewCount:review.length,vehicles:loads.length,totalCost,
     totalKg:Number(loads.reduce((a,x)=>a+x.kg,0).toFixed(2)),
+    openRows:enriched.map(x=>({
+      nf:x.nf||'',ctrc:x.ctrc||'',cliente:x.cliente||'',cidade:x.cidade||'',uf:x.uf||'SP',
+      peso:Number(x.peso||0),previsao:x.previsao||'',status:x.status||''
+    })).slice(0,3000),
     loads,review:review.slice(0,500),
     cityRules:[...schedule.entries()].map(([city,x])=>({city,weekday:x.weekdayLabel,samples:x.samples})).slice(0,300),
     generatedAt:new Date().toISOString(),
@@ -2438,7 +2442,7 @@ http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.
       .replace('<div id="loading" class="loading">Carregando dados do Google Sheets…</div>','<div id="loading" class="loading hide" style="display:none!important"></div>');
   }
   const bootstrap='<script>window.__DASHBOARD_SESSION_TOKEN__='+JSON.stringify(String(x.token||''))+';window.__DASHBOARD_SESSION_USER__='+JSON.stringify(x.user||null)+';<\/script>';
-  html=html.replace(/<script src="\/app\.js(?:\?[^"]*)?"><\/script>/,bootstrap+'<script src="/app.js?v=20260924prog1"></script>');
+  html=html.replace(/<script src="\/app\.js(?:\?[^"]*)?"><\/script>/,bootstrap+'<script src="/app.js?v=20260925materiais1"></script>');
   res.writeHead(200,{
     'Content-Type':'text/html; charset=utf-8',
     'Cache-Control':'no-store, no-cache, must-revalidate',
@@ -2489,6 +2493,28 @@ if(carregamentoFoto&&req.method==='GET'){try{if(!dashboardHas(authUser,'final_ca
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
 
+if(u.pathname==='/api/nf-materiais'&&req.method==='GET'){try{
+  if(!dashboardHasAny(authUser,['programacao','roteirizador','dashboard','ssw_saidas']))return dashboardDeny(res);
+  const q=new URLSearchParams();
+  if(u.searchParams.get('special')==='1')q.set('special','1');
+  q.set('limit',String(Math.max(1,Math.min(3000,Number(u.searchParams.get('limit')||1500)))));
+  const x=await portalJson('/api/painel/nf-materiais?'+q.toString(),{timeout:30000});
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){
+  res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}
+if(u.pathname==='/api/nf-materiais/import'&&req.method==='POST'){try{
+  if(!dashboardHasAny(authUser,['programacao','dashboard']))return dashboardDeny(res);
+  const body=await readJsonLimited(req,4*1024*1024);
+  const x=await portalJson('/api/painel/nf-materiais/import',{method:'POST',body,timeout:45000});
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){
+  res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}
 if(u.pathname==='/api/programacao-entregas'&&req.method==='GET'){try{
   if(!dashboardHasAny(authUser,['programacao','roteirizador','dashboard','ssw_saidas']))return dashboardDeny(res);
   const x=await buildDeliveryProgram(u.searchParams.get('date')||'',u.searchParams.get('force')==='1');
