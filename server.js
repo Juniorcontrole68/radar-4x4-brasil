@@ -22,6 +22,7 @@ let SSW38_QUICK_INFLIGHT=null;
 let SSW_PENDING_CACHE={at:0,value:null};
 let SSW_PENDING_INFLIGHT=null;
 let DELIVERY_PROGRAM_CACHE=new Map();
+const SSW101_DETAIL_CACHE=new Map();
 async function fetchMotoristasVeiculos(){
   const u=new URL('/api/painel/motoristas-veiculos',COLETAS_PORTAL_URL);
   const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Dashboard/1.0','Cache-Control':'no-cache'},signal:AbortSignal.timeout(15000)});
@@ -758,7 +759,13 @@ async function buildDeliveryProgram(date='',force=false){
     if(r.peso>1500){review.push({...r,reviewReason:'Carga excede 1.500 kg em uma única entrega'});continue}
     eligible.push({...r,serviceWeekday:cityRule?.weekdayLabel||deliveryProgramDowLabel(targetDow)})
   }
-  const geo=await deliveryProgramGeo(eligible),geoOk=[];
+  const detailedEligible=await deliveryProgramEnrichSsw101(eligible,force);
+  const detailedByCtrc=new Map(detailedEligible.map(x=>[normCtrc(x.ctrc)||String(x.ctrc||''),x]));
+  for(const original of enriched){
+    const d=detailedByCtrc.get(normCtrc(original.ctrc)||String(original.ctrc||''));
+    if(d)Object.assign(original,d)
+  }
+  const geo=await deliveryProgramGeo(detailedEligible),geoOk=[];
   for(const r of eligible){
     const key=normKey(r.cidade)+'|'+normKey(r.uf||'SP'),g=geo.map.get(key);
     if(!g||!Number.isFinite(g.distanceKm)){review.push({...r,reviewReason:'Cidade não localizada para calcular a distância'});continue}
@@ -803,7 +810,9 @@ async function buildDeliveryProgram(date='',force=false){
     economicRoutes,routesWithFreight,
     openRows:enriched.map(x=>({
       nf:x.nf||'',ctrc:x.ctrc||'',cliente:x.cliente||'',cidade:x.cidade||'',uf:x.uf||'SP',
-      peso:Number(x.peso||0),frete:Number(x.frete||0),previsao:x.previsao||'',status:x.status||''
+      peso:Number(x.peso||0),frete:Number(x.frete||0),previsao:x.previsao||'',status:x.status||'',
+      tipoMercadoria:x.tipoMercadoria||x.mercadoria||'',especieMercadoria:x.especieMercadoria||'',
+      specialClass:x.specialClass||'normal',specialProducts:Array.isArray(x.specialProducts)?x.specialProducts:[]
     })).slice(0,3000),
     loads,review:review.slice(0,500),
     cityRules:[...schedule.entries()].map(([city,x])=>({city,weekday:x.weekdayLabel,samples:x.samples})).slice(0,300),
@@ -1015,6 +1024,124 @@ async function probeSsw83(){
   const rows=[...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].slice(0,12).map(m=>[...m[1].matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(x=>htmlText38(x[1])).filter(Boolean)).filter(x=>x.length);
   const text=htmlText38(html).slice(0,1200);
   return{ok:true,option:83,prog,status:r.status,bytes:Buffer.byteLength(html),title,inputs,forms,rows,text}
+}
+
+
+function deliveryProgramSpecialClass(text){
+  const n=norm38(String(text||'')).replace(/[^A-Z0-9]+/g,' ');
+  const tube=/\bTUBOS?\b|\bTUBULACAO\b/.test(n);
+  const water=/\bCAIXAS?\s+(?:D\s+|DE\s+)?AGUA\b|\bRESERVATORIOS?\b/.test(n);
+  return tube&&water?'tubos_caixa_agua':(tube?'tubos':(water?'caixa_agua':'normal'))
+}
+function deliveryProgramSpecialLines(text){
+  return String(text||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean).filter(line=>{
+    const n=norm38(line).replace(/[^A-Z0-9]+/g,' ');
+    return /\bTUBOS?\b|\bTUBULACAO\b|\bCAIXAS?\s+(?:D\s+|DE\s+)?AGUA\b|\bRESERVATORIOS?\b/.test(n)
+  }).slice(0,20)
+}
+async function deliveryProgramCreateSsw101Session(){
+  if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
+  const jar=new Map();
+  const apply=headers=>{
+    const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);
+    for(const raw of list){const pair=String(raw).split(';')[0],i=pair.indexOf('=');if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())}
+  };
+  const cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
+  const hdr=ref=>({'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':ref||'https://sistema.ssw.inf.br/bin/menu01'});
+  let rr=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
+  const login=new URLSearchParams({act:'L',f1:process.env.SSW_INTERNAL_DOMINIO||'',f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),f3:process.env.SSW_INTERNAL_USUARIO||'',f4:process.env.SSW_INTERNAL_SENHA||''});
+  rr=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{method:'POST',headers:{...hdr('https://sistema.ssw.inf.br/bin/ssw0422'),'Content-Type':'application/x-www-form-urlencoded'},body:login.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);await rr.text();
+  if(!jar.has('token'))throw new Error('Login interno SSW não aceito');
+  rr=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2=AMR&f3=101',{headers:hdr(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
+  const nav=await rr.text(),prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0053';
+  rr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:hdr('https://sistema.ssw.inf.br/bin/menu01'),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
+  const formHtml=await rr.text();
+  return{jar,apply,cookie,hdr,prog,baseParams:deliveryProgramFormParams(formHtml)}
+}
+async function deliveryProgramFetchSsw101Detail(session,row,force=false){
+  const ctrc=String(row?.ctrc||'').trim().toUpperCase(),key=normCtrc(ctrc)||ctrc;
+  if(!ctrc)return null;
+  const hit=SSW101_DETAIL_CACHE.get(key);
+  if(!force&&hit&&Date.now()-hit.at<12*60*60*1000)return hit.value;
+  const mm=ctrc.match(/^([A-Z]{3})0*(\d+)-\d$/);
+  if(!mm)return null;
+  try{
+    const params=new URLSearchParams(session.baseParams.toString());
+    params.set('t_ser_ctrc',mm[1]);params.set('t_nro_ctrc',mm[2]);params.set('act','P1');
+    let rr=await fetch('https://sistema.ssw.inf.br/bin/'+session.prog,{
+      method:'POST',
+      headers:{...session.hdr('https://sistema.ssw.inf.br/bin/'+session.prog),'Content-Type':'application/x-www-form-urlencoded'},
+      body:params.toString(),redirect:'manual',signal:AbortSignal.timeout(20000)
+    });
+    session.apply(rr.headers);
+    const html=await rr.text(),plain=htmlText38(html);
+    const fm=plain.match(/Valor\s+frete\s*\(R\$\)\s*:\s*([\d.,]+)/i);
+    const tm=plain.match(/Tipo\s+de\s+mercadoria\s*:\s*(.*?)\s+Esp[eé]cie\s+de\s+mercadoria\s*:/i);
+    const em=plain.match(/Esp[eé]cie\s+de\s+mercadoria\s*:\s*(.*?)\s+Ve[ií]culo\s+coleta\s*:/i);
+    let productText='',products=[];
+    try{
+      const prodParams=deliveryProgramFormParams(html);
+      prodParams.set('act','RELPROD');
+      const prodRes=await fetch('https://sistema.ssw.inf.br/bin/'+session.prog,{
+        method:'POST',
+        headers:{...session.hdr('https://sistema.ssw.inf.br/bin/'+session.prog),'Content-Type':'application/x-www-form-urlencoded'},
+        body:prodParams.toString(),redirect:'manual',signal:AbortSignal.timeout(20000)
+      });
+      session.apply(prodRes.headers);
+      const prodHtml=await prodRes.text();
+      const webBody=(prodHtml.match(/name=web_body[^>]*value=["']([^"']+)["']/i)||[])[1]||'';
+      if(webBody){
+        const decoded=decodeURIComponent(webBody.replace(/&amp;/g,'&'));
+        const am=decoded.match(/abrir\(['"]([^'"]+)['"],\s*['"]([^'"]+)['"],\s*(\d+),\s*(\d+),\s*['"]([^'"]*)['"]/i);
+        if(am){
+          const pu=new URL('/bin/ssw0424','https://sistema.ssw.inf.br');
+          pu.searchParams.set('act',am[1]);pu.searchParams.set('filename',am[2]);pu.searchParams.set('path',am[5]||'');pu.searchParams.set('down',am[3]);pu.searchParams.set('nw',am[4]);
+          const fileRes=await fetch(pu,{headers:session.hdr('https://sistema.ssw.inf.br/bin/'+session.prog),redirect:'manual',signal:AbortSignal.timeout(20000)});
+          session.apply(fileRes.headers);
+          const fileBuf=Buffer.from(await fileRes.arrayBuffer());
+          productText=fileBuf.toString('latin1');
+          products=deliveryProgramSpecialLines(productText)
+        }
+      }
+    }catch(e){console.log('PROGRAMAÇÃO SSW101 PRODUTO '+ctrc+': '+String(e.message||e))}
+    const combined=(tm?.[1]||'')+' '+(em?.[1]||'')+' '+productText;
+    const value={
+      frete:fm?bi2Number(fm[1]):Number(row.frete||0),
+      tipoMercadoria:String(tm?.[1]||'').trim(),
+      especieMercadoria:String(em?.[1]||'').trim(),
+      specialClass:deliveryProgramSpecialClass(combined),
+      specialProducts:products
+    };
+    SSW101_DETAIL_CACHE.set(key,{at:Date.now(),value});
+    return value
+  }catch(e){
+    console.log('PROGRAMAÇÃO SSW101 '+ctrc+': '+String(e.message||e));
+    return null
+  }
+}
+async function deliveryProgramEnrichSsw101(rows,force=false){
+  if(!rows.length)return rows;
+  let session=null;
+  try{session=await deliveryProgramCreateSsw101Session()}catch(e){
+    console.log('PROGRAMAÇÃO SSW101 SESSÃO: '+String(e.message||e));
+    return rows
+  }
+  let freight=0,special=0,queried=0;
+  const out=[];
+  for(const row of rows){
+    const key=normCtrc(row.ctrc)||String(row.ctrc||'');
+    const wasCached=!force&&SSW101_DETAIL_CACHE.has(key)&&Date.now()-SSW101_DETAIL_CACHE.get(key).at<12*60*60*1000;
+    const detail=await deliveryProgramFetchSsw101Detail(session,row,force);
+    if(detail){
+      queried+=wasCached?0:1;
+      const x={...row,...detail,frete:Number(detail.frete||row.frete||0)};
+      if(x.frete>0)freight++;
+      if(x.specialClass&&x.specialClass!=='normal')special++;
+      out.push(x)
+    }else out.push(row)
+  }
+  console.log('PROGRAMAÇÃO SSW101 ENRIQUECIMENTO: '+JSON.stringify({rows:rows.length,queried,freight,special,cached:rows.length-queried}));
+  return out
 }
 
 async function probeSsw101Cte(ctrc){
@@ -2628,7 +2755,7 @@ http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.
       .replace('<div id="loading" class="loading">Carregando dados do Google Sheets…</div>','<div id="loading" class="loading hide" style="display:none!important"></div>');
   }
   const bootstrap='<script>window.__DASHBOARD_SESSION_TOKEN__='+JSON.stringify(String(x.token||''))+';window.__DASHBOARD_SESSION_USER__='+JSON.stringify(x.user||null)+';<\/script>';
-  html=html.replace(/<script src="\/app\.js(?:\?[^"]*)?"><\/script>/,bootstrap+'<script src="/app.js?v=20260925materiais2"></script>');
+  html=html.replace(/<script src="\/app\.js(?:\?[^"]*)?"><\/script>/,bootstrap+'<script src="/app.js?v=20260925ssw101a"></script>');
   res.writeHead(200,{
     'Content-Type':'text/html; charset=utf-8',
     'Cache-Control':'no-store, no-cache, must-revalidate',
@@ -2806,9 +2933,6 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
 }
 let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.join(PUB,p));if(!p.startsWith(PUB)){res.writeHead(403);return res.end()}fs.readFile(p,(e,d)=>{if(e){res.writeHead(404);return res.end('Not found')}const ext=path.extname(p);res.writeHead(200,{'Content-Type':ext==='.js'?'application/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate','Pragma':'no-cache','Expires':'0'});res.end(d)})}catch(e){res.writeHead(500);res.end(e.message)}}).listen(PORT,'0.0.0.0',()=>{
   console.log('CONSTRULOG em '+PORT);probeSswAbrirScripts().then(x=>console.log('SSW abrir probe isolado: '+JSON.stringify(x))).catch(()=>{});
-
-  probeSsw101Program().then(x=>console.log('VALIDACAO SSW101: '+JSON.stringify(x))).catch(e=>console.log('VALIDACAO SSW101 ERRO: '+String(e.message||e)));
-  probeSsw101Cte('AMR14105-4').then(x=>console.log('VALIDACAO SSW101 CTE: '+JSON.stringify(x))).catch(e=>console.log('VALIDACAO SSW101 CTE ERRO: '+String(e.message||e)));
   refreshBi2State().catch(e=>console.error('BI2 SFTP monitor ERRO: '+e.message));
   refreshBi2ApiState().catch(e=>console.error('BI2 WebAPI monitor ERRO: '+e.message));
   buildBi2Receita().then(x=>console.log('VALIDACAO RECEITA SSW: '+JSON.stringify({ok:x.ok,fonte:x.sourceCode,periodo:x.periodo,total:x.totalFaturamento,clientes:x.totalClientes,ctes:x.totalRegistros,somerlog:(x.clientes||[]).find(y=>y.cliente==='Somerlog')||null,error:x.error||''}))).catch(e=>console.log('VALIDACAO RECEITA SSW ERRO: '+String(e.message||e)));
