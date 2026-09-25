@@ -8,7 +8,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="CONSTRULOG Motorista"
+        android:label="${appLabel}"
         android:usesCleartextTraffic="false">
         <activity
             android:name=".MainActivity"
