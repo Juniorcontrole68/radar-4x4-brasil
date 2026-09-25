@@ -1144,29 +1144,36 @@ function renderDeliveryProgram(data){
   programSet('#programCost',brl(Number(data.totalCost||0)));
   programSet('#programKg',programFmtNumber(data.totalKg||0,0));
   programSet('#programReview',nf(data.reviewCount||0));
+  programSet('#programFreight',data.totalFreight>0?brl(Number(data.totalFreight||0)):'—');
+  programSet('#programCostFreight',data.costFreightPct!==null&&data.costFreightPct!==undefined?programFmtNumber(data.costFreightPct,1)+'%':'—');
+  programSet('#programEconomicRoutes',nf(data.economicRoutes||0)+' / '+nf(data.routesWithFreight||0));
   programSet('#hubProgVehicles',nf(data.vehicles||0));
   programSet('#hubProgDeliveries',nf(data.programmed||0));
   programSet('#hubProgCost',brl(Number(data.totalCost||0)));
   const hub=$('#hubProgInfo');
-  if(hub)hub.textContent=(data.weekday||'')+' • '+nf(data.programmed||0)+' entrega(s) • '+nf(data.reviewCount||0)+' para revisão • '+brl(Number(data.totalCost||0));
+  if(hub)hub.textContent=(data.weekday||'')+' • '+nf(data.programmed||0)+' entrega(s) • '+nf(data.vehicles||0)+' veículo(s) • '+brl(Number(data.totalCost||0))+(data.costFreightPct!==null&&data.costFreightPct!==undefined?' • custo/frete '+programFmtNumber(data.costFreightPct,1)+'%':'');
   const status=$('#programStatus');
-  if(status)status.textContent='Programação de '+String(data.date||'').split('-').reverse().join('/')+' ('+(data.weekday||'')+') • '+nf(data.programmed||0)+' de '+nf(data.totalOpen||0)+' entrega(s) em aberto alocadas • '+nf(data.notScheduledToday||0)+' pertencem a outros dias de atendimento.';
+  if(status)status.textContent='Programação de '+String(data.date||'').split('-').reverse().join('/')+' ('+(data.weekday||'')+') • '+nf(data.programmed||0)+' de '+nf(data.totalOpen||0)+' entrega(s) em aberto • '+nf(data.vehicles||0)+' veículo(s) • '+nf(data.notScheduledToday||0)+' pertencem a outros dias.';
   const box=$('#programLoads');
   const loads=Array.isArray(data.loads)?data.loads:[];
   if(box){
     if(!loads.length)box.innerHTML='<div class="card program-empty">Nenhuma carga pôde ser programada automaticamente para esta data.</div>';
     else box.innerHTML=loads.map((load,idx)=>{
-      const rows=(load.items||[]).map((r,i)=>'<tr><td>'+(i+1)+'</td><td>'+safe(r.nf||'—')+'</td><td>'+safe(r.ctrc||'—')+'</td><td>'+safe(r.cliente||'—')+'</td><td>'+safe(r.cidade||'—')+'</td><td>'+safe(r.previsao||'—')+'</td><td>'+programFmtNumber(r.peso||0,0)+' kg</td><td>'+programFmtNumber(r.distanceKm||0,0)+' km</td></tr>').join('');
+      const rows=(load.items||[]).map((r,i)=>'<tr><td>'+(i+1)+'</td><td>'+safe(r.nf||'—')+'</td><td>'+safe(r.ctrc||'—')+'</td><td>'+safe(r.cliente||'—')+'</td><td>'+safe(r.cidade||'—')+'</td><td>'+safe(r.previsao||'—')+'</td><td>'+programFmtNumber(r.peso||0,0)+' kg</td><td>'+(Number(r.frete||0)>0?brl(Number(r.frete||0)):'—')+'</td><td>'+programFmtNumber(r.distanceKm||0,0)+' km</td></tr>').join('');
       const kg=Math.max(0,Math.min(100,Number(load.kgUtil||0)));
-      return '<div class="card program-load"><div class="program-load-head"><div><div class="program-load-title">Veículo '+(idx+1)+' • '+safe(load.vehicle)+'</div><div class="program-load-tags"><span>'+safe(load.region||'')+'</span><span>Setor '+safe(load.sector||'—')+'</span><span>'+safe(load.distanceBand||'')+'</span><span>'+nf(load.deliveries||0)+' entrega(s)</span></div></div><div class="program-load-title">'+brl(Number(load.cost||0))+'</div></div>'+
+      const econClass=load.costFreightPct===null||load.costFreightPct===undefined?'':(load.economicOk?' economic-ok':' economic-warn');
+      const econText=load.costFreightPct===null||load.costFreightPct===undefined?'Frete não identificado':(programFmtNumber(load.costFreightPct,1)+'% '+(load.economicOk?'✓ dentro da meta':'acima da meta'));
+      return '<div class="card program-load'+econClass+'"><div class="program-load-head"><div><div class="program-load-title">Veículo '+(idx+1)+' • '+safe(load.vehicle)+'</div><div class="program-load-tags"><span>'+safe(load.region||'')+'</span><span>Setor '+safe(load.sector||'—')+'</span><span>'+safe(load.distanceBand||'')+'</span><span>'+nf(load.deliveries||0)+' entrega(s)</span></div></div><div class="program-load-title">'+brl(Number(load.cost||0))+'</div></div>'+
         '<div class="program-load-kpis">'+
         '<div class="program-load-mini"><span>Peso</span><b>'+programFmtNumber(load.kg||0,0)+' / '+programFmtNumber(load.kgCapacity||0,0)+' kg</b><div class="program-bar"><span style="width:'+kg+'%"></span></div></div>'+
 
         '<div class="program-load-mini"><span>Ocupação peso</span><b>'+programFmtNumber(load.kgUtil||0,1)+'%</b></div>'+
+        '<div class="program-load-mini"><span>Frete da rota</span><b>'+(Number(load.freight||0)>0?brl(Number(load.freight||0)):'—')+'</b></div>'+
+        '<div class="program-load-mini"><span>Custo ÷ frete</span><b class="'+(load.economicOk?'program-economic-ok':(load.costFreightPct===null||load.costFreightPct===undefined?'program-economic-na':'program-economic-warn'))+'">'+safe(econText)+'</b></div>'+
 
         '<div class="program-load-mini"><span>Limite entregas</span><b>'+nf(load.deliveries||0)+' / '+nf(load.maxStops||0)+'</b></div>'+
         '<div class="program-load-mini"><span>Destino mais distante</span><b>'+programFmtNumber(load.maxDistanceKm||0,0)+' km</b></div></div>'+
-        '<div class="scroll"><table><thead><tr><th>Ordem</th><th>NF</th><th>CT-e</th><th>Cliente</th><th>Cidade</th><th>Previsão SSW</th><th>Peso</th><th>Distância</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>'
+        '<div class="scroll"><table><thead><tr><th>Ordem</th><th>NF</th><th>CT-e</th><th>Cliente</th><th>Cidade</th><th>Previsão SSW</th><th>Peso</th><th>Frete</th><th>Distância</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>'
     }).join('')
   }
   const review=(data.review||[]).map(r=>({
@@ -1202,8 +1209,8 @@ async function refreshDeliveryProgram(force=false){
 function printDeliveryProgram(){
   const d=DELIVERY_PROGRAM;if(!d){alert('Gere a programação antes de imprimir.');return}
   const loads=(d.loads||[]).map((l,idx)=>{
-    const rows=(l.items||[]).map((r,i)=>'<tr><td>'+(i+1)+'</td><td>'+safe(r.nf||'')+'</td><td>'+safe(r.ctrc||'')+'</td><td>'+safe(r.cliente||'')+'</td><td>'+safe(r.cidade||'')+'</td><td>'+programFmtNumber(r.peso||0,0)+'</td></tr>').join('');
-    return '<h2>Veículo '+(idx+1)+' • '+safe(l.vehicle)+' • '+brl(Number(l.cost||0))+'</h2><div class="meta">'+safe(l.region||'')+' • '+safe(l.distanceBand||'')+' • '+nf(l.deliveries||0)+' entregas • '+programFmtNumber(l.kg||0,0)+' kg</div><table><thead><tr><th>#</th><th>NF</th><th>CT-e</th><th>Cliente</th><th>Cidade</th><th>kg</th></tr></thead><tbody>'+rows+'</tbody></table>'
+    const rows=(l.items||[]).map((r,i)=>'<tr><td>'+(i+1)+'</td><td>'+safe(r.nf||'')+'</td><td>'+safe(r.ctrc||'')+'</td><td>'+safe(r.cliente||'')+'</td><td>'+safe(r.cidade||'')+'</td><td>'+programFmtNumber(r.peso||0,0)+'</td><td>'+(Number(r.frete||0)>0?brl(Number(r.frete||0)):'—')+'</td></tr>').join('');
+    return '<h2>Veículo '+(idx+1)+' • '+safe(l.vehicle)+' • '+brl(Number(l.cost||0))+'</h2><div class="meta">'+safe(l.region||'')+' • '+safe(l.distanceBand||'')+' • '+nf(l.deliveries||0)+' entregas • '+programFmtNumber(l.kg||0,0)+' kg • frete '+(Number(l.freight||0)>0?brl(Number(l.freight||0)):'não identificado')+' • custo/frete '+(l.costFreightPct!==null&&l.costFreightPct!==undefined?programFmtNumber(l.costFreightPct,1)+'%':'—')+'</div><table><thead><tr><th>#</th><th>NF</th><th>CT-e</th><th>Cliente</th><th>Cidade</th><th>kg</th><th>Frete</th></tr></thead><tbody>'+rows+'</tbody></table>'
   }).join('');
   const w=window.open('','_blank','noopener,noreferrer');
   if(!w){alert('Libere pop-ups para imprimir o relatório.');return}
