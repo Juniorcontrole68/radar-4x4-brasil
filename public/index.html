@@ -48,6 +48,27 @@
   </div>
 </div>
 <div class="grid two"><div class="card"><b>Status dos agendamentos</b><div class="muted" style="margin-top:5px">Base: Cópia de AGENDAMENTOS • cards gerados pela coluna STATUS • entregues do dia também aparecem.</div><div id="agStatusCards" class="ag-status-grid"></div><div style="margin-top:12px"><button class="dash-open" data-open="agendamentos-copia" type="button">📄 Gerar relatório</button></div></div><div class="card"><b>Ajudantes x Conferentes por dia • custo e quantidade</b><div class="chart"><canvas id="helpersChart"></canvas></div></div></div>
+<div id="checkerValuePanel" class="card finance-panel">
+  <div class="finance-head">
+    <div><h3>💵 Valores por Conferente</h3><div class="muted">Fonte: Ajudantes e Conferentes • consolidação por nome</div></div>
+    <div class="finance-filter">
+      <label>Data inicial<input id="checkerValueFrom" type="date"></label>
+      <label>Data final<input id="checkerValueTo" type="date"></label>
+      <button id="checkerValueApply" class="primary" type="button">Aplicar</button>
+      <button id="checkerValueToday" class="secondary" type="button">Hoje</button>
+    </div>
+  </div>
+  <div id="checkerValueInfo" class="agcopy-info">Período padrão: data corrente.</div>
+  <div class="grid finance-kpis">
+    <div class="card kpi fin"><div class="label">Valor total</div><div id="checkerValueTotal" class="value">—</div><div class="sub">conferentes no período</div></div>
+    <div class="card kpi"><div class="label">Conferentes</div><div id="checkerValuePeople" class="value">—</div><div class="sub">nomes distintos</div></div>
+    <div class="card kpi"><div class="label">Lançamentos</div><div id="checkerValueEntries" class="value">—</div><div class="sub">registros encontrados</div></div>
+  </div>
+  <div class="card tablecard" style="margin-top:12px">
+    <div class="thead">Relatório por conferente no período selecionado</div>
+    <div class="scroll"><table id="checkerValueTable"></table></div>
+  </div>
+</div>
 <div id="financeDriverPanel" class="card finance-panel">
   <div class="finance-head">
     <div><h3>💰 Resultado por Motorista</h3><div class="muted">Fonte: Google Sheets • Controle de Entregas • aba LANÇAMENTOS 2026</div></div>
@@ -421,4 +442,4 @@
   <div class="card tablecard"><div class="thead">Conferentes</div><div class="scroll"><table id="helpCheckers"></table></div></div>
 </div>
 </section>
-</main></div><script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embedded');</script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script><script src="/app.js?v=20260925tracking11"></script></body></html>
+</main></div><script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embedded');</script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script><script src="/app.js?v=20260925checker1"></script></body></html>
