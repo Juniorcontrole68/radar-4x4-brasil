@@ -3172,8 +3172,16 @@ if(u.pathname==='/api/roteirizador/lista'){try{
   if(!dashboardHasAny(authUser,['dashboard','roteirizador','ssw_saidas','evolucao','tracking']))return dashboardDeny(res);
   const date=u.searchParams.get('date')||spDateISO();
   let romRows=[],operation=null;
-  if(date===spDateISO()){try{romRows=(await fetchSsw38Quick()).rows||[]}catch{}}
-  try{operation=await getSswMotoristasFast(date,date)}catch{}
+  if(date===spDateISO()){
+    const quick=await Promise.allSettled([fetchSsw38QuickPrefix('AMR'),fetchSsw38QuickPrefix('TBT')]);
+    for(const q of quick)if(q.status==='fulfilled')romRows.push(...(q.value?.rows||[]));
+    const cacheKey='online|'+date+'|'+date,hit=SSW_DRIVER_CACHE.get(cacheKey);
+    if(hit?.value)operation=hit.value;
+    else if(SSW_DRIVER_LAST?.key===cacheKey)operation=SSW_DRIVER_LAST.value;
+    ensureSswMotoristasRefresh(date,date).catch(()=>{});
+  }else{
+    try{operation=await getSswMotoristasFast(date,date)}catch{}
+  }
   if(!romRows.length)romRows=operation?.romaneios38||[];
 
   const byKey=new Map(),normKey=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
