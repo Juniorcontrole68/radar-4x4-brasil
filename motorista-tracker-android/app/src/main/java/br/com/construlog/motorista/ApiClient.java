@@ -62,6 +62,12 @@ final class ApiClient {
         return request("/api/tracking/session/start", "POST", token, new JSONObject());
     }
 
+    static void heartbeat(String token, String sessionId) throws Exception {
+        JSONObject b = new JSONObject();
+        if (sessionId != null && !sessionId.isEmpty()) b.put("session_id", sessionId);
+        request("/api/tracking/heartbeat", "POST", token, b);
+    }
+
     static void sendPoint(String token, String sessionId, double lat, double lon,
                           float accuracy, float speed, float bearing, float battery) throws Exception {
         JSONObject b = new JSONObject();
