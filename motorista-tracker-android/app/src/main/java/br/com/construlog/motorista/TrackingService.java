@@ -58,6 +58,7 @@ public class TrackingService extends Service implements LocationListener {
 
         String token = prefs.getString("token", "");
         if (token.isEmpty()) {
+            prefs.edit().putString("tracking_state","Celular não ativado").apply();
             updateNotification("Celular não ativado");
             stopSelf();
             return START_NOT_STICKY;
@@ -77,14 +78,16 @@ public class TrackingService extends Service implements LocationListener {
 
     private void createSession() {
         updateNotification("Iniciando rota…");
+        prefs.edit().putString("tracking_state","Criando sessão no servidor…").remove("last_error").apply();
         String token = prefs.getString("token", "");
         executor.submit(() -> {
             try {
                 JSONObject j = ApiClient.startSession(token);
                 String session = j.getString("session_id");
-                prefs.edit().putString("session_id", session).apply();
+                prefs.edit().putString("session_id", session).putString("tracking_state","Sessão criada • iniciando GPS").remove("last_error").apply();
                 main.post(this::beginLocation);
             } catch (Exception e) {
+                prefs.edit().putString("tracking_state","Falha ao criar sessão").putString("last_error",String.valueOf(e.getMessage())).apply();
                 main.post(() -> {
                     updateNotification("Falha ao iniciar rota");
                     stopForeground(STOP_FOREGROUND_REMOVE);
@@ -98,18 +101,24 @@ public class TrackingService extends Service implements LocationListener {
         if (locationStarted) return;
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
                 checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            prefs.edit().putString("tracking_state","Permissão de localização ausente").putString("last_error","Permita a localização para o aplicativo.").apply();
             updateNotification("Permissão de localização ausente");
             stopSelf();
             return;
         }
         try {
+            long gpsTime = BuildConfig.TEST_MODE ? 5000L : 30000L;
+            float gpsDistance = BuildConfig.TEST_MODE ? 0f : 30f;
+            long netTime = BuildConfig.TEST_MODE ? 7000L : 45000L;
+            float netDistance = BuildConfig.TEST_MODE ? 0f : 75f;
             if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 30000L, 30f, this);
+                locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, gpsTime, gpsDistance, this);
             }
             if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 45000L, 75f, this);
+                locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, netTime, netDistance, this);
             }
             locationStarted = true;
+            prefs.edit().putString("tracking_state","Rastreamento ativo • aguardando primeira posição GPS").remove("last_error").apply();
             updateNotification("Rastreamento ativo • aguardando GPS");
             Location last = null;
             try { last = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER); } catch (Exception ignored) {}
@@ -121,6 +130,7 @@ public class TrackingService extends Service implements LocationListener {
             updateNotification("Permissão de localização ausente");
             stopSelf();
         } catch (Exception e) {
+            prefs.edit().putString("tracking_state","GPS indisponível").putString("last_error",String.valueOf(e.getMessage())).apply();
             updateNotification("GPS indisponível");
         }
     }
@@ -129,7 +139,8 @@ public class TrackingService extends Service implements LocationListener {
     public void onLocationChanged(Location location) {
         if (location == null) return;
         long now = System.currentTimeMillis();
-        if (now - lastSentAt < 20000L) return;
+        long minSend = BuildConfig.TEST_MODE ? 5000L : 20000L;
+        if (now - lastSentAt < minSend) return;
         lastSentAt = now;
 
         String token = prefs.getString("token", "");
@@ -142,12 +153,27 @@ public class TrackingService extends Service implements LocationListener {
         float speed = location.hasSpeed() ? location.getSpeed() : Float.NaN;
         float bearing = location.hasBearing() ? location.getBearing() : Float.NaN;
         float battery = batteryPercent();
+        prefs.edit()
+                .putString("last_gps", String.format(java.util.Locale.US, "%.6f, %.6f", lat, lon))
+                .putLong("last_gps_at", System.currentTimeMillis())
+                .putString("tracking_state","GPS recebido • enviando ao servidor")
+                .apply();
 
         updateNotification("Rastreamento ativo • GPS atualizado");
         executor.submit(() -> {
             try {
                 ApiClient.sendPoint(token, session, lat, lon, accuracy, speed, bearing, battery);
-            } catch (Exception ignored) {
+                prefs.edit()
+                        .putLong("last_send_at", System.currentTimeMillis())
+                        .putString("tracking_state","Posição enviada ao servidor com sucesso")
+                        .remove("last_error")
+                        .apply();
+                main.post(() -> updateNotification("Rastreamento ativo • posição enviada"));
+            } catch (Exception e) {
+                prefs.edit()
+                        .putString("tracking_state","GPS obtido • falha ao enviar")
+                        .putString("last_error",String.valueOf(e.getMessage()))
+                        .apply();
                 main.post(() -> updateNotification("Rastreamento ativo • aguardando conexão"));
             }
         });
