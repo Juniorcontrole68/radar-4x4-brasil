@@ -1983,20 +1983,43 @@ function renderTracking(rows){
 }
 async function refreshTracking(){
   if(window.__trackingBusy)return;window.__trackingBusy=true;
-  const info=$('#trackingInfo');if(info)info.textContent='Atualizando posições e rotas…';
+  const info=$('#trackingInfo');if(info)info.textContent='Atualizando motoristas e posições GPS…';
   try{
     const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
-    const [liveRes,routeRes,driverRes]=await Promise.all([
+    const [liveRes,driverRes]=await Promise.all([
       fetch('/api/tracking/live?t='+Date.now(),{cache:'no-store'}),
-      fetch('/api/programacao-simulacao?t='+Date.now(),{cache:'no-store'}),
       fetch('/api/roteirizador/lista?date='+encodeURIComponent(today)+'&t='+Date.now(),{cache:'no-store'})
     ]);
-    const live=await liveRes.json().catch(()=>({})),routes=await routeRes.json().catch(()=>({})),drivers=await driverRes.json().catch(()=>({}));
+    const live=await liveRes.json().catch(()=>({})),drivers=await driverRes.json().catch(()=>({}));
     if(!liveRes.ok||!live.ok)throw new Error(live.error||'Falha ao consultar GPS.');
-    TRACKING_ROUTE_DATA=routeRes.ok&&routes.ok?routes:null;
-    TRACKING_DRIVER_ROWS=driverRes.ok&&drivers.ok&&Array.isArray(drivers.rows)?drivers.rows:[];
-    trackingPopulateDriverList();
-    renderTracking(Array.isArray(live.rows)?live.rows:[])
+    if(driverRes.ok&&drivers.ok&&Array.isArray(drivers.rows)){
+      TRACKING_DRIVER_ROWS=drivers.rows;
+      trackingPopulateDriverList();
+    }else{
+      TRACKING_DRIVER_ROWS=[];
+      trackingPopulateDriverList();
+      const driverInfo=$('#trackingDriverDayInfo');
+      if(driverInfo)driverInfo.textContent='Não foi possível carregar a relação de motoristas agora. Tentando novamente automaticamente.';
+    }
+    renderTracking(Array.isArray(live.rows)?live.rows:[]);
+
+    // A geometria das rotas é mais pesada. Ela é atualizada em separado para
+    // nunca segurar a lista de Motorista + Placa.
+    const now=Date.now();
+    if(!window.__trackingRouteBusy&&(!window.__trackingRouteAt||now-window.__trackingRouteAt>60000)){
+      window.__trackingRouteBusy=true;
+      fetch('/api/programacao-simulacao?t='+now,{cache:'no-store'})
+        .then(async r=>({ok:r.ok,j:await r.json().catch(()=>({}))}))
+        .then(x=>{
+          if(x.ok&&x.j?.ok){
+            TRACKING_ROUTE_DATA=x.j;
+            window.__trackingRouteAt=Date.now();
+            if(TRACKING_DATA)renderTracking(TRACKING_DATA)
+          }
+        })
+        .catch(()=>{})
+        .finally(()=>{window.__trackingRouteBusy=false})
+    }
   }catch(e){if(info)info.textContent='Erro no rastreamento: '+e.message}
   finally{
     window.__trackingBusy=false;
