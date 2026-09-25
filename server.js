@@ -3111,7 +3111,7 @@ http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.
       .replace('<div id="loading" class="loading">Carregando dados do Google Sheets…</div>','<div id="loading" class="loading hide" style="display:none!important"></div>');
   }
   const bootstrap='<script>window.__DASHBOARD_SESSION_TOKEN__='+JSON.stringify(String(x.token||''))+';window.__DASHBOARD_SESSION_USER__='+JSON.stringify(x.user||null)+';<\/script>';
-  html=html.replace(/<script src="\/app\.js(?:\?[^"]*)?"><\/script>/,bootstrap+'<script src="/app.js?v=20260925tracking9"></script>');
+  html=html.replace(/<script src="\/app\.js(?:\?[^"]*)?"><\/script>/,bootstrap+'<script src="/app.js?v=20260925tracking10"></script>');
   res.writeHead(200,{
     'Content-Type':'text/html; charset=utf-8',
     'Cache-Control':'no-store, no-cache, must-revalidate',
@@ -3355,7 +3355,7 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
       .replace('<body class="auth-pending">','<body class="embedded">')
       .replace('<div id="authGate" class="auth-gate">','<div id="authGate" class="auth-gate hide" style="display:none!important">')
       .replace('<div id="loading" class="loading">Carregando dados do Google Sheets…</div>','<div id="loading" class="loading hide" style="display:none!important"></div>')
-      .replace('<script src="/app.js"></script>','<script src="/app.js?v=20260925tracking9"></script>');
+      .replace('<script src="/app.js"></script>','<script src="/app.js?v=20260925tracking10"></script>');
     res.writeHead(200,{
       'Content-Type':'text/html; charset=utf-8',
       'Cache-Control':'no-store, no-cache, must-revalidate',
