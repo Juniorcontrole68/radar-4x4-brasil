@@ -1828,7 +1828,7 @@ async function calculateRoute(){
   finally{if(btn){btn.disabled=false;btn.textContent='Otimizar rota'}}
 }
 
-let TRACKING_MAP=null,TRACKING_LAYER=null,TRACKING_DATA=null,TRACKING_ROUTE_DATA=null;
+let TRACKING_MAP=null,TRACKING_LAYER=null,TRACKING_DATA=null,TRACKING_ROUTE_DATA=null,TRACKING_DRIVER_ROWS=[];
 const TRACKING_COLORS=['#2563eb','#dc2626','#16a34a','#9333ea','#ea580c','#0891b2','#ca8a04','#db2777','#4f46e5','#059669'];
 const TRACKING_DEVIATION_KM=3;
 function trackingNorm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim()}
@@ -1857,9 +1857,12 @@ function trackingDistanceToGeometry(lat,lon,geometry){
 }
 function trackingDriverKey(driver,plate){return trackingNorm(driver)+'|'+trackingNorm(plate)}
 function trackingPopulateDriverList(){
-  const sel=$('#trackingDriverName'),plateEl=$('#trackingVehiclePlate'),info=$('#trackingDriverDayInfo');if(!sel)return;
-  const routes=TRACKING_ROUTE_DATA?.actual?.routes||[],byKey=new Map();
-  routes.forEach(r=>{
+  const sel=$('#trackingDriverName'),info=$('#trackingDriverDayInfo');if(!sel)return;
+  const source=(Array.isArray(TRACKING_DRIVER_ROWS)&&TRACKING_DRIVER_ROWS.length)
+    ?TRACKING_DRIVER_ROWS
+    :(TRACKING_ROUTE_DATA?.actual?.routes||[]).map(r=>({motorista:r.motorista,veiculo:r.veiculo,romaneio:r.romaneio}));
+  const byKey=new Map();
+  source.forEach(r=>{
     const driver=String(r.motorista||'').trim(),plate=String(r.veiculo||'').trim();if(!driver)return;
     const key=trackingDriverKey(driver,plate);
     if(!byKey.has(key))byKey.set(key,{key,driver,plate,romaneios:[]});
@@ -1876,8 +1879,21 @@ function trackingPopulateDriverList(){
     sel.appendChild(o)
   });
   if(previous&&rows.some(x=>x.key===previous))sel.value=previous;
-  if(info)info.textContent=rows.length?nf(rows.length)+' motorista(s)/veículo(s) com romaneio emitido hoje. Selecione um para preencher a placa automaticamente.':'Nenhum motorista com romaneio emitido foi encontrado para hoje.';
+  if(info)info.textContent=rows.length
+    ?nf(rows.length)+' motorista(s)/veículo(s) encontrados diretamente nos romaneios de hoje.'
+    :'A relação do dia não retornou motoristas. Para testar o GPS, use o botão “Usar teste”.';
   trackingDriverSelectionChanged(false)
+}
+function trackingUseTest(){
+  const sel=$('#trackingDriverName'),plate=$('#trackingVehiclePlate'),msg=$('#trackingEnrollMsg'),codeBox=$('#trackingActivationCode');if(!sel)return;
+  let opt=[...sel.options].find(o=>o.dataset?.test==='1');
+  if(!opt){
+    opt=document.createElement('option');opt.value='TESTE JUNIOR|TESTE001';opt.dataset.driver='TESTE - JUNIOR';opt.dataset.plate='TESTE001';opt.dataset.test='1';
+    opt.textContent='🧪 TESTE - JUNIOR • TESTE001';sel.appendChild(opt)
+  }
+  sel.value=opt.value;if(plate)plate.value='TESTE001';
+  if(codeBox){codeBox.style.display='none';codeBox.textContent=''}
+  if(msg)msg.textContent='Modo teste selecionado. Clique em Gerar código de ativação e use o código no app TESTE.'
 }
 function trackingDriverSelectionChanged(resetCode=true){
   const sel=$('#trackingDriverName'),plateEl=$('#trackingVehiclePlate'),msg=$('#trackingEnrollMsg'),codeBox=$('#trackingActivationCode');
@@ -1960,13 +1976,16 @@ async function refreshTracking(){
   if(window.__trackingBusy)return;window.__trackingBusy=true;
   const info=$('#trackingInfo');if(info)info.textContent='Atualizando posições e rotas…';
   try{
-    const [liveRes,routeRes]=await Promise.all([
+    const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+    const [liveRes,routeRes,driverRes]=await Promise.all([
       fetch('/api/tracking/live?t='+Date.now(),{cache:'no-store'}),
-      fetch('/api/programacao-simulacao?t='+Date.now(),{cache:'no-store'})
+      fetch('/api/programacao-simulacao?t='+Date.now(),{cache:'no-store'}),
+      fetch('/api/roteirizador/lista?date='+encodeURIComponent(today)+'&t='+Date.now(),{cache:'no-store'})
     ]);
-    const live=await liveRes.json().catch(()=>({})),routes=await routeRes.json().catch(()=>({}));
+    const live=await liveRes.json().catch(()=>({})),routes=await routeRes.json().catch(()=>({})),drivers=await driverRes.json().catch(()=>({}));
     if(!liveRes.ok||!live.ok)throw new Error(live.error||'Falha ao consultar GPS.');
     TRACKING_ROUTE_DATA=routeRes.ok&&routes.ok?routes:null;
+    TRACKING_DRIVER_ROWS=driverRes.ok&&drivers.ok&&Array.isArray(drivers.rows)?drivers.rows:[];
     trackingPopulateDriverList();
     renderTracking(Array.isArray(live.rows)?live.rows:[])
   }catch(e){if(info)info.textContent='Erro no rastreamento: '+e.message}
@@ -1987,6 +2006,7 @@ async function generateTrackingCode(){
 }
 function setupTracking(){
   if($('#trackingGenerateCode'))$('#trackingGenerateCode').onclick=generateTrackingCode;
+  if($('#trackingUseTest'))$('#trackingUseTest').onclick=trackingUseTest;
   if($('#trackingRefresh'))$('#trackingRefresh').onclick=refreshTracking;
   if($('#trackingDriverName'))$('#trackingDriverName').onchange=()=>trackingDriverSelectionChanged(true);
   if($('#trackingVehiclePlate'))$('#trackingVehiclePlate').oninput=e=>{e.target.value=String(e.target.value||'').toUpperCase()}
