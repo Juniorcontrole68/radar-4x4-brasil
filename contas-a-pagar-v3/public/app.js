@@ -21,6 +21,8 @@ function chooseDocument(id,kind){
  input.click();
 }
 async function copyPix(key){try{await navigator.clipboard.writeText(String(key||''));alert('Chave PIX copiada.');}catch{prompt('Copie a chave PIX:',String(key||''));}}
+const docFlag=v=>v===true||v===1||v==='1'||String(v).toLowerCase()==='true'||String(v).toLowerCase()==='t';
+const pixText=x=>String(x?.pix_key||'').trim();
 async function editPix(id){
  const bill=bills.find(x=>x.id===id);if(!bill)return;
  const type=prompt('Tipo da chave PIX: Email, Celular, CPF ou Aleatoria',bill.pix_type||'');
@@ -48,16 +50,29 @@ function render(){
  $('#cardPending').textContent=money(pending.reduce((s,x)=>s+Number(x.amount),0));$('#cardOverdue').textContent=money(overdue.reduce((s,x)=>s+Number(x.amount),0));$('#cardMonth').textContent=money(month.reduce((s,x)=>s+Number(x.amount),0));$('#cardPaidMonth').textContent=money(paidMonth.reduce((s,x)=>s+Number(x.amount),0));
  $('#filterLabel').textContent=until?'Em aberto até '+fmt(until):'Todas as contas em aberto';$('#filterTotal').textContent=money(filtered.reduce((s,x)=>s+Number(x.amount),0));$('#filterCount').textContent=filtered.length+' conta(s)';
  $('#printFilterLabel').textContent=until?'Vencimentos até '+fmt(until):'Todas as contas em aberto';$('#printTotal').textContent='Total: '+money(filtered.reduce((s,x)=>s+Number(x.amount),0));
- $('#reportBody').innerHTML=filtered.map(x=>`<tr><td class="check">☐</td><td>${fmt(x.due_date)}</td><td>${esc(tc(x.description))}</td><td>${esc(tc(x.supplier||'-'))}</td><td>${esc(tc(x.area||'Geral'))}</td><td>${esc(tc(x.category||'-'))}</td><td>${money(x.amount)}</td></tr>`).join('')||'<tr><td colspan="7">Nenhuma conta em aberto para o filtro informado.</td></tr>';
+ $('#reportBody').innerHTML=filtered.map(x=>{
+   const p=pixText(x);
+   const pix=p
+     ?'<div class="reportPix"><b>'+esc(x.pix_type||'PIX')+':</b> <span class="reportPixKey">'+esc(p)+'</span> <button type="button" class="reportCopyLink" onclick="copyPix('+JSON.stringify(p)+')">Copiar chave PIX</button></div>'
+     :'<span class="reportMissing">Chave PIX não informada</span>';
+   const boleto=docFlag(x.has_boleto)
+     ?'<button type="button" class="reportDocLink" onclick="openDocument(\''+x.id+'\',\'boleto\')">Abrir boleto</button>'
+     :'<span class="reportMissing">Boleto não carregado</span>';
+   const comp=docFlag(x.has_comprovante)
+     ?'<button type="button" class="reportDocLink" onclick="openDocument(\''+x.id+'\',\'comprovante\')">Abrir comprovante</button>'
+     :'<span class="reportMissing">Comprovante não carregado</span>';
+   return `<tr><td class="check">☐</td><td>${fmt(x.due_date)}</td><td>${esc(tc(x.description))}</td><td>${esc(tc(x.supplier||'-'))}</td><td>${esc(tc(x.area||'Geral'))}</td><td>${esc(tc(x.category||'-'))}</td><td>${money(x.amount)}</td><td>${pix}</td><td>${boleto}</td><td>${comp}</td></tr>`
+ }).join('')||'<tr><td colspan="10">Nenhuma conta em aberto para o filtro informado.</td></tr>';
  $('#billsBody').innerHTML=visible.map(x=>{
   const due=String(x.due_date).slice(0,10),ov=x.status!=='paid'&&due<t,st=x.status==='paid'?'Pago':ov?'Vencido':'Pendente',cl=x.status==='paid'?'ok':ov?'late':'wait';
-  const pix=x.pix_key
-    ?'<div class="payLine"><b>PIX '+esc(x.pix_type||'')+':</b> <span class="wrapText">'+esc(x.pix_key)+'</span> <button class="linkBtn" onclick="copyPix('+JSON.stringify(String(x.pix_key))+')">Copiar</button></div>'
+  const currentPix=pixText(x);
+  const pix=currentPix
+    ?'<div class="payLine"><b>PIX '+esc(x.pix_type||'')+':</b> <span class="wrapText">'+esc(currentPix)+'</span> <button class="linkBtn" onclick="copyPix('+JSON.stringify(currentPix)+')">Copiar</button></div>'
     :'<div class="payLine mutedPay">PIX: não informado</div>';
-  const boleto=x.has_boleto
+  const boleto=docFlag(x.has_boleto)
     ?'<div class="payLine">Boleto: <button class="linkBtn" onclick="openDocument(\''+x.id+'\',\'boleto\')">Ver</button></div>'
     :'<div class="payLine mutedPay">Boleto: não anexado</div>';
-  const comp=x.has_comprovante
+  const comp=docFlag(x.has_comprovante)
     ?'<div class="payLine">Comprovante: <button class="linkBtn" onclick="openDocument(\''+x.id+'\',\'comprovante\')">Ver</button></div>'
     :'<div class="payLine mutedPay">Comprovante: não anexado</div>';
   const rec=x.recurrence_group
