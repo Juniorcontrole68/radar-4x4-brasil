@@ -675,6 +675,45 @@ function deliveryProgramPackOrder(items,order){
   }
   return bins
 }
+function deliveryProgramConsolidateBins(input){
+  const bins=input.map(x=>x.slice());
+  let changed=true;
+  while(changed){
+    changed=false;
+    bins.sort((a,b)=>deliveryProgramBinStats(a).kg-deliveryProgramBinStats(b).kg||a.length-b.length);
+    for(let sourceIdx=0;sourceIdx<bins.length;sourceIdx++){
+      if(bins.length<=1)break;
+      const source=bins[sourceIdx];
+      const targets=bins.map((x,i)=>i===sourceIdx?null:x.slice());
+      const items=source.slice().sort((a,b)=>Number(b.peso||0)-Number(a.peso||0));
+      let ok=true;
+      for(const item of items){
+        let best=-1,bestScore=Infinity;
+        for(let i=0;i<targets.length;i++){
+          if(!targets[i])continue;
+          const next=[...targets[i],item];
+          if(!deliveryProgramBinFeasible(next))continue;
+          const st=deliveryProgramBinStats(next);
+          const score=(1500-st.kg)+st.span*2-(st.frete/80);
+          if(score<bestScore){bestScore=score;best=i}
+        }
+        if(best<0){ok=false;break}
+        targets[best].push(item)
+      }
+      if(ok){
+        const next=[];
+        for(let i=0;i<bins.length;i++){
+          if(i===sourceIdx)continue;
+          next.push(targets[i]||bins[i])
+        }
+        bins.splice(0,bins.length,...next);
+        changed=true;
+        break
+      }
+    }
+  }
+  return bins
+}
 function deliveryProgramOptimizeAll(items){
   if(!items.length)return[];
   const orders=[
@@ -693,7 +732,7 @@ function deliveryProgramOptimizeAll(items){
     const bc=b.reduce((s,bin)=>s+(deliveryProgramBinStats(bin).kg<=600?400:700),0);
     return ac-bc
   });
-  const bins=candidates[0]||[];
+  const bins=deliveryProgramConsolidateBins(candidates[0]||[]);
   return bins.map(items=>{
     const st=deliveryProgramBinStats(items);
     const type=st.kg<=600?DELIVERY_FLEET.find(x=>x.id==='fiorino'):DELIVERY_FLEET.find(x=>x.id==='van_furgao');
