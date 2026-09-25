@@ -30,7 +30,7 @@ async function handler(req,res){
   if(req.method==='GET'&&u.pathname==='/health'){await pool.query('SELECT 1');return json(res,200,{ok:true,database:'connected'});}
   if(req.method==='GET'&&u.pathname==='/api/bills') return json(res,200,await getBills());
   if(req.method==='GET'&&u.pathname==='/api/export.csv'){const bills=await getBills(),csvEsc=v=>'"'+String(v??'').replace(/"/g,'""')+'"',lines=[['ID','Descrição','Fornecedor','Área','Categoria','Valor','Vencimento','Vencimento Original','Status','Data Pagamento','Tipo PIX','Chave PIX','Boleto','Comprovante','Qtd Prorrogações','Criado Em'].map(csvEsc).join(';'),...bills.map(x=>[x.id,x.description,x.supplier,x.area,x.category,Number(x.amount).toFixed(2),String(x.due_date).slice(0,10),x.original_due_date?String(x.original_due_date).slice(0,10):'',x.status,x.payment_date?String(x.payment_date).slice(0,10):'',x.pix_type||'',x.pix_key||'',x.has_boleto?'Sim':'Não',x.has_comprovante?'Sim':'Não',x.postponed_count,x.created_at?new Date(x.created_at).toISOString():''].map(csvEsc).join(';'))];res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="backup-contas-a-pagar.csv"','Cache-Control':'no-store'});return res.end('\uFEFF'+lines.join('\r\n'));}
-  if(req.method==='POST'&&u.pathname==='/api/bills'){const b=await readJson(req),amount=Number(b.amount);if(!b.description||!/^d{4}-d{2}-d{2}$/.test(String(b.dueDate||''))||!Number.isFinite(amount)||amount<0)return json(res,400,{error:'Dados invalidos'});const extra=Array.isArray(b.recurrenceDates)?b.recurrenceDates:[],dates=[...new Set([b.dueDate,...extra].map(String).filter(d=>/^d{4}-d{2}-d{2}$/.test(d)))].sort(),group=dates.length>1?crypto.randomUUID():null,client=await pool.connect(),ids=[];try{await client.query('BEGIN');for(const d of dates){const id=crypto.randomUUID();ids.push(id);await client.query(`INSERT INTO bills(id,recurrence_group,description,supplier,area,category,amount,due_date,status,pix_type,pix_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9,$10)`,[id,group,titleCase(b.description),titleCase(b.supplier||''),titleCase(b.area||'Pessoal'),titleCase(b.category||'Outros'),amount,d,String(b.pixType||''),String(b.pixKey||'').trim()])}await client.query('COMMIT');}catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}return json(res,201,{ok:true,count:dates.length,ids});}
+  if(req.method==='POST'&&u.pathname==='/api/bills'){const b=await readJson(req),amount=Number(b.amount);if(!b.description||!/^\d{4}-\d{2}-\d{2}$/.test(String(b.dueDate||''))||!Number.isFinite(amount)||amount<0)return json(res,400,{error:'Dados invalidos'});const extra=Array.isArray(b.recurrenceDates)?b.recurrenceDates:[],dates=[...new Set([b.dueDate,...extra].map(String).filter(d=>/^\d{4}-\d{2}-\d{2}$/.test(d)))].sort(),group=dates.length>1?crypto.randomUUID():null,client=await pool.connect(),ids=[];try{await client.query('BEGIN');for(const d of dates){const id=crypto.randomUUID();ids.push(id);await client.query(`INSERT INTO bills(id,recurrence_group,description,supplier,area,category,amount,due_date,status,pix_type,pix_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9,$10)`,[id,group,titleCase(b.description),titleCase(b.supplier||''),titleCase(b.area||'Pessoal'),titleCase(b.category||'Outros'),amount,d,String(b.pixType||''),String(b.pixKey||'').trim()])}await client.query('COMMIT');}catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}return json(res,201,{ok:true,count:dates.length,ids});}
   let m=u.pathname.match(/^\/api\/bills\/([0-9a-f-]+)\/document\/(boleto|comprovante)$/i);
   if(req.method==='POST'&&m){
     const b=await readJson(req,10*1024*1024),doc=docPayload({...b,kind:m[2]});
@@ -51,10 +51,15 @@ async function handler(req,res){
   }
   m=u.pathname.match(/^\/api\/bills\/([0-9a-f-]+)\/pix$/i);
   if(req.method==='POST'&&m){
-    const b=await readJson(req);
-    const q=await pool.query('UPDATE bills SET pix_type=$2,pix_key=$3,updated_at=NOW() WHERE id=$1 RETURNING id',[m[1],String(b.pixType||''),String(b.pixKey||'').trim()]);
-    if(!q.rowCount)return json(res,404,{error:'Conta nao encontrada'});
-    return json(res,200,{ok:true});
+    const b=await readJson(req),pixType=String(b.pixType||''),pixKey=String(b.pixKey||'').trim();
+    const current=await pool.query('SELECT recurrence_group FROM bills WHERE id=$1 LIMIT 1',[m[1]]);
+    if(!current.rowCount)return json(res,404,{error:'Conta nao encontrada'});
+    if(b.applyToRecurrence===true&&current.rows[0].recurrence_group){
+      await pool.query('UPDATE bills SET pix_type=$2,pix_key=$3,updated_at=NOW() WHERE recurrence_group=$1',[current.rows[0].recurrence_group,pixType,pixKey]);
+      return json(res,200,{ok:true,scope:'recurrence'});
+    }
+    await pool.query('UPDATE bills SET pix_type=$2,pix_key=$3,updated_at=NOW() WHERE id=$1',[m[1],pixType,pixKey]);
+    return json(res,200,{ok:true,scope:'single'});
   }
   m=u.pathname.match(/^\/api\/bills\/([0-9a-f-]+)\/pay$/i);if(req.method==='POST'&&m){await pool.query(`UPDATE bills SET status='paid',payment_date=$2,updated_at=NOW() WHERE id=$1`,[m[1],today()]);return json(res,200,{ok:true});}
   m=u.pathname.match(/^\/api\/bills\/([0-9a-f-]+)\/postpone$/i);if(req.method==='POST'&&m){const b=await readJson(req);if(!/^\d{4}-\d{2}-\d{2}$/.test(String(b.newDueDate||'')))return json(res,400,{error:'Nova data invalida'});await pool.query(`UPDATE bills SET original_due_date=COALESCE(original_due_date,due_date),due_date=$2,postponed_count=postponed_count+1,updated_at=NOW() WHERE id=$1 AND status='pending'`,[m[1],b.newDueDate]);return json(res,200,{ok:true});}
