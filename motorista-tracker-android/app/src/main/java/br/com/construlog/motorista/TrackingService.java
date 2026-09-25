@@ -35,6 +35,29 @@ public class TrackingService extends Service implements LocationListener {
     private Handler main;
     private volatile boolean locationStarted = false;
     private volatile long lastSentAt = 0L;
+    private volatile Location lastLocation = null;
+    private final Runnable heartbeat = new Runnable() {
+        @Override public void run() {
+            if (!locationStarted) return;
+            try {
+                long now = System.currentTimeMillis();
+                long heartbeatMs = BuildConfig.TEST_MODE ? 10000L : 60000L;
+                if (lastLocation == null && locationManager != null) {
+                    try { lastLocation = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER); } catch (Exception ignored) {}
+                    if (lastLocation == null) {
+                        try { lastLocation = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER); } catch (Exception ignored) {}
+                    }
+                }
+                if (lastLocation != null && now - lastSentAt >= heartbeatMs) {
+                    sendLocation(lastLocation, true);
+                }
+            } finally {
+                if (locationStarted && main != null) {
+                    main.postDelayed(this, BuildConfig.TEST_MODE ? 5000L : 30000L);
+                }
+            }
+        }
+    };
 
     @Override
     public void onCreate() {
@@ -108,9 +131,9 @@ public class TrackingService extends Service implements LocationListener {
         }
         try {
             long gpsTime = BuildConfig.TEST_MODE ? 5000L : 30000L;
-            float gpsDistance = BuildConfig.TEST_MODE ? 0f : 30f;
+            float gpsDistance = 0f;
             long netTime = BuildConfig.TEST_MODE ? 7000L : 45000L;
-            float netDistance = BuildConfig.TEST_MODE ? 0f : 75f;
+            float netDistance = 0f;
             if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                 locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, gpsTime, gpsDistance, this);
             }
@@ -126,6 +149,8 @@ public class TrackingService extends Service implements LocationListener {
                 try { last = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER); } catch (Exception ignored) {}
             }
             if (last != null) onLocationChanged(last);
+            main.removeCallbacks(heartbeat);
+            main.postDelayed(heartbeat, BuildConfig.TEST_MODE ? 5000L : 30000L);
         } catch (SecurityException e) {
             updateNotification("Permissão de localização ausente");
             stopSelf();
@@ -138,9 +163,16 @@ public class TrackingService extends Service implements LocationListener {
     @Override
     public void onLocationChanged(Location location) {
         if (location == null) return;
+        lastLocation = location;
+        sendLocation(location, false);
+    }
+
+    private void sendLocation(Location location, boolean heartbeatSend) {
+        if (location == null) return;
         long now = System.currentTimeMillis();
         long minSend = BuildConfig.TEST_MODE ? 5000L : 20000L;
-        if (now - lastSentAt < minSend) return;
+        if (!heartbeatSend && now - lastSentAt < minSend) return;
+        if (heartbeatSend && now - lastSentAt < (BuildConfig.TEST_MODE ? 10000L : 60000L)) return;
         lastSentAt = now;
 
         String token = prefs.getString("token", "");
@@ -156,10 +188,10 @@ public class TrackingService extends Service implements LocationListener {
         prefs.edit()
                 .putString("last_gps", String.format(java.util.Locale.US, "%.6f, %.6f", lat, lon))
                 .putLong("last_gps_at", System.currentTimeMillis())
-                .putString("tracking_state","GPS recebido • enviando ao servidor")
+                .putString("tracking_state",heartbeatSend ? "Rastreamento ativo • enviando batimento GPS" : "GPS recebido • enviando ao servidor")
                 .apply();
 
-        updateNotification("Rastreamento ativo • GPS atualizado");
+        updateNotification(heartbeatSend ? "Rastreamento ativo • sinal confirmado" : "Rastreamento ativo • GPS atualizado");
         executor.submit(() -> {
             try {
                 ApiClient.sendPoint(token, session, lat, lon, accuracy, speed, bearing, battery);
@@ -194,6 +226,7 @@ public class TrackingService extends Service implements LocationListener {
             if (locationManager != null) locationManager.removeUpdates(this);
         } catch (Exception ignored) {}
         locationStarted = false;
+        if (main != null) main.removeCallbacks(heartbeat);
 
         String token = prefs.getString("token", "");
         String session = prefs.getString("session_id", "");
@@ -267,6 +300,8 @@ public class TrackingService extends Service implements LocationListener {
         try {
             if (locationManager != null) locationManager.removeUpdates(this);
         } catch (Exception ignored) {}
+        locationStarted = false;
+        if (main != null) main.removeCallbacks(heartbeat);
         if (executor != null) executor.shutdownNow();
         super.onDestroy();
     }
