@@ -2220,7 +2220,7 @@ async function buildSswMotoristas(from='',to=''){
   for(const item of trackingResults){
     const r=item.r,tr=item.tr||{};
     if(tr.ok)trackingOk++;
-    const last=tr.last||{};
+    const last=tr.last||{},delivery=tr.delivery||null;
     const occ=String(last.ocorrencia||'').trim();
     const codeMatch=occ.match(/\((\d{1,3})\)/);
     const rawCode=codeMatch?codeMatch[1]:'';
@@ -2234,7 +2234,10 @@ async function buildSswMotoristas(from='',to=''){
       ocorrenciaCodigo:rawCode,ocorrencia:occ||r.ult_ocorr_descricao||'',
       dataOcorrencia:String(last.data_hora||'').slice(0,10)||r.ult_ocorr_data||'',
       horaOcorrencia:String(last.data_hora||'').slice(11,16)||r.ult_ocorr_hora||'',
-      previsao:r.prev_ent||'',dataEntrega:entregue?(String(last.data_hora||'').slice(0,10)||''):'',
+      previsao:r.prev_ent||'',
+      dataEntrega:entregue?(String(delivery?.data_hora||last.data_hora||'').slice(0,10)||''):'',
+      horaEntrega:entregue?(String(delivery?.data_hora||last.data_hora||'').slice(11,16)||''):'',
+      baixaDataHora:entregue?String(delivery?.data_hora||last.data_hora||''):'',
       trackingOk:!!tr.ok
     });
   }
@@ -2913,7 +2916,7 @@ async function buildRoutePlan(date='',romaneio=''){
       endereco:parts.endereco,numero:parts.numero,bairro:parts.bairro,cep:parts.cep,
       precision,coordinateSource,query,lat:geo.lat,lon:geo.lon,radiusKm:radius/1000,label:destinatario+(cidade?' • '+cidade:''),
       entregue:!!detail?.entregue,
-      baixaAt:detail?.dataEntrega||((detail?.dataOcorrencia||'')+(detail?.horaOcorrencia?' '+detail.horaOcorrencia:'')),
+      baixaAt:detail?.baixaDataHora||((detail?.dataEntrega||detail?.dataOcorrencia||'')+((detail?.horaEntrega||detail?.horaOcorrencia)?' '+(detail?.horaEntrega||detail?.horaOcorrencia):'')),
       baixaOcorrencia:detail?.ocorrencia||'',
       baixaCodigo:detail?.ocorrenciaCodigo||''
     })
@@ -3292,7 +3295,7 @@ if(u.pathname==='/api/roteirizador/cte'){try{
   return res.end(JSON.stringify({ok:true,stop,radiusLimitKm:300}))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(req.method==='POST'&&u.pathname==='/api/roteirizador/recalcular'){try{
-  if(!dashboardHasAny(authUser,['dashboard','roteirizador']))return dashboardDeny(res);
+  if(!dashboardHasAny(authUser,['dashboard','roteirizador','tracking']))return dashboardDeny(res);
   const body=await routeReadJson(req);
   const stops=Array.isArray(body.stops)?body.stops.slice(0,80):[];
   if(!stops.length)throw Object.assign(new Error('Nenhuma parada enviada para recalcular.'),{status:400});
