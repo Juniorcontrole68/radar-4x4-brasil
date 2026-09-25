@@ -2,7 +2,11 @@ package br.com.construlog.motorista;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.DownloadManager;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -10,6 +14,7 @@ import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.PowerManager;
 import android.provider.Settings;
 import android.view.View;
@@ -39,6 +44,11 @@ public class MainActivity extends Activity {
     private Button gpsSettings;
     private Button batterySettings;
     private TextView androidSettingsStatus;
+    private TextView updateStatus;
+    private Button updateButton;
+    private JSONObject pendingUpdate;
+    private long updateDownloadId = -1L;
+    private boolean receiverRegistered = false;
     private boolean pendingStart = false;
     private final android.os.Handler uiHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable uiRefresh = new Runnable() {
@@ -48,12 +58,23 @@ public class MainActivity extends Activity {
         }
     };
 
+    private final BroadcastReceiver updateReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (!DownloadManager.ACTION_DOWNLOAD_COMPLETE.equals(intent.getAction())) return;
+            long id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L);
+            if (id != updateDownloadId) return;
+            installDownloadedUpdate(id);
+        }
+    };
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         setContentView(buildUi());
+        registerUpdateReceiver();
         refreshUi();
+        checkForUpdate(false);
     }
 
     private View buildUi() {
@@ -77,6 +98,22 @@ public class MainActivity extends Activity {
             testBadge.setPadding(0, 0, 0, dp(12));
             root.addView(testBadge);
         }
+
+        TextView versionInfo = text("Versão " + BuildConfig.VERSION_NAME, 12, false);
+        versionInfo.setTextColor(Color.GRAY);
+        root.addView(versionInfo);
+
+        updateStatus = text("Verificando atualizações…", 13, false);
+        updateStatus.setTextColor(Color.DKGRAY);
+        updateStatus.setPadding(0, dp(6), 0, 0);
+        root.addView(updateStatus);
+
+        updateButton = button("Verificar atualização");
+        updateButton.setOnClickListener(v -> {
+            if (pendingUpdate != null && pendingUpdate.optBoolean("available", false)) startUpdateDownload();
+            else checkForUpdate(true);
+        });
+        root.addView(updateButton, buttonLayout());
 
         TextView privacy = text(
                 "O rastreamento só funciona enquanto você mantiver uma rota ativa. " +
@@ -178,6 +215,119 @@ public class MainActivity extends Activity {
 
     private int dp(int v) {
         return Math.round(v * getResources().getDisplayMetrics().density);
+    }
+
+    private void registerUpdateReceiver() {
+        if (receiverRegistered) return;
+        IntentFilter filter = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(updateReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        else registerReceiver(updateReceiver, filter);
+        receiverRegistered = true;
+    }
+
+    private void checkForUpdate(boolean manual) {
+        if (updateButton == null || updateStatus == null) return;
+        updateButton.setEnabled(false);
+        if (manual) updateStatus.setText("Verificando atualização…");
+        new Thread(() -> {
+            try {
+                JSONObject j = ApiClient.checkUpdate();
+                runOnUiThread(() -> {
+                    pendingUpdate = j;
+                    boolean available = j.optBoolean("available", false);
+                    if (available) {
+                        String v = j.optString("latestVersionName", "");
+                        updateStatus.setText("Nova versão disponível: " + (v.isEmpty() ? "atualização" : v));
+                        updateStatus.setTextColor(Color.rgb(180, 83, 9));
+                        updateButton.setText("Atualizar agora");
+                    } else {
+                        updateStatus.setText("Aplicativo atualizado • versão " + BuildConfig.VERSION_NAME);
+                        updateStatus.setTextColor(Color.rgb(22, 101, 52));
+                        updateButton.setText("Verificar atualização");
+                    }
+                    updateButton.setEnabled(true);
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    if (manual) updateStatus.setText("Não foi possível verificar agora. Tente novamente.");
+                    else updateStatus.setText("Versão " + BuildConfig.VERSION_NAME + " • verificação automática indisponível");
+                    updateStatus.setTextColor(Color.GRAY);
+                    updateButton.setText("Verificar atualização");
+                    updateButton.setEnabled(true);
+                });
+            }
+        }).start();
+    }
+
+    private boolean canInstallPackages() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true;
+        return getPackageManager().canRequestPackageInstalls();
+    }
+
+    private void openInstallPermission() {
+        try {
+            Intent i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
+            i.setData(Uri.parse("package:" + getPackageName()));
+            startActivity(i);
+        } catch (Exception e) {
+            openAppSettings();
+        }
+    }
+
+    private void startUpdateDownload() {
+        if (pendingUpdate == null || !pendingUpdate.optBoolean("available", false)) {
+            checkForUpdate(true);
+            return;
+        }
+        if (!canInstallPackages()) {
+            updateStatus.setText("Autorize 'Instalar apps desconhecidos' para o CONSTRULOG e volte para continuar.");
+            updateStatus.setTextColor(Color.rgb(180, 83, 9));
+            openInstallPermission();
+            return;
+        }
+        String url = pendingUpdate.optString("apkUrl", "");
+        if (url.isEmpty()) {
+            updateStatus.setText("Link da atualização indisponível.");
+            return;
+        }
+        try {
+            DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+            String fileName = BuildConfig.TEST_MODE
+                    ? "CONSTRULOG-Motorista-TESTE-atualizacao.apk"
+                    : "CONSTRULOG-Motorista-NORMAL-atualizacao.apk";
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+            request.setTitle("Atualização CONSTRULOG Motorista");
+            request.setDescription("Baixando nova versão…");
+            request.setMimeType("application/vnd.android.package-archive");
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            request.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, fileName);
+            updateDownloadId = dm.enqueue(request);
+            updateStatus.setText("Baixando atualização…");
+            updateButton.setEnabled(false);
+        } catch (Exception e) {
+            updateStatus.setText("Falha ao iniciar download: " + e.getMessage());
+            updateButton.setEnabled(true);
+        }
+    }
+
+    private void installDownloadedUpdate(long id) {
+        try {
+            DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+            Uri uri = dm.getUriForDownloadedFile(id);
+            if (uri == null) {
+                updateStatus.setText("Download não concluído. Toque em atualizar novamente.");
+                updateButton.setEnabled(true);
+                return;
+            }
+            updateStatus.setText("Download concluído. Confirme a instalação no Android.");
+            Intent install = new Intent(Intent.ACTION_VIEW);
+            install.setDataAndType(uri, "application/vnd.android.package-archive");
+            install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(install);
+        } catch (Exception e) {
+            updateStatus.setText("Não foi possível abrir a instalação: " + e.getMessage());
+            updateButton.setEnabled(true);
+        }
     }
 
     private String timeLabel(long when) {
@@ -403,5 +553,15 @@ public class MainActivity extends Activity {
     protected void onPause() {
         uiHandler.removeCallbacks(uiRefresh);
         super.onPause();
+    }
+
+    @Override
+    protected void onDestroy() {
+        uiHandler.removeCallbacks(uiRefresh);
+        if (receiverRegistered) {
+            try { unregisterReceiver(updateReceiver); } catch (Exception ignored) {}
+            receiverRegistered = false;
+        }
+        super.onDestroy();
     }
 }
