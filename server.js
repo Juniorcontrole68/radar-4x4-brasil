@@ -22,6 +22,7 @@ let SSW38_QUICK_INFLIGHT=null;
 let SSW_PENDING_CACHE={at:0,value:null};
 let SSW_PENDING_INFLIGHT=null;
 let DELIVERY_PROGRAM_CACHE=new Map();
+let ROMANEIO_SIM_CACHE={at:0,value:null};
 let SSW101_NF_CACHE=new Map();
 let SSW101_CTRC_CACHE=new Map();
 const SSW101_DETAIL_CACHE=new Map();
@@ -745,6 +746,168 @@ function deliveryProgramOptimizeAll(items){
     const cost=type.cost,freightPct=st.frete>0?cost/st.frete*100:null;
     return{type,items,kg:st.kg,cost,frete:st.frete,freteKnown:st.freteKnown,freightPct,economicOk:freightPct!==null&&freightPct<=40,maxStops:st.maxStops,bearingSpan:st.span}
   })
+}
+
+
+function simulationVehicleByActualRow(vehicleRow,totalKg){
+  const txt=normKey(Object.values(vehicleRow||{}).join(' '));
+  let id='';
+  if(/\bFIORINO\b|FURGONETA|UTILITARIO PEQUENO|UTILITÁRIO PEQUENO/.test(txt))id='fiorino';
+  else if(/\bBAU\b|\bBAÚ\b/.test(txt))id='van_bau';
+  else if(/\bVAN\b|FURGAO|FURGÃO/.test(txt))id='van_furgao';
+  if(!id)id=Number(totalKg||0)<=600?'fiorino':'van_furgao';
+  const type=DELIVERY_FLEET.find(x=>x.id===id)||DELIVERY_FLEET[1];
+  return{...type,inferred:!/FIORINO|FURGONETA|UTILITARIO|UTILITÁRIO|\bBAU\b|\bBAÚ\b|\bVAN\b|FURGAO|FURGÃO/.test(txt)}
+}
+function simulationUniqueRoutePoints(items){
+  const seen=new Set(),out=[];
+  for(const x of items||[]){
+    if(!Number.isFinite(Number(x.lat))||!Number.isFinite(Number(x.lon)))continue;
+    const key=Number(x.lat).toFixed(5)+'|'+Number(x.lon).toFixed(5);
+    if(seen.has(key))continue;seen.add(key);
+    out.push({lat:Number(x.lat),lon:Number(x.lon),label:String(x.cidade||x.cliente||x.nf||'Parada')})
+  }
+  return out
+}
+async function simulationRouteGeometry(items,optimize=false){
+  const base=await routeGeocode(ROUTE_BASE_ADDRESS);
+  if(!base)return{geometry:null,distanceKm:null,points:[]};
+  const stops=simulationUniqueRoutePoints(items);
+  if(!stops.length)return{geometry:null,distanceKm:null,points:[]};
+  const points=[{lat:base.lat,lon:base.lon,label:'Base Americana'},...stops];
+  let order=Array.from({length:stops.length},(_,i)=>i+1),distanceMeters=null;
+  if(optimize&&stops.length>1){
+    const mt=await routeOsrmTable(points);
+    order=routeExact(mt.matrix,stops.length)||routeTwoOpt(routeNearest(mt.matrix,stops.length),mt.matrix);
+    distanceMeters=routeCycleDistance(order,mt.matrix)
+  }
+  const geo=await routeGeometry(points,order);
+  if(Number.isFinite(Number(geo.distanceMeters)))distanceMeters=Number(geo.distanceMeters);
+  return{
+    geometry:geo.geometry||null,
+    distanceKm:Number.isFinite(Number(distanceMeters))?Number((Number(distanceMeters)/1000).toFixed(1)):null,
+    points:[points[0],...order.map(i=>points[i])]
+  }
+}
+async function buildRomaneioSimulation(force=false){
+  if(!force&&ROMANEIO_SIM_CACHE.value&&Date.now()-ROMANEIO_SIM_CACHE.at<2*60*1000)return ROMANEIO_SIM_CACHE.value;
+  if(force)ROMANEIO_SIM_CACHE={at:0,value:null};
+  const today=spDateISO(),base=await fetchSsw38Rows(),romaneios=(base.rows||[]).filter(x=>x.romaneio);
+  if(!romaneios.length)throw new Error('Nenhum romaneio atual foi encontrado na opção 38 do SSW.');
+
+  const ownerByCtrc=new Map(),ownerByNf=new Map(),raw=[],seen=new Set();
+  for(const rom of romaneios){
+    const pairs=(rom.ctrcNfs?.length?rom.ctrcNfs:(rom.ctrcMeta||[]).map(x=>({ctrc:x.ctrc,nf:x.nf})));
+    const fallback=pairs.length?pairs:(rom.ctrcs||[]).map(ctrc=>({ctrc,nf:''}));
+    let seq=0;
+    for(const p of fallback){
+      const ctrc=String(p.ctrc||'').trim(),nf=normNf(p.nf);
+      if(!ctrc||/^AMS/i.test(ctrc))continue;
+      const ck=normCtrc(ctrc),lk=normCtrcLoose(ctrc),id=ck||('#'+lk)||('NF#'+nf);
+      if(!id||seen.has(id))continue;seen.add(id);
+      const owner={romaneio:rom.romaneio||'',motorista:rom.motorista||'',veiculo:normPlate(rom.veiculo),seq:++seq};
+      if(ck)ownerByCtrc.set(ck,owner);if(lk)ownerByCtrc.set('#'+lk,owner);if(nf&&!ownerByNf.has(nf))ownerByNf.set(nf,owner);
+      raw.push({ctrc,nf,romaneio:owner.romaneio,motorista:owner.motorista,veiculo:owner.veiculo,actualSeq:owner.seq,cidade:'',uf:'SP',peso:0,frete:0})
+    }
+  }
+  if(!raw.length)throw new Error('Os romaneios atuais não possuem CT-es válidos para simulação.');
+
+  let enriched=await deliveryProgramEnrich(raw);
+  const joined=enriched.map(x=>{
+    const owner=ownerByCtrc.get(normCtrc(x.ctrc))||ownerByCtrc.get('#'+normCtrcLoose(x.ctrc))||ownerByNf.get(normNf(x.nf))||{};
+    return{...x,romaneio:owner.romaneio||x.romaneio||'',motorista:owner.motorista||x.motorista||'',veiculo:owner.veiculo||x.veiculo||'',actualSeq:owner.seq||x.actualSeq||0}
+  }).filter(x=>!/^AMS/i.test(String(x.ctrc||'')));
+
+  const review=[],valid=[];
+  for(const x of joined){
+    if(!(Number(x.peso)>0)){review.push({...x,reviewReason:'Peso não encontrado'});continue}
+    if(Number(x.peso)>1500){review.push({...x,reviewReason:'Entrega acima de 1.500 kg'});continue}
+    if(!x.cidade){review.push({...x,reviewReason:'Cidade não encontrada'});continue}
+    valid.push(x)
+  }
+  const geo=await deliveryProgramGeo(valid),items=[];
+  for(const x of valid){
+    const g=geo.map.get(normKey(x.cidade)+'|'+normKey(x.uf||'SP'));
+    if(!g||!Number.isFinite(g.distanceKm)){review.push({...x,reviewReason:'Cidade não localizada no mapa'});continue}
+    const far=g.distanceKm>100;
+    items.push({...x,lat:g.lat,lon:g.lon,distanceKm:g.distanceKm,bearing:Number(g.bearing||0),sector:g.sector||'N',far,maxStops:far?20:30})
+  }
+  if(!items.length)throw new Error('Nenhuma entrega dos romaneios pôde ser localizada para a simulação.');
+
+  let vehicleRows=[];try{vehicleRows=parseBi2Csv((await fetchBi2ReportFolder(245,'','tabelas')).text).rows||[]}catch{}
+  const vehicleMap=new Map(vehicleRows.map(x=>[normPlate(pickField(x,'PLACA')||x.PLACA),x]));
+
+  const actualGroups=new Map();
+  for(const x of items){
+    const key=x.romaneio||x.veiculo||x.motorista||'Sem identificação';
+    if(!actualGroups.has(key))actualGroups.set(key,[]);
+    actualGroups.get(key).push(x)
+  }
+  const actualRoutes=[];
+  for(const [key,arr0] of actualGroups){
+    const arr=arr0.slice().sort((a,b)=>Number(a.actualSeq||0)-Number(b.actualSeq||0));
+    const kg=arr.reduce((a,x)=>a+Number(x.peso||0),0),freight=arr.reduce((a,x)=>a+Number(x.frete||0),0);
+    const plate=arr[0]?.veiculo||'',vehicleRow=vehicleMap.get(normPlate(plate))||{},type=simulationVehicleByActualRow(vehicleRow,kg);
+    const geom=await simulationRouteGeometry(arr,false),cost=type.cost;
+    actualRoutes.push({
+      id:key,romaneio:arr[0]?.romaneio||key,motorista:arr[0]?.motorista||'',veiculo:plate,
+      vehicleType:type.label,vehicleTypeInferred:type.inferred,cost,kg:Number(kg.toFixed(1)),kgCapacity:type.kg,
+      kgUtil:Number((kg/type.kg*100).toFixed(1)),deliveries:arr.length,freight:Number(freight.toFixed(2)),
+      costFreightPct:freight>0?Number((cost/freight*100).toFixed(1)):null,
+      cities:[...new Set(arr.map(x=>x.cidade))],distanceKm:geom.distanceKm,geometry:geom.geometry,points:geom.points,items:arr
+    })
+  }
+
+  const packed=deliveryProgramOptimizeAll(items),simulatedRoutes=[];
+  let simNo=0;
+  for(const b of packed){
+    const arr=b.items.slice(),st=deliveryProgramBinStats(arr),type=b.type,geom=await simulationRouteGeometry(arr,true);
+    const sources=[...new Set(arr.map(x=>x.romaneio).filter(Boolean))],drivers=[...new Set(arr.map(x=>x.motorista).filter(Boolean))],plates=[...new Set(arr.map(x=>x.veiculo).filter(Boolean))];
+    simulatedRoutes.push({
+      id:++simNo,vehicleType:type.label,cost:type.cost,kg:Number(st.kg.toFixed(1)),kgCapacity:type.kg,
+      kgUtil:Number((st.kg/type.kg*100).toFixed(1)),deliveries:arr.length,freight:Number(st.frete.toFixed(2)),
+      costFreightPct:st.frete>0?Number((type.cost/st.frete*100).toFixed(1)):null,
+      economicOk:st.frete>0?type.cost/st.frete<=.4:false,maxStops:st.maxStops,
+      cities:[...new Set(arr.map(x=>x.cidade))],sourceRomaneios:sources,sourceDrivers:drivers,sourceVehicles:plates,
+      distanceKm:geom.distanceKm,geometry:geom.geometry,points:geom.points,items:arr
+    })
+  }
+
+  const actualCost=actualRoutes.reduce((a,x)=>a+Number(x.cost||0),0),simulatedCost=simulatedRoutes.reduce((a,x)=>a+Number(x.cost||0),0);
+  const actualFreight=actualRoutes.reduce((a,x)=>a+Number(x.freight||0),0);
+  const actualKm=actualRoutes.reduce((a,x)=>a+(Number(x.distanceKm)||0),0),simulatedKm=simulatedRoutes.reduce((a,x)=>a+(Number(x.distanceKm)||0),0);
+  const recommendations=[];
+  for(const r of simulatedRoutes){
+    if(r.sourceRomaneios.length>1)recommendations.push({
+      type:'consolidar',
+      title:'Unir '+r.sourceRomaneios.length+' romaneios em 1 '+r.vehicleType,
+      detail:r.sourceRomaneios.join(' + ')+' • '+r.deliveries+' entregas • '+r.kg+' kg • '+r.cities.join(', ')
+    })
+  }
+  for(const r of actualRoutes){
+    if(r.kgUtil<50)recommendations.push({type:'ocupacao',title:'Baixa ocupação: '+r.romaneio,detail:r.vehicleType+' • '+r.kg+' kg • '+r.kgUtil+'% da capacidade • '+r.cities.join(', ')})
+  }
+  const value={
+    ok:true,date:today,source:'SSW opção 38 + BI2',baseAddress:ROUTE_BASE_ADDRESS,
+    actual:{routes:actualRoutes,vehicles:actualRoutes.length,cost:actualCost,freight:Number(actualFreight.toFixed(2)),distanceKm:Number(actualKm.toFixed(1))},
+    simulated:{routes:simulatedRoutes,vehicles:simulatedRoutes.length,cost:simulatedCost,freight:Number(actualFreight.toFixed(2)),distanceKm:Number(simulatedKm.toFixed(1))},
+    savings:{
+      vehicles:Math.max(0,actualRoutes.length-simulatedRoutes.length),
+      cost:Math.max(0,actualCost-simulatedCost),
+      costPct:actualCost>0?Number((Math.max(0,actualCost-simulatedCost)/actualCost*100).toFixed(1)):0,
+      distanceKm:Number(Math.max(0,actualKm-simulatedKm).toFixed(1))
+    },
+    deliveries:items.length,reviewCount:review.length,review:review.slice(0,300),recommendations,
+    assumptions:{
+      actualVehicleCost:'Quando o tipo do veículo não é identificado na tabela, o custo real é estimado pela menor categoria capaz de levar o peso do romaneio.',
+      coherence:'Rotas simuladas só podem ser unidas quando permanecem no mesmo corredor geográfico, com abertura máxima de 60 graus.',
+      limits:'Até 100 km: 30 entregas. Acima de 100 km: 20 entregas. Peso máximo: 600 kg Fiorino e 1.500 kg vans.'
+    },
+    generatedAt:new Date().toISOString()
+  };
+  ROMANEIO_SIM_CACHE={at:Date.now(),value};
+  console.log('SIMULAÇÃO ROMANEIOS: '+JSON.stringify({date:today,actual:actualRoutes.length,simulated:simulatedRoutes.length,saved:value.savings.vehicles,costSaved:value.savings.cost,deliveries:items.length,review:review.length}));
+  return value
 }
 
 async function buildDeliveryProgram(date='',force=false){
@@ -2883,7 +3046,7 @@ http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.
       .replace('<div id="loading" class="loading">Carregando dados do Google Sheets…</div>','<div id="loading" class="loading hide" style="display:none!important"></div>');
   }
   const bootstrap='<script>window.__DASHBOARD_SESSION_TOKEN__='+JSON.stringify(String(x.token||''))+';window.__DASHBOARD_SESSION_USER__='+JSON.stringify(x.user||null)+';<\/script>';
-  html=html.replace(/<script src="\/app\.js(?:\?[^"]*)?"><\/script>/,bootstrap+'<script src="/app.js?v=20260925ssw101a"></script>');
+  html=html.replace(/<script src="\/app\.js(?:\?[^"]*)?"><\/script>/,bootstrap+'<script src="/app.js?v=20260925sim1"></script>');
   res.writeHead(200,{
     'Content-Type':'text/html; charset=utf-8',
     'Cache-Control':'no-store, no-cache, must-revalidate',
@@ -2950,6 +3113,15 @@ if(u.pathname==='/api/nf-materiais/import'&&req.method==='POST'){try{
   if(!dashboardHasAny(authUser,['programacao','dashboard']))return dashboardDeny(res);
   const body=await readJsonLimited(req,4*1024*1024);
   const x=await portalJson('/api/painel/nf-materiais/import',{method:'POST',body,timeout:45000});
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){
+  res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}
+if(u.pathname==='/api/programacao-simulacao'&&req.method==='GET'){try{
+  if(!dashboardHasAny(authUser,['programacao','roteirizador','dashboard','ssw_saidas']))return dashboardDeny(res);
+  const x=await buildRomaneioSimulation(u.searchParams.get('force')==='1');
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){
