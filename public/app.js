@@ -1037,9 +1037,9 @@ let PROGRAM_MATERIALS=[];
 function programNfKey(v){return String(v||'').replace(/\D/g,'').replace(/^0+/,'')||'0'}
 function programTextNorm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase()}
 function programMaterialClass(products){
-  const s=programTextNorm((products||[]).join(' | '));
-  const tubos=/\bTUBOS?\b|\bTUBULACAO\b/.test(s);
-  const caixa=/\bCAIXAS?\s*(?:D[AE]\s*)?AGUA\b|\bRESERVATORIOS?\b|\bTANQUE[S]?\b[^|]{0,50}\bAGUA\b/.test(s);
+  const items=(products||[]).map(programTextNorm).filter(Boolean);
+  const tubos=items.some(s=>/\bTUBOS?\b|\bTUBULACAO\b|\bCANO(?:S)?\b/.test(s));
+  const caixa=items.some(s=>/\bCAIXAS?\s*(?:D[AE]\s*)?AGUA\b|\bRESERVATORIOS?\b|\bTANQUE[S]?\b[^|]{0,60}\bAGUA\b/.test(s));
   return tubos&&caixa?'tubos_caixa_agua':(tubos?'tubos':(caixa?'caixa_agua':'normal'))
 }
 function programMaterialLabel(v){
