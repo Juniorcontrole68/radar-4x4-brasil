@@ -1855,11 +1855,48 @@ function trackingDistanceToGeometry(lat,lon,geometry){
   }
   return Number.isFinite(best)?best:null
 }
-function trackingFindRoute(driver){
-  const n=trackingNorm(driver);if(!n)return null;
+function trackingDriverKey(driver,plate){return trackingNorm(driver)+'|'+trackingNorm(plate)}
+function trackingPopulateDriverList(){
+  const sel=$('#trackingDriverName'),plateEl=$('#trackingVehiclePlate'),info=$('#trackingDriverDayInfo');if(!sel)return;
+  const routes=TRACKING_ROUTE_DATA?.actual?.routes||[],byKey=new Map();
+  routes.forEach(r=>{
+    const driver=String(r.motorista||'').trim(),plate=String(r.veiculo||'').trim();if(!driver)return;
+    const key=trackingDriverKey(driver,plate);
+    if(!byKey.has(key))byKey.set(key,{key,driver,plate,romaneios:[]});
+    const item=byKey.get(key),rom=String(r.romaneio||'').trim();
+    if(rom&&!item.romaneios.includes(rom))item.romaneios.push(rom)
+  });
+  const rows=[...byKey.values()].sort((a,b)=>a.driver.localeCompare(b.driver,'pt-BR')||a.plate.localeCompare(b.plate,'pt-BR'));
+  const previous=sel.value;
+  sel.innerHTML='';
+  const first=document.createElement('option');first.value='';first.textContent=rows.length?'Selecione o motorista...':'Nenhum motorista com romaneio hoje';sel.appendChild(first);
+  rows.forEach(x=>{
+    const o=document.createElement('option');o.value=x.key;o.dataset.driver=x.driver;o.dataset.plate=x.plate;
+    o.textContent=x.driver+(x.plate?' • '+x.plate:' • placa não informada')+(x.romaneios.length?' • Rom. '+x.romaneios.join(', '):'');
+    sel.appendChild(o)
+  });
+  if(previous&&rows.some(x=>x.key===previous))sel.value=previous;
+  if(info)info.textContent=rows.length?nf(rows.length)+' motorista(s)/veículo(s) com romaneio emitido hoje. Selecione um para preencher a placa automaticamente.':'Nenhum motorista com romaneio emitido foi encontrado para hoje.';
+  trackingDriverSelectionChanged(false)
+}
+function trackingDriverSelectionChanged(resetCode=true){
+  const sel=$('#trackingDriverName'),plateEl=$('#trackingVehiclePlate'),msg=$('#trackingEnrollMsg'),codeBox=$('#trackingActivationCode');
+  const opt=sel?.selectedOptions?.[0],plate=opt?.dataset?.plate||'';
+  if(plateEl)plateEl.value=plate;
+  if(resetCode&&codeBox){codeBox.style.display='none';codeBox.textContent=''}
+  if(resetCode&&msg)msg.textContent=opt?.dataset?.driver
+    ?'Motorista selecionado: '+opt.dataset.driver+(plate?' • placa '+plate:' • placa não identificada no SSW')+'. Gere o código para ativar o celular.'
+    :'Selecione um motorista que esteja trabalhando hoje.'
+}
+function trackingFindRoute(driver,plate){
+  const n=trackingNorm(driver),p=trackingNorm(plate);if(!n)return null;
   const routes=TRACKING_ROUTE_DATA?.actual?.routes||[];
-  return routes.find(r=>trackingNorm(r.motorista)===n)||routes.find(r=>{
-    const rn=trackingNorm(r.motorista);return rn&&n&&(rn.includes(n)||n.includes(rn))
+  const sameDriver=routes.filter(r=>trackingNorm(r.motorista)===n);
+  if(p){const exact=sameDriver.find(r=>trackingNorm(r.veiculo)===p);if(exact)return exact}
+  if(sameDriver.length)return sameDriver[0];
+  return routes.find(r=>{
+    const rn=trackingNorm(r.motorista),rp=trackingNorm(r.veiculo);
+    return rn&&n&&(rn.includes(n)||n.includes(rn))&&(!p||!rp||rp===p)
   })||null
 }
 function trackingStatus(row){
@@ -1867,7 +1904,7 @@ function trackingStatus(row){
   const age=Number(row.age_seconds);
   if(!Number.isFinite(Number(row.latitude))||!Number.isFinite(Number(row.longitude)))return{key:'warn',label:'Aguardando GPS',distance:null};
   if(Number.isFinite(age)&&age>180)return{key:'bad',label:'Sem sinal • '+trackingAgeLabel(age),distance:null};
-  const route=trackingFindRoute(row.driver_name);
+  const route=trackingFindRoute(row.driver_name,row.vehicle_plate);
   if(!route?.geometry)return{key:'warn',label:'Ativo • sem rota vinculada',distance:null};
   const d=trackingDistanceToGeometry(Number(row.latitude),Number(row.longitude),route.geometry);
   if(d===null)return{key:'warn',label:'Ativo • rota indisponível',distance:null};
@@ -1886,7 +1923,7 @@ function renderTrackingMap(rows){
   TRACKING_LAYER=L.layerGroup().addTo(TRACKING_MAP);
   const bounds=[];
   (rows||[]).forEach((row,i)=>{
-    const color=TRACKING_COLORS[i%TRACKING_COLORS.length],route=trackingFindRoute(row.driver_name),status=trackingStatus(row);
+    const color=TRACKING_COLORS[i%TRACKING_COLORS.length],route=trackingFindRoute(row.driver_name,row.vehicle_plate),status=trackingStatus(row);
     if(route?.geometry?.coordinates?.length){
       const coords=route.geometry.coordinates.map(x=>[Number(x[1]),Number(x[0])]).filter(x=>Number.isFinite(x[0])&&Number.isFinite(x[1]));
       if(coords.length){L.polyline(coords,{color,weight:4,opacity:.38,dashArray:'7 7'}).addTo(TRACKING_LAYER).bindTooltip('Rota • '+safe(row.driver_name));coords.forEach(x=>bounds.push(x))}
@@ -1930,13 +1967,15 @@ async function refreshTracking(){
     const live=await liveRes.json().catch(()=>({})),routes=await routeRes.json().catch(()=>({}));
     if(!liveRes.ok||!live.ok)throw new Error(live.error||'Falha ao consultar GPS.');
     TRACKING_ROUTE_DATA=routeRes.ok&&routes.ok?routes:null;
+    trackingPopulateDriverList();
     renderTracking(Array.isArray(live.rows)?live.rows:[])
   }catch(e){if(info)info.textContent='Erro no rastreamento: '+e.message}
   finally{window.__trackingBusy=false}
 }
 async function generateTrackingCode(){
-  const driver=$('#trackingDriverName')?.value.trim()||'',plate=$('#trackingVehiclePlate')?.value.trim()||'',msg=$('#trackingEnrollMsg'),codeBox=$('#trackingActivationCode'),btn=$('#trackingGenerateCode');
-  if(!driver){if(msg)msg.textContent='Informe o nome do motorista.';return}
+  const driverEl=$('#trackingDriverName'),opt=driverEl?.selectedOptions?.[0];
+  const driver=String(opt?.dataset?.driver||driverEl?.value||'').trim(),plate=String($('#trackingVehiclePlate')?.value||opt?.dataset?.plate||'').trim().toUpperCase(),msg=$('#trackingEnrollMsg'),codeBox=$('#trackingActivationCode'),btn=$('#trackingGenerateCode');
+  if(!driver){if(msg)msg.textContent='Selecione um motorista que esteja trabalhando hoje.';return}
   if(btn)btn.disabled=true;
   try{
     const r=await fetch('/api/tracking/enrollment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({driver_name:driver,vehicle_plate:plate,expires_hours:24})});
@@ -1948,7 +1987,9 @@ async function generateTrackingCode(){
 }
 function setupTracking(){
   if($('#trackingGenerateCode'))$('#trackingGenerateCode').onclick=generateTrackingCode;
-  if($('#trackingRefresh'))$('#trackingRefresh').onclick=refreshTracking
+  if($('#trackingRefresh'))$('#trackingRefresh').onclick=refreshTracking;
+  if($('#trackingDriverName'))$('#trackingDriverName').onchange=()=>trackingDriverSelectionChanged(true);
+  if($('#trackingVehiclePlate'))$('#trackingVehiclePlate').oninput=e=>{e.target.value=String(e.target.value||'').toUpperCase()}
 }
 
 function setupRoteirizador(){
