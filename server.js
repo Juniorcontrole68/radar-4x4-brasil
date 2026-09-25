@@ -19,6 +19,8 @@ const SSW_TRACK_CACHE=new Map();
 const SSW_DRIVER_CONFIRMED_DAY=new Map();
 let SSW38_QUICK_CACHE={at:0,value:null};
 let SSW38_QUICK_INFLIGHT=null;
+const SSW38_PREFIX_CACHE=new Map();
+const SSW38_PREFIX_INFLIGHT=new Map();
 let SSW_PENDING_CACHE={at:0,value:null};
 let SSW_PENDING_INFLIGHT=null;
 let DELIVERY_PROGRAM_CACHE=new Map();
@@ -342,10 +344,13 @@ async function fetchRomaneioCtrcs38(x,jar,apply,cookie){
   const rows=[...text.matchAll(/^\s*\S{8,14}\s+(\d{6})\b/gm)].map(m=>m[1]);
   return[...new Set(rows)];
 }
-async function fetchSsw38Quick(){
-  if(SSW38_QUICK_CACHE.value&&Date.now()-SSW38_QUICK_CACHE.at<60000)return SSW38_QUICK_CACHE.value;
-  if(SSW38_QUICK_INFLIGHT)return SSW38_QUICK_INFLIGHT;
-  SSW38_QUICK_INFLIGHT=(async()=>{
+async function fetchSsw38QuickPrefix(prefix='AMR'){
+  prefix=String(prefix||'AMR').trim().toUpperCase();
+  if(!/^[A-Z]{3}$/.test(prefix))prefix='AMR';
+  const cached=SSW38_PREFIX_CACHE.get(prefix);
+  if(cached&&Date.now()-cached.at<60000)return cached.value;
+  if(SSW38_PREFIX_INFLIGHT.has(prefix))return SSW38_PREFIX_INFLIGHT.get(prefix);
+  const job=(async()=>{
     if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
     const jar=new Map();
     const apply=headers=>{
@@ -383,7 +388,7 @@ async function fetchSsw38Quick(){
     apply(r.headers);await r.text();
     if(!jar.has('token'))throw new Error('Login interno SSW não aceito');
 
-    r=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2=AMR&f3=38',{
+    r=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2='+encodeURIComponent(prefix)+'&f3=38',{
       headers:{
         'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36',
         'Cookie':cookie(),
@@ -432,16 +437,22 @@ async function fetchSsw38Quick(){
       if(!p.rows.length)p=parseSsw38Xml(body38)
     }
 
+    p.rows=(p.rows||[]).filter(x=>String(x.romaneio||'').toUpperCase().startsWith(prefix));
     const total=p.rows.reduce((a,x)=>a+Number(x.qtdeCtrcs||0),0);
-    const value={ok:true,rows:p.rows,total,motoristas:[...new Set(p.rows.map(x=>x.motorista).filter(Boolean))].length,romaneios:p.rows.length};
-    SSW38_QUICK_CACHE={at:Date.now(),value};
-    console.log('SSW38 QUICK: '+JSON.stringify({
+    const value={ok:true,prefix,rows:p.rows,total,motoristas:[...new Set(p.rows.map(x=>x.motorista).filter(Boolean))].length,romaneios:p.rows.length};
+    SSW38_PREFIX_CACHE.set(prefix,{at:Date.now(),value});
+    if(prefix==='AMR')SSW38_QUICK_CACHE={at:Date.now(),value};
+    console.log('SSW38 QUICK '+prefix+': '+JSON.stringify({
       total:value.total,romaneios:value.romaneios,motoristas:value.motoristas,
-      rows:value.rows.map(x=>({motorista:x.motorista,total:x.qtdeCtrcs,falta:x.faltaOcorr}))
+      rows:value.rows.map(x=>({romaneio:x.romaneio,motorista:x.motorista,veiculo:x.veiculo,total:x.qtdeCtrcs}))
     }));
     return value
-  })().finally(()=>{SSW38_QUICK_INFLIGHT=null});
-  return SSW38_QUICK_INFLIGHT
+  })().finally(()=>SSW38_PREFIX_INFLIGHT.delete(prefix));
+  SSW38_PREFIX_INFLIGHT.set(prefix,job);
+  return job
+}
+async function fetchSsw38Quick(){
+  return fetchSsw38QuickPrefix('AMR')
 }
 
 
