@@ -23,9 +23,31 @@ async function initDb(){
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE bills ADD COLUMN IF NOT EXISTS pix_type TEXT NOT NULL DEFAULT '';
+    ALTER TABLE bills ADD COLUMN IF NOT EXISTS pix_key TEXT NOT NULL DEFAULT '';
+    CREATE TABLE IF NOT EXISTS bill_documents (
+      id UUID PRIMARY KEY,
+      bill_id UUID NOT NULL REFERENCES bills(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK (kind IN ('boleto','comprovante')),
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      file_data BYTEA NOT NULL,
+      uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (bill_id, kind)
+    );
     CREATE INDEX IF NOT EXISTS idx_bills_due_date ON bills(due_date);
     CREATE INDEX IF NOT EXISTS idx_bills_status ON bills(status);
+    CREATE INDEX IF NOT EXISTS idx_bill_documents_bill ON bill_documents(bill_id);
   `);
 }
-async function getBills(){ const {rows}=await pool.query('SELECT * FROM bills ORDER BY due_date ASC, created_at ASC'); return rows; }
+async function getBills(){
+  const {rows}=await pool.query(`
+    SELECT b.*,
+      EXISTS(SELECT 1 FROM bill_documents d WHERE d.bill_id=b.id AND d.kind='boleto') AS has_boleto,
+      EXISTS(SELECT 1 FROM bill_documents d WHERE d.bill_id=b.id AND d.kind='comprovante') AS has_comprovante
+    FROM bills b
+    ORDER BY b.due_date ASC, b.created_at ASC
+  `);
+  return rows;
+}
 module.exports={pool,initDb,getBills};
