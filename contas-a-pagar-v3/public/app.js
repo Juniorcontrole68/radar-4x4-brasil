@@ -39,6 +39,10 @@ function visibleBills(){
  if(!until)return [...bills];
  return pendingFiltered();
 }
+function recurrenceCount(x){
+ if(!x?.recurrence_group)return 1;
+ return bills.filter(b=>b.recurrence_group===x.recurrence_group).length;
+}
 function render(){
  const t=today(),cm=t.slice(0,7),pending=bills.filter(x=>x.status!=='paid'),overdue=pending.filter(x=>String(x.due_date).slice(0,10)<t),month=bills.filter(x=>String(x.due_date).slice(0,7)===cm),paidMonth=bills.filter(x=>x.status==='paid'&&x.payment_date&&String(x.payment_date).slice(0,7)===cm),filtered=pendingFiltered(),visible=visibleBills().sort((a,b)=>String(a.due_date||'').localeCompare(String(b.due_date||'')));
  $('#cardPending').textContent=money(pending.reduce((s,x)=>s+Number(x.amount),0));$('#cardOverdue').textContent=money(overdue.reduce((s,x)=>s+Number(x.amount),0));$('#cardMonth').textContent=money(month.reduce((s,x)=>s+Number(x.amount),0));$('#cardPaidMonth').textContent=money(paidMonth.reduce((s,x)=>s+Number(x.amount),0));
@@ -47,11 +51,29 @@ function render(){
  $('#reportBody').innerHTML=filtered.map(x=>`<tr><td class="check">☐</td><td>${fmt(x.due_date)}</td><td>${esc(tc(x.description))}</td><td>${esc(tc(x.supplier||'-'))}</td><td>${esc(tc(x.area||'Geral'))}</td><td>${esc(tc(x.category||'-'))}</td><td>${money(x.amount)}</td></tr>`).join('')||'<tr><td colspan="7">Nenhuma conta em aberto para o filtro informado.</td></tr>';
  $('#billsBody').innerHTML=visible.map(x=>{
   const due=String(x.due_date).slice(0,10),ov=x.status!=='paid'&&due<t,st=x.status==='paid'?'Pago':ov?'Vencido':'Pendente',cl=x.status==='paid'?'ok':ov?'late':'wait';
-  const pix=x.pix_key?('<div class="pixcell"><b>'+esc(x.pix_type||'PIX')+'</b><div>'+esc(x.pix_key)+'</div><button class="btn secondary miniBtn" onclick="copyPix('+JSON.stringify(String(x.pix_key))+')">Copiar</button></div>'):'<span class="mini">Sem PIX</span>';
-  const boleto=x.has_boleto?'<div class="docActions"><button class="btn secondary miniBtn" onclick="openDocument(\''+x.id+'\',\'boleto\')">Ver</button><button class="btn rec miniBtn" onclick="chooseDocument(\''+x.id+'\',\'boleto\')">Trocar</button></div>':'<button class="btn rec miniBtn" onclick="chooseDocument(\''+x.id+'\',\'boleto\')">Anexar</button>';
-  const comp=x.has_comprovante?'<div class="docActions"><button class="btn secondary miniBtn" onclick="openDocument(\''+x.id+'\',\'comprovante\')">Ver</button><button class="btn rec miniBtn" onclick="chooseDocument(\''+x.id+'\',\'comprovante\')">Trocar</button></div>':'<button class="btn rec miniBtn" onclick="chooseDocument(\''+x.id+'\',\'comprovante\')">Anexar</button>';
-  return `<tr><td>${fmt(due)}</td><td><b>${esc(tc(x.description))}</b>${Number(x.postponed_count)>0?'<div class="mini">Prorrogado '+Number(x.postponed_count)+'x</div>':''}</td><td>${esc(tc(x.supplier||'-'))}</td><td>${esc(tc(x.area||'Geral'))}</td><td>${esc(tc(x.category||'-'))}</td><td>${money(x.amount)}</td><td>${pix}</td><td>${boleto}</td><td>${comp}</td><td><span class="badge ${cl}">${st}</span></td><td><div class="actions"><button class="btn secondary miniBtn" onclick="editPix('${x.id}')">PIX</button>${x.status!=='paid'?`<button class="btn pay" onclick="payBill('${x.id}')">Pagar</button><button class="btn postpone" onclick="openPostpone('${x.id}')">Prorrogar</button>`:''}<button class="btn del" onclick="deleteBill('${x.id}')">Excluir</button></div></td></tr>`
- }).join('')||(until?'<tr><td colspan="11" class="empty">Nenhuma conta em aberto até '+fmt(until)+'.</td></tr>':'<tr><td colspan="11" class="empty">Nenhuma Conta Cadastrada.</td></tr>');
+  const pix=x.pix_key
+    ?'<div class="payLine"><b>PIX '+esc(x.pix_type||'')+':</b> <span class="wrapText">'+esc(x.pix_key)+'</span> <button class="linkBtn" onclick="copyPix('+JSON.stringify(String(x.pix_key))+')">Copiar</button></div>'
+    :'<div class="payLine mutedPay">PIX: não informado</div>';
+  const boleto=x.has_boleto
+    ?'<div class="payLine">Boleto: <button class="linkBtn" onclick="openDocument(\''+x.id+'\',\'boleto\')">Ver</button></div>'
+    :'<div class="payLine mutedPay">Boleto: não anexado</div>';
+  const comp=x.has_comprovante
+    ?'<div class="payLine">Comprovante: <button class="linkBtn" onclick="openDocument(\''+x.id+'\',\'comprovante\')">Ver</button></div>'
+    :'<div class="payLine mutedPay">Comprovante: não anexado</div>';
+  const rec=x.recurrence_group
+    ?'<span class="badge recBadge">Recorrente • '+recurrenceCount(x)+' parcelas</span>'
+    :'<span class="mini">Avulsa</span>';
+  return `<tr>
+    <td data-label="Vencimento"><b>${fmt(due)}</b></td>
+    <td data-label="Conta"><b>${esc(tc(x.description))}</b><div class="subInfo">Fornecedor: ${esc(tc(x.supplier||'-'))}</div>${Number(x.postponed_count)>0?'<div class="mini">Prorrogado '+Number(x.postponed_count)+'x</div>':''}</td>
+    <td data-label="Classificação"><b>${esc(tc(x.area||'Geral'))}</b><div class="subInfo">${esc(tc(x.category||'-'))}</div></td>
+    <td data-label="Valor"><b>${money(x.amount)}</b></td>
+    <td data-label="Pagamento"><div class="paymentCell">${pix}${boleto}${comp}</div></td>
+    <td data-label="Status"><span class="badge ${cl}">${st}</span></td>
+    <td data-label="Recorrência">${rec}</td>
+    <td data-label="Ações"><div class="actions"><button class="btn edit miniBtn" onclick="openEditBill('${x.id}')">Alterar</button>${x.status!=='paid'?`<button class="btn pay miniBtn" onclick="payBill('${x.id}')">Pagar</button><button class="btn postpone miniBtn" onclick="openPostpone('${x.id}')">Prorrogar</button>`:''}<button class="btn del miniBtn" onclick="deleteBill('${x.id}')">Excluir</button></div></td>
+  </tr>`
+ }).join('')||(until?'<tr><td colspan="8" class="empty">Nenhuma conta em aberto até '+fmt(until)+'.</td></tr>':'<tr><td colspan="8" class="empty">Nenhuma Conta Cadastrada.</td></tr>');
 }
 
 $('#dueDate').value=today();
@@ -82,9 +104,44 @@ $('#untilDate').addEventListener('change',()=>{if(until){until=$('#untilDate').v
 $('#clearFilter').onclick=()=>{until='';$('#untilDate').value='';render();};
 $('#printBtn').onclick=()=>window.print();
 
+function openEditBill(id){
+ const x=bills.find(v=>v.id===id);if(!x)return;
+ $('#editBillId').value=id;
+ $('#editBillTitle').innerHTML='<b>'+esc(tc(x.description))+'</b><div>'+fmt(x.due_date)+' • '+money(x.amount)+(x.recurrence_group?' • Conta recorrente':'')+'</div>';
+ $('#editPixType').value=x.pix_type||'';
+ $('#editPixKey').value=x.pix_key||'';
+ $('#editBoletoFile').value='';
+ $('#editComprovanteFile').value='';
+ $('#applyPixRecurrence').checked=false;
+ $('#applyRecurrenceWrap').style.display=x.recurrence_group?'flex':'none';
+ const docs=[];
+ if(x.has_boleto)docs.push('<button type="button" class="btn secondary miniBtn" onclick="openDocument(\''+x.id+'\',\'boleto\')">Ver boleto atual</button>');
+ if(x.has_comprovante)docs.push('<button type="button" class="btn secondary miniBtn" onclick="openDocument(\''+x.id+'\',\'comprovante\')">Ver comprovante atual</button>');
+ $('#editExistingDocs').innerHTML=docs.join('')||'<span class="hint">Nenhum documento anexado nesta parcela.</span>';
+ $('#editBillModal').showModal();
+}
+$('#cancelEditBill').onclick=()=>$('#editBillModal').close();
+$('#saveEditBill').onclick=async()=>{
+ const id=$('#editBillId').value,bill=bills.find(x=>x.id===id);if(!bill)return;
+ const btn=$('#saveEditBill'),old=btn.textContent;btn.disabled=true;btn.textContent='Salvando...';
+ try{
+  await api('/api/bills/'+id+'/pix',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+   pixType:$('#editPixType').value,
+   pixKey:$('#editPixKey').value.trim(),
+   applyToRecurrence:!!bill.recurrence_group&&$('#applyPixRecurrence').checked
+  })});
+  const boleto=$('#editBoletoFile').files?.[0]||null,comp=$('#editComprovanteFile').files?.[0]||null;
+  if(boleto)await sendDocument(id,'boleto',boleto);
+  if(comp)await sendDocument(id,'comprovante',comp);
+  $('#editBillModal').close();
+  await load();
+ }catch(e){alert(e.message)}
+ finally{btn.disabled=false;btn.textContent=old}
+};
+
 async function payBill(id){if(!confirm('Marcar esta conta como paga?'))return;await api('/api/bills/'+id+'/pay',{method:'POST'});await load();}
 async function deleteBill(id){if(!confirm('Excluir esta conta?'))return;await api('/api/bills/'+id,{method:'DELETE'});await load();}
 function openPostpone(id){const x=bills.find(v=>v.id===id);if(!x)return;$('#postponeId').value=id;$('#postponeDesc').textContent=tc(x.description)+' — vencimento atual: '+fmt(x.due_date);$('#postponeDate').value=String(x.due_date).slice(0,10);$('#postponeModal').showModal();}
 $('#cancelPostpone').onclick=()=>$('#postponeModal').close();$('#confirmPostpone').onclick=async()=>{const id=$('#postponeId').value,newDueDate=$('#postponeDate').value;if(!newDueDate)return alert('Informe a nova data.');await api('/api/bills/'+id+'/postpone',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({newDueDate})});$('#postponeModal').close();await load();};
-window.payBill=payBill;window.deleteBill=deleteBill;window.openPostpone=openPostpone;window.openDocument=openDocument;window.chooseDocument=chooseDocument;window.copyPix=copyPix;window.editPix=editPix;
-load().catch(e=>{console.error(e);$('#billsBody').innerHTML='<tr><td colspan="11" class="empty">Erro ao carregar. Verifique o banco de dados.</td></tr>';});
+window.payBill=payBill;window.deleteBill=deleteBill;window.openPostpone=openPostpone;window.openDocument=openDocument;window.chooseDocument=chooseDocument;window.copyPix=copyPix;window.editPix=editPix;window.openEditBill=openEditBill;
+load().catch(e=>{console.error(e);$('#billsBody').innerHTML='<tr><td colspan="8" class="empty">Erro ao carregar. Verifique o banco de dados.</td></tr>';});
