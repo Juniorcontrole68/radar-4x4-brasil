@@ -254,7 +254,7 @@ function parseSsw38Table(html){
   const rows=[];
   for(const cells of parsed.slice(hi+1)){
     const rom=ir>=0?cells[ir]:'',mot=im>=0?cells[im]:'',qraw=iq>=0?cells[iq]:'';
-    if(!rom||!/^AMR/i.test(rom)||!mot)continue;
+    if(!rom||!/^(?:AMR|TBT)/i.test(rom)||!mot)continue;
     const q=Number(String(qraw).replace(/\D/g,''))||0;
     rows.push({romaneio:rom,veiculo:iv>=0?cells[iv]:'',inclusao:ii>=0?cells[ii]:'',motorista:mot,qtdeCtrcs:q,faltaOcorr:ifalta>=0?(Number(String(cells[ifalta]||'').replace(/\D/g,''))||0):0});
   }
