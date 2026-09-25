@@ -1867,9 +1867,10 @@ function trackingPopulateDriverList(){
   source.forEach(r=>{
     const driver=String(r.motorista||'').trim(),plate=String(r.veiculo||'').trim();if(!driver)return;
     const key=trackingDriverKey(driver,plate);
-    if(!byKey.has(key))byKey.set(key,{key,driver,plate,romaneios:[]});
-    const item=byKey.get(key),rom=String(r.romaneio||'').trim();
-    if(rom&&!item.romaneios.includes(rom))item.romaneios.push(rom)
+    if(!byKey.has(key))byKey.set(key,{key,driver,plate,romaneios:[],manifesto:false});
+    const item=byKey.get(key),roms=Array.isArray(r.romaneios)?r.romaneios:[r.romaneio].filter(Boolean);
+    roms.forEach(v=>{const rom=String(v||'').trim();if(rom&&!item.romaneios.includes(rom))item.romaneios.push(rom)});
+    if(r.manifesto||String(r.origem||'').includes('manifesto'))item.manifesto=true
   });
   const rows=[...byKey.values()].sort((a,b)=>a.driver.localeCompare(b.driver,'pt-BR')||a.plate.localeCompare(b.plate,'pt-BR'));
   const previous=sel.value;
@@ -1877,13 +1878,19 @@ function trackingPopulateDriverList(){
   const first=document.createElement('option');first.value='';first.textContent=rows.length?'Selecione o motorista...':'Nenhum motorista com romaneio hoje';sel.appendChild(first);
   rows.forEach(x=>{
     const o=document.createElement('option');o.value=x.key;o.dataset.driver=x.driver;o.dataset.plate=x.plate;
-    o.textContent=x.driver+(x.plate?' • '+x.plate:' • placa não informada')+(x.romaneios.length?' • Rom. '+x.romaneios.join(', '):'');
+    const sourceLabel=x.romaneios.length
+      ?(' • Rom. '+x.romaneios.join(', ')+(x.manifesto?' • Manifesto':''))
+      :(x.manifesto?' • Manifesto':'');
+    o.textContent=x.driver+(x.plate?' • '+x.plate:' • placa não informada')+sourceLabel;
     sel.appendChild(o)
   });
   if(previous&&rows.some(x=>x.key===previous))sel.value=previous;
-  if(info)info.textContent=rows.length
-    ?nf(rows.length)+' motorista(s)/veículo(s) encontrados diretamente nos romaneios de hoje.'
-    :'A relação do dia não retornou motoristas. Para testar o GPS, use o botão “Usar teste”.';
+  if(info){
+    const manifestCount=rows.filter(x=>x.manifesto).length,romCount=rows.filter(x=>x.romaneios.length).length;
+    info.textContent=rows.length
+      ?nf(rows.length)+' motorista(s)/veículo(s) trabalhando hoje • '+nf(romCount)+' com romaneio • '+nf(manifestCount)+' com manifesto/saída.'
+      :'A operação do dia não retornou motoristas com romaneio ou manifesto. Para testar o GPS, use o botão “Usar teste”.';
+  }
   trackingDriverSelectionChanged(false)
 }
 function trackingUseTest(){
