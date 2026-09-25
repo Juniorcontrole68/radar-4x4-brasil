@@ -1283,7 +1283,7 @@ async function fetchSsw101ByNf(nf,session=null){
   const s=session||await ssw101Session(),params=sswFormParamsFromHtml(s.html);
   params.set('t_nro_nf',key);
   params.set('t_ser_nf',params.get('t_ser_nf')||'');
-  params.set('act','PES');
+  params.set('act','P2');
   let rr=await fetch('https://sistema.ssw.inf.br/bin/'+s.prog,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/'+s.prog,'Cookie':s.cookie()},body:params.toString(),redirect:'manual',signal:AbortSignal.timeout(20000)});s.apply(rr.headers);
   let html=await rr.text(),parsed=parseSsw101Freight(html,key);
   // Some SSW pages return a result list first; follow a single CTRC link if present.
@@ -3036,18 +3036,6 @@ let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.jo
       console.log('VALIDACAO FRETE NF101: '+JSON.stringify({nf:row.nf,ctrc:row.ctrc,resultado:x}));
     }
   }catch(e){console.log('VALIDACAO FRETE NF101 ERRO: '+String(e.message||e))}},7000);
-  setTimeout(async()=>{try{
-    const s=await ssw101Session(),html=String(s.html||'');
-    const contexts=[];
-    for(const term of ['t_nro_nf','ajaxEnvia','act=','submit','button']){
-      let p=0,n=0;
-      while((p=html.indexOf(term,p))>=0&&n<8){
-        contexts.push({term,context:html.slice(Math.max(0,p-500),Math.min(html.length,p+1200)).replace(/\s+/g,' ')});
-        p+=term.length;n++
-      }
-    }
-    console.log('VALIDACAO SSW101 ACOES: '+JSON.stringify(contexts.slice(0,30)));
-  }catch(e){console.log('VALIDACAO SSW101 ACOES ERRO: '+String(e.message||e))}},9000);
   refreshBi2State().catch(e=>console.error('BI2 SFTP monitor ERRO: '+e.message));
   refreshBi2ApiState().catch(e=>console.error('BI2 WebAPI monitor ERRO: '+e.message));
   buildBi2Receita().then(x=>console.log('VALIDACAO RECEITA SSW: '+JSON.stringify({ok:x.ok,fonte:x.sourceCode,periodo:x.periodo,total:x.totalFaturamento,clientes:x.totalClientes,ctes:x.totalRegistros,somerlog:(x.clientes||[]).find(y=>y.cliente==='Somerlog')||null,error:x.error||''}))).catch(e=>console.log('VALIDACAO RECEITA SSW ERRO: '+String(e.message||e)));
