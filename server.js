@@ -1043,7 +1043,13 @@ async function probeSsw101Cte(ctrc){
   }
   const rawLinks=[...html.matchAll(/(?:href|onclick)=["']([^"']+)["']/gi)].map(m=>m[1]).filter(x=>/xml|dacte|cte|ssw\d+|abrir|download/i.test(x)).slice(0,100);
   const programs=[...new Set([...html.matchAll(/ssw\d{3,6}/gi)].map(m=>m[0]))];
-  return{ok:true,ctrc,prog,status:rr.status,bytes:Buffer.byteLength(html),programs,rawLinks,contexts,text:plain.slice(0,5000)}
+  const rawContexts={};
+  for(const term of ['Produtos','DACTE','XML','Valor frete','Tipo de mercadoria','Espécie de mercadoria']){
+    const p=html.toUpperCase().indexOf(term.toUpperCase());
+    rawContexts[term]=p>=0?html.slice(Math.max(0,p-1200),Math.min(html.length,p+2500)).replace(/\s+/g,' '):''
+  }
+  const productAttrs=[...html.matchAll(/<[^>]+(?:produt|mercador)[^>]*>/gi)].map(m=>m[0]).slice(0,80);
+  return{ok:true,ctrc,prog,status:rr.status,bytes:Buffer.byteLength(html),programs,rawLinks,rawContexts,productAttrs,contexts,text:plain.slice(0,5000)}
 }
 
 async function probeSsw101Program(){
