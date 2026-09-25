@@ -620,12 +620,9 @@ function financeDualBars(id,labels,A,B,legendA='A receber',legendB='Pago'){
     const drawValue=(v,barX,barH)=>{
       if(!(v>0))return;
       const txt=financeMoneyLabel(v);
-      x.save();x.font='700 9px Segoe UI';x.textAlign='center';
-      if(barH>=44){
-        x.translate(barX+bw/2,baseY-6);x.rotate(-Math.PI/2);x.fillStyle='#fff';x.textBaseline='middle';x.fillText(txt,0,0)
-      }else{
-        x.fillStyle='#172033';x.textBaseline='bottom';x.fillText(txt,barX+bw/2,Math.max(p.t+12,baseY-barH-4))
-      }
+      x.save();x.font='700 9px Segoe UI';x.textAlign='center';x.textBaseline='middle';
+      x.fillStyle=barH>=18?'#fff':'#172033';
+      x.fillText(txt,barX+bw/2,baseY-barH/2);
       x.restore()
     };
     drawValue(va,ax,ha);drawValue(vb,bx,hb);
@@ -713,6 +710,87 @@ function setupFinanceDashboard(){
   if($('#financeTo'))$('#financeTo').onchange=financeRender
 }
 
+
+function driverPerfRowsBetween(fromIso,toIso){
+  const from=fromIso?new Date(fromIso+'T00:00:00'):null,to=toIso?new Date(toIso+'T23:59:59'):null;
+  return(S.ops||[]).filter(o=>{
+    const d=financeDateOfRow(o);if(!d)return false;
+    return(!from||d>=from)&&(!to||d<=to)
+  })
+}
+function driverPerfAggregate(rows){
+  const map=new Map();
+  for(const o of rows||[]){
+    const motorista=String(g(o,'Motorista')||'Sem motorista').trim()||'Sem motorista';
+    if(!map.has(motorista))map.set(motorista,{motorista,veiculos:new Set(),entregas:0,realizadas:0,receive:0,paid:0});
+    const x=map.get(motorista),ent=num(g(o,'Entregas')),rawReal=String(g(o,'Realizadas')??'').trim(),ret=num(g(o,'Retorno'));
+    const real=rawReal!==''?num(rawReal):Math.max(0,ent-ret);
+    const veic=String(g(o,'Veiculo','Veículo')||'').trim();if(veic)x.veiculos.add(veic);
+    x.entregas+=ent;x.realizadas+=Math.min(ent,Math.max(0,real));x.receive+=financeReceive(o);x.paid+=financePaid(o)
+  }
+  return[...map.values()].map(x=>({
+    motorista:x.motorista,veiculo:[...x.veiculos].join('/')||'—',entregas:x.entregas,realizadas:x.realizadas,
+    performance:x.entregas?x.realizadas/x.entregas*100:0,receive:x.receive,paid:x.paid,profit:x.receive-x.paid
+  }))
+}
+function driverPerformanceBars(id,rows){
+  if(!rows.length)return empty(id);
+  const sorted=rows.slice().sort((a,b)=>b.performance-a.performance||b.realizadas-a.realizadas).slice(0,14);
+  const{x,w,h}=cv(id),p={l:42,r:12,t:28,b:82},cw=w-p.l-p.r,ch=h-p.t-p.b,m=100,bw=Math.max(13,Math.min(38,cw/sorted.length*.62));
+  x.strokeStyle='#e2e8f0';x.strokeRect(p.l,p.t,cw,ch);
+  sorted.forEach((r,i)=>{
+    const px=p.l+(i+.5)*cw/sorted.length,bh=Math.max(0,Math.min(100,r.performance))/m*ch,barY=h-p.b-bh;
+    x.fillStyle='#0f766e';x.fillRect(px-bw/2,barY,bw,bh);
+    if(bh>0){
+      x.save();x.fillStyle=bh>=18?'#fff':'#172033';x.textAlign='center';x.textBaseline='middle';x.font='700 10px Segoe UI';
+      x.fillText(r.performance.toFixed(1).replace('.',',')+'%',px,barY+bh/2);x.restore()
+    }
+    x.save();x.translate(px,h-p.b+9);x.rotate(-Math.PI/4);x.textAlign='right';x.fillStyle='#64748b';x.font='11px Segoe UI';x.fillText(r.motorista.slice(0,20),0,0);x.restore()
+  })
+}
+function driverFinancialBars(id,rows){
+  if(!rows.length)return empty(id);
+  const sorted=rows.slice().sort((a,b)=>b.profit-a.profit).slice(0,14),vals=sorted.map(x=>x.profit),min=Math.min(0,...vals),max=Math.max(0,...vals),span=Math.max(1,max-min);
+  const{x,w,h}=cv(id),p={l:48,r:12,t:28,b:96},cw=w-p.l-p.r,ch=h-p.t-p.b,bw=Math.max(13,Math.min(38,cw/sorted.length*.62));
+  const zeroY=p.t+ch-(0-min)/span*ch;
+  x.strokeStyle='#e2e8f0';x.strokeRect(p.l,p.t,cw,ch);
+  x.strokeStyle='#94a3b8';x.beginPath();x.moveTo(p.l,zeroY);x.lineTo(p.l+cw,zeroY);x.stroke();
+  sorted.forEach((r,i)=>{
+    const px=p.l+(i+.5)*cw/sorted.length,v=Number(r.profit||0),y=p.t+ch-(v-min)/span*ch,top=Math.min(y,zeroY),bh=Math.abs(zeroY-y);
+    x.fillStyle=v>=0?'#0f766e':'#b91c1c';x.fillRect(px-bw/2,top,bw,Math.max(1,bh));
+    if(Math.abs(v)>0){
+      x.save();x.fillStyle=bh>=18?'#fff':'#172033';x.textAlign='center';x.textBaseline='middle';x.font='700 9px Segoe UI';
+      x.fillText(financeMoneyLabel(v),px,top+Math.max(1,bh)/2);x.restore()
+    }
+    const label=r.motorista+' • '+r.veiculo;
+    x.save();x.translate(px,h-p.b+9);x.rotate(-Math.PI/4);x.textAlign='right';x.fillStyle='#64748b';x.font='10px Segoe UI';x.fillText(label.slice(0,27),0,0);x.restore()
+  })
+}
+function renderDriverPerformanceDashboard(){
+  if(!$('#driverPerformanceChart'))return;
+  const from=$('#driverPerfFrom')?.value||'',to=$('#driverPerfTo')?.value||'',rows=driverPerfRowsBetween(from,to),agg=driverPerfAggregate(rows);
+  driverPerformanceBars('#driverPerformanceChart',agg.filter(x=>x.entregas>0));
+  driverFinancialBars('#driverFinancialResultChart',agg.filter(x=>x.receive!==0||x.paid!==0));
+  const info=$('#driverPerfInfo');
+  if(info){
+    const best=agg.filter(x=>x.entregas>0).sort((a,b)=>b.performance-a.performance)[0];
+    info.textContent=nf(rows.length)+' lançamento(s) • '+nf(agg.length)+' motorista(s) • '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje')+(best?' • melhor performance: '+best.motorista+' '+best.performance.toFixed(1).replace('.',',')+'%':'')
+  }
+}
+function driverPerfSetToday(){
+  const d=iso(new Date());if($('#driverPerfFrom'))$('#driverPerfFrom').value=d;if($('#driverPerfTo'))$('#driverPerfTo').value=d;renderDriverPerformanceDashboard()
+}
+function setupDriverPerformanceDashboard(){
+  if(!$('#driverPerformanceChart'))return;
+  const d=iso(new Date());
+  if($('#driverPerfFrom')&&!$('#driverPerfFrom').value)$('#driverPerfFrom').value=d;
+  if($('#driverPerfTo')&&!$('#driverPerfTo').value)$('#driverPerfTo').value=d;
+  if($('#driverPerfApply'))$('#driverPerfApply').onclick=renderDriverPerformanceDashboard;
+  if($('#driverPerfToday'))$('#driverPerfToday').onclick=driverPerfSetToday;
+  if($('#driverPerfFrom'))$('#driverPerfFrom').onchange=renderDriverPerformanceDashboard;
+  if($('#driverPerfTo'))$('#driverPerfTo').onchange=renderDriverPerformanceDashboard
+}
+
 function update(){const O=ops(),H=help(),A=sch(),roleNorm=o=>String(g(o,'FUNÇÃO','FUNCAO','Função','Funcao')||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase(),HCf=H.filter(o=>roleNorm(o).includes('CONFER')),HA=H.filter(o=>!roleNorm(o).includes('CONFER')),delSheet=O.reduce((a,o)=>a+num(g(o,'Entregas')),0),doneSheet=O.reduce((a,o)=>a+num(g(o,'Realizadas')),0),co=S.coletas&&S.coletas.ok?S.coletas:null,del=co?num(co.ativas):delSheet,done=co?num(co.entregues):doneSheet,km=O.reduce((a,o)=>a+num(g(o,'KM')),0),rev=O.reduce((a,o)=>a+num(g(o,'Frete Vialog Liq',' Frete Vialog Liq')),0),dc=O.reduce((a,o)=>a+num(g(o,'Frete Mot Liq',' Frete Mot Liq')),0),helperCost=HA.reduce((a,o)=>a+num(g(o,'Valor')),0),checkerCost=HCf.reduce((a,o)=>a+num(g(o,'Valor')),0),hc=helperCost+checkerCost,gross=rev-dc,margin=rev?gross/rev*100:0,net=gross-hc,ret=O.reduce((a,o)=>a+num(g(o,'Retorno')),0),pending=co?num(co.pendentes):Math.max(del-done,0);
 $('#del').textContent=nf(del);$('#done').textContent=nf(done);$('#rate').textContent=(del?done/del*100:0).toFixed(1).replace('.',',')+'%';$('#km').textContent=nf(km);$('#revenue').textContent=brl(rev);$('#driverCost').textContent=brl(dc);$('#gross').textContent=brl(gross);$('#margin').textContent=margin.toFixed(1).replace('.',',')+'%';$('#helpersCost').textContent=brl(helperCost);$('#checkersCost').textContent=brl(checkerCost);$('#net').textContent=brl(net);mood($('#gross'),gross);mood($('#margin'),margin);mood($('#net'),net);
 const sla=del?done/del*100:0;
@@ -730,8 +808,7 @@ const hrm={};O.forEach(o=>{const k=g(o,'Rota')||'Sem rota';hrm[k]=(hrm[k]||0)+nu
 set('#hubIssue',nf(ret));set('#hubIssueRate',(del?ret/del*100:0).toFixed(1).replace('.',',')+'%');set('#hubIssueSla',sla.toFixed(1).replace('.',',')+'%');set('#hubIssuePend',nf(pending));$('#sswPlanned').textContent=nf(del);$('#sswRoute').textContent=nf(pending);$('#sswDone').textContent=nf(done);$('#sswIssue').textContent=nf(ret);$('#sswSla').textContent=sla.toFixed(1).replace('.',',')+'%';$('#sswSlaBar').style.width=Math.min(100,Math.max(0,sla))+'%';
 const active=$('.section.active')?.id||'dashboard';
 if(active==='dashboard'){
-  const bd={};O.forEach(o=>{const k=gd(o)||'Sem data';bd[k]??={d:0,r:0};bd[k].d+=num(g(o,'Realizadas'));bd[k].r+=num(g(o,'Retorno'))});const K=Object.keys(bd).sort((a,b)=>(pd(a)||0)-(pd(b)||0));lines('#trend',K,K.map(k=>bd[k].d),K.map(k=>bd[k].r));
-  const dm={};O.forEach(o=>{const k=g(o,'Motorista')||'Sem motorista';dm[k]=(dm[k]||0)+num(g(o,'Entregas'))});const T=Object.entries(dm).sort((a,b)=>b[1]-a[1]).slice(0,10);bars('#drivers',T.map(x=>x[0]),T.map(x=>x[1]),T.map(x=>nf(x[1])),true);
+  renderDriverPerformanceDashboard();
   renderAgStatusCards('#agStatusCards',(S.agCopy||[]).filter(o=>!agCopyOldDelivered(o)));
   financeRender();
   const hdA={},hdC={};HA.forEach(o=>{const k=g(o,'Data')||'Sem data';hdA[k]??={valor:0,nomes:new Set()};hdA[k].valor+=num(g(o,'Valor'));const nome=String(g(o,'NOME')||'').trim();if(nome)hdA[k].nomes.add(nome)});HCf.forEach(o=>{const k=g(o,'Data')||'Sem data';hdC[k]??={valor:0,nomes:new Set()};hdC[k].valor+=num(g(o,'Valor'));const nome=String(g(o,'NOME')||'').trim();if(nome)hdC[k].nomes.add(nome)});const HK=[...new Set([...Object.keys(hdA),...Object.keys(hdC)])].sort((a,b)=>(pd(a)||0)-(pd(b)||0));groupedBars('#helpersChart',HK,HK.map(k=>hdA[k]?.valor||0),HK.map(k=>hdC[k]?.valor||0),HK.map(k=>nf(hdA[k]?.nomes.size||0)),HK.map(k=>nf(hdC[k]?.nomes.size||0)));
@@ -1801,6 +1878,7 @@ function loadHeavyForTab(tab){
 async function start(){
   init();
   setupFinanceDashboard();
+  setupDriverPerformanceDashboard();
   $('#err').style.display='none';
   if(hasAnyPerm(['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo','receita_ssw']))checkSsw();
   if(DASH_EMBEDDED){
