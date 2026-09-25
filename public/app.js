@@ -1829,6 +1829,8 @@ async function calculateRoute(){
 }
 
 let TRACKING_MAP=null,TRACKING_LAYER=null,TRACKING_DATA=null,TRACKING_ROUTE_DATA=null,TRACKING_DRIVER_ROWS=[];
+let TRACKING_AUTO_SECONDS=Math.max(5,Math.min(300,Number(localStorage.getItem('construlog_tracking_refresh_seconds')||30)));
+let TRACKING_NEXT_REFRESH=0;
 const TRACKING_COLORS=['#2563eb','#dc2626','#16a34a','#9333ea','#ea580c','#0891b2','#ca8a04','#db2777','#4f46e5','#059669'];
 const TRACKING_DEVIATION_KM=3;
 function trackingNorm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim()}
@@ -1969,7 +1971,7 @@ function renderTracking(rows){
     }).join('');
     tableEl.innerHTML='<thead><tr><th>Motorista</th><th>Placa</th><th>Status</th><th>Sessão</th><th>Última posição</th><th>Velocidade</th><th>Bateria</th><th>Celular</th></tr></thead><tbody>'+body+'</tbody>'
   }
-  const info=$('#trackingInfo');if(info)info.textContent='Atualizado às '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})+' • desvio configurado em '+String(TRACKING_DEVIATION_KM).replace('.',',')+' km.';
+  const info=$('#trackingInfo');if(info)info.textContent='Atualizado às '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})+' • atualização automática a cada '+TRACKING_AUTO_SECONDS+' s • desvio configurado em '+String(TRACKING_DEVIATION_KM).replace('.',',')+' km.';
   renderTrackingMap(TRACKING_DATA)
 }
 async function refreshTracking(){
@@ -1989,7 +1991,33 @@ async function refreshTracking(){
     trackingPopulateDriverList();
     renderTracking(Array.isArray(live.rows)?live.rows:[])
   }catch(e){if(info)info.textContent='Erro no rastreamento: '+e.message}
-  finally{window.__trackingBusy=false}
+  finally{
+    window.__trackingBusy=false;
+    TRACKING_NEXT_REFRESH=Date.now()+TRACKING_AUTO_SECONDS*1000;
+  }
+}
+function trackingApplyRefreshSeconds(){
+  const input=$('#trackingRefreshSeconds'),msg=$('#trackingRefreshSettingMsg');
+  let seconds=Math.round(Number(input?.value||30));
+  if(!Number.isFinite(seconds))seconds=30;
+  seconds=Math.max(5,Math.min(300,seconds));
+  TRACKING_AUTO_SECONDS=seconds;
+  if(input)input.value=String(seconds);
+  localStorage.setItem('construlog_tracking_refresh_seconds',String(seconds));
+  TRACKING_NEXT_REFRESH=Date.now()+seconds*1000;
+  if(msg)msg.textContent='Atualização automática configurada para '+seconds+' segundo(s).';
+}
+function trackingAutoTick(){
+  const t=$('.section.active')?.id;
+  if(document.hidden||t!=='rastreamento'||!hasAnyPerm(['tracking','dashboard']))return;
+  if(!TRACKING_NEXT_REFRESH)TRACKING_NEXT_REFRESH=Date.now()+TRACKING_AUTO_SECONDS*1000;
+  const remaining=Math.max(0,Math.ceil((TRACKING_NEXT_REFRESH-Date.now())/1000));
+  const countdown=$('#trackingRefreshCountdown');
+  if(countdown)countdown.textContent='Próxima atualização em '+remaining+' s';
+  if(Date.now()>=TRACKING_NEXT_REFRESH&&!window.__trackingBusy){
+    TRACKING_NEXT_REFRESH=Date.now()+TRACKING_AUTO_SECONDS*1000;
+    refreshTracking();
+  }
 }
 async function generateTrackingCode(){
   const driverEl=$('#trackingDriverName'),opt=driverEl?.selectedOptions?.[0];
@@ -2007,9 +2035,17 @@ async function generateTrackingCode(){
 function setupTracking(){
   if($('#trackingGenerateCode'))$('#trackingGenerateCode').onclick=generateTrackingCode;
   if($('#trackingUseTest'))$('#trackingUseTest').onclick=trackingUseTest;
-  if($('#trackingRefresh'))$('#trackingRefresh').onclick=refreshTracking;
+  if($('#trackingRefresh'))$('#trackingRefresh').onclick=()=>{TRACKING_NEXT_REFRESH=0;refreshTracking()};
   if($('#trackingDriverName'))$('#trackingDriverName').onchange=()=>trackingDriverSelectionChanged(true);
   if($('#trackingVehiclePlate'))$('#trackingVehiclePlate').oninput=e=>{e.target.value=String(e.target.value||'').toUpperCase()}
+  const refreshInput=$('#trackingRefreshSeconds');
+  if(refreshInput){
+    refreshInput.value=String(TRACKING_AUTO_SECONDS);
+    refreshInput.onchange=trackingApplyRefreshSeconds;
+    refreshInput.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();trackingApplyRefreshSeconds()}};
+  }
+  const msg=$('#trackingRefreshSettingMsg');if(msg)msg.textContent='Atualização automática configurada para '+TRACKING_AUTO_SECONDS+' segundo(s).';
+  TRACKING_NEXT_REFRESH=Date.now()+TRACKING_AUTO_SECONDS*1000;
 }
 
 function setupRoteirizador(){
@@ -2097,7 +2133,7 @@ async function start(){
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasPerm('receita_ssw')&&['receita-ssw','dashboards'].includes(t))refreshSswReceita()},120000);
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasAnyPerm(['remetentes','remetentes_comparativo'])&&['ssw-remetentes','ssw-remetentes-comparativo','dashboards'].includes(t))refreshSswRemetentes()},120000);
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasAnyPerm(['ssw_saidas','evolucao','cidade_destino'])&&['ssw-motoristas','motoristas-evolucao','dashboards'].includes(t))refreshSswMotoristas()},120000);
-  setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&t==='rastreamento'&&hasAnyPerm(['tracking','dashboard']))refreshTracking()},30000);
+  setInterval(trackingAutoTick,1000);
   window.addEventListener('focus',()=>refreshData(false));
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshData(false)})
 }
