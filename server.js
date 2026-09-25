@@ -23,6 +23,7 @@ let SSW_PENDING_CACHE={at:0,value:null};
 let SSW_PENDING_INFLIGHT=null;
 let DELIVERY_PROGRAM_CACHE=new Map();
 let SSW101_NF_CACHE=new Map();
+let SSW101_CTRC_CACHE=new Map();
 const SSW101_DETAIL_CACHE=new Map();
 async function fetchMotoristasVeiculos(){
   const u=new URL('/api/painel/motoristas-veiculos',COLETAS_PORTAL_URL);
@@ -1277,6 +1278,23 @@ async function ssw101Session(){
   const html=await rr.text();
   return{jar,apply,cookie,prog,html}
 }
+
+async function fetchSsw101ByCtrc(ctrc,session=null){
+  const raw=String(ctrc||'').toUpperCase().trim();
+  const m=raw.match(/^([A-Z]{3})0*(\d{1,6})-(\d)$/);
+  if(!m)return{ctrc:raw,freight:0,source:'CTRC inválido'};
+  const key=m[1]+String(Number(m[2]))+m[3];
+  const hit=SSW101_CTRC_CACHE.get(key);if(hit&&Date.now()-hit.at<30*60*1000)return hit.value;
+  const s=session||await ssw101Session(),params=sswFormParamsFromHtml(s.html);
+  params.set('t_ser_ctrc',m[1]);
+  params.set('t_nro_ctrc',String(Number(m[2])));
+  params.set('act','P1');
+  const rr=await fetch('https://sistema.ssw.inf.br/bin/'+s.prog,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/'+s.prog,'Cookie':s.cookie()},body:params.toString(),redirect:'manual',signal:AbortSignal.timeout(20000)});s.apply(rr.headers);
+  const html=await rr.text(),parsed=parseSsw101Freight(html,'');
+  const value={...parsed,ctrc:parsed.ctrc||raw,source:parsed.freight>0?'SSW 101 por CTRC':'SSW 101 CTRC sem valor'};
+  SSW101_CTRC_CACHE.set(key,{at:Date.now(),value});
+  return value
+}
 async function fetchSsw101ByNf(nf,session=null){
   const key=normNf(nf);if(!key)return{nf:key,freight:0,ctrc:'',cte:'',source:'none'};
   const hit=SSW101_NF_CACHE.get(key);if(hit&&Date.now()-hit.at<30*60*1000)return hit.value;
@@ -1303,26 +1321,38 @@ async function fetchSsw101ByNf(nf,session=null){
   return value
 }
 async function fillFreightByNf(rows){
-  const missing=rows.filter(x=>!(Number(x.frete)>0)&&normNf(x.nf));
+  const missing=rows.filter(x=>!(Number(x.frete)>0)&&(normCtrc(x.ctrc)||normNf(x.nf)));
   if(!missing.length)return rows;
   let session=null;try{session=await ssw101Session()}catch(e){console.log('SSW101 sessão para frete ERRO: '+String(e.message||e));return rows}
-  const uniq=[...new Set(missing.map(x=>normNf(x.nf)).filter(Boolean))];
-  const values=new Map();
-  const results=await mapLimit(uniq,3,async nf=>{
-    try{return await fetchSsw101ByNf(nf,session)}catch(e){return{nf,freight:0,error:String(e.message||e)}}
+  const requests=[],seen=new Set();
+  for(const x of missing){
+    const ck=String(x.ctrc||'').toUpperCase().trim(),nk=normNf(x.nf),id=ck?'C|'+ck:'N|'+nk;
+    if(!id||seen.has(id))continue;seen.add(id);requests.push({id,ctrc:ck,nf:nk})
+  }
+  const results=await mapLimit(requests,3,async req=>{
+    try{
+      if(req.ctrc){
+        const byCtrc=await fetchSsw101ByCtrc(req.ctrc,session);
+        if(Number(byCtrc.freight)>0)return{...byCtrc,id:req.id,nf:req.nf};
+      }
+      if(req.nf){
+        const byNf=await fetchSsw101ByNf(req.nf,session);
+        return{...byNf,id:req.id,nf:req.nf,ctrc:byNf.ctrc||req.ctrc||''}
+      }
+      return{id:req.id,nf:req.nf,ctrc:req.ctrc,freight:0}
+    }catch(e){return{id:req.id,nf:req.nf,ctrc:req.ctrc,freight:0,error:String(e.message||e)}}
   });
-  results.forEach(x=>values.set(normNf(x.nf),x));
+  const byId=new Map(results.map(x=>[x.id,x]));
   let found=0;
   const out=rows.map(x=>{
     if(Number(x.frete)>0)return x;
-    const v=values.get(normNf(x.nf));
-    if(v&&Number(v.freight)>0){found++;return{...x,frete:Number(v.freight),freteSource:v.source||'SSW 101 por NF',ctrcValor:v.ctrc||v.cte||''}}
+    const ck=String(x.ctrc||'').toUpperCase().trim(),nk=normNf(x.nf),id=ck?'C|'+ck:'N|'+nk,v=byId.get(id);
+    if(v&&Number(v.freight)>0){found++;return{...x,frete:Number(v.freight),freteSource:v.source||'SSW 101',ctrcValor:v.ctrc||ck}}
     return x
   });
-  console.log('PROGRAMAÇÃO FRETE POR NF: '+JSON.stringify({consultadas:uniq.length,encontradas:found,amostra:results.filter(x=>x.freight>0).slice(0,5)}));
+  console.log('PROGRAMAÇÃO FRETE NF->CTRC: '+JSON.stringify({consultadas:requests.length,encontradas:found,amostra:results.filter(x=>x.freight>0).slice(0,5)}));
   return out
 }
-
 async function fetchSsw38Rows(){
   if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
   const jar=new Map(),apply=headers=>{const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);for(const raw of list){const pair=String(raw).split(';')[0],i=pair.indexOf('=');if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())}},cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
@@ -3032,8 +3062,8 @@ let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.jo
     const p=await fetchSswPendingDeliveries();
     const row=(p.rows||[]).find(x=>normNf(x.nf));
     if(row){
-      const x=await fetchSsw101ByNf(row.nf);
-      console.log('VALIDACAO FRETE NF101: '+JSON.stringify({nf:row.nf,ctrc:row.ctrc,resultado:x}));
+      const x=await fetchSsw101ByCtrc(row.ctrc);
+      console.log('VALIDACAO FRETE CTRC101: '+JSON.stringify({nf:row.nf,ctrc:row.ctrc,resultado:x}));
     }
   }catch(e){console.log('VALIDACAO FRETE NF101 ERRO: '+String(e.message||e))}},7000);
   refreshBi2State().catch(e=>console.error('BI2 SFTP monitor ERRO: '+e.message));
