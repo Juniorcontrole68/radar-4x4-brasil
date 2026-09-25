@@ -1035,6 +1035,14 @@ async function probeSsw101Cte(ctrc){
   params.set('t_ser_ctrc',mm[1]);params.set('t_nro_ctrc',mm[2]);params.set('act','P1');
   rr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/'+prog,'Cookie':cookie()},body:params.toString(),redirect:'manual',signal:AbortSignal.timeout(20000)});apply(rr.headers);
   const html=await rr.text(),plain=htmlText38(html);
+  let productProbeText='',productProbeBytes=0;
+  try{
+    const prodParams=deliveryProgramFormParams(html);
+    prodParams.set('act','RELPROD');
+    const prodRes=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/'+prog,'Cookie':cookie()},body:prodParams.toString(),redirect:'manual',signal:AbortSignal.timeout(20000)});
+    apply(prodRes.headers);
+    const prodHtml=await prodRes.text();productProbeBytes=Buffer.byteLength(prodHtml);productProbeText=htmlText38(prodHtml).slice(0,9000)
+  }catch(e){productProbeText='ERRO '+String(e.message||e)}
   const terms=['PRODUTO PREDOMINANTE','PRODUTO','VALOR DO FRETE','VALOR TOTAL DO SERVICO','VALOR TOTAL DO SERVIÇO','VALOR A RECEBER','FRETE'];
   const contexts={};
   for(const term of terms){
@@ -1049,7 +1057,7 @@ async function probeSsw101Cte(ctrc){
     rawContexts[term]=p>=0?html.slice(Math.max(0,p-1200),Math.min(html.length,p+2500)).replace(/\s+/g,' '):''
   }
   const productAttrs=[...html.matchAll(/<[^>]+(?:produt|mercador)[^>]*>/gi)].map(m=>m[0]).slice(0,80);
-  return{ok:true,ctrc,prog,status:rr.status,bytes:Buffer.byteLength(html),programs,rawLinks,rawContexts,productAttrs,contexts,text:plain.slice(0,5000)}
+  return{ok:true,ctrc,prog,status:rr.status,bytes:Buffer.byteLength(html),programs,rawLinks,rawContexts,productAttrs,contexts,text:plain.slice(0,5000),productProbeBytes,productProbeText}
 }
 
 async function probeSsw101Program(){
