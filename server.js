@@ -125,7 +125,7 @@ function filterLancamentosForUser(rows,user){
   const allow=new Set(['ENTREGUE','Entregue','Data','  Data','DATA']);
   const add=(arr)=>arr.forEach(x=>allow.add(x));
   if(dashboardHas(user,'operacional'))add(['Motorista','Veiculo','Veículo','Filial','Entregas','Realizadas','KM','Retorno','Rota']);
-  if(dashboardHas(user,'financeiro'))add(['Frete Vialog Liq',' Frete Vialog Liq','Frete Mot Liq',' Frete Mot Liq']);
+  if(dashboardHas(user,'financeiro'))add(['Motorista','Frete Vialog Liq',' Frete Vialog Liq','Frete a Receber','Frete A Receber','FRETE A RECEBER','Frete Mot Liq',' Frete Mot Liq','Frete Pago','FRETE PAGO']);
   if(dashboardHas(user,'motoristas'))add(['Motorista','Realizadas']);
   if(dashboardHas(user,'filiais'))add(['Filial','Entregas','Realizadas']);
   if(dashboardHas(user,'rotas'))add(['Rota','Realizadas','KM']);
