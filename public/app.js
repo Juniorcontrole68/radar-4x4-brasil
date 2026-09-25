@@ -1939,7 +1939,8 @@ function trackingStatus(row){
   if(!row.session_id)return{key:'off',label:'Inativo',distance:null};
   const age=Number(row.age_seconds);
   if(!Number.isFinite(Number(row.latitude))||!Number.isFinite(Number(row.longitude)))return{key:'warn',label:'Aguardando GPS',distance:null};
-  if(Number.isFinite(age)&&age>180)return{key:'bad',label:'Sem sinal • '+trackingAgeLabel(age),distance:null};
+  if(Number.isFinite(age)&&age>300)return{key:'bad',label:'Sem sinal • '+trackingAgeLabel(age),distance:null};
+  if(Number.isFinite(age)&&age>120)return{key:'warn',label:'Sinal atrasado • '+trackingAgeLabel(age),distance:null};
   const route=trackingFindRoute(row.driver_name,row.vehicle_plate);
   if(!route?.geometry)return{key:'warn',label:'Ativo • sem rota vinculada',distance:null};
   const d=trackingDistanceToGeometry(Number(row.latitude),Number(row.longitude),route.geometry);
