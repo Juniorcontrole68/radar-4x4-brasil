@@ -3036,6 +3036,18 @@ let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.jo
       console.log('VALIDACAO FRETE NF101: '+JSON.stringify({nf:row.nf,ctrc:row.ctrc,resultado:x}));
     }
   }catch(e){console.log('VALIDACAO FRETE NF101 ERRO: '+String(e.message||e))}},7000);
+  setTimeout(async()=>{try{
+    const s=await ssw101Session(),html=String(s.html||'');
+    const contexts=[];
+    for(const term of ['t_nro_nf','ajaxEnvia','act=','submit','button']){
+      let p=0,n=0;
+      while((p=html.indexOf(term,p))>=0&&n<8){
+        contexts.push({term,context:html.slice(Math.max(0,p-500),Math.min(html.length,p+1200)).replace(/\s+/g,' ')});
+        p+=term.length;n++
+      }
+    }
+    console.log('VALIDACAO SSW101 ACOES: '+JSON.stringify(contexts.slice(0,30)));
+  }catch(e){console.log('VALIDACAO SSW101 ACOES ERRO: '+String(e.message||e))}},9000);
   refreshBi2State().catch(e=>console.error('BI2 SFTP monitor ERRO: '+e.message));
   refreshBi2ApiState().catch(e=>console.error('BI2 WebAPI monitor ERRO: '+e.message));
   buildBi2Receita().then(x=>console.log('VALIDACAO RECEITA SSW: '+JSON.stringify({ok:x.ok,fonte:x.sourceCode,periodo:x.periodo,total:x.totalFaturamento,clientes:x.totalClientes,ctes:x.totalRegistros,somerlog:(x.clientes||[]).find(y=>y.cliente==='Somerlog')||null,error:x.error||''}))).catch(e=>console.log('VALIDACAO RECEITA SSW ERRO: '+String(e.message||e)));
