@@ -170,6 +170,7 @@ public class MainActivity extends Activity {
         String lastGps = prefs.getString("last_gps", "");
         long lastGpsAt = prefs.getLong("last_gps_at", 0L);
         long lastSendAt = prefs.getLong("last_send_at", 0L);
+        long lastHeartbeatAt = prefs.getLong("last_heartbeat_at", 0L);
         String lastError = prefs.getString("last_error", "");
 
         if (enrolled) {
@@ -191,7 +192,8 @@ public class MainActivity extends Activity {
             d.append("Ativado: ").append(enrolled ? "SIM" : "NÃO").append("\n");
             d.append("Sessão: ").append(session.isEmpty() ? "NÃO INICIADA" : "ATIVA").append("\n");
             d.append("Último GPS: ").append(lastGps.isEmpty() ? "—" : lastGps).append(" • ").append(timeLabel(lastGpsAt)).append("\n");
-            d.append("Último envio ao servidor: ").append(timeLabel(lastSendAt));
+            d.append("Último envio de posição: ").append(timeLabel(lastSendAt)).append("\n");
+            d.append("Último sinal do app: ").append(timeLabel(lastHeartbeatAt));
             if (!lastError.isEmpty()) d.append("\nErro: ").append(lastError);
             diagnostics.setText(d.toString());
         }
