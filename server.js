@@ -3097,6 +3097,26 @@ if(carregamentoFoto&&req.method==='GET'){try{if(!dashboardHas(authUser,'final_ca
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
 
+if(u.pathname==='/api/tracking/live'&&req.method==='GET'){try{
+  if(!dashboardHasAny(authUser,['tracking','dashboard']))return dashboardDeny(res);
+  const x=await portalAuth('/api/painel/tracking/live',{token:authUser.token,timeout:25000});
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+if(u.pathname==='/api/tracking/history'&&req.method==='GET'){try{
+  if(!dashboardHasAny(authUser,['tracking','dashboard']))return dashboardDeny(res);
+  const sessionId=String(u.searchParams.get('session_id')||'').trim();
+  const x=await portalAuth('/api/painel/tracking/history?session_id='+encodeURIComponent(sessionId),{token:authUser.token,timeout:25000});
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+if(u.pathname==='/api/tracking/enrollment'&&req.method==='POST'){try{
+  if(!dashboardHasAny(authUser,['tracking','dashboard']))return dashboardDeny(res);
+  const body=await readJsonLimited(req,64*1024);
+  const x=await portalAuth('/api/painel/tracking/enrollments',{method:'POST',body,token:authUser.token,timeout:25000});
+  res.writeHead(201,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/nf-materiais'&&req.method==='GET'){try{
   if(!dashboardHasAny(authUser,['programacao','roteirizador','dashboard','ssw_saidas']))return dashboardDeny(res);
   const q=new URLSearchParams();
