@@ -35,7 +35,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.android/debug.keystore
-          key: construlog-motorista-signing-v1
+          key: construlog-motorista-signing-v2
 
       - name: Build TESTE e NORMAL
         run: gradle -p motorista-tracker-android assembleDebug assembleRelease --stacktrace
