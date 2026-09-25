@@ -1,13 +1,13 @@
 {
   "normal": {
-    "versionCode": 6,
-    "versionName": "1.0.5",
+    "versionCode": 7,
+    "versionName": "1.0.6",
     "url": "/downloads/CONSTRULOG-Motorista-NORMAL.apk",
     "notes": "Nova versão do CONSTRULOG Motorista disponível."
   },
   "teste": {
-    "versionCode": 6,
-    "versionName": "1.0.5-teste",
+    "versionCode": 7,
+    "versionName": "1.0.6-teste",
     "url": "/downloads/CONSTRULOG-Motorista-TESTE.apk",
     "notes": "Nova versão TESTE do CONSTRULOG Motorista disponível."
   }
