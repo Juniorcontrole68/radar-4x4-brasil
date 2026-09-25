@@ -2171,7 +2171,30 @@ function renderTrackingMap(rows){
     const color=TRACKING_COLORS[i%TRACKING_COLORS.length],route=trackingFindRoute(row.driver_name,row.vehicle_plate),status=trackingStatus(row);
     if(route?.geometry?.coordinates?.length){
       const coords=route.geometry.coordinates.map(x=>[Number(x[1]),Number(x[0])]).filter(x=>Number.isFinite(x[0])&&Number.isFinite(x[1]));
-      if(coords.length){L.polyline(coords,{color,weight:4,opacity:.38,dashArray:'7 7'}).addTo(TRACKING_LAYER).bindTooltip('Rota • '+safe(row.driver_name));coords.forEach(x=>bounds.push(x))}
+      if(coords.length){
+        L.polyline(coords,{color,weight:route.logical?5:4,opacity:route.logical?.72:.38,dashArray:route.logical?null:'7 7'})
+          .addTo(TRACKING_LAYER)
+          .bindTooltip((route.logical?'Percurso lógico':'Rota')+' • '+safe(row.driver_name));
+        coords.forEach(x=>bounds.push(x))
+      }
+      if(route.logical&&Array.isArray(route.optimizedOrder)){
+        const points=route.points||[];
+        route.optimizedOrder.forEach((pointIndex,pos)=>{
+          const s=points[pointIndex];if(!s)return;
+          const lat=Number(s.lat),lon=Number(s.lon);if(!Number.isFinite(lat)||!Number.isFinite(lon))return;
+          const analysis=(route.analysisRows||[]).find(x=>x.pointIndex===pointIndex);
+          const markerHtml='<div style="min-width:26px;height:26px;padding:0 5px;border-radius:13px;background:#fff;border:2px solid '+color+';box-shadow:0 1px 5px #0004;display:grid;place-items:center;font-size:11px;font-weight:900;color:#0f172a">'+(pos+1)+'</div>';
+          const stopIcon=L.divIcon({className:'',html:markerHtml,iconSize:[30,30],iconAnchor:[15,15]});
+          const popup='<b>'+(pos+1)+'º • '+safe(s.destinatario||s.label||'Cliente')+'</b><br>'+
+            safe(s.cidade||'')+
+            '<br>Localização: '+safe((s.coordinateSource||'').toUpperCase()==='SSW'?'Coordenada SSW':'Endereço/geocodificação')+
+            '<br>Chegada GPS: '+safe(trackingTimeLabel(analysis?.arrivalAt))+
+            '<br>Baixa SSW: '+safe(trackingTimeLabel(analysis?.baixaAt))+
+            (analysis?.diffMin!==null&&analysis?.diffMin!==undefined?'<br>Diferença: '+safe((analysis.diffMin>=0?'+':'')+analysis.diffMin+' min'):'');
+          L.marker([lat,lon],{icon:stopIcon}).addTo(TRACKING_LAYER).bindPopup(popup).bindTooltip((pos+1)+'º '+safe(s.destinatario||s.label||'Cliente'));
+          bounds.push([lat,lon])
+        })
+      }
     }
     const lat=Number(row.latitude),lon=Number(row.longitude);
     if(Number.isFinite(lat)&&Number.isFinite(lon)){
@@ -2231,7 +2254,9 @@ async function refreshTracking(){
       const driverInfo=$('#trackingDriverDayInfo');
       if(driverInfo)driverInfo.textContent='Não foi possível carregar a relação de motoristas agora. Tentando novamente automaticamente.';
     }
-    renderTracking(Array.isArray(live.rows)?live.rows:[]);
+    const liveRows=Array.isArray(live.rows)?live.rows:[];
+    renderTracking(liveRows);
+    trackingRefreshLogicalAnalysis(liveRows,today).catch(()=>{});
 
     // A geometria das rotas é mais pesada. Ela é atualizada em separado para
     // nunca segurar a lista de Motorista + Placa.
