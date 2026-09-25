@@ -871,6 +871,20 @@ async function start() {
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao encerrar rota.'})}
       }
 
+      if (req.method === 'POST' && u.pathname === '/api/tracking/heartbeat') {
+        try {
+          const device=await trackingDeviceFromReq(req);
+          const body=await readJsonBodyLimited(req,16*1024);
+          const sessionId=String(body.session_id||'').trim();
+          if(sessionId){
+            const sess=await pool.query("SELECT 1 FROM driver_tracking_sessions WHERE id::text=$1 AND device_id=$2 AND status='active' LIMIT 1",[sessionId,device.id]);
+            if(!sess.rowCount)return sendJson(res,409,{ok:false,error:'Sessão de rota não está ativa.'});
+          }
+          await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
+          return sendJson(res,200,{ok:true,server_time:new Date().toISOString()})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao confirmar comunicação do dispositivo.'})}
+      }
+
       if (req.method === 'POST' && u.pathname === '/api/tracking/point') {
         try {
           const device=await trackingDeviceFromReq(req);
@@ -921,7 +935,8 @@ async function start() {
             SELECT d.id::text AS device_id,d.driver_name,d.vehicle_plate,d.device_name,d.last_seen_at,
                    s.id::text AS session_id,s.started_at,
                    p.latitude,p.longitude,p.accuracy_m,p.speed_mps,p.bearing_deg,p.battery_pct,p.captured_at,
-                   EXTRACT(EPOCH FROM (NOW()-p.captured_at))::int AS age_seconds
+                   EXTRACT(EPOCH FROM (NOW()-p.captured_at))::int AS age_seconds,
+                   EXTRACT(EPOCH FROM (NOW()-d.last_seen_at))::int AS device_age_seconds
             FROM driver_tracking_devices d
             LEFT JOIN LATERAL (
               SELECT id,started_at FROM driver_tracking_sessions
