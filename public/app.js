@@ -684,8 +684,8 @@ function financeSetToday(){
 }
 function setupFinanceDashboard(){
   if(!$('#financeDriverPanel'))return;
-  const t=new Date(),f=new Date(t.getFullYear(),t.getMonth(),1);
-  if($('#financeFrom')&&!$('#financeFrom').value)$('#financeFrom').value=iso(f);
+  const t=new Date();
+  if($('#financeFrom')&&!$('#financeFrom').value)$('#financeFrom').value=iso(t);
   if($('#financeTo')&&!$('#financeTo').value)$('#financeTo').value=iso(t);
   if($('#financeApply'))$('#financeApply').onclick=financeRender;
   if($('#financeMonth'))$('#financeMonth').onclick=financeSetMonthCurrent;
