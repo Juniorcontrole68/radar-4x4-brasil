@@ -3066,6 +3066,15 @@ let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.jo
       console.log('VALIDACAO FRETE CTRC101: '+JSON.stringify({nf:row.nf,ctrc:row.ctrc,resultado:x}));
     }
   }catch(e){console.log('VALIDACAO FRETE NF101 ERRO: '+String(e.message||e))}},7000);
+  setTimeout(async()=>{try{
+    const rep=await fetchBi2Report(16),p=parseBi2Csv(rep.text),rows=p.rows||[];
+    console.log('VALIDACAO BI2 16 FRETE: '+JSON.stringify({
+      total:rows.length,headers:p.headers,
+      amostra:rows.slice(0,3),
+      comNf:rows.filter(x=>normNf(pickField(x,'NF','NUMERO NF','NUMERO_NF'))).length,
+      comFrete:rows.filter(x=>bi2Number(pickField(x,'FRETE','FRETE TOTAL','FRETE LIQ','FRETE LIQUIDO','VALOR FRETE'))>0).length
+    }));
+  }catch(e){console.log('VALIDACAO BI2 16 FRETE ERRO: '+String(e.message||e))}},6000);
   refreshBi2State().catch(e=>console.error('BI2 SFTP monitor ERRO: '+e.message));
   refreshBi2ApiState().catch(e=>console.error('BI2 WebAPI monitor ERRO: '+e.message));
   buildBi2Receita().then(x=>console.log('VALIDACAO RECEITA SSW: '+JSON.stringify({ok:x.ok,fonte:x.sourceCode,periodo:x.periodo,total:x.totalFaturamento,clientes:x.totalClientes,ctes:x.totalRegistros,somerlog:(x.clientes||[]).find(y=>y.cliente==='Somerlog')||null,error:x.error||''}))).catch(e=>console.log('VALIDACAO RECEITA SSW ERRO: '+String(e.message||e)));
