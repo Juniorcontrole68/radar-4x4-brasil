@@ -51,6 +51,12 @@ final class ApiClient {
         return json;
     }
 
+    static JSONObject checkUpdate() throws Exception {
+        String channel = BuildConfig.TEST_MODE ? "teste" : "normal";
+        return request("/api/tracking/app-update?channel=" + channel + "&version_code=" + BuildConfig.VERSION_CODE,
+                "GET", null, null);
+    }
+
     static JSONObject enroll(String code, String deviceName) throws Exception {
         JSONObject b = new JSONObject();
         b.put("code", code);
