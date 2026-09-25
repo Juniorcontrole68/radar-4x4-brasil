@@ -1,4 +1,4 @@
-name: Build Motorista TESTE APK
+name: Build Motorista APKs
 
 on:
   push:
@@ -24,12 +24,19 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Build debug APK
-        run: gradle -p motorista-tracker-android assembleDebug --stacktrace
+      - name: Build TESTE e NORMAL
+        run: gradle -p motorista-tracker-android assembleDebug assembleRelease --stacktrace
 
-      - name: Upload APK
+      - name: Upload TESTE APK
         uses: actions/upload-artifact@v4
         with:
           name: construlog-motorista-teste-apk
           path: motorista-tracker-android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Upload NORMAL APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: construlog-motorista-normal-apk
+          path: motorista-tracker-android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
