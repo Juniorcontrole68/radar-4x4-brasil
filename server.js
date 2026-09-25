@@ -1041,7 +1041,10 @@ async function probeSsw101Cte(ctrc){
     prodParams.set('act','RELPROD');
     const prodRes=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/'+prog,'Cookie':cookie()},body:prodParams.toString(),redirect:'manual',signal:AbortSignal.timeout(20000)});
     apply(prodRes.headers);
-    const prodHtml=await prodRes.text();productProbeBytes=Buffer.byteLength(prodHtml);productProbeText=htmlText38(prodHtml).slice(0,9000)
+    const prodHtml=await prodRes.text();productProbeBytes=Buffer.byteLength(prodHtml);productProbeText=htmlText38(prodHtml).slice(0,9000);
+    const prodRaw=prodHtml.slice(0,3000).replace(/\s+/g,' ');
+    const prodWebBody=(prodHtml.match(/name=web_body[^>]*value=["']([^"']+)["']/i)||[])[1]||'';
+    productProbeText+=' RAW:'+prodRaw+' WEBBODY:'+prodWebBody
   }catch(e){productProbeText='ERRO '+String(e.message||e)}
   const terms=['PRODUTO PREDOMINANTE','PRODUTO','VALOR DO FRETE','VALOR TOTAL DO SERVICO','VALOR TOTAL DO SERVIÇO','VALOR A RECEBER','FRETE'];
   const contexts={};
