@@ -599,18 +599,37 @@ function financeWeeksForMonth(year,month,maxDateIso=''){
   }
   return weeks.map(financeAgg)
 }
+function financeMoneyLabel(v){
+  const n=Number(v||0),a=Math.abs(n);
+  if(a>=1000000)return'R$ '+(n/1000000).toLocaleString('pt-BR',{maximumFractionDigits:1})+' mi';
+  if(a>=1000)return'R$ '+(n/1000).toLocaleString('pt-BR',{maximumFractionDigits:1})+' mil';
+  return'R$ '+n.toLocaleString('pt-BR',{maximumFractionDigits:0})
+}
 function financeDualBars(id,labels,A,B,legendA='A receber',legendB='Pago'){
   if(!labels.length)return empty(id);
-  const{x,w,h}=cv(id),p={l:52,r:12,t:52,b:62},cw=w-p.l-p.r,ch=h-p.t-p.b,m=Math.max(...A,...B,1),groupW=cw/Math.max(labels.length,1),gap=Math.max(3,Math.min(8,groupW*.08)),bw=Math.max(4,Math.min(24,(groupW-gap*3)/2));
+  const{x,w,h}=cv(id),p={l:52,r:12,t:52,b:72},cw=w-p.l-p.r,ch=h-p.t-p.b,m=Math.max(...A,...B,1),groupW=cw/Math.max(labels.length,1),gap=Math.max(3,Math.min(8,groupW*.08)),bw=Math.max(10,Math.min(34,(groupW-gap*3)/2));
   x.strokeStyle='#e2e8f0';x.strokeRect(p.l,p.t,cw,ch);
   x.font='700 11px Segoe UI';x.textAlign='left';x.textBaseline='middle';
   x.fillStyle='#0f766e';x.fillRect(p.l,16,12,12);x.fillStyle='#475569';x.fillText(legendA,p.l+18,22);
   x.fillStyle='#0284c7';x.fillRect(p.l+120,16,12,12);x.fillStyle='#475569';x.fillText(legendB,p.l+138,22);
   labels.forEach((label,i)=>{
     const cx=p.l+(i+.5)*groupW,va=Number(A[i]||0),vb=Number(B[i]||0),ha=va/m*ch,hb=vb/m*ch;
-    x.fillStyle='#0f766e';x.fillRect(cx-gap/2-bw,h-p.b-ha,bw,ha);
-    x.fillStyle='#0284c7';x.fillRect(cx+gap/2,h-p.b-hb,bw,hb);
-    x.save();x.translate(cx,h-p.b+9);x.rotate(-Math.PI/4);x.textAlign='right';x.fillStyle='#64748b';x.font='11px Segoe UI';x.fillText(String(label).slice(0,18),0,0);x.restore()
+    const ax=cx-gap/2-bw,bx=cx+gap/2,baseY=h-p.b;
+    x.fillStyle='#0f766e';x.fillRect(ax,baseY-ha,bw,ha);
+    x.fillStyle='#0284c7';x.fillRect(bx,baseY-hb,bw,hb);
+    const drawValue=(v,barX,barH)=>{
+      if(!(v>0))return;
+      const txt=financeMoneyLabel(v);
+      x.save();x.font='700 9px Segoe UI';x.textAlign='center';
+      if(barH>=44){
+        x.translate(barX+bw/2,baseY-6);x.rotate(-Math.PI/2);x.fillStyle='#fff';x.textBaseline='middle';x.fillText(txt,0,0)
+      }else{
+        x.fillStyle='#172033';x.textBaseline='bottom';x.fillText(txt,barX+bw/2,Math.max(p.t+12,baseY-barH-4))
+      }
+      x.restore()
+    };
+    drawValue(va,ax,ha);drawValue(vb,bx,hb);
+    x.save();x.translate(cx,baseY+10);x.rotate(-Math.PI/4);x.textAlign='right';x.fillStyle='#64748b';x.font='11px Segoe UI';x.fillText(String(label).slice(0,18),0,0);x.restore()
   })
 }
 function financeMultiLines(id,labels,series){
