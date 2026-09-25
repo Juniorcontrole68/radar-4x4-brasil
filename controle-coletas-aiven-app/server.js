@@ -162,6 +162,23 @@ async function dashboardCreateSession(userId, days=14){
   return token;
 }
 
+function trackingBearer(req){
+  const m=String(req.headers.authorization||'').match(/^Bearer\s+(.+)$/i);
+  return m?m[1].trim():'';
+}
+async function trackingDeviceFromReq(req){
+  const token=trackingBearer(req);
+  if(!token){const e=new Error('Dispositivo não autenticado.');e.status=401;throw e}
+  const q=await pool.query(
+    "SELECT id::text AS id, driver_name, vehicle_plate, active FROM driver_tracking_devices WHERE token_hash=$1 AND active=TRUE LIMIT 1",
+    [dashboardTokenHash(token)]
+  );
+  if(!q.rowCount){const e=new Error('Dispositivo não autorizado.');e.status=401;throw e}
+  return q.rows[0]
+}
+function trackingCode(){
+  return String(Math.floor(100000+Math.random()*900000))
+}
 async function duplicateColetaMinimal(id, novaData) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(novaData || ''))) {
     const e = new Error('Nova data inválida.'); e.status = 400; throw e;
@@ -358,6 +375,60 @@ async function start() {
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_nf_materiais_chave ON nf_materiais (chave)');
   await pool.query('CREATE INDEX IF NOT EXISTS idx_nf_materiais_nf ON nf_materiais (nf)');
   await pool.query('CREATE INDEX IF NOT EXISTS idx_nf_materiais_classificacao ON nf_materiais (classificacao)');
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS driver_tracking_enrollments (
+      id BIGSERIAL PRIMARY KEY,
+      code_hash TEXT NOT NULL UNIQUE,
+      driver_name TEXT NOT NULL,
+      vehicle_plate TEXT,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ,
+      created_by BIGINT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_tracking_enrollments_exp ON driver_tracking_enrollments (expires_at DESC)');
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS driver_tracking_devices (
+      id BIGSERIAL PRIMARY KEY,
+      token_hash TEXT NOT NULL UNIQUE,
+      driver_name TEXT NOT NULL,
+      vehicle_plate TEXT,
+      device_name TEXT,
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      enrolled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen_at TIMESTAMPTZ
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_tracking_devices_driver ON driver_tracking_devices (lower(driver_name))');
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS driver_tracking_sessions (
+      id BIGSERIAL PRIMARY KEY,
+      device_id BIGINT NOT NULL REFERENCES driver_tracking_devices(id) ON DELETE CASCADE,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ended_at TIMESTAMPTZ,
+      status TEXT NOT NULL DEFAULT 'active'
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_tracking_sessions_device ON driver_tracking_sessions (device_id, started_at DESC)');
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS driver_tracking_points (
+      id BIGSERIAL PRIMARY KEY,
+      session_id BIGINT NOT NULL REFERENCES driver_tracking_sessions(id) ON DELETE CASCADE,
+      device_id BIGINT NOT NULL REFERENCES driver_tracking_devices(id) ON DELETE CASCADE,
+      latitude DOUBLE PRECISION NOT NULL,
+      longitude DOUBLE PRECISION NOT NULL,
+      accuracy_m REAL,
+      speed_mps REAL,
+      bearing_deg REAL,
+      battery_pct REAL,
+      captured_at TIMESTAMPTZ NOT NULL,
+      received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_tracking_points_device_time ON driver_tracking_points (device_id, captured_at DESC)');
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_tracking_points_session_time ON driver_tracking_points (session_id, captured_at DESC)');
+
   await pool.query("CREATE TABLE IF NOT EXISTS dashboard_users (id BIGSERIAL PRIMARY KEY, username TEXT NOT NULL, password_salt TEXT NOT NULL, password_hash TEXT NOT NULL, is_admin BOOLEAN NOT NULL DEFAULT FALSE, active BOOLEAN NOT NULL DEFAULT TRUE, permissions JSONB NOT NULL DEFAULT '[]'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())");
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_dashboard_users_username_lower ON dashboard_users (lower(username))');
   await pool.query('CREATE TABLE IF NOT EXISTS dashboard_sessions (token_hash TEXT PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES dashboard_users(id) ON DELETE CASCADE, expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
@@ -750,6 +821,140 @@ async function start() {
         return sendJson(res, 200, result.rows);
       }
 
+
+
+      if (req.method === 'POST' && u.pathname === '/api/tracking/enroll') {
+        try {
+          const body=await readJsonBodyLimited(req,64*1024);
+          const code=String(body.code||'').replace(/\D/g,'');
+          const deviceName=String(body.device_name||'Android').trim().slice(0,120);
+          if(!/^\d{6}$/.test(code))return sendJson(res,400,{ok:false,error:'Código de ativação inválido.'});
+          const codeHash=dashboardTokenHash(code);
+          const q=await pool.query(
+            "SELECT id::text AS id, driver_name, vehicle_plate FROM driver_tracking_enrollments WHERE code_hash=$1 AND used_at IS NULL AND expires_at>NOW() LIMIT 1",
+            [codeHash]
+          );
+          if(!q.rowCount)return sendJson(res,401,{ok:false,error:'Código expirado ou já utilizado.'});
+          const row=q.rows[0],token=crypto.randomBytes(32).toString('hex');
+          const client=await pool.connect();
+          try{
+            await client.query('BEGIN');
+            const dev=await client.query(
+              "INSERT INTO driver_tracking_devices(token_hash,driver_name,vehicle_plate,device_name,last_seen_at) VALUES($1,$2,$3,$4,NOW()) RETURNING id::text AS id",
+              [dashboardTokenHash(token),row.driver_name,row.vehicle_plate||'',deviceName]
+            );
+            await client.query('UPDATE driver_tracking_enrollments SET used_at=NOW() WHERE id=$1',[row.id]);
+            await client.query('COMMIT');
+            return sendJson(res,200,{ok:true,token,device_id:dev.rows[0].id,driver_name:row.driver_name,vehicle_plate:row.vehicle_plate||''})
+          }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao ativar dispositivo.'})}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/tracking/session/start') {
+        try {
+          const device=await trackingDeviceFromReq(req);
+          await pool.query("UPDATE driver_tracking_sessions SET status='ended',ended_at=COALESCE(ended_at,NOW()) WHERE device_id=$1 AND status='active'",[device.id]);
+          const q=await pool.query("INSERT INTO driver_tracking_sessions(device_id,status) VALUES($1,'active') RETURNING id::text AS id,started_at",[device.id]);
+          await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
+          return sendJson(res,200,{ok:true,session_id:q.rows[0].id,started_at:q.rows[0].started_at,driver_name:device.driver_name,vehicle_plate:device.vehicle_plate||''})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao iniciar rota.'})}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/tracking/session/stop') {
+        try {
+          const device=await trackingDeviceFromReq(req);
+          const body=await readJsonBodyLimited(req,32*1024),sessionId=String(body.session_id||'').trim();
+          if(sessionId)await pool.query("UPDATE driver_tracking_sessions SET status='ended',ended_at=NOW() WHERE id::text=$1 AND device_id=$2",[sessionId,device.id]);
+          else await pool.query("UPDATE driver_tracking_sessions SET status='ended',ended_at=NOW() WHERE device_id=$1 AND status='active'",[device.id]);
+          await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
+          return sendJson(res,200,{ok:true})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao encerrar rota.'})}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/tracking/point') {
+        try {
+          const device=await trackingDeviceFromReq(req);
+          const body=await readJsonBodyLimited(req,48*1024);
+          const sessionId=String(body.session_id||'').trim(),lat=Number(body.latitude),lon=Number(body.longitude);
+          const captured=new Date(body.captured_at||Date.now());
+          if(!sessionId)return sendJson(res,400,{ok:false,error:'Sessão não informada.'});
+          if(!Number.isFinite(lat)||lat<-90||lat>90||!Number.isFinite(lon)||lon<-180||lon>180)return sendJson(res,400,{ok:false,error:'Coordenadas inválidas.'});
+          if(!Number.isFinite(captured.getTime()))return sendJson(res,400,{ok:false,error:'Data/hora inválida.'});
+          const sess=await pool.query("SELECT id FROM driver_tracking_sessions WHERE id::text=$1 AND device_id=$2 AND status='active' LIMIT 1",[sessionId,device.id]);
+          if(!sess.rowCount)return sendJson(res,409,{ok:false,error:'Sessão de rota não está ativa.'});
+          await pool.query(
+            "INSERT INTO driver_tracking_points(session_id,device_id,latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+            [sessionId,device.id,lat,lon,Number.isFinite(Number(body.accuracy_m))?Number(body.accuracy_m):null,Number.isFinite(Number(body.speed_mps))?Number(body.speed_mps):null,Number.isFinite(Number(body.bearing_deg))?Number(body.bearing_deg):null,Number.isFinite(Number(body.battery_pct))?Number(body.battery_pct):null,captured.toISOString()]
+          );
+          await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
+          return sendJson(res,200,{ok:true})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao registrar posição.'})}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/painel/tracking/enrollments') {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const body=await readJsonBodyLimited(req,32*1024);
+          const driver=String(body.driver_name||'').trim(),plate=String(body.vehicle_plate||'').trim().toUpperCase().slice(0,20);
+          const hours=Math.max(1,Math.min(168,Number(body.expires_hours||24)));
+          if(!driver)return sendJson(res,400,{ok:false,error:'Informe o motorista.'});
+          let code='';
+          for(let i=0;i<10;i++){
+            code=trackingCode();
+            const exists=await pool.query('SELECT 1 FROM driver_tracking_enrollments WHERE code_hash=$1 AND used_at IS NULL AND expires_at>NOW() LIMIT 1',[dashboardTokenHash(code)]);
+            if(!exists.rowCount)break
+          }
+          await pool.query(
+            "INSERT INTO driver_tracking_enrollments(code_hash,driver_name,vehicle_plate,expires_at,created_by) VALUES($1,$2,$3,NOW()+($4*INTERVAL '1 hour'),$5)",
+            [dashboardTokenHash(code),driver,plate,hours,user.id]
+          );
+          return sendJson(res,201,{ok:true,code,driver_name:driver,vehicle_plate:plate,expires_hours:hours})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao gerar código.'})}
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/painel/tracking/live') {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const q=await pool.query(`
+            SELECT d.id::text AS device_id,d.driver_name,d.vehicle_plate,d.device_name,d.last_seen_at,
+                   s.id::text AS session_id,s.started_at,
+                   p.latitude,p.longitude,p.accuracy_m,p.speed_mps,p.bearing_deg,p.battery_pct,p.captured_at,
+                   EXTRACT(EPOCH FROM (NOW()-p.captured_at))::int AS age_seconds
+            FROM driver_tracking_devices d
+            LEFT JOIN LATERAL (
+              SELECT id,started_at FROM driver_tracking_sessions
+              WHERE device_id=d.id AND status='active'
+              ORDER BY started_at DESC LIMIT 1
+            ) s ON TRUE
+            LEFT JOIN LATERAL (
+              SELECT latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at
+              FROM driver_tracking_points
+              WHERE device_id=d.id
+              ORDER BY captured_at DESC LIMIT 1
+            ) p ON TRUE
+            WHERE d.active=TRUE
+            ORDER BY COALESCE(p.captured_at,d.last_seen_at) DESC NULLS LAST
+            LIMIT 300
+          `);
+          return sendJson(res,200,{ok:true,rows:q.rows,server_time:new Date().toISOString()})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao consultar rastreamento.'})}
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/painel/tracking/history') {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const sessionId=String(u.searchParams.get('session_id')||'').trim();
+          if(!sessionId)return sendJson(res,400,{ok:false,error:'Sessão não informada.'});
+          const q=await pool.query(
+            "SELECT latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at FROM driver_tracking_points WHERE session_id::text=$1 ORDER BY captured_at ASC LIMIT 10000",
+            [sessionId]
+          );
+          return sendJson(res,200,{ok:true,rows:q.rows})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao consultar histórico.'})}
+      }
 
       if (req.method === 'GET' && u.pathname === '/api/painel/nf-materiais') {
         try {
