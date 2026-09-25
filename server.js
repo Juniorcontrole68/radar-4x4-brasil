@@ -3160,13 +3160,54 @@ if(u.pathname==='/api/programacao-entregas'&&req.method==='GET'){try{
 if(u.pathname==='/api/roteirizador/lista'){try{
   if(!dashboardHasAny(authUser,['dashboard','roteirizador','ssw_saidas','evolucao','tracking']))return dashboardDeny(res);
   const date=u.searchParams.get('date')||spDateISO();
-  let rows=[];
-  if(date===spDateISO()){try{rows=(await fetchSsw38Quick()).rows||[]}catch{}}
-  if(!rows.length){const x=await getSswMotoristasFast(date,date);rows=x.romaneios38||[]}
-  const clean=rows.map(x=>({romaneio:x.romaneio||'',motorista:x.motorista||'',veiculo:x.veiculo||'',entregas:Number(x.qtdeCtrcs||0)}))
-    .filter(x=>x.romaneio).sort((a,b)=>String(a.motorista).localeCompare(String(b.motorista),'pt-BR')||String(a.romaneio).localeCompare(String(b.romaneio),'pt-BR'));
+  let romRows=[],operation=null;
+  if(date===spDateISO()){try{romRows=(await fetchSsw38Quick()).rows||[]}catch{}}
+  try{operation=await getSswMotoristasFast(date,date)}catch{}
+  if(!romRows.length)romRows=operation?.romaneios38||[];
+
+  const byKey=new Map(),normKey=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
+  const add=(x,origem)=>{
+    const motorista=String(x.motorista||'').trim(),veiculo=String(x.veiculo||'').trim();
+    if(!motorista)return;
+    const key=normKey(motorista)+'|'+normKey(veiculo);
+    if(!byKey.has(key))byKey.set(key,{motorista,veiculo,romaneios:[],entregas:0,origens:new Set()});
+    const item=byKey.get(key);
+    const roms=Array.isArray(x.romaneios)?x.romaneios:[x.romaneio].filter(Boolean);
+    for(const rom of roms){const v=String(rom||'').trim();if(v&&!item.romaneios.includes(v))item.romaneios.push(v)}
+    item.entregas=Math.max(item.entregas,Number(x.qtdeCtrcs||x.total||x.saidas||x.entregas||0));
+    item.origens.add(origem)
+  };
+
+  for(const x of romRows)add(x,'romaneio');
+  for(const x of (operation?.motoristas38||[]))add(x,'romaneio');
+  for(const x of (operation?.motoristas||[]))add(x,'manifesto');
+
+  // Complementa com CT-es que efetivamente saíram/foram baixados no dia.
+  // Esses registros representam operação em curso/concluída mesmo quando o romaneio
+  // já não aparece na consulta rápida da opção 38.
+  const opGroups=new Map();
+  for(const r of (operation?.rows||[])){
+    if(!(r.saida||r.entregue))continue;
+    const motorista=String(r.motorista||'').trim(),veiculo=String(r.veiculo||'').trim();
+    if(!motorista)continue;
+    const key=normKey(motorista)+'|'+normKey(veiculo);
+    if(!opGroups.has(key))opGroups.set(key,{motorista,veiculo,romaneios:[],saidas:0});
+    const g=opGroups.get(key);g.saidas++;
+    const rom=String(r.romaneio||'').trim();if(rom&&!g.romaneios.includes(rom))g.romaneios.push(rom)
+  }
+  for(const g of opGroups.values())add(g,'manifesto');
+
+  const clean=[...byKey.values()].map(x=>({
+    romaneio:x.romaneios[0]||'',
+    romaneios:x.romaneios,
+    motorista:x.motorista,
+    veiculo:x.veiculo,
+    entregas:x.entregas,
+    origem:x.origens.has('romaneio')&&x.origens.has('manifesto')?'romaneio_manifesto':(x.origens.has('romaneio')?'romaneio':'manifesto'),
+    manifesto:x.origens.has('manifesto')
+  })).sort((a,b)=>String(a.motorista).localeCompare(String(b.motorista),'pt-BR')||String(a.veiculo).localeCompare(String(b.veiculo),'pt-BR'));
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
-  return res.end(JSON.stringify({ok:true,date,baseAddress:ROUTE_BASE_ADDRESS,rows:clean}))
+  return res.end(JSON.stringify({ok:true,date,baseAddress:ROUTE_BASE_ADDRESS,rows:clean,romaneios:clean.filter(x=>x.romaneios.length).length,manifestos:clean.filter(x=>x.manifesto).length}))
 }catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/roteirizador/endereco'){try{
   if(!dashboardHasAny(authUser,['dashboard','roteirizador']))return dashboardDeny(res);
