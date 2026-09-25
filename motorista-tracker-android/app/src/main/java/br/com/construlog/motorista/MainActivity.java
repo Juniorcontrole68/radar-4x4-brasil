@@ -51,9 +51,16 @@ public class MainActivity extends Activity {
         logo.setTextColor(Color.rgb(15, 118, 110));
         root.addView(logo);
 
-        TextView title = text("Motorista", 28, true);
+        TextView title = text(BuildConfig.TEST_MODE ? "Motorista TESTE" : "Motorista", 28, true);
         title.setPadding(0, dp(4), 0, dp(4));
         root.addView(title);
+
+        if (BuildConfig.TEST_MODE) {
+            TextView testBadge = text("VERSÃO DE TESTE • pode ficar instalada junto com a versão normal", 13, true);
+            testBadge.setTextColor(Color.rgb(180, 83, 9));
+            testBadge.setPadding(0, 0, 0, dp(12));
+            root.addView(testBadge);
+        }
 
         TextView privacy = text(
                 "O rastreamento só funciona enquanto você mantiver uma rota ativa. " +
