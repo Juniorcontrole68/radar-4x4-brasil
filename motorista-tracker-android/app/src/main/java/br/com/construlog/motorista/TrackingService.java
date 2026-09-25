@@ -39,22 +39,26 @@ public class TrackingService extends Service implements LocationListener {
     private final Runnable heartbeat = new Runnable() {
         @Override public void run() {
             if (!locationStarted) return;
-            try {
-                long now = System.currentTimeMillis();
-                long heartbeatMs = BuildConfig.TEST_MODE ? 10000L : 60000L;
-                if (lastLocation == null && locationManager != null) {
-                    try { lastLocation = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER); } catch (Exception ignored) {}
-                    if (lastLocation == null) {
-                        try { lastLocation = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER); } catch (Exception ignored) {}
+            final String token = prefs.getString("token", "");
+            final String session = prefs.getString("session_id", "");
+            if (!token.isEmpty() && !session.isEmpty()) {
+                executor.submit(() -> {
+                    try {
+                        ApiClient.heartbeat(token, session);
+                        prefs.edit()
+                                .putLong("last_heartbeat_at", System.currentTimeMillis())
+                                .putString("tracking_state","Rastreamento ativo • app conectado")
+                                .remove("last_error")
+                                .apply();
+                    } catch (Exception e) {
+                        prefs.edit()
+                                .putString("last_error", String.valueOf(e.getMessage()))
+                                .apply();
                     }
-                }
-                if (lastLocation != null && now - lastSentAt >= heartbeatMs) {
-                    sendLocation(lastLocation, true);
-                }
-            } finally {
-                if (locationStarted && main != null) {
-                    main.postDelayed(this, BuildConfig.TEST_MODE ? 5000L : 30000L);
-                }
+                });
+            }
+            if (locationStarted && main != null) {
+                main.postDelayed(this, BuildConfig.TEST_MODE ? 10000L : 60000L);
             }
         }
     };
@@ -150,7 +154,7 @@ public class TrackingService extends Service implements LocationListener {
             }
             if (last != null) onLocationChanged(last);
             main.removeCallbacks(heartbeat);
-            main.postDelayed(heartbeat, BuildConfig.TEST_MODE ? 5000L : 30000L);
+            main.postDelayed(heartbeat, BuildConfig.TEST_MODE ? 5000L : 15000L);
         } catch (SecurityException e) {
             updateNotification("Permissão de localização ausente");
             stopSelf();
@@ -164,15 +168,14 @@ public class TrackingService extends Service implements LocationListener {
     public void onLocationChanged(Location location) {
         if (location == null) return;
         lastLocation = location;
-        sendLocation(location, false);
+        sendLocation(location);
     }
 
-    private void sendLocation(Location location, boolean heartbeatSend) {
+    private void sendLocation(Location location) {
         if (location == null) return;
         long now = System.currentTimeMillis();
         long minSend = BuildConfig.TEST_MODE ? 5000L : 20000L;
-        if (!heartbeatSend && now - lastSentAt < minSend) return;
-        if (heartbeatSend && now - lastSentAt < (BuildConfig.TEST_MODE ? 10000L : 60000L)) return;
+        if (now - lastSentAt < minSend) return;
         lastSentAt = now;
 
         String token = prefs.getString("token", "");
@@ -188,10 +191,10 @@ public class TrackingService extends Service implements LocationListener {
         prefs.edit()
                 .putString("last_gps", String.format(java.util.Locale.US, "%.6f, %.6f", lat, lon))
                 .putLong("last_gps_at", System.currentTimeMillis())
-                .putString("tracking_state",heartbeatSend ? "Rastreamento ativo • enviando batimento GPS" : "GPS recebido • enviando ao servidor")
+                .putString("tracking_state","GPS recebido • enviando ao servidor")
                 .apply();
 
-        updateNotification(heartbeatSend ? "Rastreamento ativo • sinal confirmado" : "Rastreamento ativo • GPS atualizado");
+        updateNotification("Rastreamento ativo • GPS atualizado");
         executor.submit(() -> {
             try {
                 ApiClient.sendPoint(token, session, lat, lon, accuracy, speed, bearing, battery);
