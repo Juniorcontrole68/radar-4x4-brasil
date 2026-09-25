@@ -55,6 +55,7 @@ const PERMISSION_OPTIONS=[
   ['cidade_destino','Entregas por cidade destino'],
   ['roteirizador','Roteirizador de romaneios'],
   ['programacao','Programação de Entregas'],
+  ['tracking','Motoristas em Rota'],
   ['final_carregamento','Registro de Carga e Descarga'],
   ['operacional','Operacional / Entregas'],
   ['financeiro','Financeiro'],
@@ -75,7 +76,7 @@ function hasPerm(p){return !!(AUTH&&(AUTH.is_admin||AUTH.permissions?.includes('
 function hasAnyPerm(list){return list.some(hasPerm)}
 function tabAllowed(tab){
   const map={
-    dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',
+    dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',rastreamento:'tracking',
     agendamentos:'agendamentos',ajudantes:'ajudantes',
     'ssw-motoristas':'ssw_saidas','motoristas-evolucao':'evolucao',
     'ssw-atrasos':'ssw_atrasos','ssw-remetentes':'remetentes',
@@ -88,7 +89,7 @@ function tabAllowed(tab){
   return map[tab]?hasPerm(map[tab]):false
 }
 function applyPermissions(){
-  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',agendamentos:'agendamentos',ajudantes:'ajudantes'};
+  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',rastreamento:'tracking',agendamentos:'agendamentos',ajudantes:'ajudantes'};
   document.querySelectorAll('.nav button').forEach(b=>{
     let show=true;
     if(b.dataset.adminOnly==='1')show=!!AUTH?.is_admin;
@@ -227,6 +228,7 @@ async function showAuthenticatedApp(user){
   setupLoadingForm();
   setupAgCopy();
   setupDeliveryProgram();
+  setupTracking();
   setupRoteirizador();
   if(AUTH.is_admin)loadDashboardUsers();
   if(!window.__appStarted){
@@ -1825,6 +1827,130 @@ async function calculateRoute(){
   }catch(e){if(status)status.textContent='Erro ao calcular rota: '+e.message}
   finally{if(btn){btn.disabled=false;btn.textContent='Otimizar rota'}}
 }
+
+let TRACKING_MAP=null,TRACKING_LAYER=null,TRACKING_DATA=null,TRACKING_ROUTE_DATA=null;
+const TRACKING_COLORS=['#2563eb','#dc2626','#16a34a','#9333ea','#ea580c','#0891b2','#ca8a04','#db2777','#4f46e5','#059669'];
+const TRACKING_DEVIATION_KM=3;
+function trackingNorm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim()}
+function trackingAgeLabel(sec){
+  const s=Number(sec);if(!Number.isFinite(s))return'—';
+  if(s<60)return Math.max(0,Math.round(s))+' s';
+  if(s<3600)return Math.round(s/60)+' min';
+  return (s/3600).toFixed(1).replace('.',',')+' h'
+}
+function trackingPointSegmentKm(lat,lon,lat1,lon1,lat2,lon2){
+  const rad=Math.PI/180,mean=((lat+lat1+lat2)/3)*rad,kx=111.32*Math.cos(mean),ky=110.574;
+  const px=lon*kx,py=lat*ky,x1=lon1*kx,y1=lat1*ky,x2=lon2*kx,y2=lat2*ky,dx=x2-x1,dy=y2-y1;
+  const den=dx*dx+dy*dy,t=den?Math.max(0,Math.min(1,((px-x1)*dx+(py-y1)*dy)/den)):0;
+  return Math.hypot(px-(x1+t*dx),py-(y1+t*dy))
+}
+function trackingDistanceToGeometry(lat,lon,geometry){
+  const coords=geometry?.coordinates||[];if(coords.length<2)return null;
+  let best=Infinity;
+  for(let i=1;i<coords.length;i++){
+    const a=coords[i-1],b=coords[i];
+    if(!Array.isArray(a)||!Array.isArray(b))continue;
+    const d=trackingPointSegmentKm(Number(lat),Number(lon),Number(a[1]),Number(a[0]),Number(b[1]),Number(b[0]));
+    if(Number.isFinite(d)&&d<best)best=d
+  }
+  return Number.isFinite(best)?best:null
+}
+function trackingFindRoute(driver){
+  const n=trackingNorm(driver);if(!n)return null;
+  const routes=TRACKING_ROUTE_DATA?.actual?.routes||[];
+  return routes.find(r=>trackingNorm(r.motorista)===n)||routes.find(r=>{
+    const rn=trackingNorm(r.motorista);return rn&&n&&(rn.includes(n)||n.includes(rn))
+  })||null
+}
+function trackingStatus(row){
+  if(!row.session_id)return{key:'off',label:'Inativo',distance:null};
+  const age=Number(row.age_seconds);
+  if(!Number.isFinite(Number(row.latitude))||!Number.isFinite(Number(row.longitude)))return{key:'warn',label:'Aguardando GPS',distance:null};
+  if(Number.isFinite(age)&&age>180)return{key:'bad',label:'Sem sinal • '+trackingAgeLabel(age),distance:null};
+  const route=trackingFindRoute(row.driver_name);
+  if(!route?.geometry)return{key:'warn',label:'Ativo • sem rota vinculada',distance:null};
+  const d=trackingDistanceToGeometry(Number(row.latitude),Number(row.longitude),route.geometry);
+  if(d===null)return{key:'warn',label:'Ativo • rota indisponível',distance:null};
+  return d<=TRACKING_DEVIATION_KM
+    ?{key:'ok',label:'Na rota',distance:d}
+    :{key:'bad',label:'Desvio de '+d.toFixed(1).replace('.',',')+' km',distance:d}
+}
+function renderTrackingMap(rows){
+  const box=$('#trackingMap');if(!box)return;
+  if(typeof L==='undefined'){box.innerHTML='<div class="muted" style="padding:22px">Mapa indisponível.</div>';return}
+  if(!TRACKING_MAP){
+    TRACKING_MAP=L.map(box,{zoomControl:true});
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(TRACKING_MAP)
+  }
+  if(TRACKING_LAYER)TRACKING_LAYER.remove();
+  TRACKING_LAYER=L.layerGroup().addTo(TRACKING_MAP);
+  const bounds=[];
+  (rows||[]).forEach((row,i)=>{
+    const color=TRACKING_COLORS[i%TRACKING_COLORS.length],route=trackingFindRoute(row.driver_name),status=trackingStatus(row);
+    if(route?.geometry?.coordinates?.length){
+      const coords=route.geometry.coordinates.map(x=>[Number(x[1]),Number(x[0])]).filter(x=>Number.isFinite(x[0])&&Number.isFinite(x[1]));
+      if(coords.length){L.polyline(coords,{color,weight:4,opacity:.38,dashArray:'7 7'}).addTo(TRACKING_LAYER).bindTooltip('Rota • '+safe(row.driver_name));coords.forEach(x=>bounds.push(x))}
+    }
+    const lat=Number(row.latitude),lon=Number(row.longitude);
+    if(Number.isFinite(lat)&&Number.isFinite(lon)){
+      const icon=L.divIcon({className:'',html:'<div style="width:30px;height:30px;border-radius:50%;background:'+color+';border:3px solid #fff;box-shadow:0 2px 7px #0006;display:grid;place-items:center;color:#fff;font-size:15px">🚚</div>',iconSize:[30,30],iconAnchor:[15,15]});
+      L.marker([lat,lon],{icon}).addTo(TRACKING_LAYER).bindPopup('<b>'+safe(row.driver_name)+'</b><br>'+safe(row.vehicle_plate||'')+'<br>'+safe(status.label)+'<br>Última posição: '+safe(trackingAgeLabel(row.age_seconds)));
+      bounds.push([lat,lon])
+    }
+  });
+  if(bounds.length){const bb=L.latLngBounds(bounds);if(bb.isValid())TRACKING_MAP.fitBounds(bb.pad(.12))}
+  else TRACKING_MAP.setView([-22.739,-47.331],9);
+  setTimeout(()=>TRACKING_MAP.invalidateSize(),100)
+}
+function renderTracking(rows){
+  TRACKING_DATA=rows||[];
+  const statuses=TRACKING_DATA.map(r=>({r,s:trackingStatus(r)}));
+  const active=statuses.filter(x=>x.r.session_id).length,on=statuses.filter(x=>x.s.key==='ok').length,dev=statuses.filter(x=>x.r.session_id&&x.s.key==='bad'&&x.s.distance!==null).length,offline=statuses.filter(x=>x.r.session_id&&x.s.key==='bad'&&x.s.distance===null).length;
+  const set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
+  set('#trackingActive',nf(active));set('#trackingOnRoute',nf(on));set('#trackingDeviation',nf(dev));set('#trackingOffline',nf(offline));
+  const tableEl=$('#trackingTable');
+  if(tableEl){
+    const body=statuses.map(({r,s})=>{
+      const speed=Number(r.speed_mps);const kmh=Number.isFinite(speed)?speed*3.6:null;
+      return '<tr><td><b>'+safe(r.driver_name||'—')+'</b></td><td>'+safe(r.vehicle_plate||'—')+'</td><td><span class="tracking-status '+safe(s.key)+'">'+safe(s.label)+'</span></td><td>'+safe(r.session_id?'Em rota':'—')+'</td><td>'+safe(trackingAgeLabel(r.age_seconds))+'</td><td>'+(kmh!==null?kmh.toFixed(0)+' km/h':'—')+'</td><td>'+(r.battery_pct!==null&&r.battery_pct!==undefined?Math.round(Number(r.battery_pct))+'%':'—')+'</td><td>'+safe(r.device_name||'—')+'</td></tr>'
+    }).join('');
+    tableEl.innerHTML='<thead><tr><th>Motorista</th><th>Placa</th><th>Status</th><th>Sessão</th><th>Última posição</th><th>Velocidade</th><th>Bateria</th><th>Celular</th></tr></thead><tbody>'+body+'</tbody>'
+  }
+  const info=$('#trackingInfo');if(info)info.textContent='Atualizado às '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})+' • desvio configurado em '+String(TRACKING_DEVIATION_KM).replace('.',',')+' km.';
+  renderTrackingMap(TRACKING_DATA)
+}
+async function refreshTracking(){
+  if(window.__trackingBusy)return;window.__trackingBusy=true;
+  const info=$('#trackingInfo');if(info)info.textContent='Atualizando posições e rotas…';
+  try{
+    const [liveRes,routeRes]=await Promise.all([
+      fetch('/api/tracking/live?t='+Date.now(),{cache:'no-store'}),
+      fetch('/api/programacao-simulacao?t='+Date.now(),{cache:'no-store'})
+    ]);
+    const live=await liveRes.json().catch(()=>({})),routes=await routeRes.json().catch(()=>({}));
+    if(!liveRes.ok||!live.ok)throw new Error(live.error||'Falha ao consultar GPS.');
+    TRACKING_ROUTE_DATA=routeRes.ok&&routes.ok?routes:null;
+    renderTracking(Array.isArray(live.rows)?live.rows:[])
+  }catch(e){if(info)info.textContent='Erro no rastreamento: '+e.message}
+  finally{window.__trackingBusy=false}
+}
+async function generateTrackingCode(){
+  const driver=$('#trackingDriverName')?.value.trim()||'',plate=$('#trackingVehiclePlate')?.value.trim()||'',msg=$('#trackingEnrollMsg'),codeBox=$('#trackingActivationCode'),btn=$('#trackingGenerateCode');
+  if(!driver){if(msg)msg.textContent='Informe o nome do motorista.';return}
+  if(btn)btn.disabled=true;
+  try{
+    const r=await fetch('/api/tracking/enrollment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({driver_name:driver,vehicle_plate:plate,expires_hours:24})});
+    const j=await r.json().catch(()=>({}));if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao gerar código.');
+    if(codeBox){codeBox.style.display='block';codeBox.textContent=j.code}
+    if(msg)msg.textContent='Código válido por 24 horas e usado apenas uma vez. Informe este código ao motorista no primeiro acesso ao app.'
+  }catch(e){if(msg)msg.textContent='Erro: '+e.message}
+  finally{if(btn)btn.disabled=false}
+}
+function setupTracking(){
+  if($('#trackingGenerateCode'))$('#trackingGenerateCode').onclick=generateTrackingCode;
+  if($('#trackingRefresh'))$('#trackingRefresh').onclick=refreshTracking
+}
+
 function setupRoteirizador(){
   const d=$('#routeDate');if(d&&!d.value)d.value=iso(new Date());
   if(d)d.onchange=()=>{ROUTE_PLAN=null;ROUTE_MANUAL_ORDER=[];ROUTE_EXTRA_STOPS=[];loadRouteManifests(true)};
@@ -1862,6 +1988,8 @@ function loadHeavyForTab(tab){
     setTimeout(()=>refreshLoadingRecords(true),50);
   }else if(tab==='programacao'&&hasAnyPerm(['programacao','roteirizador','dashboard','ssw_saidas'])){
     setTimeout(()=>refreshDeliveryProgram(false),60);
+  }else if(tab==='rastreamento'&&hasAnyPerm(['tracking','dashboard'])){
+    setTimeout(()=>refreshTracking(),60);
   }else if(tab==='agendamentos-copia'&&hasAnyPerm(['dashboard','agendamentos','agendamentos_copia'])){
     setTimeout(()=>refreshAgCopy(false),50);
   }else if(tab==='roteirizador'&&hasPerm('roteirizador')){
@@ -1908,6 +2036,7 @@ async function start(){
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasPerm('receita_ssw')&&['receita-ssw','dashboards'].includes(t))refreshSswReceita()},120000);
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasAnyPerm(['remetentes','remetentes_comparativo'])&&['ssw-remetentes','ssw-remetentes-comparativo','dashboards'].includes(t))refreshSswRemetentes()},120000);
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasAnyPerm(['ssw_saidas','evolucao','cidade_destino'])&&['ssw-motoristas','motoristas-evolucao','dashboards'].includes(t))refreshSswMotoristas()},120000);
+  setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&t==='rastreamento'&&hasAnyPerm(['tracking','dashboard']))refreshTracking()},30000);
   window.addEventListener('focus',()=>refreshData(false));
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshData(false)})
 }
@@ -1929,6 +2058,7 @@ function openTab(tab){
     'motoristas-evolucao':'Evolução por Motorista',
     'conferencia':'Registro de Carga e Descarga',
     'programacao':'Programação de Entregas',
+    'rastreamento':'Motoristas em Rota',
     'roteirizador':'Roteirizador SSW',
     'agendamentos-copia':'Consulta de Agendamentos',
     'usuarios':'Usuários e Acessos'
