@@ -2379,7 +2379,7 @@ function printTrackingHistory(){
 }
 async function trackingFetchPlan(romaneio,date){
   const key=date+'|'+romaneio,hit=TRACKING_PLAN_CACHE.get(key);
-  if(hit&&Date.now()-hit.at<5*60*1000)return hit.value;
+  if(hit&&Date.now()-hit.at<30*1000)return hit.value;
   const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(date)+'&romaneio='+encodeURIComponent(romaneio)+'&t='+Date.now(),{cache:'no-store'});
   const j=await r.json().catch(()=>({}));
   if(!r.ok||!j.ok)throw new Error(j.error||('Falha ao montar rota '+romaneio));
@@ -2390,7 +2390,7 @@ async function trackingBuildLogicalPlan(row,date){
   const driver=String(row?.driver_name||'').trim(),plate=String(row?.vehicle_plate||'').trim();
   if(!driver&&!plate)return null;
   const key='manifestos|'+date+'|'+trackingDriverKey(driver,plate),hit=TRACKING_PLAN_CACHE.get(key);
-  if(hit&&Date.now()-hit.at<2*60*1000)return hit.value;
+  if(hit&&Date.now()-hit.at<20*1000)return hit.value;
   try{
     const q=new URLSearchParams({date,driver,plate,t:String(Date.now())});
     const r=await fetch('/api/tracking/planned-route?'+q.toString(),{cache:'no-store'});
