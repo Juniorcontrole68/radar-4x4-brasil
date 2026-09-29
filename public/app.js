@@ -2394,15 +2394,26 @@ async function trackingHistory(sessionId){
   return rows
 }
 function trackingArrivalAt(stop,history){
+  // Visita só pode ser confirmada por GPS em coordenada suficientemente precisa.
+  // Ponto aproximado apenas por cidade/simulação não confirma visita ao cliente.
+  const precision=String(stop?.precision||'').toLowerCase();
+  const source=String(stop?.coordinateSource||'').toLowerCase();
+  if(precision==='cidade'||source.includes('cidade-aproximada')||source.includes('simulacao')||source.includes('simulação'))return null;
+
+  let best=null;
   for(const p of (history||[])){
     const acc=Math.max(0,Number(p.accuracy_m)||0);
-    const radiusKm=Math.max(.25,Math.min(.60,.15+acc/1000));
-    if(trackingHaversineKm(p,stop)<=radiusKm){
-      const d=trackingParseDateTime(p.captured_at);
-      if(d)return{date:d,raw:p.captured_at,distanceKm:trackingHaversineKm(p,stop),accuracyM:acc}
-    }
+    if(acc>180)continue;
+    const distanceKm=trackingHaversineKm(p,stop);
+    // Raio operacional máximo de 200 m, reduzido quando o GPS está mais preciso.
+    const radiusKm=Math.max(.10,Math.min(.20,.10+Math.min(acc,120)/1200));
+    if(distanceKm>radiusKm)continue;
+    const d=trackingParseDateTime(p.captured_at);
+    if(!d)continue;
+    const candidate={date:d,raw:p.captured_at,distanceKm,accuracyM:acc};
+    if(!best||candidate.date<best.date)best=candidate
   }
-  return null
+  return best
 }
 function xTime(v){const t=v?.getTime?.();return Number.isFinite(t)?t:Number.MAX_SAFE_INTEGER}
 function trackingAnalyzePlan(row,plan,history){
