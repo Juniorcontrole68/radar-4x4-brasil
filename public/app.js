@@ -1301,7 +1301,7 @@ async function refreshData(first=false){
     if(needHelp){
       if(rh.status==='fulfilled'){S.help=rh.value||[];updated=true}else errors.push('Ajudantes: '+(rh.reason?.message||rh.reason))
     }else S.help=[];
-    if(updated||!needOps){filters();update()}
+    filters();update();
     const er=$('#err');
     if(errors.length){
       er.style.display='block';
@@ -1391,10 +1391,19 @@ function renderLoadingRecords(rows){
   }
   const today=iso(new Date()),todayRows=rows.filter(r=>{const d=new Date(r.capturada_em);return !isNaN(d)&&iso(d)===today});
   const set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
+  const todayLoads=todayRows.filter(r=>String(r.tipo||'carregamento').toLowerCase()!=='descarga');
+  const todayUnloads=todayRows.filter(r=>String(r.tipo||'').toLowerCase()==='descarga');
+  const todayQty=todayRows.reduce((a,r)=>a+Number(r.quantidade_entregas||0),0);
   set('#hubLoadCount',nf(todayRows.length));
   set('#hubLoadLast',rows.length?new Date(rows[0].capturada_em).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'—');
+  set('#overviewLoadCount',nf(todayLoads.length));
+  set('#overviewUnloadCount',nf(todayUnloads.length));
+  set('#overviewLoadQty',nf(todayQty));
+  set('#overviewLoadLast',rows.length?new Date(rows[0].capturada_em).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'—');
   const info=$('#hubLoadInfo');
-  if(info)info.textContent=rows.length?('Último: '+cargoTypeLabel(rows[0].tipo)+' • '+(rows[0].motorista||'—')+' • '+nf(Number(rows[0].quantidade_entregas||0))+' • '+loadingDateTime(rows[0].capturada_em)):'Nenhum registro realizado ainda.'
+  if(info)info.textContent=rows.length?('Último: '+cargoTypeLabel(rows[0].tipo)+' • '+(rows[0].motorista||'—')+' • '+nf(Number(rows[0].quantidade_entregas||0))+' • '+loadingDateTime(rows[0].capturada_em)):'Nenhum registro realizado ainda.';
+  const overviewInfo=$('#overviewLoadInfo');
+  if(overviewInfo)overviewInfo.textContent=rows.length?('Último registro: '+cargoTypeLabel(rows[0].tipo)+' • '+(rows[0].motorista||'—')+' • '+loadingDateTime(rows[0].capturada_em)):'Nenhum carregamento ou descarga registrado ainda.'
 }
 async function refreshLoadingRecords(useFilters=true){
   if(window.__loadingRecordsBusy)return;
@@ -3210,6 +3219,7 @@ function setupRoteirizador(){
 function loadHeavyForTab(tab){
   if(tab==='dashboard'){
     if(hasAnyPerm(['dashboard','agendamentos','agendamentos_copia']))setTimeout(()=>refreshAgCopy(false),80);
+    if(hasPerm('final_carregamento'))setTimeout(()=>refreshLoadingRecords(false),140);
   }else if(tab==='dashboards'){
     if(hasAnyPerm(['ssw_saidas','evolucao','cidade_destino']))setTimeout(()=>refreshSswMotoristas(),100);
     if(hasPerm('evolucao'))setTimeout(()=>refreshDriverProgress(),180);
