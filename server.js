@@ -2521,6 +2521,7 @@ const ROUTE_BASE_ADDRESS='Avenida do Algodão, 316, Distrito Industrial Salto Gr
 const ROUTE_BASE_FALLBACK={lat:-22.69552,lon:-47.307,displayName:ROUTE_BASE_ADDRESS,city:'Americana',state:'São Paulo',fallback:true};
 const ROUTE_MAX_RADIUS_METERS=300000;
 const ROUTE_GEO_CACHE=new Map();
+const ROUTE_CEP_CACHE=new Map();
 const ROUTE_GEO_INFLIGHT=new Map();
 let ROUTE_GEO_QUEUE=Promise.resolve();
 const ROUTE_PLAN_CACHE=new Map();
@@ -2579,6 +2580,28 @@ function routeHaversine(a,b){
   const h=Math.sin(dlat/2)**2+Math.cos(la1)*Math.cos(la2)*Math.sin(dlon/2)**2;
   return 2*R*Math.asin(Math.sqrt(h))
 }
+async function routeGeocodeCep(cep,center=null,maxRadiusMeters=null){
+  const digits=String(cep||'').replace(/\D/g,'');
+  if(digits.length!==8)return null;
+  if(ROUTE_CEP_CACHE.has(digits))return ROUTE_CEP_CACHE.get(digits);
+  try{
+    const u='https://brasilapi.com.br/api/cep/v2/'+digits;
+    const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Roteirizador/1.0'},signal:AbortSignal.timeout(8000)});
+    const j=await r.json().catch(()=>({}));
+    const lat=Number(j?.location?.coordinates?.latitude),lon=Number(j?.location?.coordinates?.longitude);
+    if(r.ok&&Number.isFinite(lat)&&Number.isFinite(lon)&&Math.abs(lat)>0.01&&Math.abs(lon)>0.01){
+      const v={lat,lon,displayName:[j.street,j.neighborhood,j.city,j.state,j.cep].filter(Boolean).join(', '),city:j.city||'',state:j.state||'',source:'BrasilAPI CEP'};
+      if(center&&Number.isFinite(center.lat)&&Number.isFinite(center.lon)){
+        v.distanceFromBaseMeters=routeHaversine(center,v);
+        if(Number(maxRadiusMeters)>0&&v.distanceFromBaseMeters>Number(maxRadiusMeters))return null
+      }
+      ROUTE_CEP_CACHE.set(digits,v);
+      return v
+    }
+  }catch{}
+  return null
+}
+
 async function routeGeocode(query,center=null,maxRadiusMeters=null){
   const q=String(query||'').trim();
   if(!q)return null;
@@ -2960,12 +2983,15 @@ async function buildRoutePlan(date='',romaneio=''){
       geo=exactCoord;precision='ssw-coordenada';coordinateSource='SSW';
       query='Coordenada cadastrada no SSW'
     }else{
-      if(pending?.cidade){query=[cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');precision='cidade'}
-      else if(parts.cep){query=parts.cep+', Brasil';precision='cep'}
+      if(parts.cep){
+        query=parts.cep+', Brasil';precision='cep';
+        geo=await routeGeocodeCep(parts.cep,baseGeo,ROUTE_MAX_RADIUS_METERS);
+        if(geo)coordinateSource='CEP BrasilAPI'
+      }else if(pending?.cidade){query=[cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');precision='cidade'}
       else if(parts.endereco){query=[parts.endereco,parts.numero,parts.bairro,cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');precision='endereco'}
       else if(cidade){query=[cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');precision='cidade'}
       if(!query){rejectedStops.push({ctrc:meta.ctrc||'',nf:meta.nf||'',destinatario,cidade,uf,reason:'sem coordenada/cidade/endereço'});continue}
-      geo=await routeGeocode(query,baseGeo,ROUTE_MAX_RADIUS_METERS);
+      if(!geo)geo=await routeGeocode(query,baseGeo,ROUTE_MAX_RADIUS_METERS);
       // Se CEP/endereço não localizar, mantém a entrega na rota usando a cidade
       // como posição aproximada. Isso é melhor do que deixar o motorista sem rota.
       if(!geo&&cidade){
@@ -2995,6 +3021,10 @@ async function buildRoutePlan(date='',romaneio=''){
       baixaCodigo:detail?.ocorrenciaCodigo||''
     })
   }
+  console.log('ROTEIRIZADOR PARADAS '+String(selected.romaneio||'')+': '+JSON.stringify({
+    metas:metas.length,validas:stops.length,rejeitadas:rejectedStops.length,
+    porFonte:stops.reduce((a,x)=>{const k=x.coordinateSource||x.precision||'desconhecida';a[k]=(a[k]||0)+1;return a},{})
+  }));
   if(!stops.length){
     throw new Error('Nenhuma entrega válida ficou dentro do raio máximo de 300 km da base. Use o endereço manual ou leia o CT-e para corrigir as paradas.');
   }
