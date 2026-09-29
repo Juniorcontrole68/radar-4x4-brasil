@@ -2931,10 +2931,36 @@ async function routeLookupCteBarcode(code,date=''){
   }
 }
 
+async function routeRefreshCachedDeliveryStatus(plan,target){
+  if(!plan||target!==spDateISO())return plan;
+  try{
+    const op=await getSswMotoristasFast(target,target);
+    const byCtrc=new Map(),byNf=new Map();
+    for(const r of (op?.rows||[])){
+      const c=normCtrcLoose(r.ctrcOficial||r.ctrc),n=normNf(r.nf);
+      if(c)byCtrc.set(c,r);
+      if(n)byNf.set(n,r)
+    }
+    const patch=s=>{
+      if(!s)return s;
+      const r=byCtrc.get(normCtrcLoose(s.ctrc))||byNf.get(normNf(s.nf));
+      if(!r)return s;
+      const baixaAt=r.baixaDataHora||((r.dataEntrega||r.dataOcorrencia||'')+((r.horaEntrega||r.horaOcorrencia)?' '+(r.horaEntrega||r.horaOcorrencia):''));
+      return{...s,entregue:!!r.entregue,baixaAt:baixaAt||s.baixaAt||'',baixaOcorrencia:r.ocorrencia||s.baixaOcorrencia||'',baixaCodigo:r.ocorrenciaCodigo||s.baixaCodigo||''}
+    };
+    const stops=(plan.stops||[]).map(patch);
+    const points=(plan.points||[]).map((p,i)=>i===0?p:patch(p));
+    return{...plan,stops,points}
+  }catch(e){
+    console.log('ROTEIRIZADOR atualização de baixas ERRO: '+String(e.message||e));
+    return plan
+  }
+}
+
 async function buildRoutePlan(date='',romaneio=''){
   const target=date||spDateISO(),cacheKey=target+'|'+String(romaneio||'').trim();
   const cached=ROUTE_PLAN_CACHE.get(cacheKey);
-  if(cached&&Date.now()-cached.at<10*60*1000)return cached.value;
+  if(cached&&Date.now()-cached.at<10*60*1000)return await routeRefreshCachedDeliveryStatus(cached.value,target);
 
   let data;
   if(target===spDateISO()){
@@ -3158,7 +3184,7 @@ async function buildRoutePlan(date='',romaneio=''){
   value.rejectedStops=[...(value.rejectedStops||[]),...rejectedStops];
   value.expectedDeliveries=Number(selected.qtdeCtrcs||metas.length||0);
   ROUTE_PLAN_CACHE.set(cacheKey,{at:Date.now(),value});
-  return value
+  return await routeRefreshCachedDeliveryStatus(value,target)
 }
 
 
