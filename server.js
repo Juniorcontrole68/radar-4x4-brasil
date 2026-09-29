@@ -3395,6 +3395,82 @@ if(u.pathname==='/api/tracking/planned-route'&&req.method==='GET'){try{
   res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
+if(u.pathname==='/api/evolucao-motoristas'&&req.method==='GET'){try{
+  if(!dashboardHasAny(authUser,['dashboard','ssw_saidas','evolucao']))return dashboardDeny(res);
+  const date=String(u.searchParams.get('date')||spDateISO()).trim()||spDateISO();
+  const nkey=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
+  let operation=null,quickRows=[];
+  if(date===spDateISO()){
+    const quick=await Promise.allSettled([fetchSsw38QuickPrefix('AMR'),fetchSsw38QuickPrefix('TBT')]);
+    for(const q of quick)if(q.status==='fulfilled')quickRows.push(...(q.value?.rows||[]));
+    const cacheKey='online|'+date+'|'+date,hit=SSW_DRIVER_CACHE.get(cacheKey);
+    operation=hit?.value||(SSW_DRIVER_LAST?.key===cacheKey?SSW_DRIVER_LAST.value:null);
+    ensureSswMotoristasRefresh(date,date).catch(()=>{});
+  }else{
+    try{operation=await getSswMotoristasFast(date,date)}catch{}
+  }
+
+  const detailed=operation?.motoristas38||[];
+  const matchDetailed=(motorista,veiculo)=>{
+    const dk=nkey(motorista),pk=normPlate(veiculo);
+    return detailed.find(x=>pk&&normPlate(x.veiculo||'')===pk)
+      ||detailed.find(x=>dk&&nkey(x.motorista||'')===dk)
+      ||detailed.find(x=>{const xd=nkey(x.motorista||'');return dk&&xd&&(xd.includes(dk)||dk.includes(xd))})
+      ||null
+  };
+
+  const groups=new Map();
+  const addQuick=x=>{
+    const motorista=String(x.motorista||'').trim(),veiculo=String(x.veiculo||'').trim();
+    if(!motorista)return;
+    const key=nkey(motorista)+'|'+normPlate(veiculo);
+    if(!groups.has(key))groups.set(key,{motorista,veiculo,total:0,faltaOcorr:0,romaneios:[]});
+    const g=groups.get(key);
+    g.total+=Number(x.qtdeCtrcs||x.total||0);
+    g.faltaOcorr+=Math.max(0,Number(x.faltaOcorr||0));
+    const rom=String(x.romaneio||'').trim();if(rom&&!g.romaneios.includes(rom))g.romaneios.push(rom)
+  };
+  quickRows.forEach(addQuick);
+
+  if(!groups.size){
+    for(const x of detailed){
+      const motorista=String(x.motorista||'').trim(),veiculo=String(x.veiculo||'').trim();
+      if(!motorista)continue;
+      groups.set(nkey(motorista)+'|'+normPlate(veiculo),{
+        motorista,veiculo,total:Number(x.total||0),faltaOcorr:Number(x.pendentes||0),
+        romaneios:Array.isArray(x.romaneios)?x.romaneios:[]
+      })
+    }
+  }
+
+  const rows=[...groups.values()].map(g=>{
+    const d=matchDetailed(g.motorista,g.veiculo);
+    const total=Number(d?.total||g.total||0);
+    let ocorrencias=Number(d?.ocorrencias||0);
+    let pendentes=d?Number(d.pendentes||0):Math.max(0,Math.min(total,Number(g.faltaOcorr||0)));
+    let entregues=d?Number(d.entregues||0):Math.max(0,total-pendentes-ocorrencias);
+    if(entregues+pendentes+ocorrencias!==total){
+      pendentes=Math.max(0,total-entregues-ocorrencias)
+    }
+    return{
+      motorista:g.motorista,veiculo:g.veiculo,total,entregues,pendentes,ocorrencias,
+      romaneios:g.romaneios.length?g.romaneios:(Array.isArray(d?.romaneios)?d.romaneios:[]),
+      taxa:total?((entregues+ocorrencias)/total*100):0
+    }
+  }).filter(x=>x.total>0).sort((a,b)=>b.total-a.total||a.motorista.localeCompare(b.motorista,'pt-BR'));
+
+  return res.end(JSON.stringify({
+    ok:true,date,source:'SSW opção 38',rows,
+    total:rows.reduce((a,x)=>a+x.total,0),
+    entregues:rows.reduce((a,x)=>a+x.entregues,0),
+    pendentes:rows.reduce((a,x)=>a+x.pendentes,0),
+    ocorrencias:rows.reduce((a,x)=>a+x.ocorrencias,0),
+    refreshing:!operation
+  }))
+}catch(e){
+  res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}
 if(u.pathname==='/api/roteirizador/lista'){try{
   if(!dashboardHasAny(authUser,['dashboard','roteirizador','ssw_saidas','evolucao','tracking']))return dashboardDeny(res);
   const date=u.searchParams.get('date')||spDateISO();
