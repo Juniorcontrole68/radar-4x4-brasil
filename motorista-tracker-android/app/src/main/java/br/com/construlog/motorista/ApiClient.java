@@ -57,11 +57,18 @@ final class ApiClient {
                 "GET", null, null);
     }
 
-    static JSONObject enroll(String code, String deviceName) throws Exception {
+    static JSONObject requestActivation(String driverName, String vehiclePlate, String deviceName) throws Exception {
         JSONObject b = new JSONObject();
-        b.put("code", code);
+        b.put("driver_name", driverName);
+        b.put("vehicle_plate", vehiclePlate);
         b.put("device_name", deviceName);
-        return request("/api/tracking/enroll", "POST", null, b);
+        return request("/api/tracking/register-request", "POST", null, b);
+    }
+
+    static JSONObject activationStatus(String requestToken) throws Exception {
+        return request("/api/tracking/register-status?request_token=" +
+                java.net.URLEncoder.encode(requestToken, java.nio.charset.StandardCharsets.UTF_8),
+                "GET", null, null);
     }
 
     static JSONObject startSession(String token) throws Exception {
