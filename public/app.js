@@ -2404,6 +2404,7 @@ function trackingArrivalAt(stop,history){
   }
   return null
 }
+function xTime(v){const t=v?.getTime?.();return Number.isFinite(t)?t:Number.MAX_SAFE_INTEGER}
 function trackingAnalyzePlan(row,plan,history){
   const order=(plan.optimizedOrder&&plan.optimizedOrder.length)?plan.optimizedOrder:Array.from({length:(plan.stops||[]).length},(_,i)=>i+1);
   const points=plan.points||[{label:'Base'},...(plan.stops||[])],out=[];
@@ -2426,9 +2427,10 @@ function trackingAnalyzePlan(row,plan,history){
       delivered:!!s.entregue||!!baixa,diffMin,statusKey,statusLabel,sequenceKey:'warn',sequenceLabel:'Ainda não visitado'
     })
   });
-  const visited=out.filter(x=>x.arrivalAt||x.baixaAt||x.delivered).sort((a,b)=>{
-    const ta=(a.arrivalAt||a.baixaAt)?.getTime?.()||Number.MAX_SAFE_INTEGER;
-    const tb=(b.arrivalAt||b.baixaAt)?.getTime?.()||Number.MAX_SAFE_INTEGER;
+  // Cliente visitado é confirmado EXCLUSIVAMENTE pela passagem do GPS.
+  // Baixa/status do SSW ficam apenas como informação de conferência.
+  const visited=out.filter(x=>x.arrivalAt).sort((a,b)=>{
+    const ta=xTime(a.arrivalAt),tb=xTime(b.arrivalAt);
     return ta-tb||a.plannedPos-b.plannedPos
   });
   visited.forEach((x,i)=>{
@@ -2442,7 +2444,7 @@ function trackingAnalyzePlan(row,plan,history){
 function trackingRenderVisitedReport(){
   const table=$('#trackingVisitedTable'),summary=$('#trackingVisitedSummary');
   if(!table)return;
-  const visited=(TRACKING_ANALYSIS_ROWS||[]).filter(x=>x.visited||x.arrivalAt||x.baixaAt||x.delivered)
+  const visited=(TRACKING_ANALYSIS_ROWS||[]).filter(x=>x.arrivalAt)
     .slice().sort((a,b)=>(a.actualPos||9999)-(b.actualPos||9999)||a.plannedPos-b.plannedPos);
   if(summary){
     const drivers=new Set(visited.map(x=>trackingNorm(x.driver)).filter(Boolean));
@@ -2455,8 +2457,8 @@ function trackingRenderVisitedReport(){
     return
   }
   const body=visited.map(x=>{
-    const when=x.arrivalAt||x.baixaAt;
-    const source=x.arrivalAt?'GPS'+(x.baixaAt?' + baixa SSW':''):(x.baixaAt?'Baixa SSW':'SSW');
+    const when=x.arrivalAt;
+    const source='GPS confirmado';
     return '<tr>'+
       '<td><b>'+(x.actualPos||'—')+'ª</b></td>'+
       '<td><b>'+safe(trackingFirstName(x.driver))+'</b><div class="muted">'+safe(x.plate||'')+'</div></td>'+
@@ -2480,11 +2482,11 @@ function trackingRenderAnalysis(){
     trackingRenderVisitedReport();
     return
   }
-  const visited=rows.filter(x=>x.visited||x.arrivalAt||x.baixaAt||x.delivered).length,
-    withGps=rows.filter(x=>x.arrivalAt).length,withBaixa=rows.filter(x=>x.baixaAt).length,
+  const visited=rows.filter(x=>x.arrivalAt).length,
+    withGps=visited,withBaixa=rows.filter(x=>x.baixaAt).length,
     outSeq=rows.filter(x=>x.visited&&x.sequenceKey==='bad').length;
   if(summary)summary.textContent=visited+' visitada(s) • '+withGps+' confirmada(s) por GPS • '+withBaixa+' baixa(s) SSW • '+outSeq+' fora da sequência';
-  if(info)info.textContent='Chegada considerada quando o GPS entra aproximadamente em um raio de 250–600 m do cliente, ajustado pela precisão do celular. Coordenadas SSW têm prioridade; endereço é usado apenas como fallback.';
+  if(info)info.textContent='Cliente visitado é confirmado somente pela passagem do GPS na área do cliente. A baixa do SSW aparece apenas para conferência e não marca visita.';
   const body=rows.map(x=>{
     const diff=x.diffMin===null?'—':(x.diffMin>=0?'+':'')+x.diffMin+' min';
     return '<tr>'+
@@ -2608,12 +2610,12 @@ function renderTrackingMap(rows){
           const s=points[pointIndex];if(!s)return;
           const lat=Number(s.lat),lon=Number(s.lon);if(!Number.isFinite(lat)||!Number.isFinite(lon))return;
           const analysis=(route.analysisRows||[]).find(x=>x.pointIndex===pointIndex);
-          const done=!!(analysis?.visited||analysis?.arrivalAt||analysis?.baixaAt||analysis?.delivered);
+          const done=!!analysis?.arrivalAt;
           const displayNo=done?(analysis?.actualPos||pos+1):(pos+1);
           const bg=done?'#16a34a':'#fff',fg=done?'#fff':'#0f172a',border=done?'#15803d':plannedColor;
           const markerHtml='<div style="min-width:28px;height:28px;padding:0 5px;border-radius:14px;background:'+bg+';border:3px solid '+border+';box-shadow:0 1px 5px #0004;display:grid;place-items:center;font-size:11px;font-weight:900;color:'+fg+'">'+displayNo+(done?'✓':'')+'</div>';
           const stopIcon=L.divIcon({className:'',html:markerHtml,iconSize:[32,32],iconAnchor:[16,16]});
-          const popup='<b>'+(done?'Entrega realizada nº '+displayNo:'Programada nº '+(pos+1))+' • '+safe(s.destinatario||s.label||'Cliente')+'</b><br>'+
+          const popup='<b>'+(done?'Cliente visitado por GPS nº '+displayNo:'Programada nº '+(pos+1))+' • '+safe(s.destinatario||s.label||'Cliente')+'</b><br>'+
             safe(s.cidade||'')+
             '<br>Localização: '+safe((s.coordinateSource||'').toUpperCase()==='SSW'?'Coordenada SSW':'Endereço/geocodificação')+
             '<br>Chegada GPS: '+safe(trackingTimeLabel(analysis?.arrivalAt))+
