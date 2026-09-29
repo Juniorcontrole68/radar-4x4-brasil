@@ -1975,6 +1975,23 @@ function trackingMapApplyFilters(){
   TRACKING_MAP_VIEW_READY=false;
   if(TRACKING_DATA)renderTrackingMap(TRACKING_DATA)
 }
+function trackingMapSelectDriver(){
+  const select=$('#trackingMapDriver'),check=$('#trackingMapOnlyDrivers');
+  TRACKING_MAP_DRIVER_FILTER=String(select?.value||'');
+  // Ao escolher um motorista, sempre abre a visão completa dele:
+  // base + rota planejada + percurso executado + todas as entregas + visitados.
+  if(TRACKING_MAP_DRIVER_FILTER){
+    TRACKING_MAP_ONLY_DRIVERS=false;
+    if(check)check.checked=false;
+    localStorage.setItem('construlog_tracking_map_only_drivers','0')
+  }else{
+    TRACKING_MAP_ONLY_DRIVERS=!!check?.checked
+  }
+  if(TRACKING_MAP_DRIVER_FILTER)localStorage.setItem('construlog_tracking_map_driver',TRACKING_MAP_DRIVER_FILTER);
+  else localStorage.removeItem('construlog_tracking_map_driver');
+  TRACKING_MAP_VIEW_READY=false;
+  if(TRACKING_DATA)renderTrackingMap(TRACKING_DATA)
+}
 const TRACKING_DEVIATION_KM=3;
 function trackingNorm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim()}
 function trackingAgeLabel(sec){
@@ -2869,7 +2886,7 @@ function setupTracking(){
   if($('#trackingGenerateCode'))$('#trackingGenerateCode').onclick=generateTrackingCode;
   if($('#trackingUseTest'))$('#trackingUseTest').onclick=trackingUseTest;
   if($('#trackingRefresh'))$('#trackingRefresh').onclick=()=>{TRACKING_NEXT_REFRESH=0;refreshTracking()};
-  if($('#trackingMapDriver'))$('#trackingMapDriver').onchange=trackingMapApplyFilters;
+  if($('#trackingMapDriver'))$('#trackingMapDriver').onchange=trackingMapSelectDriver;
   if($('#trackingMapOnlyDrivers'))$('#trackingMapOnlyDrivers').onchange=trackingMapApplyFilters;
   trackingMapPopulateControls(TRACKING_DATA||[]);
   if($('#trackingDriverName'))$('#trackingDriverName').onchange=()=>trackingDriverSelectionChanged(true);
