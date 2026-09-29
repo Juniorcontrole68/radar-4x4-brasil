@@ -36,7 +36,8 @@ public class MainActivity extends Activity {
     private TextView status;
     private TextView identity;
     private TextView diagnostics;
-    private EditText code;
+    private EditText driverInput;
+    private EditText plateInput;
     private Button activate;
     private Button start;
     private Button stop;
@@ -50,6 +51,8 @@ public class MainActivity extends Activity {
     private long updateDownloadId = -1L;
     private boolean receiverRegistered = false;
     private boolean pendingStart = false;
+    private boolean approvalChecking = false;
+    private long lastApprovalCheckAt = 0L;
     private final android.os.Handler uiHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable uiRefresh = new Runnable() {
         @Override public void run() {
@@ -127,13 +130,19 @@ public class MainActivity extends Activity {
         identity.setPadding(0, dp(8), 0, dp(14));
         root.addView(identity);
 
-        code = new EditText(this);
-        code.setHint("Código de ativação (6 dígitos)");
-        code.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
-        code.setTextSize(18);
-        root.addView(code, fullWidth());
+        driverInput = new EditText(this);
+        driverInput.setHint("Nome do motorista");
+        driverInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_CAP_WORDS);
+        driverInput.setTextSize(17);
+        root.addView(driverInput, fullWidth());
 
-        activate = button("Ativar este celular");
+        plateInput = new EditText(this);
+        plateInput.setHint("Placa do veículo (ex.: ABC1D23)");
+        plateInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
+        plateInput.setTextSize(17);
+        root.addView(plateInput, fullWidth());
+
+        activate = button("Solicitar ativação");
         activate.setOnClickListener(v -> activateDevice());
         root.addView(activate, buttonLayout());
 
@@ -399,8 +408,11 @@ public class MainActivity extends Activity {
     private void refreshUi() {
         String token = prefs.getString("token", "");
         boolean enrolled = !token.isEmpty();
-        code.setVisibility(enrolled ? View.GONE : View.VISIBLE);
-        activate.setVisibility(enrolled ? View.GONE : View.VISIBLE);
+        String requestToken = prefs.getString("request_token", "");
+        boolean pendingApproval = !enrolled && !requestToken.isEmpty();
+        driverInput.setVisibility((enrolled || pendingApproval) ? View.GONE : View.VISIBLE);
+        plateInput.setVisibility((enrolled || pendingApproval) ? View.GONE : View.VISIBLE);
+        activate.setVisibility((enrolled || pendingApproval) ? View.GONE : View.VISIBLE);
         start.setVisibility(enrolled ? View.VISIBLE : View.GONE);
         stop.setVisibility(enrolled ? View.VISIBLE : View.GONE);
 
@@ -437,7 +449,12 @@ public class MainActivity extends Activity {
                     : "Rota ativa. Aguardando atualização do GPS.");
         } else {
             identity.setText("Primeiro acesso");
-            status.setText("Digite o código fornecido pela central.");
+            if (pendingApproval) {
+                status.setText("Solicitação enviada • aguardando aprovação da central.");
+                maybeCheckApproval();
+            } else {
+                status.setText("Informe seu nome e a placa. A central aprovará este aparelho.");
+            }
         }
 
         if (diagnostics != null) {
@@ -454,34 +471,85 @@ public class MainActivity extends Activity {
     }
 
     private void activateDevice() {
-        String activationCode = code.getText().toString().trim();
-        if (!activationCode.matches("\\d{6}")) {
-            status.setText("Informe o código de 6 dígitos.");
+        String driver = driverInput.getText().toString().trim();
+        String plate = plateInput.getText().toString().trim().toUpperCase(java.util.Locale.ROOT).replaceAll("[^A-Z0-9]", "");
+        if (driver.length() < 2) {
+            status.setText("Informe o nome do motorista.");
+            return;
+        }
+        if (!plate.isEmpty() && plate.length() < 7) {
+            status.setText("Confira a placa do veículo.");
             return;
         }
         activate.setEnabled(false);
-        status.setText("Ativando celular…");
+        status.setText("Enviando solicitação para a central…");
         String deviceName = Build.MANUFACTURER + " " + Build.MODEL;
 
         new Thread(() -> {
             try {
-                JSONObject j = ApiClient.enroll(activationCode, deviceName);
+                JSONObject j = ApiClient.requestActivation(driver, plate, deviceName);
                 prefs.edit()
-                        .putString("token", j.getString("token"))
-                        .putString("driver_name", j.optString("driver_name", "Motorista"))
-                        .putString("vehicle_plate", j.optString("vehicle_plate", ""))
-                        .putString("tracking_state", "Celular ativado • pronto para iniciar rota")
+                        .putString("request_token", j.getString("request_token"))
+                        .putString("pending_driver_name", driver)
+                        .putString("pending_vehicle_plate", plate)
+                        .putString("tracking_state", "Aguardando aprovação da central")
                         .remove("last_error")
                         .apply();
                 runOnUiThread(() -> {
-                    code.setText("");
-                    status.setText("Celular ativado com sucesso.");
+                    status.setText("Solicitação enviada. Aguarde a aprovação da central.");
                     refreshUi();
                 });
             } catch (Exception e) {
-                runOnUiThread(() -> status.setText("Não foi possível ativar: " + e.getMessage()));
+                runOnUiThread(() -> status.setText("Não foi possível solicitar ativação: " + e.getMessage()));
             } finally {
                 runOnUiThread(() -> activate.setEnabled(true));
+            }
+        }).start();
+    }
+
+    private void maybeCheckApproval() {
+        if (approvalChecking) return;
+        String requestToken = prefs.getString("request_token", "");
+        if (requestToken.isEmpty() || !prefs.getString("token", "").isEmpty()) return;
+        long now = System.currentTimeMillis();
+        if (now - lastApprovalCheckAt < 10000L) return;
+        lastApprovalCheckAt = now;
+        approvalChecking = true;
+        new Thread(() -> {
+            try {
+                JSONObject j = ApiClient.activationStatus(requestToken);
+                String approvalStatus = j.optString("status", "pending");
+                if ("approved".equals(approvalStatus) && j.has("token")) {
+                    prefs.edit()
+                            .putString("token", j.getString("token"))
+                            .putString("driver_name", j.optString("driver_name", prefs.getString("pending_driver_name", "Motorista")))
+                            .putString("vehicle_plate", j.optString("vehicle_plate", prefs.getString("pending_vehicle_plate", "")))
+                            .putString("tracking_state", "Celular aprovado • pronto para receber o romaneio")
+                            .remove("request_token")
+                            .remove("pending_driver_name")
+                            .remove("pending_vehicle_plate")
+                            .remove("last_error")
+                            .apply();
+                    runOnUiThread(() -> {
+                        status.setText("Aparelho aprovado com sucesso.");
+                        refreshUi();
+                    });
+                } else if ("rejected".equals(approvalStatus)) {
+                    prefs.edit()
+                            .remove("request_token")
+                            .remove("pending_driver_name")
+                            .remove("pending_vehicle_plate")
+                            .putString("tracking_state", "Solicitação recusada")
+                            .apply();
+                    runOnUiThread(() -> {
+                        status.setText("Solicitação recusada. Confira os dados e solicite novamente.");
+                        refreshUi();
+                    });
+                }
+            } catch (Exception e) {
+                prefs.edit().putString("last_error", String.valueOf(e.getMessage())).apply();
+            } finally {
+                approvalChecking = false;
             }
         }).start();
     }
