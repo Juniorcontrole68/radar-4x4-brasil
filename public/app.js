@@ -1931,6 +1931,7 @@ const TRACKING_LOGICAL_ROUTES=new Map();
 const TRACKING_PLAN_CACHE=new Map();
 const TRACKING_HISTORY_CACHE=new Map();
 const TRACKING_MARKERS=new Map();
+let TRACKING_BASE_POSITION={lat:-22.69552,lon:-47.307,address:'Avenida do Algodão, 316, Distrito Industrial Salto Grande, Americana/SP'};
 let TRACKING_ANALYSIS_ROWS=[];
 let TRACKING_AUTO_SECONDS=Math.max(5,Math.min(300,Number(localStorage.getItem('construlog_tracking_refresh_seconds')||30)));
 let TRACKING_NEXT_REFRESH=0;
@@ -2574,6 +2575,14 @@ function renderTrackingMap(rows){
       (actualLegend?'<span class="dotSep">•</span>'+actualLegend:'')
   }
   let baseMarked=false;
+  const baseLat=Number(TRACKING_BASE_POSITION?.lat),baseLon=Number(TRACKING_BASE_POSITION?.lon);
+  if(Number.isFinite(baseLat)&&Number.isFinite(baseLon)){
+    const baseIcon=L.divIcon({className:'',html:'<div style="min-width:48px;height:32px;padding:0 8px;border-radius:8px;background:#0f172a;color:#fff;border:3px solid #fff;box-shadow:0 2px 8px #0006;display:grid;place-items:center;font-size:10px;font-weight:900">BASE</div>',iconSize:[52,36],iconAnchor:[26,18]});
+    L.marker([baseLat,baseLon],{icon:baseIcon}).addTo(TRACKING_LAYER)
+      .bindPopup('<b>Base CONSTRULOG</b><br>'+safe(TRACKING_BASE_POSITION.address||'Av. do Algodão, 316 • Americana/SP'))
+      .bindTooltip('BASE • Av. do Algodão, 316',{permanent:false});
+    bounds.push([baseLat,baseLon]);baseMarked=true
+  }
   activeRows.forEach((row,i)=>{
     const plannedColor=TRACKING_PLANNED_COLOR,actualColor=trackingActualColor(row);
     const route=trackingFindRoute(row.driver_name,row.vehicle_plate),status=trackingStatus(row);
@@ -2692,6 +2701,10 @@ async function refreshTracking(){
     if(!liveRes.ok||!live.ok)throw new Error(live.error||'Falha ao consultar GPS.');
     if(driverRes.ok&&drivers.ok&&Array.isArray(drivers.rows)){
       TRACKING_DRIVER_ROWS=drivers.rows;
+      const bl=Number(drivers.baseLat),bo=Number(drivers.baseLon);
+      if(Number.isFinite(bl)&&Number.isFinite(bo)){
+        TRACKING_BASE_POSITION={lat:bl,lon:bo,address:drivers.baseAddress||TRACKING_BASE_POSITION.address}
+      }
       trackingPopulateDriverList();
     }else{
       TRACKING_DRIVER_ROWS=[];
