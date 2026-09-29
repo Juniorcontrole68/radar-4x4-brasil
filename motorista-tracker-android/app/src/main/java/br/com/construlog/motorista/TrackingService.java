@@ -234,18 +234,43 @@ public class TrackingService extends Service implements LocationListener {
         String token = prefs.getString("token", "");
         String session = prefs.getString("session_id", "");
         updateNotification("Encerrando rota…");
+        prefs.edit().putString("tracking_state","Encerrando rota no servidor…").remove("last_error").apply();
 
         executor.submit(() -> {
-            try {
-                if (!token.isEmpty() && !session.isEmpty()) ApiClient.stopSession(token, session);
-            } catch (Exception ignored) {
-            } finally {
-                prefs.edit().remove("session_id").apply();
-                main.post(() -> {
-                    stopForeground(STOP_FOREGROUND_REMOVE);
-                    stopSelf();
-                });
+            boolean confirmed = token.isEmpty() || session.isEmpty();
+            Exception lastError = null;
+            if (!confirmed) {
+                for (int attempt = 1; attempt <= 3 && !confirmed; attempt++) {
+                    try {
+                        ApiClient.stopSession(token, session);
+                        confirmed = true;
+                    } catch (Exception e) {
+                        lastError = e;
+                        if (attempt < 3) {
+                            try { Thread.sleep(2500L * attempt); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); break; }
+                        }
+                    }
+                }
             }
+
+            if (confirmed) {
+                prefs.edit()
+                        .remove("session_id")
+                        .putString("tracking_state","Rota encerrada")
+                        .remove("last_error")
+                        .apply();
+            } else {
+                prefs.edit()
+                        .putString("tracking_state","Rota encerrada no celular • confirmação pendente")
+                        .putString("last_error","Não foi possível confirmar o encerramento no servidor. Toque em Encerrar rota novamente quando houver internet."+
+                                (lastError != null && lastError.getMessage() != null ? " • " + lastError.getMessage() : ""))
+                        .apply();
+            }
+
+            main.post(() -> {
+                stopForeground(STOP_FOREGROUND_REMOVE);
+                stopSelf();
+            });
         });
     }
 
