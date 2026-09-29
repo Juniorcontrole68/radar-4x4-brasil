@@ -1016,21 +1016,22 @@ async function start() {
           if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
           const q=await pool.query(`
             SELECT d.id::text AS device_id,d.driver_name,d.vehicle_plate,d.device_name,d.last_seen_at,
-                   s.id::text AS session_id,s.started_at,
+                   s.id::text AS session_id,s.started_at,s.ended_at,s.status AS session_status,
                    p.latitude,p.longitude,p.accuracy_m,p.speed_mps,p.bearing_deg,p.battery_pct,p.captured_at,
                    EXTRACT(EPOCH FROM (NOW()-p.captured_at))::int AS age_seconds,
                    EXTRACT(EPOCH FROM (NOW()-d.last_seen_at))::int AS device_age_seconds,
-                   (s.id IS NOT NULL AND d.last_seen_at IS NOT NULL AND d.last_seen_at >= NOW()-INTERVAL '5 minutes') AS map_active
+                   (s.id IS NOT NULL) AS map_active
             FROM driver_tracking_devices d
             LEFT JOIN LATERAL (
-              SELECT id,started_at FROM driver_tracking_sessions
-              WHERE device_id=d.id AND status='active'
-              ORDER BY started_at DESC LIMIT 1
+              SELECT id,started_at,ended_at,status FROM driver_tracking_sessions
+              WHERE device_id=d.id
+                AND (started_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+              ORDER BY (status='active') DESC,started_at DESC LIMIT 1
             ) s ON TRUE
             LEFT JOIN LATERAL (
               SELECT latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at
               FROM driver_tracking_points
-              WHERE device_id=d.id
+              WHERE s.id IS NOT NULL AND session_id=s.id
               ORDER BY captured_at DESC LIMIT 1
             ) p ON TRUE
             WHERE d.active=TRUE
