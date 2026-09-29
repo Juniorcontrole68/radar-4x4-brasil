@@ -2687,6 +2687,16 @@ async function routeGeometry(points,order){
   }catch{}
   return{geometry:{type:'LineString',coordinates:[0,...order,0].map(i=>[points[i].lon,points[i].lat])},distanceMeters:null,durationSeconds:null}
 }
+async function routeGeometryOpen(points,order){
+  try{
+    const seq=[0,...order],coords=seq.map(i=>points[i].lon+','+points[i].lat).join(';');
+    const u='https://router.project-osrm.org/route/v1/driving/'+coords+'?overview=full&geometries=geojson&steps=false';
+    const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Roteirizador/1.0'},signal:AbortSignal.timeout(20000)});
+    const j=await r.json();
+    if(r.ok&&j.code==='Ok'&&j.routes?.[0])return{geometry:j.routes[0].geometry,distanceMeters:j.routes[0].distance,durationSeconds:j.routes[0].duration}
+  }catch{}
+  return{geometry:{type:'LineString',coordinates:[0,...order].map(i=>[points[i].lon,points[i].lat])},distanceMeters:null,durationSeconds:null}
+}
 
 async function routeFinalizePlan(stops,meta={}){
   const baseGeo=await routeGeocode(ROUTE_BASE_ADDRESS);
@@ -2717,7 +2727,7 @@ async function routeFinalizePlan(stops,meta={}){
   if(!optimized){optimized=routeTwoOpt(routeNearest(m,n),m);method='heurística otimizada'}
   const original=Array.from({length:n},(_,i)=>i+1);
   const optMeters=routeCycleDistance(optimized,m),origMeters=routeCycleDistance(original,m);
-  const geo=await routeGeometry(points,optimized);
+  const [geo,outboundGeo]=await Promise.all([routeGeometry(points,optimized),routeGeometryOpen(points,optimized)]);
   return{
     ok:true,date:meta.date||'',baseAddress:ROUTE_BASE_ADDRESS,radiusLimitKm:300,
     romaneio:meta.romaneio||'',motorista:meta.motorista||'',veiculo:meta.veiculo||'',
@@ -2726,7 +2736,8 @@ async function routeFinalizePlan(stops,meta={}){
     optimizedDistanceMeters:Number.isFinite(optMeters)?optMeters:0,
     originalDistanceMeters:Number.isFinite(origMeters)?origMeters:0,
     optimizedLegs:routeLegs(optimized,m,points),originalLegs:routeLegs(original,m,points),
-    points,stops:clean,matrix:m,geometry:geo.geometry,rejectedStops:rejected,
+    points,stops:clean,matrix:m,geometry:geo.geometry,outboundGeometry:outboundGeo.geometry,
+    outboundDistanceMeters:Number.isFinite(outboundGeo.distanceMeters)?outboundGeo.distanceMeters:0,rejectedStops:rejected,
     approximateStops:clean.filter(x=>['cidade','cliente','manual-aproximado','cte-aproximado'].includes(x.precision)).length
   }
 }
