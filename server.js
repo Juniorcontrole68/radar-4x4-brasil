@@ -3459,12 +3459,17 @@ if(u.pathname==='/api/evolucao-motoristas'&&req.method==='GET'){try{
     }
   }).filter(x=>x.total>0).sort((a,b)=>b.total-a.total||a.motorista.localeCompare(b.motorista,'pt-BR'));
 
+  const total=rows.reduce((a,x)=>a+x.total,0),
+    entregues=rows.reduce((a,x)=>a+x.entregues,0),
+    pendentes=rows.reduce((a,x)=>a+x.pendentes,0),
+    ocorrencias=rows.reduce((a,x)=>a+x.ocorrencias,0);
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({
-    ok:true,date,source:'SSW opção 38',rows,
-    total:rows.reduce((a,x)=>a+x.total,0),
-    entregues:rows.reduce((a,x)=>a+x.entregues,0),
-    pendentes:rows.reduce((a,x)=>a+x.pendentes,0),
-    ocorrencias:rows.reduce((a,x)=>a+x.ocorrencias,0),
+    ok:true,date,from:date,to:date,source:'SSW opção 38',rows:[],
+    motoristas38:rows,totalRomaneado:total,
+    total,entregues,pendentes,ocorrencias,
+    baixadas:entregues,baixasSsw:entregues,
+    taxa:total?((entregues+ocorrencias)/total*100):0,
     refreshing:!operation
   }))
 }catch(e){
