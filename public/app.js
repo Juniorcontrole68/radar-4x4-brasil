@@ -2619,7 +2619,7 @@ function renderTrackingMap(rows){
   if(legend){
     const actualLegend=activeRows.map(row=>{
       const actual=trackingActualColor(row);
-      return '<span><i class="tracking-history-dot" style="background:'+actual+'"></i>'+safe(trackingFirstName(row.driver_name))+' • percurso real</span>'
+      return '<span><i class="tracking-history-dot" style="background:'+actual+'"></i>'+safe(trackingFirstName(row.driver_name))+(TRACKING_MAP_ONLY_DRIVERS?' • motorista':' • percurso real')+'</span>'
     }).join('<span class="dotSep">•</span>');
     legend.innerHTML=(TRACKING_MAP_ONLY_DRIVERS?'':('<span><i class="tracking-history-dot" style="background:'+TRACKING_PLANNED_COLOR+'"></i><b>Rota planejada</b> • azul tracejado</span>'))+
       ((!TRACKING_MAP_ONLY_DRIVERS&&actualLegend)?'<span class="dotSep">•</span>':'')+
