@@ -1933,6 +1933,8 @@ const TRACKING_HISTORY_CACHE=new Map();
 const TRACKING_MARKERS=new Map();
 let TRACKING_BASE_POSITION={lat:-22.69552,lon:-47.307,address:'Avenida do Algodão, 316, Distrito Industrial Salto Grande, Americana/SP'};
 let TRACKING_ANALYSIS_ROWS=[];
+let TRACKING_MAP_DRIVER_FILTER=localStorage.getItem('construlog_tracking_map_driver')||'';
+let TRACKING_MAP_ONLY_DRIVERS=localStorage.getItem('construlog_tracking_map_only_drivers')==='1';
 let TRACKING_AUTO_SECONDS=Math.max(5,Math.min(300,Number(localStorage.getItem('construlog_tracking_refresh_seconds')||30)));
 let TRACKING_NEXT_REFRESH=0;
 const TRACKING_COLORS=['#2563eb','#dc2626','#16a34a','#9333ea','#ea580c','#0891b2','#ca8a04','#db2777','#4f46e5','#059669'];
@@ -1942,6 +1944,36 @@ function trackingActualColor(row){
   const key=trackingDriverKey(row?.driver_name,row?.vehicle_plate)||'MOTORISTA';
   let h=0;for(let i=0;i<key.length;i++)h=((h<<5)-h+key.charCodeAt(i))|0;
   return TRACKING_ACTUAL_COLORS[Math.abs(h)%TRACKING_ACTUAL_COLORS.length]
+}
+function trackingMapPopulateControls(rows){
+  const select=$('#trackingMapDriver'),check=$('#trackingMapOnlyDrivers');
+  const active=(rows||[]).filter(r=>r?.session_id);
+  const unique=new Map();
+  active.forEach(r=>{
+    const key=trackingDriverKey(r.driver_name,r.vehicle_plate);
+    if(key&&!unique.has(key))unique.set(key,r)
+  });
+  if(select){
+    const exists=TRACKING_MAP_DRIVER_FILTER&&unique.has(TRACKING_MAP_DRIVER_FILTER);
+    if(TRACKING_MAP_DRIVER_FILTER&&!exists){
+      TRACKING_MAP_DRIVER_FILTER='';
+      localStorage.removeItem('construlog_tracking_map_driver')
+    }
+    select.innerHTML='<option value="">Todos os motoristas</option>'+
+      [...unique.entries()].map(([key,r])=>'<option value="'+safe(key)+'">'+safe(r.driver_name||'Motorista')+(r.vehicle_plate?' • '+safe(r.vehicle_plate):'')+'</option>').join('');
+    select.value=TRACKING_MAP_DRIVER_FILTER
+  }
+  if(check)check.checked=TRACKING_MAP_ONLY_DRIVERS
+}
+function trackingMapApplyFilters(){
+  const select=$('#trackingMapDriver'),check=$('#trackingMapOnlyDrivers');
+  TRACKING_MAP_DRIVER_FILTER=String(select?.value||'');
+  TRACKING_MAP_ONLY_DRIVERS=!!check?.checked;
+  if(TRACKING_MAP_DRIVER_FILTER)localStorage.setItem('construlog_tracking_map_driver',TRACKING_MAP_DRIVER_FILTER);
+  else localStorage.removeItem('construlog_tracking_map_driver');
+  localStorage.setItem('construlog_tracking_map_only_drivers',TRACKING_MAP_ONLY_DRIVERS?'1':'0');
+  TRACKING_MAP_VIEW_READY=false;
+  if(TRACKING_DATA)renderTrackingMap(TRACKING_DATA)
 }
 const TRACKING_DEVIATION_KM=3;
 function trackingNorm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim()}
@@ -2579,20 +2611,24 @@ function renderTrackingMap(rows){
   TRACKING_LAYER=L.layerGroup().addTo(TRACKING_MAP);
   TRACKING_MARKERS.clear();
   const bounds=[];
-  const activeRows=(rows||[]).filter(row=>!!row?.session_id);
+  const activeRows=(rows||[]).filter(row=>!!row?.session_id).filter(row=>{
+    if(!TRACKING_MAP_DRIVER_FILTER)return true;
+    return trackingDriverKey(row.driver_name,row.vehicle_plate)===TRACKING_MAP_DRIVER_FILTER
+  });
   const legend=$('#trackingLiveLegend');
   if(legend){
     const actualLegend=activeRows.map(row=>{
       const actual=trackingActualColor(row);
       return '<span><i class="tracking-history-dot" style="background:'+actual+'"></i>'+safe(trackingFirstName(row.driver_name))+' • percurso real</span>'
     }).join('<span class="dotSep">•</span>');
-    legend.innerHTML='<span><i class="tracking-history-dot" style="background:'+TRACKING_PLANNED_COLOR+'"></i><b>Rota planejada</b> • azul tracejado</span>'+
-      (actualLegend?'<span class="dotSep">•</span>'+actualLegend:'')
+    legend.innerHTML=(TRACKING_MAP_ONLY_DRIVERS?'':('<span><i class="tracking-history-dot" style="background:'+TRACKING_PLANNED_COLOR+'"></i><b>Rota planejada</b> • azul tracejado</span>'))+
+      ((!TRACKING_MAP_ONLY_DRIVERS&&actualLegend)?'<span class="dotSep">•</span>':'')+
+      actualLegend
   }
   let baseMarked=false;
   const markerCoordUse=new Map(),visitedRendered=new Set();
   const baseLat=Number(TRACKING_BASE_POSITION?.lat),baseLon=Number(TRACKING_BASE_POSITION?.lon);
-  if(Number.isFinite(baseLat)&&Number.isFinite(baseLon)){
+  if(!TRACKING_MAP_ONLY_DRIVERS&&Number.isFinite(baseLat)&&Number.isFinite(baseLon)){
     const baseIcon=L.divIcon({className:'',html:'<div style="min-width:48px;height:32px;padding:0 8px;border-radius:8px;background:#0f172a;color:#fff;border:3px solid #fff;box-shadow:0 2px 8px #0006;display:grid;place-items:center;font-size:10px;font-weight:900">BASE</div>',iconSize:[52,36],iconAnchor:[26,18]});
     L.marker([baseLat,baseLon],{icon:baseIcon}).addTo(TRACKING_LAYER)
       .bindPopup('<b>Base CONSTRULOG</b><br>'+safe(TRACKING_BASE_POSITION.address||'Av. do Algodão, 316 • Americana/SP'))
@@ -2603,7 +2639,7 @@ function renderTrackingMap(rows){
     const plannedColor=TRACKING_PLANNED_COLOR,actualColor=trackingActualColor(row);
     const route=trackingFindRoute(row.driver_name,row.vehicle_plate),status=trackingStatus(row);
     const coords=trackingPlannedCoords(route);
-    if(coords.length>1){
+    if(!TRACKING_MAP_ONLY_DRIVERS&&coords.length>1){
       L.polyline(coords,{pane:'tracking-planned',color:'#ffffff',weight:8,opacity:.88,dashArray:'14 7'}).addTo(TRACKING_LAYER);
       L.polyline(coords,{pane:'tracking-planned',color:TRACKING_PLANNED_COLOR,weight:5,opacity:1,dashArray:'14 7'})
         .addTo(TRACKING_LAYER)
@@ -2660,7 +2696,7 @@ function renderTrackingMap(rows){
     const history=liveTrail.length>=cachedHistory.length?liveTrail:cachedHistory;
     if(liveTrail.length)TRACKING_HISTORY_CACHE.set(String(row.session_id||''),{at:Date.now(),rows:history});
     const realCoords=history.map(p=>[Number(p.latitude),Number(p.longitude)]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1]));
-    if(realCoords.length>1){
+    if(!TRACKING_MAP_ONLY_DRIVERS&&realCoords.length>1){
       L.polyline(realCoords,{pane:'tracking-actual',color:'#ffffff',weight:9,opacity:.94}).addTo(TRACKING_LAYER);
       L.polyline(realCoords,{pane:'tracking-actual',color:actualColor,weight:5,opacity:.98})
         .addTo(TRACKING_LAYER)
@@ -2694,8 +2730,9 @@ function renderTrackingMap(rows){
 
   // Visitas confirmadas por GPS continuam visíveis mesmo se a rota planejada
   // de um motorista ainda estiver sendo calculada ou não tiver desenhado o marcador.
-  for(const x of (TRACKING_ANALYSIS_ROWS||[])){
+  for(const x of (TRACKING_MAP_ONLY_DRIVERS?[]:(TRACKING_ANALYSIS_ROWS||[]))){
     if(!x?.arrivalAt||!Number.isFinite(Number(x.lat))||!Number.isFinite(Number(x.lon)))continue;
+    if(TRACKING_MAP_DRIVER_FILTER&&trackingDriverKey(x.driver,x.plate)!==TRACKING_MAP_DRIVER_FILTER)continue;
     const key=trackingDriverKey(x.driver,x.plate)+'|'+x.pointIndex;
     if(visitedRendered.has(key))continue;
     const no=x.actualPos||x.plannedPos||'✓';
@@ -2732,6 +2769,7 @@ function renderTracking(rows){
     tableEl.querySelectorAll('[data-tracking-key]').forEach(btn=>btn.onclick=()=>trackingFocusDriver(btn.dataset.trackingKey))
   }
   const info=$('#trackingInfo');if(info)info.textContent='Atualizado às '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})+' • atualização automática a cada '+TRACKING_AUTO_SECONDS+' s • desvio configurado em '+String(TRACKING_DEVIATION_KM).replace('.',',')+' km.';
+  trackingMapPopulateControls(TRACKING_DATA);
   renderTrackingMap(TRACKING_DATA)
 }
 async function refreshTracking(){
@@ -2831,6 +2869,9 @@ function setupTracking(){
   if($('#trackingGenerateCode'))$('#trackingGenerateCode').onclick=generateTrackingCode;
   if($('#trackingUseTest'))$('#trackingUseTest').onclick=trackingUseTest;
   if($('#trackingRefresh'))$('#trackingRefresh').onclick=()=>{TRACKING_NEXT_REFRESH=0;refreshTracking()};
+  if($('#trackingMapDriver'))$('#trackingMapDriver').onchange=trackingMapApplyFilters;
+  if($('#trackingMapOnlyDrivers'))$('#trackingMapOnlyDrivers').onchange=trackingMapApplyFilters;
+  trackingMapPopulateControls(TRACKING_DATA||[]);
   if($('#trackingDriverName'))$('#trackingDriverName').onchange=()=>trackingDriverSelectionChanged(true);
   if($('#trackingVehiclePlate'))$('#trackingVehiclePlate').oninput=e=>{e.target.value=String(e.target.value||'').toUpperCase()}
   const refreshInput=$('#trackingRefreshSeconds');
