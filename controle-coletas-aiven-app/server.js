@@ -182,6 +182,50 @@ async function trackingDeviceFromReq(req){
 function trackingCode(){
   return String(Math.floor(100000+Math.random()*900000))
 }
+function trackingHistoryDistanceMeters(a,b){
+  const lat1=Number(a?.latitude),lon1=Number(a?.longitude),lat2=Number(b?.latitude),lon2=Number(b?.longitude);
+  if(![lat1,lon1,lat2,lon2].every(Number.isFinite))return 0;
+  const R=6371000,rad=Math.PI/180,dLat=(lat2-lat1)*rad,dLon=(lon2-lon1)*rad;
+  const h=Math.sin(dLat/2)**2+Math.cos(lat1*rad)*Math.cos(lat2*rad)*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.min(1,Math.sqrt(h)))
+}
+function trackingHistoryStops(points,minMinutes=5,radiusMeters=150){
+  const pts=(points||[]).filter(p=>Number.isFinite(Number(p.latitude))&&Number.isFinite(Number(p.longitude))&&p.captured_at);
+  const out=[];let i=0;
+  while(i<pts.length){
+    let j=i,sumLat=Number(pts[i].latitude),sumLon=Number(pts[i].longitude),count=1;
+    let center={latitude:sumLat,longitude:sumLon};
+    while(j+1<pts.length){
+      const next=pts[j+1];
+      if(trackingHistoryDistanceMeters(center,next)>radiusMeters)break;
+      j++;sumLat+=Number(next.latitude);sumLon+=Number(next.longitude);count++;
+      center={latitude:sumLat/count,longitude:sumLon/count};
+    }
+    if(j>i){
+      const start=new Date(pts[i].captured_at),end=new Date(pts[j].captured_at);
+      const seconds=Math.max(0,Math.round((end-start)/1000));
+      if(seconds>=minMinutes*60){
+        out.push({
+          latitude:center.latitude,longitude:center.longitude,
+          arrived_at:pts[i].captured_at,left_at:pts[j].captured_at,
+          duration_seconds:seconds,point_count:j-i+1
+        })
+      }
+    }
+    i=Math.max(i+1,j+1)
+  }
+  return out
+}
+function trackingHistorySessionSummary(session){
+  const points=session.points||[];
+  let meters=0;
+  for(let i=1;i<points.length;i++){
+    const d=trackingHistoryDistanceMeters(points[i-1],points[i]);
+    if(Number.isFinite(d)&&d<5000)meters+=d
+  }
+  const stops=trackingHistoryStops(points);
+  return Object.assign(session,{stops,distance_km:Math.round(meters)/1000})
+}
 async function duplicateColetaMinimal(id, novaData) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(novaData || ''))) {
     const e = new Error('Nova data inválida.'); e.status = 400; throw e;
@@ -996,17 +1040,73 @@ async function start() {
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao consultar rastreamento.'})}
       }
 
+      if (req.method === 'GET' && u.pathname === '/api/painel/tracking/history-drivers') {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const date=String(u.searchParams.get('date')||'').trim();
+          if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return sendJson(res,400,{ok:false,error:'Data inválida.'});
+          const q=await pool.query(`
+            SELECT d.driver_name,d.vehicle_plate,COUNT(*)::int AS points,
+                   MIN(p.captured_at) AS first_point,MAX(p.captured_at) AS last_point
+            FROM driver_tracking_points p
+            JOIN driver_tracking_devices d ON d.id=p.device_id
+            WHERE p.captured_at >= ($1::date::timestamp AT TIME ZONE 'America/Sao_Paulo')
+              AND p.captured_at < (($1::date + 1)::timestamp AT TIME ZONE 'America/Sao_Paulo')
+            GROUP BY d.driver_name,d.vehicle_plate
+            ORDER BY lower(d.driver_name),d.vehicle_plate
+          `,[date]);
+          return sendJson(res,200,{ok:true,date,rows:q.rows})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao listar motoristas do histórico.'})}
+      }
+
       if (req.method === 'GET' && u.pathname === '/api/painel/tracking/history') {
         try {
           const user=await dashboardSession(req,false);
           if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
           const sessionId=String(u.searchParams.get('session_id')||'').trim();
-          if(!sessionId)return sendJson(res,400,{ok:false,error:'Sessão não informada.'});
-          const q=await pool.query(
-            "SELECT latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at FROM driver_tracking_points WHERE session_id::text=$1 ORDER BY captured_at ASC LIMIT 10000",
-            [sessionId]
-          );
-          return sendJson(res,200,{ok:true,rows:q.rows})
+          if(sessionId){
+            const q=await pool.query(
+              "SELECT latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at FROM driver_tracking_points WHERE session_id::text=$1 ORDER BY captured_at ASC LIMIT 10000",
+              [sessionId]
+            );
+            return sendJson(res,200,{ok:true,rows:q.rows})
+          }
+          const date=String(u.searchParams.get('date')||'').trim();
+          const driver=String(u.searchParams.get('driver')||'').trim();
+          if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return sendJson(res,400,{ok:false,error:'Data inválida.'});
+          const q=await pool.query(`
+            SELECT s.id::text AS session_id,d.driver_name,d.vehicle_plate,
+                   s.started_at,s.ended_at,s.status,
+                   p.latitude,p.longitude,p.accuracy_m,p.speed_mps,p.bearing_deg,p.battery_pct,p.captured_at
+            FROM driver_tracking_points p
+            JOIN driver_tracking_sessions s ON s.id=p.session_id
+            JOIN driver_tracking_devices d ON d.id=p.device_id
+            WHERE p.captured_at >= ($1::date::timestamp AT TIME ZONE 'America/Sao_Paulo')
+              AND p.captured_at < (($1::date + 1)::timestamp AT TIME ZONE 'America/Sao_Paulo')
+              AND ($2='' OR lower(d.driver_name)=lower($2))
+            ORDER BY lower(d.driver_name),s.started_at,p.captured_at
+            LIMIT 60000
+          `,[date,driver]);
+          const map=new Map();
+          for(const r of q.rows){
+            if(!map.has(r.session_id))map.set(r.session_id,{
+              session_id:r.session_id,driver_name:r.driver_name,vehicle_plate:r.vehicle_plate,
+              started_at:r.started_at,ended_at:r.ended_at,status:r.status,points:[]
+            });
+            map.get(r.session_id).points.push({
+              latitude:r.latitude,longitude:r.longitude,accuracy_m:r.accuracy_m,
+              speed_mps:r.speed_mps,bearing_deg:r.bearing_deg,battery_pct:r.battery_pct,captured_at:r.captured_at
+            })
+          }
+          const sessions=[...map.values()].map(trackingHistorySessionSummary);
+          const drivers=new Set(sessions.map(x=>String(x.driver_name||'').trim()).filter(Boolean));
+          const totalStops=sessions.reduce((a,x)=>a+(x.stops?.length||0),0);
+          const distanceKm=sessions.reduce((a,x)=>a+Number(x.distance_km||0),0);
+          return sendJson(res,200,{ok:true,date,driver:driver||'',sessions,summary:{
+            drivers:drivers.size,sessions:sessions.length,points:q.rows.length,stops:totalStops,
+            distance_km:Math.round(distanceKm*10)/10,stop_min_minutes:5,stop_radius_meters:150
+          }})
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao consultar histórico.'})}
       }
 
