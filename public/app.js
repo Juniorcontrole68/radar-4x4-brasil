@@ -2405,9 +2405,8 @@ function trackingArrivalAt(stop,history){
     const acc=Math.max(0,Number(p.accuracy_m)||0);
     if(acc>180)continue;
     const distanceKm=trackingHaversineKm(p,stop);
-    // Raio operacional máximo de 200 m, reduzido quando o GPS está mais preciso.
-    const radiusKm=Math.max(.10,Math.min(.20,.10+Math.min(acc,120)/1200));
-    if(distanceKm>radiusKm)continue;
+    // Regra operacional: cliente visitado quando o GPS passa a até 100 metros.
+    if(distanceKm>0.10)continue;
     const d=trackingParseDateTime(p.captured_at);
     if(!d)continue;
     const candidate={date:d,raw:p.captured_at,distanceKm,accuracyM:acc};
@@ -2497,7 +2496,7 @@ function trackingRenderAnalysis(){
     withGps=visited,withBaixa=rows.filter(x=>x.baixaAt).length,
     outSeq=rows.filter(x=>x.visited&&x.sequenceKey==='bad').length;
   if(summary)summary.textContent=visited+' visitada(s) • '+withGps+' confirmada(s) por GPS • '+withBaixa+' baixa(s) SSW • '+outSeq+' fora da sequência';
-  if(info)info.textContent='Cliente visitado é confirmado somente pela passagem do GPS na área do cliente. A baixa do SSW aparece apenas para conferência e não marca visita.';
+  if(info)info.textContent='Cliente visitado é confirmado somente quando o GPS passa a até 100 metros do ponto do cliente. A baixa do SSW aparece apenas para conferência e não marca visita.';
   const body=rows.map(x=>{
     const diff=x.diffMin===null?'—':(x.diffMin>=0?'+':'')+x.diffMin+' min';
     return '<tr>'+
