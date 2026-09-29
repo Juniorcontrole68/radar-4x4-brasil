@@ -903,24 +903,20 @@ function cityBubbleSetDefaults(){
   if(f&&!f.value)f.value=month;
   if(t&&!t.value)t.value=today
 }
-function cityBubbleMetricFlags(){
-  return{
-    value:!!$('#cityBubbleFlagValue')?.checked,
-    deliveries:!!$('#cityBubbleFlagDeliveries')?.checked,
-    returns:!!$('#cityBubbleFlagReturns')?.checked
-  }
+function cityBubbleMetric(){
+  return $('#cityBubbleMetric')?.value||'deliveries'
 }
-function cityBubbleScoreRows(rows,flags){
-  const mv=Math.max(1,...rows.map(x=>Number(x.valor||0)));
-  const md=Math.max(1,...rows.map(x=>Number(x.entregas||0)));
-  const mr=Math.max(1,...rows.map(x=>Number(x.retornos||0)));
-  return rows.map(x=>({...x,_score:Math.max(
-    flags.value?Number(x.valor||0)/mv:0,
-    flags.deliveries?Number(x.entregas||0)/md:0,
-    flags.returns?Number(x.retornos||0)/mr:0
-  )})).sort((a,b)=>b._score-a._score||b.valor-a.valor)
+function cityBubbleMetricValue(x,metric){
+  if(metric==='freight')return Number(x.frete||0);
+  if(metric==='value')return Number(x.valor||0);
+  return Number(x.entregas||0)
 }
-function cityBubbleRadius(v,max,minR=6,maxR=30){
+function cityBubbleMetricLabel(metric){
+  if(metric==='freight')return'Frete';
+  if(metric==='value')return'Valor da mercadoria';
+  return'Quantidade de entregas'
+}
+function cityBubbleRadius(v,max,minR=7,maxR=34){
   const n=Math.max(0,Number(v)||0),m=Math.max(1,Number(max)||1);
   return n<=0?0:minR+(maxR-minR)*Math.sqrt(n/m)
 }
@@ -937,76 +933,68 @@ function cityBubbleEnsureMap(){
 function renderCityBubbleMap(){
   const d=CITY_BUBBLE_DATA;if(!d?.ok)return;
   const map=cityBubbleEnsureMap();if(!map)return;
-  const flags=cityBubbleMetricFlags();
-  if(!flags.value&&!flags.deliveries&&!flags.returns){
-    const cb=$('#cityBubbleFlagDeliveries');if(cb)cb.checked=true;flags.deliveries=true
-  }
-  const all=(d.cities||[]).filter(x=>Number.isFinite(Number(x.lat))&&Number.isFinite(Number(x.lon)));
+  const metric=cityBubbleMetric(),all=(d.cities||[]).filter(x=>Number.isFinite(Number(x.lat))&&Number.isFinite(Number(x.lon)));
   const top=Number($('#cityBubbleTop')?.value||40);
-  const rows=cityBubbleScoreRows(all,flags);
+  const rows=all.slice().sort((a,b)=>cityBubbleMetricValue(b,metric)-cityBubbleMetricValue(a,metric)||b.entregas-a.entregas);
   const visible=top>0?rows.slice(0,top):rows;
-  const maxValue=Math.max(1,...visible.map(x=>Number(x.valor||0)));
-  const maxDeliveries=Math.max(1,...visible.map(x=>Number(x.entregas||0)));
-  const maxReturns=Math.max(1,...visible.map(x=>Number(x.retornos||0)));
+  const maxMetric=Math.max(1,...visible.map(x=>cityBubbleMetricValue(x,metric)));
   const bounds=[];
   const popup=x=>'<b>'+safe(x.cidade)+' / '+safe(x.uf)+'</b>'+
+    '<br>Frete: <b>'+brl(x.frete||0)+'</b>'+
     '<br>Valor mercadoria: <b>'+brl(x.valor||0)+'</b>'+
     '<br>Entregas: <b>'+nf(x.entregas||0)+'</b>'+
-    '<br>Retornos: <b>'+nf(x.retornos||0)+'</b>'+
-    '<br>Taxa de retorno: <b>'+((x.entregas?x.retornos/x.entregas*100:0).toFixed(1).replace('.',','))+'%</b>'+
-    '<br>Frete: '+brl(x.frete||0);
+    (x.retornos?'<br>Retornos: <b>'+nf(x.retornos)+'</b>':'');
   for(const x of visible){
+    const v=cityBubbleMetricValue(x,metric);if(v<=0)continue;
     const lat=Number(x.lat),lon=Number(x.lon);bounds.push([lat,lon]);
-    if(flags.value&&Number(x.valor)>0){
-      L.circleMarker([lat,lon],{radius:cityBubbleRadius(x.valor,maxValue,8,34),color:'#1d4ed8',weight:2,fillColor:'#3b82f6',fillOpacity:.23}).addTo(CITY_BUBBLE_LAYER).bindPopup(popup(x))
-    }
-    if(flags.deliveries&&Number(x.entregas)>0){
-      L.circleMarker([lat,lon],{radius:cityBubbleRadius(x.entregas,maxDeliveries,6,25),color:'#d97706',weight:2,fillColor:'#f59e0b',fillOpacity:.28}).addTo(CITY_BUBBLE_LAYER).bindPopup(popup(x))
-    }
-    if(flags.returns&&Number(x.retornos)>0){
-      L.circleMarker([lat,lon],{radius:cityBubbleRadius(x.retornos,maxReturns,5,18),color:'#b91c1c',weight:2,fillColor:'#ef4444',fillOpacity:.40}).addTo(CITY_BUBBLE_LAYER).bindPopup(popup(x))
-    }
+    L.circleMarker([lat,lon],{
+      radius:cityBubbleRadius(v,maxMetric),
+      color:metric==='freight'?'#0f766e':(metric==='value'?'#1d4ed8':'#d97706'),
+      weight:2,
+      fillOpacity:.32
+    }).addTo(CITY_BUBBLE_LAYER).bindPopup(popup(x))
   }
-  if(bounds.length){
-    const bb=L.latLngBounds(bounds);if(bb.isValid())map.fitBounds(bb.pad(.10),{maxZoom:10})
-  }
+  if(bounds.length){const bb=L.latLngBounds(bounds);if(bb.isValid())map.fitBounds(bb.pad(.10),{maxZoom:10})}
   setTimeout(()=>map.invalidateSize(),80);
-
   const ranking=$('#cityBubbleRanking');
   if(ranking){
-    ranking.innerHTML=visible.slice(0,25).map((x,i)=>'<div class="city-bubble-row"><b>'+(i+1)+'. '+safe(x.cidade)+' / '+safe(x.uf)+'</b><div class="meta">💰 '+brl(x.valor||0)+' • 📦 '+nf(x.entregas||0)+' • ↩️ '+nf(x.retornos||0)+'</div></div>').join('')||'<div class="muted">Nenhuma cidade localizada no mapa.</div>'
+    ranking.innerHTML=visible.slice(0,25).map((x,i)=>{
+      const main=metric==='freight'?brl(x.frete||0):(metric==='value'?brl(x.valor||0):nf(x.entregas||0)+' entregas');
+      return '<div class="city-bubble-row"><b>'+(i+1)+'. '+safe(x.cidade)+' / '+safe(x.uf)+'</b><div class="meta"><b>'+safe(cityBubbleMetricLabel(metric))+': '+main+'</b><br>Frete '+brl(x.frete||0)+' • Mercadoria '+brl(x.valor||0)+' • '+nf(x.entregas||0)+' entregas</div></div>'
+    }).join('')||'<div class="muted">Nenhuma cidade localizada no mapa.</div>'
   }
+  const ml=$('#cityBubbleMetricLabel');if(ml)ml.textContent='Visão atual: '+cityBubbleMetricLabel(metric)
 }
 function renderCityBubbles(){
   const d=CITY_BUBBLE_DATA;if(!d?.ok)return;
   const set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
+  set('#cityBubbleTotalFreight',brl(d.totalFreight||0));
   set('#cityBubbleTotalValue',brl(d.totalValue||0));
   set('#cityBubbleTotalDeliveries',nf(d.totalDeliveries||0));
   set('#cityBubbleTotalReturns',nf(d.totalReturns||0));
   set('#cityBubbleTotalCities',nf(d.totalCities||0));
   set('#hubCityBubbleCities',nf(d.totalCities||0));
+  set('#hubCityBubbleFreight',brl(d.totalFreight||0));
   set('#hubCityBubbleValue',brl(d.totalValue||0));
   set('#hubCityBubbleDeliveries',nf(d.totalDeliveries||0));
-  set('#hubCityBubbleReturns',nf(d.totalReturns||0));
-  set('#hubCityBubbleInfo','Período '+d.from+' a '+d.to+' • '+nf(d.mappedCities||0)+' cidade(s) localizadas no mapa.');
-  set('#cityBubbleInfo','Fonte: '+(d.source||'SSW / BI2')+' • período '+d.from+' a '+d.to+' • bolhas por cidade de destino.');
+  set('#hubCityBubbleInfo','Fonte SSW • '+nf(d.totalDeliveries||0)+' entregas distribuídas em '+nf(d.totalCities||0)+' cidades.');
+  set('#cityBubbleInfo','Fonte: '+(d.source||'SSW')+' • período '+d.from+' a '+d.to+' • total oficial dos romaneios: '+nf(d.officialDeliveries||d.totalDeliveries||0)+'.');
   const rows=(d.cities||[]).map(x=>({
     cidade:x.cidade+' / '+x.uf,
+    frete:brl(x.frete||0),
     valor:brl(x.valor||0),
     entregas:nf(x.entregas||0),
     retornos:nf(x.retornos||0),
-    taxa:(x.entregas?x.retornos/x.entregas*100:0).toFixed(1).replace('.',',')+'%',
-    frete:brl(x.frete||0),
     mapa:Number.isFinite(Number(x.lat))?'Sim':'Não'
   }));
-  table('#cityBubbleTable',[['Cidade','cidade'],['Valor mercadoria','valor'],['Entregas','entregas'],['Retornos','retornos'],['Taxa retorno','taxa'],['Frete','frete'],['No mapa','mapa']],rows);
+  table('#cityBubbleTable',[['Cidade','cidade'],['Frete','frete'],['Valor mercadoria','valor'],['Entregas','entregas'],['Retornos','retornos'],['No mapa','mapa']],rows);
   renderCityBubbleMap()
 }
 async function refreshCityBubbles(){
   if(window.__cityBubbleBusy)return;
   window.__cityBubbleBusy=true;
   cityBubbleSetDefaults();
-  const info=$('#cityBubbleInfo');if(info)info.textContent='Consultando cidades no SSW…';
+  const info=$('#cityBubbleInfo');if(info)info.textContent='Consultando romaneios e CT-es no SSW…';
   try{
     const from=$('#cityBubbleFrom')?.value||'',to=$('#cityBubbleTo')?.value||'';
     const q=new URLSearchParams({from,to,t:String(Date.now())});
@@ -1376,6 +1364,24 @@ async function hydrateLoadingPhotos(){
     }
   }))
 }
+async function renderOverviewLoadingPhotos(rows){
+  const box=$('#overviewLoadPhotos');if(!box)return;
+  const recent=(rows||[]).slice(0,6);
+  if(!recent.length){box.innerHTML='<div class="muted">Nenhuma foto de carregamento ou descarga registrada.</div>';return}
+  box.innerHTML=recent.map(r=>'<div style="min-width:150px;max-width:190px;flex:1;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;background:#fff"><a data-overview-photo-id="'+safe(r.id)+'" title="Abrir foto"><div style="height:115px;background:#f1f5f9;display:flex;align-items:center;justify-content:center"><img data-overview-photo-id="'+safe(r.id)+'" alt="Foto do registro" style="width:100%;height:100%;object-fit:cover"></div></a><div style="padding:8px;font-size:12px"><b>'+safe(cargoTypeLabel(r.tipo))+'</b><br>'+safe(r.motorista||'Motorista não informado')+'<br><span class="muted">'+safe(loadingDateTime(r.capturada_em))+'</span></div></div>').join('');
+  await Promise.all([...box.querySelectorAll('img[data-overview-photo-id]')].map(async img=>{
+    const id=img.dataset.overviewPhotoId,wrap=img.closest('a');
+    try{
+      const r=await fetch('/api/carregamentos-finais/'+encodeURIComponent(id)+'/foto?t='+Date.now(),{cache:'no-store'});
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      const blob=await r.blob(),url=URL.createObjectURL(blob);
+      if(!Array.isArray(window.__loadingPhotoObjectUrls))window.__loadingPhotoObjectUrls=[];
+      window.__loadingPhotoObjectUrls.push(url);img.src=url;
+      if(wrap){wrap.href=url;wrap.target='_blank';wrap.rel='noopener'}
+    }catch(e){img.alt='Foto indisponível'}
+  }))
+}
+
 function cargoTypeLabel(v){return String(v||'carregamento').toLowerCase()==='descarga'?'Descarga':'Carregamento'}
 function renderLoadingRecords(rows){
   const box=$('#loadRecords');clearLoadingPhotoUrls();
@@ -1403,7 +1409,8 @@ function renderLoadingRecords(rows){
   const info=$('#hubLoadInfo');
   if(info)info.textContent=rows.length?('Último: '+cargoTypeLabel(rows[0].tipo)+' • '+(rows[0].motorista||'—')+' • '+nf(Number(rows[0].quantidade_entregas||0))+' • '+loadingDateTime(rows[0].capturada_em)):'Nenhum registro realizado ainda.';
   const overviewInfo=$('#overviewLoadInfo');
-  if(overviewInfo)overviewInfo.textContent=rows.length?('Último registro: '+cargoTypeLabel(rows[0].tipo)+' • '+(rows[0].motorista||'—')+' • '+loadingDateTime(rows[0].capturada_em)):'Nenhum carregamento ou descarga registrado ainda.'
+  if(overviewInfo)overviewInfo.textContent=rows.length?('Último registro: '+cargoTypeLabel(rows[0].tipo)+' • '+(rows[0].motorista||'—')+' • '+loadingDateTime(rows[0].capturada_em)):'Nenhum carregamento ou descarga registrado ainda.';
+  renderOverviewLoadingPhotos(rows).catch(()=>{})
 }
 async function refreshLoadingRecords(useFilters=true){
   if(window.__loadingRecordsBusy)return;
@@ -3326,7 +3333,7 @@ function openTab(tab){
 }
 $$('.dash-open').forEach(b=>b.onclick=()=>{if(tabAllowed(b.dataset.open))openTab(b.dataset.open)});
 if($('#cityBubbleApply'))$('#cityBubbleApply').onclick=refreshCityBubbles;
-['#cityBubbleFlagValue','#cityBubbleFlagDeliveries','#cityBubbleFlagReturns','#cityBubbleTop'].forEach(id=>{const e=$(id);if(e)e.onchange=renderCityBubbleMap});
+['#cityBubbleMetric','#cityBubbleTop'].forEach(id=>{const e=$(id);if(e)e.onchange=renderCityBubbleMap});
 
 $$('.nav button').forEach(b=>b.onclick=()=>{
   if(!tabAllowed(b.dataset.tab))return;
