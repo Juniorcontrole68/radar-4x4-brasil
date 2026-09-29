@@ -2967,18 +2967,36 @@ async function routeRefreshCachedDeliveryStatus(plan,target){
   if(!plan||target!==spDateISO())return plan;
   try{
     const op=await getSswMotoristasFast(target,target);
-    const byCtrc=new Map(),byNf=new Map();
+    const byCtrc=new Map(),byNfUnique=new Map(),nfCount=new Map();
     for(const r of (op?.rows||[])){
       const c=normCtrcLoose(r.ctrcOficial||r.ctrc),n=normNf(r.nf);
       if(c)byCtrc.set(c,r);
-      if(n)byNf.set(n,r)
+      if(n){
+        nfCount.set(n,(nfCount.get(n)||0)+1);
+        if(!byNfUnique.has(n))byNfUnique.set(n,r)
+      }
     }
     const patch=s=>{
       if(!s)return s;
-      const r=byCtrc.get(normCtrcLoose(s.ctrc))||byNf.get(normNf(s.nf));
+      const c=normCtrcLoose(s.ctrc),n=normNf(s.nf);
+      // Status de entrega deve casar pelo CT-e. NF só é contingência quando o
+      // ponto realmente não possui CT-e e a NF aparece uma única vez.
+      const r=c?byCtrc.get(c):((n&&nfCount.get(n)===1)?byNfUnique.get(n):null);
       if(!r)return s;
-      const baixaAt=r.baixaDataHora||((r.dataEntrega||r.dataOcorrencia||'')+((r.horaEntrega||r.horaOcorrencia)?' '+(r.horaEntrega||r.horaOcorrencia):''));
-      return{...s,entregue:!!r.entregue,baixaAt:baixaAt||s.baixaAt||'',baixaOcorrencia:r.ocorrencia||s.baixaOcorrencia||'',baixaCodigo:r.ocorrenciaCodigo||s.baixaCodigo||''}
+      const delivered=!!r.entregue;
+      const code=String(r.ocorrenciaCodigo||'').replace(/^0+/,'');
+      const isDeliveryCode=code==='1'||code==='37';
+      const baixaAt=(delivered||isDeliveryCode)
+        ?(r.baixaDataHora||((r.dataEntrega||'')+((r.horaEntrega)?' '+r.horaEntrega:'')))
+        :'';
+      return{
+        ...s,
+        entregue:delivered||isDeliveryCode,
+        baixaAt:baixaAt||'',
+        baixaOcorrencia:(delivered||isDeliveryCode)?(r.ocorrencia||''):'',
+        baixaCodigo:(delivered||isDeliveryCode)?(r.ocorrenciaCodigo||''):'',
+        baixaConfirmed:!!(delivered||isDeliveryCode)
+      }
     };
     const stops=(plan.stops||[]).map(patch);
     const points=(plan.points||[]).map((p,i)=>i===0?p:patch(p));
@@ -3130,7 +3148,7 @@ async function buildRoutePlan(date='',romaneio=''){
   const stops=[],rejectedStops=[];
   for(let idx=0;idx<metas.length;idx++){
     const meta=metas[idx],lk=normCtrcLoose(meta.ctrc),nf=normNf(meta.nf);
-    const detail=detailByLoose.get(lk)||detailByNf.get(nf)||null;
+    const detail=detailByLoose.get(lk)||(!lk?detailByNf.get(nf):null)||null;
     const primary=byLoose.get(lk)||byNf.get(nf)||meta.__row||null;
     const pending=pendingByLoose.get(lk)||pendingByNf.get(nf)||null;
     const enriched=enrichedByLoose.get(lk)||enrichedByNf.get(nf)||null;
@@ -3198,9 +3216,12 @@ async function buildRoutePlan(date='',romaneio=''){
       endereco:parts.endereco,numero:parts.numero,bairro:parts.bairro,cep:parts.cep,
       precision,coordinateSource,query,lat:geo.lat,lon:geo.lon,radiusKm:radius/1000,label:destinatario+(cidade?' • '+cidade:''),
       entregue:!!detail?.entregue,
-      baixaAt:detail?.baixaDataHora||((detail?.dataEntrega||detail?.dataOcorrencia||'')+((detail?.horaEntrega||detail?.horaOcorrencia)?' '+(detail?.horaEntrega||detail?.horaOcorrencia):'')),
-      baixaOcorrencia:detail?.ocorrencia||'',
-      baixaCodigo:detail?.ocorrenciaCodigo||''
+      baixaAt:detail?.entregue
+        ?(detail?.baixaDataHora||((detail?.dataEntrega||'')+((detail?.horaEntrega)?' '+detail?.horaEntrega:'')))
+        :'',
+      baixaOcorrencia:detail?.entregue?(detail?.ocorrencia||''):'',
+      baixaCodigo:detail?.entregue?(detail?.ocorrenciaCodigo||''):'',
+      baixaConfirmed:!!detail?.entregue
     })
   }
   console.log('ROTEIRIZADOR PARADAS '+String(selected.romaneio||'')+': '+JSON.stringify({
@@ -3296,7 +3317,7 @@ async function buildTrackingPlannedRoute(date='',driver='',plate=''){
             cidade:x.cidade||d?.cidade||'',uf:x.uf||d?.uf||'SP',
             lat:Number(x.lat),lon:Number(x.lon),precision:'cidade',coordinateSource:'BI2/simulacao',
             label:(x.cliente||d?.destinatario||('Entrega '+(i+1)))+(x.cidade?' • '+x.cidade:''),
-            entregue:!!d?.entregue,baixaAt:d?.baixaDataHora||''
+            entregue:!!d?.entregue,baixaAt:d?.entregue?(d?.baixaDataHora||''):'',baixaConfirmed:!!d?.entregue
           }
         });
         if(stops.length){
@@ -3343,7 +3364,7 @@ async function buildTrackingPlannedRoute(date='',driver='',plate=''){
         ctrc:r.ctrcOficial||r.ctrc||'',nf:r.nf||'',destinatario:r.destinatario||('Entrega '+(fallbackStops.length+1)),
         cidade:city,uf,lat:geo.lat,lon:geo.lon,precision:'cidade',coordinateSource:'cidade-aproximada',
         label:(r.destinatario||'Entrega')+' • '+city,
-        entregue:!!r.entregue,baixaAt:r.baixaDataHora||''
+        entregue:!!r.entregue,baixaAt:r.entregue?(r.baixaDataHora||''):'',baixaConfirmed:!!r.entregue
       })
     }
     if(fallbackStops.length){
