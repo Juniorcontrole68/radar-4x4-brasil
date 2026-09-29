@@ -990,21 +990,26 @@ function renderCityBubbles(){
   table('#cityBubbleTable',[['Cidade','cidade'],['Frete','frete'],['Valor mercadoria','valor'],['Entregas','entregas'],['Retornos','retornos'],['No mapa','mapa']],rows);
   renderCityBubbleMap()
 }
-async function refreshCityBubbles(){
+async function refreshCityBubbles(force=false){
   if(window.__cityBubbleBusy)return;
   window.__cityBubbleBusy=true;
   cityBubbleSetDefaults();
-  const info=$('#cityBubbleInfo');if(info)info.textContent='Consultando romaneios e CT-es no SSW…';
+  const info=$('#cityBubbleInfo'),btn=$('#cityBubbleApply');
+  if(info)info.textContent=force?'Atualizando SSW e recalculando valores…':'Consultando romaneios e CT-es no SSW…';
+  if(btn){btn.disabled=true;btn.textContent='Atualizando SSW…'}
   try{
     const from=$('#cityBubbleFrom')?.value||'',to=$('#cityBubbleTo')?.value||'';
-    const q=new URLSearchParams({from,to,t:String(Date.now())});
+    const q=new URLSearchParams({from,to,t:String(Date.now()),force:force?'1':'0'});
     const r=await fetch('/api/ssw/cidades-mapa?'+q.toString(),{cache:'no-store'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar mapa de cidades.');
     CITY_BUBBLE_DATA=j;renderCityBubbles()
   }catch(e){
     if(info)info.textContent='Não foi possível carregar o mapa de cidades: '+e.message
-  }finally{window.__cityBubbleBusy=false}
+  }finally{
+    window.__cityBubbleBusy=false;
+    if(btn){btn.disabled=false;btn.textContent='Atualizar SSW'}
+  }
 }
 
 function sswRangeQuery(){const f=$('#from')?.value||'',t=$('#to')?.value||'';return f&&t?'?from='+encodeURIComponent(f)+'&to='+encodeURIComponent(t):''}
@@ -3333,7 +3338,7 @@ function openTab(tab){
   loadHeavyForTab(tab);
 }
 $$('.dash-open').forEach(b=>b.onclick=()=>{if(tabAllowed(b.dataset.open))openTab(b.dataset.open)});
-if($('#cityBubbleApply'))$('#cityBubbleApply').onclick=refreshCityBubbles;
+if($('#cityBubbleApply'))$('#cityBubbleApply').onclick=()=>refreshCityBubbles(true);
 ['#cityBubbleMetric','#cityBubbleTop'].forEach(id=>{const e=$(id);if(e)e.onchange=renderCityBubbleMap});
 
 $$('.nav button').forEach(b=>b.onclick=()=>{
