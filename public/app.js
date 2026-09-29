@@ -1901,6 +1901,7 @@ async function calculateRoute(){
 
 let TRACKING_MAP=null,TRACKING_LAYER=null,TRACKING_DATA=null,TRACKING_ROUTE_DATA=null,TRACKING_DRIVER_ROWS=[];
 let TRACKING_MAP_VIEW_READY=false;
+let TRACKING_HISTORY_MAP_UI=null,TRACKING_HISTORY_LAYER_UI=null,TRACKING_HISTORY_RESULT=null;
 const TRACKING_LOGICAL_ROUTES=new Map();
 const TRACKING_PLAN_CACHE=new Map();
 const TRACKING_HISTORY_CACHE=new Map();
@@ -2087,6 +2088,141 @@ function trackingParseDateTime(v){
 function trackingTimeLabel(v){
   const d=v instanceof Date?v:trackingParseDateTime(v);
   return d?d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'—'
+}
+function trackingHistoryDuration(sec){
+  const s=Math.max(0,Math.round(Number(sec)||0));
+  if(s<60)return s+' s';
+  const h=Math.floor(s/3600),m=Math.round((s%3600)/60);
+  return h?(h+' h '+m+' min'):(m+' min')
+}
+async function trackingHistoryLoadDrivers(preserve=true){
+  const date=$('#trackingHistoryDate')?.value||'',sel=$('#trackingHistoryDriver');if(!date||!sel)return;
+  const previous=preserve?sel.value:'';
+  sel.disabled=true;
+  try{
+    const r=await fetch('/api/tracking/history-drivers?date='+encodeURIComponent(date)+'&t='+Date.now(),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao listar motoristas.');
+    const grouped=new Map();
+    (j.rows||[]).forEach(x=>{
+      const name=String(x.driver_name||'').trim();if(!name)return;
+      const key=trackingNorm(name);
+      if(!grouped.has(key))grouped.set(key,{name,plates:new Set(),points:0});
+      const g=grouped.get(key);if(x.vehicle_plate)g.plates.add(String(x.vehicle_plate));g.points+=Number(x.points||0)
+    });
+    const rows=[...grouped.values()].sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
+    sel.innerHTML='<option value="">Todos os motoristas (coletivo)</option>'+rows.map(x=>'<option value="'+safe(x.name)+'">'+safe(x.name)+(x.plates.size?' • '+safe([...x.plates].join(', ')):'')+'</option>').join('');
+    if(previous&&rows.some(x=>x.name===previous))sel.value=previous;
+    const info=$('#trackingHistoryInfo');
+    if(info&&!TRACKING_HISTORY_RESULT)info.textContent=rows.length?nf(rows.length)+' motorista(s) com pontos GPS nesta data. Selecione um ou mantenha a visão coletiva.':'Nenhum ponto GPS encontrado nesta data.'
+  }catch(e){
+    sel.innerHTML='<option value="">Todos os motoristas (coletivo)</option>';
+    const info=$('#trackingHistoryInfo');if(info)info.textContent='Não foi possível carregar os motoristas do histórico: '+e.message
+  }finally{sel.disabled=false}
+}
+function trackingHistoryRenderMap(data){
+  const box=$('#trackingHistoryMap');if(!box)return;
+  if(typeof L==='undefined'){box.innerHTML='<div class="muted" style="padding:22px">Mapa indisponível.</div>';return}
+  if(!TRACKING_HISTORY_MAP_UI){
+    TRACKING_HISTORY_MAP_UI=L.map(box,{zoomControl:true}).setView([-22.739,-47.331],9);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(TRACKING_HISTORY_MAP_UI)
+  }
+  if(TRACKING_HISTORY_LAYER_UI)TRACKING_HISTORY_LAYER_UI.remove();
+  TRACKING_HISTORY_LAYER_UI=L.layerGroup().addTo(TRACKING_HISTORY_MAP_UI);
+  const sessions=data?.sessions||[],drivers=[...new Set(sessions.map(x=>String(x.driver_name||'').trim()).filter(Boolean))];
+  const colorByDriver=new Map(drivers.map((d,i)=>[d,TRACKING_COLORS[i%TRACKING_COLORS.length]]));
+  const bounds=[],legend=$('#trackingHistoryLegend');
+  if(legend)legend.innerHTML=drivers.map(d=>'<span><i class="tracking-history-dot" style="background:'+colorByDriver.get(d)+'"></i>'+safe(d)+'</span>').join('');
+  const stopCounters=new Map();
+  sessions.forEach(session=>{
+    const color=colorByDriver.get(String(session.driver_name||'').trim())||TRACKING_COLORS[0];
+    const coords=(session.points||[]).map(p=>[Number(p.latitude),Number(p.longitude)]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1]));
+    if(coords.length){
+      L.polyline(coords,{color,weight:4,opacity:.8}).addTo(TRACKING_HISTORY_LAYER_UI)
+        .bindTooltip(safe(session.driver_name||'Motorista')+(session.vehicle_plate?' • '+safe(session.vehicle_plate):''));
+      coords.forEach(p=>bounds.push(p))
+    }
+    (session.stops||[]).forEach(stop=>{
+      const driver=String(session.driver_name||'Motorista'),n=(stopCounters.get(driver)||0)+1;stopCounters.set(driver,n);
+      const lat=Number(stop.latitude),lon=Number(stop.longitude);if(!Number.isFinite(lat)||!Number.isFinite(lon))return;
+      const icon=L.divIcon({className:'',html:'<div style="min-width:30px;height:30px;padding:0 5px;border-radius:15px;background:#fff;border:3px solid '+color+';box-shadow:0 2px 7px #0005;display:grid;place-items:center;font-size:11px;font-weight:900">'+n+'</div>',iconSize:[34,34],iconAnchor:[17,17]});
+      const popup='<b>'+safe(driver)+' • Parada '+n+'</b><br>'+safe(session.vehicle_plate||'')+
+        '<br>Chegada: '+safe(trackingTimeLabel(stop.arrived_at))+
+        '<br>Saída: '+safe(trackingTimeLabel(stop.left_at))+
+        '<br>Tempo parado: <b>'+safe(trackingHistoryDuration(stop.duration_seconds))+'</b>'+
+        '<br>GPS: '+lat.toFixed(5)+', '+lon.toFixed(5);
+      L.marker([lat,lon],{icon}).addTo(TRACKING_HISTORY_LAYER_UI).bindPopup(popup).bindTooltip(safe(trackingFirstName(driver))+' • '+n);
+      bounds.push([lat,lon])
+    })
+  });
+  if(bounds.length){
+    const bb=L.latLngBounds(bounds);if(bb.isValid())TRACKING_HISTORY_MAP_UI.fitBounds(bb.pad(.10))
+  }else TRACKING_HISTORY_MAP_UI.setView([-22.739,-47.331],9);
+  setTimeout(()=>TRACKING_HISTORY_MAP_UI.invalidateSize(),80)
+}
+function trackingHistoryRender(data){
+  TRACKING_HISTORY_RESULT=data;
+  const sum=data?.summary||{},sessions=data?.sessions||[];
+  const set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
+  set('#trackingHistoryDrivers',nf(sum.drivers||0));
+  set('#trackingHistorySessions',nf(sum.sessions||0));
+  set('#trackingHistoryDistance',(Number(sum.distance_km||0)).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})+' km');
+  set('#trackingHistoryStops',nf(sum.stops||0));
+  const chosen=$('#trackingHistoryDriver')?.value||'';
+  const info=$('#trackingHistoryInfo');
+  if(info)info.textContent=(chosen?chosen:'Todos os motoristas')+' • '+String(data.date||'').split('-').reverse().join('/')+' • '+nf(sum.points||0)+' ponto(s) GPS • '+nf(sum.stops||0)+' parada(s) detectada(s).';
+  const flat=[];
+  sessions.forEach(s=>(s.stops||[]).forEach((stop,i)=>flat.push({session:s,stop,index:i+1})));
+  flat.sort((a,b)=>new Date(a.stop.arrived_at)-new Date(b.stop.arrived_at));
+  const table=$('#trackingHistoryStopsTable');
+  if(table){
+    const body=flat.length?flat.map(x=>{
+      const s=x.session,p=x.stop,lat=Number(p.latitude),lon=Number(p.longitude);
+      return '<tr>'+
+        '<td><b>'+safe(s.driver_name||'—')+'</b><div class="muted">'+safe(s.vehicle_plate||'')+'</div></td>'+
+        '<td>'+x.index+'º</td>'+
+        '<td>'+safe(trackingTimeLabel(p.arrived_at))+'</td>'+
+        '<td>'+safe(trackingTimeLabel(p.left_at))+'</td>'+
+        '<td><span class="tracking-stop-time">'+safe(trackingHistoryDuration(p.duration_seconds))+'</span></td>'+
+        '<td>'+safe(Number.isFinite(lat)&&Number.isFinite(lon)?lat.toFixed(5)+', '+lon.toFixed(5):'—')+'</td>'+
+        '<td>'+nf(p.point_count||0)+'</td>'+
+        '</tr>'
+    }).join(''):'<tr><td colspan="7" class="muted">Nenhuma parada de 5 minutos ou mais foi detectada neste período.</td></tr>';
+    table.innerHTML='<thead><tr><th>Motorista</th><th>Parada</th><th>Chegada</th><th>Saída</th><th>Tempo parado</th><th>Ponto GPS</th><th>Amostras</th></tr></thead><tbody>'+body+'</tbody>'
+  }
+  trackingHistoryRenderMap(data)
+}
+async function refreshTrackingHistory(){
+  const date=$('#trackingHistoryDate')?.value||'',driver=$('#trackingHistoryDriver')?.value||'',info=$('#trackingHistoryInfo'),btn=$('#trackingHistorySearch');
+  if(!date){if(info)info.textContent='Selecione uma data.';return}
+  if(btn){btn.disabled=true;btn.textContent='Consultando…'}
+  if(info)info.textContent='Carregando percurso e identificando pontos de parada…';
+  try{
+    const q=new URLSearchParams({date});if(driver)q.set('driver',driver);q.set('t',String(Date.now()));
+    const r=await fetch('/api/tracking/history?'+q.toString(),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível consultar o histórico.');
+    trackingHistoryRender(j)
+  }catch(e){
+    TRACKING_HISTORY_RESULT=null;
+    if(info)info.textContent='Erro ao consultar histórico: '+e.message;
+    const table=$('#trackingHistoryStopsTable');if(table)table.innerHTML='<tbody><tr><td class="muted">Histórico indisponível.</td></tr></tbody>'
+  }finally{if(btn){btn.disabled=false;btn.textContent='Consultar histórico'}}
+}
+async function trackingHistoryToday(){
+  const d=iso(new Date());if($('#trackingHistoryDate'))$('#trackingHistoryDate').value=d;
+  await trackingHistoryLoadDrivers(false);await refreshTrackingHistory()
+}
+function printTrackingHistory(){
+  const data=TRACKING_HISTORY_RESULT;if(!data){alert('Consulte um histórico antes de imprimir.');return}
+  const table=$('#trackingHistoryStopsTable'),driver=$('#trackingHistoryDriver')?.value||'Todos os motoristas';
+  const w=window.open('','_blank');if(!w)return alert('O navegador bloqueou a janela de impressão.');
+  const title='Histórico de Rastreio de Carga • '+String(data.date||'').split('-').reverse().join('/');
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>'+safe(title)+'</title><style>body{font-family:Segoe UI,Arial;padding:22px;color:#172033}h1{font-size:20px;margin:0 0 5px}.meta{color:#64748b;font-size:12px;margin-bottom:16px}.sum{display:flex;gap:20px;flex-wrap:wrap;margin:12px 0 18px}.sum b{font-size:18px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #cbd5e1;padding:7px;text-align:left}th{background:#f1f5f9}@page{size:landscape;margin:10mm}</style></head><body>');
+  w.document.write('<h1>'+safe(title)+'</h1><div class="meta">'+safe(driver)+'</div>');
+  w.document.write('<div class="sum"><span>Motoristas: <b>'+nf(data.summary?.drivers||0)+'</b></span><span>Rotas: <b>'+nf(data.summary?.sessions||0)+'</b></span><span>Distância: <b>'+Number(data.summary?.distance_km||0).toLocaleString('pt-BR',{maximumFractionDigits:1})+' km</b></span><span>Paradas: <b>'+nf(data.summary?.stops||0)+'</b></span></div>');
+  w.document.write(table?table.outerHTML:'');
+  w.document.write('</body></html>');w.document.close();setTimeout(()=>{w.focus();w.print()},250)
 }
 async function trackingFetchPlan(romaneio,date){
   const key=date+'|'+romaneio,hit=TRACKING_PLAN_CACHE.get(key);
@@ -2400,6 +2536,12 @@ async function generateTrackingCode(){
   finally{if(btn)btn.disabled=false}
 }
 function setupTracking(){
+  if($('#trackingHistoryDate')&&!$('#trackingHistoryDate').value)$('#trackingHistoryDate').value=iso(new Date());
+  if($('#trackingHistorySearch'))$('#trackingHistorySearch').onclick=refreshTrackingHistory;
+  if($('#trackingHistoryToday'))$('#trackingHistoryToday').onclick=trackingHistoryToday;
+  if($('#trackingHistoryPrint'))$('#trackingHistoryPrint').onclick=printTrackingHistory;
+  if($('#trackingHistoryDate'))$('#trackingHistoryDate').onchange=async()=>{TRACKING_HISTORY_RESULT=null;await trackingHistoryLoadDrivers(false)};
+  if($('#trackingHistoryDriver'))$('#trackingHistoryDriver').onchange=()=>{};
   if($('#trackingGenerateCode'))$('#trackingGenerateCode').onclick=generateTrackingCode;
   if($('#trackingUseTest'))$('#trackingUseTest').onclick=trackingUseTest;
   if($('#trackingRefresh'))$('#trackingRefresh').onclick=()=>{TRACKING_NEXT_REFRESH=0;refreshTracking()};
@@ -2454,6 +2596,7 @@ function loadHeavyForTab(tab){
     setTimeout(()=>refreshDeliveryProgram(false),60);
   }else if(tab==='rastreamento'&&hasPerm('tracking')){
     setTimeout(()=>refreshTracking(),60);
+    setTimeout(()=>trackingHistoryLoadDrivers(true),120);
   }else if(tab==='agendamentos-copia'&&hasAnyPerm(['dashboard','agendamentos','agendamentos_copia'])){
     setTimeout(()=>refreshAgCopy(false),50);
   }else if(tab==='roteirizador'&&hasPerm('roteirizador')){
