@@ -2025,7 +2025,7 @@ function trackingStatus(row){
   if(Number.isFinite(age)&&age>120)return{key:'warn',label:'GPS atrasado • '+trackingAgeLabel(age),distance:null};
   const route=trackingFindRoute(row.driver_name,row.vehicle_plate);
   if(!route?.geometry)return{key:'warn',label:'Ativo • sem rota vinculada',distance:null};
-  const d=trackingDistanceToGeometry(Number(row.latitude),Number(row.longitude),route.geometry);
+  const d=trackingDistanceToGeometry(Number(row.latitude),Number(row.longitude),route.outboundGeometry||route.geometry);
   if(d===null)return{key:'warn',label:'Ativo • rota indisponível',distance:null};
   return d<=TRACKING_DEVIATION_KM
     ?{key:'ok',label:'Na rota',distance:d}
@@ -2235,31 +2235,16 @@ async function trackingFetchPlan(romaneio,date){
   return j
 }
 async function trackingBuildLogicalPlan(row,date){
-  const roms=trackingRomaneiosFor(row.driver_name,row.vehicle_plate);
-  if(!roms.length)return null;
-  const plans=[];
-  for(const rom of roms.slice(0,6)){
-    try{plans.push(await trackingFetchPlan(rom,date))}catch(e){console.warn('Rota '+rom,e)}
-  }
-  if(!plans.length)return null;
-  let plan=plans[0];
-  if(plans.length>1){
-    const seen=new Set(),stops=[];
-    plans.forEach(p=>(p.stops||[]).forEach(s=>{
-      const k=trackingNorm(s.ctrc||'')+'|'+String(s.nf||'')+'|'+Number(s.lat).toFixed(5)+'|'+Number(s.lon).toFixed(5);
-      if(seen.has(k))return;seen.add(k);stops.push(s)
-    }));
-    if(stops.length){
-      try{
-        const rr=await fetch('/api/roteirizador/recalcular',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-          date,romaneio:roms.join(' + '),motorista:row.driver_name||'',veiculo:row.vehicle_plate||'',stops
-        })});
-        const jj=await rr.json().catch(()=>({}));
-        if(rr.ok&&jj.ok)plan=jj
-      }catch{}
-    }
-  }
-  plan={...plan,logical:true,romaneios:roms,motorista:row.driver_name||plan.motorista||'',veiculo:row.vehicle_plate||plan.veiculo||''};
+  const driver=String(row?.driver_name||'').trim(),plate=String(row?.vehicle_plate||'').trim();
+  if(!driver&&!plate)return null;
+  const key='manifestos|'+date+'|'+trackingDriverKey(driver,plate),hit=TRACKING_PLAN_CACHE.get(key);
+  if(hit&&Date.now()-hit.at<2*60*1000)return hit.value;
+  const q=new URLSearchParams({date,driver,plate,t:String(Date.now())});
+  const r=await fetch('/api/tracking/planned-route?'+q.toString(),{cache:'no-store'});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível montar a rota pelas entregas dos romaneios.');
+  const plan={...j,logical:true,plannedSource:'romaneios',motorista:driver||j.motorista||'',veiculo:plate||j.veiculo||''};
+  TRACKING_PLAN_CACHE.set(key,{at:Date.now(),value:plan});
   return plan
 }
 async function trackingHistory(sessionId){
@@ -2406,7 +2391,7 @@ function renderTrackingMap(rows){
         L.polyline(coords,{color:'#ffffff',weight:8,opacity:.92}).addTo(TRACKING_LAYER);
         L.polyline(coords,{color:plannedColor,weight:4,opacity:.82,dashArray:'10 7'})
           .addTo(TRACKING_LAYER)
-          .bindTooltip('Rota planejada • '+safe(row.driver_name));
+          .bindTooltip('Rota planejada pelos romaneios • '+safe(row.driver_name)+' • '+nf(route.expectedDeliveries||route.stops?.length||0)+' entrega(s)');
         coords.forEach(x=>bounds.push(x))
       }
       const base=route?.points?.[0];
