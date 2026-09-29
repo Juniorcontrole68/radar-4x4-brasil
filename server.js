@@ -2521,6 +2521,8 @@ const ROUTE_BASE_ADDRESS='Avenida do Algodão, 316, Distrito Industrial Salto Gr
 const ROUTE_BASE_FALLBACK={lat:-22.69552,lon:-47.307,displayName:ROUTE_BASE_ADDRESS,city:'Americana',state:'São Paulo',fallback:true};
 const ROUTE_MAX_RADIUS_METERS=300000;
 const ROUTE_GEO_CACHE=new Map();
+const ROUTE_GEO_INFLIGHT=new Map();
+let ROUTE_GEO_QUEUE=Promise.resolve();
 const ROUTE_PLAN_CACHE=new Map();
 let ROUTE_GEOCODE_LAST=0;
 function routeKeyNorm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'')}
@@ -2583,31 +2585,37 @@ async function routeGeocode(query,center=null,maxRadiusMeters=null){
   const centerKey=center&&Number.isFinite(center.lat)&&Number.isFinite(center.lon)?('|'+center.lat.toFixed(3)+'|'+center.lon.toFixed(3)+'|'+Number(maxRadiusMeters||0)):'';
   const key=routeKeyNorm(q)+centerKey;
   if(ROUTE_GEO_CACHE.has(key))return ROUTE_GEO_CACHE.get(key);
-  const wait=Math.max(0,1050-(Date.now()-ROUTE_GEOCODE_LAST));
-  if(wait)await new Promise(r=>setTimeout(r,wait));
-  ROUTE_GEOCODE_LAST=Date.now();
-  const u=new URL('https://nominatim.openstreetmap.org/search');
-  u.searchParams.set('format','jsonv2');u.searchParams.set('limit','5');u.searchParams.set('addressdetails','1');u.searchParams.set('countrycodes','br');u.searchParams.set('q',q);
-  try{
-    const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Roteirizador/1.0 (operacao interna)','Accept-Language':'pt-BR,pt;q=0.9'},signal:AbortSignal.timeout(12000)});
-    const j=await r.json().catch(()=>[]);
-    if(r.ok&&Array.isArray(j)&&j.length){
-      let list=j.map(x=>({
-        lat:Number(x.lat),lon:Number(x.lon),displayName:x.display_name||q,
-        state:String(x.address?.state||x.address?.region||''),city:String(x.address?.city||x.address?.town||x.address?.municipality||x.address?.village||'')
-      })).filter(v=>Number.isFinite(v.lat)&&Number.isFinite(v.lon));
-      if(center&&Number.isFinite(center.lat)&&Number.isFinite(center.lon)){
-        list=list.map(v=>({...v,distanceFromBaseMeters:routeHaversine(center,v)})).sort((a,b)=>a.distanceFromBaseMeters-b.distanceFromBaseMeters);
-        if(Number(maxRadiusMeters)>0)list=list.filter(v=>v.distanceFromBaseMeters<=Number(maxRadiusMeters));
+  if(ROUTE_GEO_INFLIGHT.has(key))return ROUTE_GEO_INFLIGHT.get(key);
+
+  // Nominatim limita chamadas em sequência. Serializamos as consultas e
+  // compartilhamos a mesma promessa entre rotas que procuram a mesma cidade.
+  const job=(ROUTE_GEO_QUEUE=ROUTE_GEO_QUEUE.catch(()=>{}).then(async()=>{
+    const wait=Math.max(0,1100-(Date.now()-ROUTE_GEOCODE_LAST));
+    if(wait)await new Promise(r=>setTimeout(r,wait));
+    ROUTE_GEOCODE_LAST=Date.now();
+    const u=new URL('https://nominatim.openstreetmap.org/search');
+    u.searchParams.set('format','jsonv2');u.searchParams.set('limit','5');u.searchParams.set('addressdetails','1');u.searchParams.set('countrycodes','br');u.searchParams.set('q',q);
+    try{
+      const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Roteirizador/1.0 (operacao interna)','Accept-Language':'pt-BR,pt;q=0.9'},signal:AbortSignal.timeout(12000)});
+      const j=await r.json().catch(()=>[]);
+      if(r.ok&&Array.isArray(j)&&j.length){
+        let list=j.map(x=>({
+          lat:Number(x.lat),lon:Number(x.lon),displayName:x.display_name||q,
+          state:String(x.address?.state||x.address?.region||''),city:String(x.address?.city||x.address?.town||x.address?.municipality||x.address?.village||'')
+        })).filter(v=>Number.isFinite(v.lat)&&Number.isFinite(v.lon));
+        if(center&&Number.isFinite(center.lat)&&Number.isFinite(center.lon)){
+          list=list.map(v=>({...v,distanceFromBaseMeters:routeHaversine(center,v)})).sort((a,b)=>a.distanceFromBaseMeters-b.distanceFromBaseMeters);
+          if(Number(maxRadiusMeters)>0)list=list.filter(v=>v.distanceFromBaseMeters<=Number(maxRadiusMeters));
+        }
+        const v=list[0]||null;
+        if(v)ROUTE_GEO_CACHE.set(key,v);
+        return v
       }
-      const v=list[0]||null;
-      if(v)ROUTE_GEO_CACHE.set(key,v);
-      return v
-    }
-  }catch{}
-  // Falhas temporárias do geocodificador não devem ficar presas em cache.
-  // Assim a próxima atualização do rastreio pode tentar novamente.
-  return null
+    }catch{}
+    return null
+  })).finally(()=>ROUTE_GEO_INFLIGHT.delete(key));
+  ROUTE_GEO_INFLIGHT.set(key,job);
+  return job
 }
 async function routeBaseGeo(){
   // A base é fixa. Não depende de uma chamada externa para o mapa existir.
@@ -2904,6 +2912,18 @@ async function buildRoutePlan(date='',romaneio=''){
       console.log('ROTEIRIZADOR fallback de linhas ERRO: '+String(e.message||e))
     }
   }
+  // Fonte prioritária para cliente/cidade: pendências atuais da própria opção 38.
+  // Ela já traz CT-e/NF + cliente + cidade e evita depender do BI2 para localizar a rota.
+  const pendingByLoose=new Map(),pendingByNf=new Map();
+  try{
+    const pending=await fetchSswPendingDeliveries();
+    for(const r of (pending?.rows||[])){
+      const lk=normCtrcLoose(r.ctrc),nf=normNf(r.nf);
+      if(lk&&!pendingByLoose.has(lk))pendingByLoose.set(lk,r);
+      if(nf&&!pendingByNf.has(nf))pendingByNf.set(nf,r)
+    }
+  }catch(e){console.log('ROTEIRIZADOR pendências opção 38 ERRO: '+String(e.message||e))}
+
   // O roteirizador passa a usar também os relatórios 174/13/16 para recuperar
   // destinatário/cidade quando a opção 38/PDF não traz esses campos.
   let routeEnriched=[];
@@ -2925,13 +2945,14 @@ async function buildRoutePlan(date='',romaneio=''){
     const meta=metas[idx],lk=normCtrcLoose(meta.ctrc),nf=normNf(meta.nf);
     const detail=detailByLoose.get(lk)||detailByNf.get(nf)||null;
     const primary=byLoose.get(lk)||byNf.get(nf)||meta.__row||null;
+    const pending=pendingByLoose.get(lk)||pendingByNf.get(nf)||null;
     const enriched=enrichedByLoose.get(lk)||enrichedByNf.get(nf)||null;
     // Completa o BI2 com os dados detalhados do SSW. Alguns CT-es chegam no BI2
     // sem endereço/coordenada; o SSW ainda pode trazer cidade, CEP ou GPS.
     const r={...(detail||{}),...(primary||{})};
-    const destinatario=r.destinatario_nome||r.destinatario||routeField(r,[/(destinatario|destinat)_?nome/,/^destinatario$/])||enriched?.cliente||('Entrega '+(idx+1));
-    const cidade=r.cidade_destino||r.dest_cidade||r.cidade||routeField(r,[/(cidade).*(dest|destinat)/,/(dest|destinat).*cidade/,/^cidade_destino$/])||enriched?.cidade||'';
-    const uf=r.uf_destino||r.dest_uf||r.uf||routeField(r,[/(uf).*(dest|destinat)/,/(dest|destinat).*uf/,/^uf_destino$/])||enriched?.uf||'SP';
+    const destinatario=r.destinatario_nome||r.destinatario||routeField(r,[/(destinatario|destinat)_?nome/,/^destinatario$/])||pending?.cliente||enriched?.cliente||('Entrega '+(idx+1));
+    const cidade=r.cidade_destino||r.dest_cidade||r.cidade||routeField(r,[/(cidade).*(dest|destinat)/,/(dest|destinat).*cidade/,/^cidade_destino$/])||pending?.cidade||enriched?.cidade||'';
+    const uf=r.uf_destino||r.dest_uf||r.uf||routeField(r,[/(uf).*(dest|destinat)/,/(dest|destinat).*uf/,/^uf_destino$/])||pending?.uf||enriched?.uf||'SP';
     const parts=routeAddressParts(r,meta);
     const exactCoord=routeSswCoordinates(r,meta);
     let query='',precision='cidade',geo=null,coordinateSource='';
@@ -2939,7 +2960,8 @@ async function buildRoutePlan(date='',romaneio=''){
       geo=exactCoord;precision='ssw-coordenada';coordinateSource='SSW';
       query='Coordenada cadastrada no SSW'
     }else{
-      if(parts.cep){query=parts.cep+', Brasil';precision='cep'}
+      if(pending?.cidade){query=[cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');precision='cidade'}
+      else if(parts.cep){query=parts.cep+', Brasil';precision='cep'}
       else if(parts.endereco){query=[parts.endereco,parts.numero,parts.bairro,cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');precision='endereco'}
       else if(cidade){query=[cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');precision='cidade'}
       if(!query){rejectedStops.push({ctrc:meta.ctrc||'',nf:meta.nf||'',destinatario,cidade,uf,reason:'sem coordenada/cidade/endereço'});continue}
@@ -3617,7 +3639,7 @@ if(u.pathname==='/api/roteirizador/lista'){try{
     }
   }).sort((a,b)=>String(a.motorista).localeCompare(String(b.motorista),'pt-BR')||String(a.veiculo).localeCompare(String(b.veiculo),'pt-BR'));
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
-  return res.end(JSON.stringify({ok:true,date,baseAddress:ROUTE_BASE_ADDRESS,rows:clean,romaneios:clean.filter(x=>x.romaneios.length).length,manifestos:clean.filter(x=>x.manifesto).length}))
+  return res.end(JSON.stringify({ok:true,date,baseAddress:ROUTE_BASE_ADDRESS,baseLat:ROUTE_BASE_FALLBACK.lat,baseLon:ROUTE_BASE_FALLBACK.lon,rows:clean,romaneios:clean.filter(x=>x.romaneios.length).length,manifestos:clean.filter(x=>x.manifesto).length}))
 }catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/roteirizador/endereco'){try{
   if(!dashboardHasAny(authUser,['dashboard','roteirizador']))return dashboardDeny(res);
