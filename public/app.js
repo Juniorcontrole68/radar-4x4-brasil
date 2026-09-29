@@ -3294,6 +3294,7 @@ async function start(){
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasAnyPerm(['remetentes','remetentes_comparativo'])&&['ssw-remetentes','ssw-remetentes-comparativo','dashboards'].includes(t))refreshSswRemetentes()},120000);
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasAnyPerm(['ssw_saidas','evolucao','cidade_destino'])&&['ssw-motoristas','motoristas-evolucao','dashboards'].includes(t))refreshSswMotoristas()},120000);
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasPerm('evolucao')&&['motoristas-evolucao','dashboards'].includes(t))refreshDriverProgress()},120000);
+  setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasPerm('cidade_destino')&&['mapa-cidades','dashboards'].includes(t))refreshCityBubbles()},60000);
   setInterval(trackingAutoTick,1000);
   window.addEventListener('focus',()=>refreshData(false));
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshData(false)})
