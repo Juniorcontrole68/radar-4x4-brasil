@@ -19,6 +19,8 @@ const SSW_TRACK_CACHE=new Map();
 const SSW_DRIVER_CONFIRMED_DAY=new Map();
 let SSW38_QUICK_CACHE={at:0,value:null};
 let SSW38_QUICK_INFLIGHT=null;
+let SSW38_DETAIL_CACHE={at:0,value:null};
+let SSW38_DETAIL_INFLIGHT=null;
 const SSW38_PREFIX_CACHE=new Map();
 const SSW38_PREFIX_INFLIGHT=new Map();
 let SSW_PENDING_CACHE={at:0,value:null};
@@ -1888,6 +1890,16 @@ async function fetchSsw38Rows(){
   }catch(e){console.log('SSW38 PEN por romaneio ERRO: '+e.message)}
   return{ok:true,rows:p.rows,total,motoristas:motoristas.length,romaneios:p.rows.length};
 }
+async function fetchSsw38DetailedCached(){
+  if(SSW38_DETAIL_CACHE.value&&Date.now()-SSW38_DETAIL_CACHE.at<60000)return SSW38_DETAIL_CACHE.value;
+  if(SSW38_DETAIL_INFLIGHT)return SSW38_DETAIL_INFLIGHT;
+  SSW38_DETAIL_INFLIGHT=fetchSsw38Rows().then(value=>{
+    SSW38_DETAIL_CACHE={at:Date.now(),value};
+    return value
+  }).finally(()=>{SSW38_DETAIL_INFLIGHT=null});
+  return SSW38_DETAIL_INFLIGHT
+}
+
 async function probeSswAbrirScripts(){
   const scripts=[
     '/scripts/ssw_020926.js?version=1',
@@ -2891,6 +2903,20 @@ async function buildRoutePlan(date='',romaneio=''){
     }catch(e){
       console.log('ROTEIRIZADOR detalhe do romaneio ERRO: '+String(e.message||e))
     }
+  }
+  // O cache operacional pode conter apenas o resumo do romaneio. Se ainda não
+  // houver CT-es/NFs, busca diretamente a leitura detalhada da opção 38/PDF.
+  if(!hasSelectedDetails()&&target===spDateISO()&&/^AMR/i.test(String(selected.romaneio||''))){
+    try{
+      const direct=await fetchSsw38DetailedCached();
+      const detailed=(direct?.rows||[]).find(x=>String(x.romaneio||'')===String(selected.romaneio||''));
+      if(detailed){
+        selected={...selected,...detailed};
+        console.log('ROTEIRIZADOR detalhe direto '+String(selected.romaneio||'')+': '+JSON.stringify({
+          ctrcs:(selected.ctrcs||[]).length,pares:(selected.ctrcNfs||[]).length,metas:(selected.ctrcMeta||[]).length
+        }))
+      }
+    }catch(e){console.log('ROTEIRIZADOR detalhe direto ERRO: '+String(e.message||e))}
   }
 
   let biRows=[];
