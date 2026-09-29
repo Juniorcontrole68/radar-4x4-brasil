@@ -2025,6 +2025,7 @@ function trackingFindRoute(driver,plate){
 }
 function trackingStatus(row){
   if(!row.session_id)return{key:'off',label:'Inativo',distance:null};
+  if(String(row.session_status||'').toLowerCase()==='ended')return{key:'off',label:'Rota finalizada • permanece no mapa até o fim do dia',distance:null};
   const age=Number(row.age_seconds),deviceAge=Number(row.device_age_seconds);
   if(Number.isFinite(deviceAge)&&deviceAge>300)return{key:'bad',label:'Sem sinal do app • '+trackingAgeLabel(deviceAge),distance:null};
   if(!Number.isFinite(Number(row.latitude))||!Number.isFinite(Number(row.longitude))){
@@ -2389,10 +2390,11 @@ async function trackingRefreshLogicalAnalysis(liveRows,date){
     const analysis=[];
     for(const row of active){
       try{
-        const history=await trackingHistory(row.session_id);
         const plan=await trackingBuildLogicalPlan(row,date);
         if(!plan)continue;
         TRACKING_LOGICAL_ROUTES.set(trackingDriverKey(row.driver_name,row.vehicle_plate),plan);
+        if(TRACKING_DATA)renderTrackingMap(TRACKING_DATA);
+        const history=await trackingHistory(row.session_id);
         const rows=trackingAnalyzePlan(row,plan,history);
         plan.analysisRows=rows;
         analysis.push(...rows)
@@ -2423,13 +2425,7 @@ function renderTrackingMap(rows){
   if(TRACKING_LAYER)TRACKING_LAYER.remove();
   TRACKING_LAYER=L.layerGroup().addTo(TRACKING_MAP);
   const bounds=[];
-  const activeRows=(rows||[]).filter(row=>{
-    if(!row?.session_id)return false;
-    if(/TESTE/i.test(String(row.driver_name||'')))return true;
-    const op=trackingDriverOperationRow(row.driver_name,row.vehicle_plate);
-    if(!op)return false;
-    return !op.concluido
-  });
+  const activeRows=(rows||[]).filter(row=>!!row?.session_id);
   const legend=$('#trackingLiveLegend');
   if(legend){
     legend.innerHTML=activeRows.map((row,i)=>{
@@ -2520,7 +2516,7 @@ function renderTracking(rows){
   if(tableEl){
     const body=statuses.map(({r,s})=>{
       const speed=Number(r.speed_mps);const kmh=Number.isFinite(speed)?speed*3.6:null;
-      return '<tr><td><b>'+safe(r.driver_name||'—')+'</b></td><td>'+safe(r.vehicle_plate||'—')+'</td><td><span class="tracking-status '+safe(s.key)+'">'+safe(s.label)+'</span></td><td>'+safe(r.session_id?'Em rota':'—')+'</td><td>'+safe(trackingAgeLabel(r.age_seconds))+'</td><td>'+(kmh!==null?kmh.toFixed(0)+' km/h':'—')+'</td><td>'+(r.battery_pct!==null&&r.battery_pct!==undefined?Math.round(Number(r.battery_pct))+'%':'—')+'</td><td>'+safe(r.device_name||'—')+'</td></tr>'
+      return '<tr><td><b>'+safe(r.driver_name||'—')+'</b></td><td>'+safe(r.vehicle_plate||'—')+'</td><td><span class="tracking-status '+safe(s.key)+'">'+safe(s.label)+'</span></td><td>'+safe(r.session_id?(String(r.session_status||'').toLowerCase()==='ended'?'Finalizada':'Em rota'):'—')+'</td><td>'+safe(trackingAgeLabel(r.age_seconds))+'</td><td>'+(kmh!==null?kmh.toFixed(0)+' km/h':'—')+'</td><td>'+(r.battery_pct!==null&&r.battery_pct!==undefined?Math.round(Number(r.battery_pct))+'%':'—')+'</td><td>'+safe(r.device_name||'—')+'</td></tr>'
     }).join('');
     tableEl.innerHTML='<thead><tr><th>Motorista</th><th>Placa</th><th>Status</th><th>Sessão</th><th>Última posição</th><th>Velocidade</th><th>Bateria</th><th>Celular</th></tr></thead><tbody>'+body+'</tbody>'
   }
