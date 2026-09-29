@@ -2543,7 +2543,7 @@ function trackingAnalyzePlan(row,plan,history){
       else{statusKey='ok';statusLabel=diffMin>=0?'Baixa '+diffMin+' min após chegada':'Baixa quase simultânea'}
     }else if(arrival&&!sswDelivered){statusKey='warn';statusLabel='Visita GPS • aguardando baixa'}
     else if(!arrival&&sswDelivered){statusKey='ok';statusLabel='Visita confirmada pela baixa SSW'}
-    const coordSource=String(s.coordinateSource||'').toUpperCase()==='SSW'||String(s.precision||'').includes('ssw')?'SSW':'Endereço';
+    const coordSource=String(s.coordinateSource||'').trim()||(String(s.precision||'').toLowerCase()==='cep'?'CEP':(String(s.precision||'').toLowerCase()==='cidade'?'Cidade aproximada':'Endereço'));
     out.push({
       driver:row.driver_name||'',plate:row.vehicle_plate||'',romaneios:plan.romaneios||[plan.romaneio].filter(Boolean),
       plannedPos:pos+1,pointIndex,ctrc:s.ctrc||'',nf:s.nf||'',client:s.destinatario||s.label||('Entrega '+(pos+1)),
@@ -2622,7 +2622,7 @@ function trackingRenderAnalysis(){
     withGps=rows.filter(x=>x.arrivalAt).length,withBaixa=rows.filter(x=>x.baixaAt).length,
     outSeq=rows.filter(x=>x.visited&&x.sequenceKey==='bad').length;
   if(summary)summary.textContent=visited+' visitada(s) • '+withGps+' por GPS • '+withBaixa+' com baixa SSW • '+outSeq+' fora da sequência';
-  if(info)info.textContent='Visita confirmada por GPS a até 100 m ou pela baixa no SSW. Chegada e saída são calculadas pelo GPS; baixa usa o horário registrado no SSW.';
+  if(info)info.textContent='Visita confirmada por GPS a até 100 m ou pela baixa no SSW. Chegada e saída usam a trilha GPS completa; quando há apenas CEP e baixa confirmada, o horário GPS pode aparecer como aproximado. A baixa usa a ocorrência mais recente do dia no SSW.';
   const body=rows.map(x=>{
     const diff=x.diffMin===null?'—':(x.diffMin>=0?'+':'')+x.diffMin+' min';
     return '<tr>'+
