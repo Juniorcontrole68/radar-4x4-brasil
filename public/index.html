@@ -31,6 +31,19 @@
 <div class="card kpi fin"><div class="label">Custo com conferentes</div><div id="checkersCost" class="value">—</div><div class="sub">função Conferente</div></div>
 <div class="card kpi fin"><div class="label">Lucro líquido</div><div id="net" class="value">—</div><div class="sub">lucro bruto − ajudantes − conferentes</div></div>
 </div>
+<div class="card" id="overviewLoadControl" style="margin-top:14px">
+  <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">
+    <div><h3 style="margin:0 0 4px">📦 Controle de Carregamentos e Descargas</h3><div class="muted">Resumo operacional do dia, atualizado a partir dos registros com foto.</div></div>
+    <button class="dash-open" data-open="conferencia" type="button">Abrir controle completo</button>
+  </div>
+  <div class="grid kpis" style="margin-top:12px">
+    <div class="card kpi"><div class="label">Carregamentos hoje</div><div id="overviewLoadCount" class="value">—</div></div>
+    <div class="card kpi"><div class="label">Descargas hoje</div><div id="overviewUnloadCount" class="value">—</div></div>
+    <div class="card kpi"><div class="label">Quantidade movimentada</div><div id="overviewLoadQty" class="value">—</div><div class="sub">soma das quantidades registradas</div></div>
+    <div class="card kpi"><div class="label">Último registro</div><div id="overviewLoadLast" class="value">—</div></div>
+  </div>
+  <div id="overviewLoadInfo" class="agcopy-info" style="margin-top:10px">Carregando registros de carga e descarga…</div>
+</div>
 <div class="card driver-performance-panel">
   <div class="driver-performance-head">
     <div><h3>📊 Performance e Resultado por Motorista</h3><div class="muted">Fonte: LANÇAMENTOS 2026 • período padrão: data corrente</div></div>
@@ -530,4 +543,4 @@
   <div class="card tablecard"><div class="thead">Conferentes</div><div class="scroll"><table id="helpCheckers"></table></div></div>
 </div>
 </section>
-</main></div><script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embedded');</script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script><script src="/app.js?v=20260929romaneios2"></script></body></html>
+</main></div><script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embedded');</script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script><script src="/app.js?v=20260929visao-geral-carga1"></script></body></html>
