@@ -3014,7 +3014,50 @@ async function buildTrackingPlannedRoute(date='',driver='',plate=''){
       console.log('RASTREIO romaneio '+rom+' ERRO: '+String(e.message||e))
     }
   }
-  if(!plans.length)throw Object.assign(new Error('Os romaneios do motorista foram encontrados, mas nenhuma entrega pôde ser localizada no mapa.'),{status:422});
+  // Se nenhum romaneio gerou rota detalhada, monta uma rota operacional
+  // aproximada usando as cidades das próprias entregas reconciliadas do SSW/BI2.
+  // Isso garante uma linha planejada no mapa sem depender de endereço completo.
+  if(!plans.length){
+    const rows=(full?.rows||[]).filter(x=>{
+      const d=normKey(x.motorista||''),p=normPlate(x.veiculo||''),rom=String(x.romaneio||'').trim();
+      const driverMatch=driverKey&&d&&(d===driverKey||d.includes(driverKey)||driverKey.includes(d));
+      const plateMatch=plateKey&&p&&p===plateKey;
+      return (driverMatch||plateMatch)&&(!candidates.length||candidates.includes(rom))
+    });
+    const cityGeo=new Map(),fallbackStops=[],seenFallback=new Set();
+    const baseGeo=await routeGeocode(ROUTE_BASE_ADDRESS);
+    for(const r of rows){
+      const city=String(r.cidade||r.cidade_destino||'').trim(),uf=String(r.uf||r.uf_destino||'SP').trim()||'SP';
+      if(!city)continue;
+      const id=normCtrcLoose(r.ctrcOficial||r.ctrc)||('NF'+normNf(r.nf))||(city+'|'+fallbackStops.length);
+      if(seenFallback.has(id))continue;seenFallback.add(id);
+      const ck=normKey(city)+'|'+normKey(uf);
+      let geo=cityGeo.get(ck);
+      if(geo===undefined){
+        geo=await routeGeocode(city+', '+uf+', Brasil',baseGeo,ROUTE_MAX_RADIUS_METERS);
+        cityGeo.set(ck,geo||null)
+      }
+      if(!geo)continue;
+      fallbackStops.push({
+        ctrc:r.ctrcOficial||r.ctrc||'',nf:r.nf||'',destinatario:r.destinatario||('Entrega '+(fallbackStops.length+1)),
+        cidade:city,uf,lat:geo.lat,lon:geo.lon,precision:'cidade',coordinateSource:'cidade-aproximada',
+        label:(r.destinatario||'Entrega')+' • '+city,
+        entregue:!!r.entregue,baixaAt:r.baixaDataHora||''
+      })
+    }
+    if(fallbackStops.length){
+      const fallbackPlan=await routeFinalizePlan(fallbackStops,{
+        date:target,romaneio:candidates.join(' + '),motorista:driver,veiculo:plate
+      });
+      fallbackPlan.logical=true;
+      fallbackPlan.plannedSource='romaneios-cidade';
+      fallbackPlan.romaneios=candidates;
+      fallbackPlan.expectedDeliveries=rows.length||fallbackStops.length;
+      fallbackPlan.approximate=true;
+      return fallbackPlan
+    }
+    throw Object.assign(new Error('Os romaneios do motorista foram encontrados, mas nenhuma entrega pôde ser localizada no mapa.'),{status:422})
+  }
 
   const seen=new Set(),stops=[];
   for(const p of plans){
@@ -3218,7 +3261,7 @@ http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.
       .replace('<div id="loading" class="loading">Carregando dados do Google Sheets…</div>','<div id="loading" class="loading hide" style="display:none!important"></div>');
   }
   const bootstrap='<script>window.__DASHBOARD_SESSION_TOKEN__='+JSON.stringify(String(x.token||''))+';window.__DASHBOARD_SESSION_USER__='+JSON.stringify(x.user||null)+';<\/script>';
-  html=html.replace(/<script src="\/app\.js(?:\?[^"]*)?"><\/script>/,bootstrap+'<script src="/app.js?v=20260929rotas4"></script>');
+  html=html.replace(/<script src="\/app\.js(?:\?[^"]*)?"><\/script>/,bootstrap+'<script src="/app.js?v=20260929maprotas5"></script>');
   res.writeHead(200,{
     'Content-Type':'text/html; charset=utf-8',
     'Cache-Control':'no-store, no-cache, must-revalidate',
