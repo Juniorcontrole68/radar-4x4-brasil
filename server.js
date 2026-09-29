@@ -2827,9 +2827,13 @@ async function buildRoutePlan(date='',romaneio=''){
     const full=await buildSswMotoristas(target,target);
     data={rows:full.romaneios38||[]}
   }
-  const manifests=data.rows||[];
-  let selected=manifests.find(x=>String(x.romaneio||'')===String(romaneio||''))||manifests[0];
-  if(!selected)throw new Error('Nenhum romaneio encontrado no SSW para a data selecionada.');
+  const manifests=data.rows||[],requestedRom=String(romaneio||'').trim();
+  let selected=requestedRom
+    ?manifests.find(x=>String(x.romaneio||'').trim()===requestedRom)
+    :manifests[0];
+  if(!selected)throw new Error(requestedRom
+    ?('Romaneio '+requestedRom+' não encontrado no SSW para a data selecionada.')
+    :'Nenhum romaneio encontrado no SSW para a data selecionada.');
 
   // A leitura rápida da opção 38 traz motorista/romaneio/quantidade, mas nem sempre
   // inclui os CT-es do PDF. Para rotear, força a leitura detalhada quando necessário.
@@ -2943,6 +2947,84 @@ async function buildRoutePlan(date='',romaneio=''){
   value.expectedDeliveries=Number(selected.qtdeCtrcs||metas.length||0);
   ROUTE_PLAN_CACHE.set(cacheKey,{at:Date.now(),value});
   return value
+}
+
+
+async function buildTrackingPlannedRoute(date='',driver='',plate=''){
+  const target=date||spDateISO(),driverKey=normKey(driver),plateKey=normPlate(plate);
+  if(!driverKey&&!plateKey)throw Object.assign(new Error('Motorista ou placa não informado.'),{status:400});
+
+  const candidates=[];
+  const addCandidate=x=>{
+    if(!x)return;
+    const d=normKey(x.motorista||''),p=normPlate(x.veiculo||'');
+    const driverMatch=driverKey&&d&&(d===driverKey||d.includes(driverKey)||driverKey.includes(d));
+    const plateMatch=plateKey&&p&&p===plateKey;
+    if(!(driverMatch||plateMatch))return;
+    const roms=Array.isArray(x.romaneios)?x.romaneios:[x.romaneio].filter(Boolean);
+    for(const r of roms){
+      const rom=String(r||'').trim();
+      if(rom&&!candidates.includes(rom))candidates.push(rom)
+    }
+  };
+
+  if(target===spDateISO()){
+    const quick=await Promise.allSettled([fetchSsw38QuickPrefix('AMR'),fetchSsw38QuickPrefix('TBT')]);
+    for(const q of quick)if(q.status==='fulfilled')for(const x of (q.value?.rows||[]))addCandidate(x)
+  }
+
+  let full=null;
+  try{full=await buildSswMotoristas(target,target)}catch(e){
+    console.log('RASTREIO rota planejada SSW ERRO: '+String(e.message||e))
+  }
+  for(const x of (full?.romaneios38||[]))addCandidate(x);
+  for(const x of (full?.motoristas38||[]))addCandidate(x);
+
+  // Fallback: extrai romaneio das próprias entregas/saídas reconciliadas do dia.
+  for(const x of (full?.rows||[])){
+    const d=normKey(x.motorista||''),p=normPlate(x.veiculo||'');
+    const driverMatch=driverKey&&d&&(d===driverKey||d.includes(driverKey)||driverKey.includes(d));
+    const plateMatch=plateKey&&p&&p===plateKey;
+    if(!(driverMatch||plateMatch))continue;
+    const rom=String(x.romaneio||'').trim();
+    if(rom&&!candidates.includes(rom))candidates.push(rom)
+  }
+
+  if(!candidates.length)throw Object.assign(new Error('Nenhum romaneio com entregas foi encontrado para este motorista.'),{status:404});
+
+  const plans=[];
+  for(const rom of candidates.slice(0,10)){
+    try{
+      const p=await buildRoutePlan(target,rom);
+      if(p?.stops?.length)plans.push(p)
+    }catch(e){
+      console.log('RASTREIO romaneio '+rom+' ERRO: '+String(e.message||e))
+    }
+  }
+  if(!plans.length)throw Object.assign(new Error('Os romaneios do motorista foram encontrados, mas nenhuma entrega pôde ser localizada no mapa.'),{status:422});
+
+  const seen=new Set(),stops=[];
+  for(const p of plans){
+    for(const s of (p.stops||[])){
+      const key=(normCtrcLoose(s.ctrc)||'')+'|'+normNf(s.nf)+'|'+Number(s.lat).toFixed(5)+'|'+Number(s.lon).toFixed(5);
+      if(seen.has(key))continue;seen.add(key);
+      stops.push({...s,sourceRomaneio:p.romaneio||''})
+    }
+  }
+  if(!stops.length)throw Object.assign(new Error('Nenhuma entrega válida foi localizada nos romaneios do motorista.'),{status:422});
+
+  const plan=await routeFinalizePlan(stops,{
+    date:target,
+    romaneio:candidates.join(' + '),
+    motorista:driver||plans[0]?.motorista||'',
+    veiculo:plate||plans[0]?.veiculo||''
+  });
+  plan.logical=true;
+  plan.plannedSource='romaneios';
+  plan.romaneios=candidates;
+  plan.expectedDeliveries=stops.length;
+  plan.sourcePlans=plans.map(p=>({romaneio:p.romaneio||'',deliveries:(p.stops||[]).length,rejected:(p.rejectedStops||[]).length}));
+  return plan
 }
 
 
@@ -3238,6 +3320,19 @@ if(u.pathname==='/api/programacao-simulacao'&&req.method==='GET'){try{
 if(u.pathname==='/api/programacao-entregas'&&req.method==='GET'){try{
   if(!dashboardHasAny(authUser,['programacao','roteirizador','dashboard','ssw_saidas']))return dashboardDeny(res);
   const x=await buildDeliveryProgram(u.searchParams.get('date')||'',u.searchParams.get('force')==='1');
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){
+  res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}
+if(u.pathname==='/api/tracking/planned-route'&&req.method==='GET'){try{
+  if(!dashboardHas(authUser,'tracking'))return dashboardDeny(res);
+  const x=await buildTrackingPlannedRoute(
+    u.searchParams.get('date')||spDateISO(),
+    u.searchParams.get('driver')||'',
+    u.searchParams.get('plate')||''
+  );
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){
