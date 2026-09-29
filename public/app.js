@@ -2575,7 +2575,8 @@ function trackingAnalyzePlan(row,plan,history){
   const points=plan.points||[{label:'Base'},...(plan.stops||[])],out=[];
   order.forEach((pointIndex,pos)=>{
     const s=points[pointIndex]||plan.stops?.[pointIndex-1];if(!s)return;
-    const baixa=trackingParseDateTime(s.baixaAt),sswDelivered=!!s.entregue||!!baixa;
+    const baixa=trackingParseDateTime(s.baixaAt);
+    const sswDelivered=s.baixaConfirmed===true||(s.baixaConfirmed===undefined&&!!s.entregue&&!!baixa);
     const visit=trackingVisitWindow(s,history,sswDelivered),arrival=visit.arrival,departure=visit.departure;
     const visited=!!(arrival||sswDelivered);
     let diffMin=null;if(arrival?.date&&baixa)diffMin=Math.round((baixa-arrival.date)/60000);
