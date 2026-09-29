@@ -1961,6 +1961,18 @@ function trackingDistanceToGeometry(lat,lon,geometry){
   }
   return Number.isFinite(best)?best:null
 }
+function trackingPlannedCoords(route){
+  const geometry=route?.outboundGeometry||route?.geometry;
+  const gc=(geometry?.coordinates||[]).map(x=>[Number(x[1]),Number(x[0])]).filter(x=>Number.isFinite(x[0])&&Number.isFinite(x[1]));
+  if(gc.length>1)return gc;
+  const points=Array.isArray(route?.points)?route.points:[];
+  if(points.length<2)return[];
+  const order=Array.isArray(route?.optimizedOrder)&&route.optimizedOrder.length
+    ?route.optimizedOrder
+    :Array.from({length:Math.max(0,points.length-1)},(_,i)=>i+1);
+  const seq=[0,...order];
+  return seq.map(i=>[Number(points[i]?.lat),Number(points[i]?.lon)]).filter(x=>Number.isFinite(x[0])&&Number.isFinite(x[1]))
+}
 function trackingDriverKey(driver,plate){return trackingNorm(driver)+'|'+trackingNorm(plate)}
 function trackingPopulateDriverList(){
   const sel=$('#trackingDriverName'),info=$('#trackingDriverDayInfo');if(!sel)return;
@@ -2020,17 +2032,17 @@ function trackingDriverSelectionChanged(resetCode=true){
 function trackingFindRoute(driver,plate){
   const n=trackingNorm(driver),p=trackingNorm(plate);
   const logical=TRACKING_LOGICAL_ROUTES.get(trackingDriverKey(driver,plate));
-  if(logical?.geometry||logical?.outboundGeometry)return logical;
+  if(logical?.geometry||logical?.outboundGeometry||(Array.isArray(logical?.points)&&logical.points.length>1))return logical;
   if(p){
     for(const [key,plan] of TRACKING_LOGICAL_ROUTES){
       const kp=key.split('|')[1]||'';
-      if(kp===p&&(plan?.geometry||plan?.outboundGeometry))return plan
+      if(kp===p&&(plan?.geometry||plan?.outboundGeometry||(Array.isArray(plan?.points)&&plan.points.length>1)))return plan
     }
   }
   if(n){
     for(const [key,plan] of TRACKING_LOGICAL_ROUTES){
       const kd=key.split('|')[0]||'';
-      if((kd===n||kd.includes(n)||n.includes(kd))&&(plan?.geometry||plan?.outboundGeometry))return plan
+      if((kd===n||kd.includes(n)||n.includes(kd))&&(plan?.geometry||plan?.outboundGeometry||(Array.isArray(plan?.points)&&plan.points.length>1)))return plan
     }
   }
   const routes=TRACKING_ROUTE_DATA?.actual?.routes||[];
@@ -2066,13 +2078,14 @@ function trackingStatus(row){
   }
   if(Number.isFinite(age)&&age>120)return{key:'warn',label:'GPS atrasado • '+trackingAgeLabel(age),distance:null};
   const route=trackingFindRoute(row.driver_name,row.vehicle_plate);
-  if(!route?.geometry&&!route?.outboundGeometry){
+  if(trackingPlannedCoords(route).length<2){
     const roms=trackingRomaneiosFor(row.driver_name,row.vehicle_plate);
     return roms.length
       ?{key:'warn',label:'Ativo • Rom. '+roms.join(', ')+' • preparando rota',distance:null}
       :{key:'warn',label:'Ativo • aguardando romaneio',distance:null}
   }
-  const d=trackingDistanceToGeometry(Number(row.latitude),Number(row.longitude),route.outboundGeometry||route.geometry);
+  const routeGeometry=(route?.outboundGeometry||route?.geometry)||{type:'LineString',coordinates:trackingPlannedCoords(route).map(x=>[x[1],x[0]])};
+  const d=trackingDistanceToGeometry(Number(row.latitude),Number(row.longitude),routeGeometry);
   if(d===null)return{key:'warn',label:'Ativo • rota indisponível',distance:null};
   return d<=TRACKING_DEVIATION_KM
     ?{key:'ok',label:'Na rota',distance:d}
@@ -2403,16 +2416,51 @@ function trackingAnalyzePlan(row,plan,history){
       plannedPos:pos+1,pointIndex,ctrc:s.ctrc||'',nf:s.nf||'',client:s.destinatario||s.label||('Entrega '+(pos+1)),
       city:s.cidade||'',lat:Number(s.lat),lon:Number(s.lon),coordinateSource:coordSource,
       arrivalAt:arrival?.date||null,arrivalDistanceKm:arrival?.distanceKm??null,baixaAt:baixa,baixaRaw:s.baixaAt||'',
-      diffMin,statusKey,statusLabel,sequenceKey:'warn',sequenceLabel:'Ainda não visitado'
+      delivered:!!s.entregue||!!baixa,diffMin,statusKey,statusLabel,sequenceKey:'warn',sequenceLabel:'Ainda não visitado'
     })
   });
-  const visited=out.filter(x=>x.arrivalAt).sort((a,b)=>a.arrivalAt-b.arrivalAt);
+  const visited=out.filter(x=>x.arrivalAt||x.baixaAt||x.delivered).sort((a,b)=>{
+    const ta=(a.arrivalAt||a.baixaAt)?.getTime?.()||Number.MAX_SAFE_INTEGER;
+    const tb=(b.arrivalAt||b.baixaAt)?.getTime?.()||Number.MAX_SAFE_INTEGER;
+    return ta-tb||a.plannedPos-b.plannedPos
+  });
   visited.forEach((x,i)=>{
     x.actualPos=i+1;
+    x.visited=true;
     if(x.plannedPos===i+1){x.sequenceKey='ok';x.sequenceLabel='Na ordem prevista'}
-    else{x.sequenceKey='bad';x.sequenceLabel='Visitou como '+(i+1)+'º • previsto '+x.plannedPos+'º'}
+    else{x.sequenceKey='bad';x.sequenceLabel='Entrega realizada como '+(i+1)+'ª • prevista '+x.plannedPos+'ª'}
   });
   return out
+}
+function trackingRenderVisitedReport(){
+  const table=$('#trackingVisitedTable'),summary=$('#trackingVisitedSummary');
+  if(!table)return;
+  const visited=(TRACKING_ANALYSIS_ROWS||[]).filter(x=>x.visited||x.arrivalAt||x.baixaAt||x.delivered)
+    .slice().sort((a,b)=>(a.actualPos||9999)-(b.actualPos||9999)||a.plannedPos-b.plannedPos);
+  if(summary){
+    const drivers=new Set(visited.map(x=>trackingNorm(x.driver)).filter(Boolean));
+    summary.textContent=visited.length
+      ?nf(visited.length)+' cliente(s) visitado(s) • '+nf(drivers.size)+' motorista(s)'
+      :'Nenhum cliente visitado identificado ainda.'
+  }
+  if(!visited.length){
+    table.innerHTML='<tbody><tr><td class="muted">Nenhuma entrega identificada como visitada ainda.</td></tr></tbody>';
+    return
+  }
+  const body=visited.map(x=>{
+    const when=x.arrivalAt||x.baixaAt;
+    const source=x.arrivalAt?'GPS'+(x.baixaAt?' + baixa SSW':''):(x.baixaAt?'Baixa SSW':'SSW');
+    return '<tr>'+
+      '<td><b>'+(x.actualPos||'—')+'ª</b></td>'+
+      '<td><b>'+safe(trackingFirstName(x.driver))+'</b><div class="muted">'+safe(x.plate||'')+'</div></td>'+
+      '<td><b>'+safe(x.client||'Cliente')+'</b><div class="muted">'+safe(x.ctrc||('NF '+(x.nf||'')))+'</div></td>'+
+      '<td>'+safe(x.city||'—')+'</td>'+
+      '<td>'+safe(trackingTimeLabel(when))+'</td>'+
+      '<td>'+safe(source)+'</td>'+
+      '<td>'+safe(x.plannedPos+'ª')+'</td>'+
+      '</tr>'
+  }).join('');
+  table.innerHTML='<thead><tr><th>Entrega realizada</th><th>Motorista</th><th>Cliente</th><th>Cidade</th><th>Horário</th><th>Confirmação</th><th>Ordem programada</th></tr></thead><tbody>'+body+'</tbody>'
 }
 function trackingRenderAnalysis(){
   const table=$('#trackingRouteCompareTable'),info=$('#trackingRouteCompareInfo'),summary=$('#trackingRouteCompareSummary');
@@ -2422,6 +2470,7 @@ function trackingRenderAnalysis(){
     table.innerHTML='<tbody><tr><td class="muted">Aguardando motorista ativo e rota do romaneio para iniciar a comparação.</td></tr></tbody>';
     if(info)info.textContent='O sistema cruza percurso lógico, passagem GPS pelo cliente e horário da baixa no SSW.';
     if(summary)summary.textContent='—';
+    trackingRenderVisitedReport();
     return
   }
   const visited=rows.filter(x=>x.arrivalAt).length,withBaixa=rows.filter(x=>x.baixaAt).length,outSeq=rows.filter(x=>x.arrivalAt&&x.sequenceKey==='bad').length;
@@ -2441,7 +2490,8 @@ function trackingRenderAnalysis(){
       '<td><span class="tracking-status '+safe(x.sequenceKey)+'">'+safe(x.sequenceLabel)+'</span><br><span class="tracking-status '+safe(x.statusKey)+'" style="margin-top:4px">'+safe(x.statusLabel)+'</span></td>'+
       '</tr>'
   }).join('');
-  table.innerHTML='<thead><tr><th>Motorista</th><th>Ordem</th><th>Cliente</th><th>Cidade</th><th>Localização</th><th>Chegada GPS</th><th>Baixa SSW</th><th>Diferença</th><th>Comparação</th></tr></thead><tbody>'+body+'</tbody>'
+  table.innerHTML='<thead><tr><th>Motorista</th><th>Ordem</th><th>Cliente</th><th>Cidade</th><th>Localização</th><th>Chegada GPS</th><th>Baixa SSW</th><th>Diferença</th><th>Comparação</th></tr></thead><tbody>'+body+'</tbody>';
+  trackingRenderVisitedReport()
 }
 async function trackingRefreshLogicalAnalysis(liveRows,date){
   if(window.__trackingAnalysisBusy)return;
@@ -2513,16 +2563,13 @@ function renderTrackingMap(rows){
   activeRows.forEach((row,i)=>{
     const plannedColor=TRACKING_COLORS[i%TRACKING_COLORS.length],actualColor=TRACKING_ACTUAL_COLORS[i%TRACKING_ACTUAL_COLORS.length];
     const route=trackingFindRoute(row.driver_name,row.vehicle_plate),status=trackingStatus(row);
-    const plannedGeometry=route?.outboundGeometry||route?.geometry;
-    if(plannedGeometry?.coordinates?.length){
-      const coords=plannedGeometry.coordinates.map(x=>[Number(x[1]),Number(x[0])]).filter(x=>Number.isFinite(x[0])&&Number.isFinite(x[1]));
-      if(coords.length){
-        L.polyline(coords,{color:'#ffffff',weight:8,opacity:.92}).addTo(TRACKING_LAYER);
-        L.polyline(coords,{color:plannedColor,weight:4,opacity:.82,dashArray:'10 7'})
-          .addTo(TRACKING_LAYER)
-          .bindTooltip('Rota planejada pelos romaneios • '+safe(row.driver_name)+' • '+nf(route.expectedDeliveries||route.stops?.length||0)+' entrega(s)');
-        coords.forEach(x=>bounds.push(x))
-      }
+    const coords=trackingPlannedCoords(route);
+    if(coords.length>1){
+      L.polyline(coords,{color:'#ffffff',weight:8,opacity:.92}).addTo(TRACKING_LAYER);
+      L.polyline(coords,{color:plannedColor,weight:4,opacity:.92,dashArray:'12 8'})
+        .addTo(TRACKING_LAYER)
+        .bindTooltip('Rota programada • '+safe(row.driver_name)+' • '+nf(route?.expectedDeliveries||route?.stops?.length||0)+' entrega(s)');
+      coords.forEach(x=>bounds.push(x));
       const base=route?.points?.[0];
       if(!baseMarked&&Number.isFinite(Number(base?.lat))&&Number.isFinite(Number(base?.lon))){
         const baseIcon=L.divIcon({className:'',html:'<div style="min-width:34px;height:30px;padding:0 7px;border-radius:7px;background:#0f172a;color:#fff;border:2px solid #fff;box-shadow:0 2px 7px #0005;display:grid;place-items:center;font-size:10px;font-weight:900">BASE</div>',iconSize:[38,34],iconAnchor:[19,17]});
@@ -2535,9 +2582,12 @@ function renderTrackingMap(rows){
           const s=points[pointIndex];if(!s)return;
           const lat=Number(s.lat),lon=Number(s.lon);if(!Number.isFinite(lat)||!Number.isFinite(lon))return;
           const analysis=(route.analysisRows||[]).find(x=>x.pointIndex===pointIndex);
-          const markerHtml='<div style="min-width:26px;height:26px;padding:0 5px;border-radius:13px;background:#fff;border:2px solid '+plannedColor+';box-shadow:0 1px 5px #0004;display:grid;place-items:center;font-size:11px;font-weight:900;color:#0f172a">'+(pos+1)+'</div>';
-          const stopIcon=L.divIcon({className:'',html:markerHtml,iconSize:[30,30],iconAnchor:[15,15]});
-          const popup='<b>'+(pos+1)+'º • '+safe(s.destinatario||s.label||'Cliente')+'</b><br>'+
+          const done=!!(analysis?.visited||analysis?.arrivalAt||analysis?.baixaAt||analysis?.delivered);
+          const displayNo=done?(analysis?.actualPos||pos+1):(pos+1);
+          const bg=done?'#16a34a':'#fff',fg=done?'#fff':'#0f172a',border=done?'#15803d':plannedColor;
+          const markerHtml='<div style="min-width:28px;height:28px;padding:0 5px;border-radius:14px;background:'+bg+';border:3px solid '+border+';box-shadow:0 1px 5px #0004;display:grid;place-items:center;font-size:11px;font-weight:900;color:'+fg+'">'+displayNo+(done?'✓':'')+'</div>';
+          const stopIcon=L.divIcon({className:'',html:markerHtml,iconSize:[32,32],iconAnchor:[16,16]});
+          const popup='<b>'+(done?'Entrega realizada nº '+displayNo:'Programada nº '+(pos+1))+' • '+safe(s.destinatario||s.label||'Cliente')+'</b><br>'+
             safe(s.cidade||'')+
             '<br>Localização: '+safe((s.coordinateSource||'').toUpperCase()==='SSW'?'Coordenada SSW':'Endereço/geocodificação')+
             '<br>Chegada GPS: '+safe(trackingTimeLabel(analysis?.arrivalAt))+
