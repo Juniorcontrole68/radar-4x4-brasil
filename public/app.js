@@ -2554,12 +2554,15 @@ function renderTrackingMap(rows){
     }
     TRACKING_MAP.on('moveend zoomend',trackingSaveMapView)
     if(!TRACKING_MAP.getPane('tracking-planned')){
-      const p=TRACKING_MAP.createPane('tracking-planned');p.style.zIndex='410';p.style.pointerEvents='none'
+      const p=TRACKING_MAP.createPane('tracking-planned');p.style.zIndex='445';p.style.pointerEvents='none'
     }
     if(!TRACKING_MAP.getPane('tracking-actual')){
-      const p=TRACKING_MAP.createPane('tracking-actual');p.style.zIndex='430';p.style.pointerEvents='none'
+      const p=TRACKING_MAP.createPane('tracking-actual');p.style.zIndex='420';p.style.pointerEvents='none'
     }
   }
+  const plannedPane=TRACKING_MAP.getPane('tracking-planned'),actualPane=TRACKING_MAP.getPane('tracking-actual');
+  if(plannedPane)plannedPane.style.zIndex='445';
+  if(actualPane)actualPane.style.zIndex='420';
   if(TRACKING_LAYER)TRACKING_LAYER.remove();
   TRACKING_LAYER=L.layerGroup().addTo(TRACKING_MAP);
   TRACKING_MARKERS.clear();
@@ -2588,8 +2591,8 @@ function renderTrackingMap(rows){
     const route=trackingFindRoute(row.driver_name,row.vehicle_plate),status=trackingStatus(row);
     const coords=trackingPlannedCoords(route);
     if(coords.length>1){
-      L.polyline(coords,{pane:'tracking-planned',color:'#ffffff',weight:8,opacity:.82}).addTo(TRACKING_LAYER);
-      L.polyline(coords,{pane:'tracking-planned',color:TRACKING_PLANNED_COLOR,weight:4,opacity:.95,dashArray:'12 8'})
+      L.polyline(coords,{pane:'tracking-planned',color:'#ffffff',weight:8,opacity:.88,dashArray:'14 7'}).addTo(TRACKING_LAYER);
+      L.polyline(coords,{pane:'tracking-planned',color:TRACKING_PLANNED_COLOR,weight:5,opacity:1,dashArray:'14 7'})
         .addTo(TRACKING_LAYER)
         .bindTooltip('Rota programada • '+safe(row.driver_name)+' • '+nf(route?.expectedDeliveries||route?.stops?.length||0)+' entrega(s)');
       coords.forEach(x=>bounds.push(x));
