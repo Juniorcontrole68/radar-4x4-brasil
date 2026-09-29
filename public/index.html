@@ -289,7 +289,14 @@
     </div>
   </div>
   <div class="card tablecard" style="margin-top:14px">
-    <div class="thead"><div><b>Percurso lógico × execução real</b><div id="trackingRouteCompareSummary" class="muted">—</div></div></div>
+    <div class="thead" style="display:flex;justify-content:space-between;gap:12px;align-items:end;flex-wrap:wrap">
+      <div><b>Percurso lógico × execução real</b><div id="trackingRouteCompareSummary" class="muted">—</div></div>
+      <div class="tracking-history-filter">
+        <label>Motorista
+          <select id="trackingRouteCompareDriver"><option value="">Todos os motoristas</option></select>
+        </label>
+      </div>
+    </div>
     <div id="trackingRouteCompareInfo" class="agcopy-info">Aguardando motorista ativo para cruzar clientes, GPS e baixas do SSW.</div>
     <div class="scroll"><table id="trackingRouteCompareTable"><tbody><tr><td class="muted">Aguardando dados da rota.</td></tr></tbody></table></div>
   </div>
