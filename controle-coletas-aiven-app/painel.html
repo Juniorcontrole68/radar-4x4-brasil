@@ -62,7 +62,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
       <button class="tab" data-module="dashboard" data-src="https://construlog-dashboard.onrender.com/?embed=1&view=dashboard" data-name="Visão Geral">Visão Geral</button>
       <button class="tab" data-module="dashboards" data-src="https://construlog-dashboard.onrender.com/?embed=1&view=dashboards" data-name="Dashboards">Dashboards</button>
       <button class="tab" data-module="programacao" data-src="https://construlog-dashboard.onrender.com/?embed=1&view=programacao" data-name="Programação">Programação</button>
-      <button class="tab" data-module="tracking" data-src="https://construlog-dashboard.onrender.com/?embed=1&view=rastreamento" data-name="Rastreamento">Rastreamento</button>
+      <button class="tab" data-module="tracking" data-src="https://construlog-dashboard.onrender.com/?embed=1&view=rastreamento" data-name="Rastreio de Carga">Rastreio de Carga</button>
       <button class="tab" data-module="contas" data-src="/contas?embed=1" data-name="Contas a Pagar">Contas a Pagar</button>
     </div>
     <div class="session-actions"><span id="sessionUser" class="session-user"></span><button id="logoutBtn" class="logout-btn" type="button">Sair</button></div>
@@ -125,6 +125,21 @@ function moduleAllowed(mod){
 function applyModulePermissions(){
   document.querySelectorAll('.tab').forEach(btn=>btn.style.display=moduleAllowed(btn.dataset.module)?'':'none');
   document.getElementById('sessionUser').textContent=AUTH?(AUTH.username+(AUTH.is_admin?' • Administrador':'')):'';
+}
+async function refreshUserPermissions(){
+  if(!AUTH)return;
+  try{
+    const r=await fetch('/api/auth/me?refresh='+Date.now(),{cache:'no-store',headers:{'Cache-Control':'no-cache','Pragma':'no-cache'}});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok||!j.user)return;
+    AUTH=j.user;
+    applyModulePermissions();
+    const current=frame.dataset.module||'';
+    if(current&&!moduleAllowed(current)){
+      const next=[...document.querySelectorAll('.tab')].find(b=>moduleAllowed(b.dataset.module));
+      if(next)await abrirModulo(next);
+    }
+  }catch(e){}
 }
 async function dashboardTicket(){
   const r=await fetch('/api/auth/embed-ticket',{method:'POST'});
@@ -552,6 +567,9 @@ window.addEventListener('hashchange',()=>{
   const btn=document.querySelector('.tab[data-module="'+mod+'"]');
   if(btn&&moduleAllowed(mod)&&frame.dataset.module!==mod)abrirModulo(btn)
 });
+window.addEventListener('focus',()=>refreshUserPermissions());
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshUserPermissions()});
+setInterval(()=>{if(!document.hidden)refreshUserPermissions()},30000);
 bootstrapAuth();
 </script>
 </body>
