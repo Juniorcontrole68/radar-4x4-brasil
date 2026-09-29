@@ -3168,10 +3168,20 @@ if(u.pathname==='/api/tracking/live'&&req.method==='GET'){try{
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+if(u.pathname==='/api/tracking/history-drivers'&&req.method==='GET'){try{
+  if(!dashboardHas(authUser,'tracking'))return dashboardDeny(res);
+  const date=String(u.searchParams.get('date')||'').trim();
+  const x=await portalAuth('/api/painel/tracking/history-drivers?date='+encodeURIComponent(date),{token:authUser.token,timeout:25000});
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/tracking/history'&&req.method==='GET'){try{
   if(!dashboardHas(authUser,'tracking'))return dashboardDeny(res);
-  const sessionId=String(u.searchParams.get('session_id')||'').trim();
-  const x=await portalAuth('/api/painel/tracking/history?session_id='+encodeURIComponent(sessionId),{token:authUser.token,timeout:25000});
+  const q=new URLSearchParams();
+  for(const key of ['session_id','date','driver']){
+    const v=String(u.searchParams.get(key)||'').trim();if(v)q.set(key,v)
+  }
+  const x=await portalAuth('/api/painel/tracking/history?'+q.toString(),{token:authUser.token,timeout:45000});
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
