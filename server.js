@@ -3867,6 +3867,17 @@ if(u.pathname==='/api/tracking/history'&&req.method==='GET'){try{
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+if(u.pathname==='/api/tracking/requests'&&req.method==='GET'){try{
+  if(!dashboardHasAny(authUser,['tracking']))return dashboardDeny(res);
+  const x=await portalAuth('/api/painel/tracking/requests',{token:authUser.token,timeout:25000});
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+if(/^\/api\/tracking\/requests\/\d+\/(approve|reject)$/.test(u.pathname)&&req.method==='POST'){try{
+  if(!dashboardHasAny(authUser,['tracking']))return dashboardDeny(res);
+  const tail=u.pathname.replace('/api/tracking','/api/painel/tracking');
+  const x=await portalAuth(tail,{method:'POST',body:{},token:authUser.token,timeout:25000});
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/tracking/enrollment'&&req.method==='POST'){try{
   if(!dashboardHas(authUser,'tracking'))return dashboardDeny(res);
   const body=await readJsonLimited(req,64*1024);
