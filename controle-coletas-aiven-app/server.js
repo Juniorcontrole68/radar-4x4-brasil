@@ -1019,7 +1019,8 @@ async function start() {
                    s.id::text AS session_id,s.started_at,
                    p.latitude,p.longitude,p.accuracy_m,p.speed_mps,p.bearing_deg,p.battery_pct,p.captured_at,
                    EXTRACT(EPOCH FROM (NOW()-p.captured_at))::int AS age_seconds,
-                   EXTRACT(EPOCH FROM (NOW()-d.last_seen_at))::int AS device_age_seconds
+                   EXTRACT(EPOCH FROM (NOW()-d.last_seen_at))::int AS device_age_seconds,
+                   (s.id IS NOT NULL AND d.last_seen_at IS NOT NULL AND d.last_seen_at >= NOW()-INTERVAL '5 minutes') AS map_active
             FROM driver_tracking_devices d
             LEFT JOIN LATERAL (
               SELECT id,started_at FROM driver_tracking_sessions
