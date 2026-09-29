@@ -2384,7 +2384,12 @@ function renderTrackingMap(rows){
   if(TRACKING_LAYER)TRACKING_LAYER.remove();
   TRACKING_LAYER=L.layerGroup().addTo(TRACKING_MAP);
   const bounds=[];
-  const activeRows=(rows||[]).filter(row=>!!row.session_id);
+  const activeRows=(rows||[]).filter(row=>{
+    if(!row?.session_id)return false;
+    if(row.map_active===false||row.map_active==='false')return false;
+    const deviceAge=Number(row.device_age_seconds);
+    return !Number.isFinite(deviceAge)||deviceAge<=300
+  });
   activeRows.forEach((row,i)=>{
     const color=TRACKING_COLORS[i%TRACKING_COLORS.length],route=trackingFindRoute(row.driver_name,row.vehicle_plate),status=trackingStatus(row);
     if(route?.geometry?.coordinates?.length){
