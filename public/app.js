@@ -927,7 +927,7 @@ function buildDriverProgress(d){
   return[...groups.values()].filter(x=>x.total>0).sort((a,b)=>b.total-a.total||String(a.motorista).localeCompare(String(b.motorista),'pt-BR'))
 }
 function renderDriverProgress(){
-  const d=S.sswMotoristas;if(!d||!d.ok)return;
+  const d=S.driverProgress||S.sswMotoristas;if(!d||!d.ok)return;
   const list=$('#driverProgressList');if(!list)return;
   const set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
   const G=buildDriverProgress(d),tot=G.reduce((a,x)=>a+x.total,0),del=G.reduce((a,x)=>a+x.entregues,0),pen=G.reduce((a,x)=>a+x.pendentes,0),occ=G.reduce((a,x)=>a+x.ocorrencias,0);
@@ -1069,6 +1069,31 @@ function renderSswMotoristas(){
   const dr=(d.rows||[]).map(x=>({ctrc:x.ctrc,nf:x.nf,remetente:x.remetente,destinatario:x.destinatario,cidade:(x.cidade||'')+(x.uf?' / '+x.uf:''),veiculo:x.veiculo||'—',motorista:x.motorista||'Não identificado',situacao:x.entregue?'BAIXADA':(x.ocorrenciaCodigo==='085'||x.ocorrenciaCodigo==='85'?'EM ROTA':'PENDENTE'),ocorrencia:(x.ocorrenciaCodigo?x.ocorrenciaCodigo+' - ':'')+(x.ocorrencia||''),data:(x.dataOcorrencia||'')+(x.horaOcorrencia?' '+x.horaOcorrencia:''),entrega:x.dataEntrega||''}));
   table('#sswDriverDetail',[['CTRC','ctrc'],['NF','nf'],['Remetente','remetente'],['Destinatário','destinatario'],['Cidade','cidade'],['Veículo','veiculo'],['Motorista','motorista'],['Situação','situacao'],['Última ocorrência','ocorrencia'],['Data / hora','data'],['Baixa','entrega']],dr);renderDriverProgress();renderForecast();
 }
+async function refreshDriverProgress(){
+  if(window.__driverProgressLoading)return;
+  window.__driverProgressLoading=true;
+  const meta=$('#driverProgressMeta');
+  if(meta)meta.textContent='Atualizando evolução diretamente pela opção 38 do SSW…';
+  try{
+    const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+    const r=await fetch('/api/evolucao-motoristas?date='+encodeURIComponent(today)+'&t='+Date.now(),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar evolução dos motoristas.');
+    S.driverProgress=j;
+    renderDriverProgress();
+    if(j.refreshing){
+      clearTimeout(window.__driverProgressRetry);
+      window.__driverProgressRetry=setTimeout(refreshDriverProgress,8000)
+    }
+  }catch(e){
+    if(meta)meta.textContent='Não foi possível carregar a evolução: '+e.message;
+    clearTimeout(window.__driverProgressRetry);
+    window.__driverProgressRetry=setTimeout(refreshDriverProgress,15000)
+  }finally{
+    window.__driverProgressLoading=false
+  }
+}
+
 async function refreshSswMotoristas(){
   if(window.__sswMotoristasLoading)return;
   window.__sswMotoristasLoading=true;
@@ -2722,6 +2747,7 @@ function loadHeavyForTab(tab){
     if(hasAnyPerm(['dashboard','agendamentos','agendamentos_copia']))setTimeout(()=>refreshAgCopy(false),80);
   }else if(tab==='dashboards'){
     if(hasAnyPerm(['ssw_saidas','evolucao','cidade_destino']))setTimeout(()=>refreshSswMotoristas(),100);
+    if(hasPerm('evolucao'))setTimeout(()=>refreshDriverProgress(),180);
     if(hasPerm('ssw_atrasos'))setTimeout(()=>refreshSswAtrasos(),450);
     if(hasPerm('receita_ssw'))setTimeout(()=>refreshSswReceita(),700);
     if(hasAnyPerm(['remetentes','remetentes_comparativo']))setTimeout(()=>refreshSswRemetentes(),1000);
@@ -2739,7 +2765,10 @@ function loadHeavyForTab(tab){
     setTimeout(()=>refreshAgCopy(false),50);
   }else if(tab==='roteirizador'&&hasPerm('roteirizador')){
     setTimeout(()=>loadRouteManifests(false),50);
-  }else if((tab==='ssw-motoristas'||tab==='motoristas-evolucao')&&tabAllowed(tab)){
+  }else if(tab==='motoristas-evolucao'&&tabAllowed(tab)){
+    setTimeout(()=>refreshDriverProgress(),50);
+    setTimeout(()=>refreshSswMotoristas(),450);
+  }else if(tab==='ssw-motoristas'&&tabAllowed(tab)){
     setTimeout(()=>refreshSswMotoristas(),80);
   }else if(tab==='receita-ssw'&&hasPerm('receita_ssw')){
     setTimeout(()=>refreshSswReceita(),50);
@@ -2782,6 +2811,7 @@ async function start(){
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasPerm('receita_ssw')&&['receita-ssw','dashboards'].includes(t))refreshSswReceita()},120000);
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasAnyPerm(['remetentes','remetentes_comparativo'])&&['ssw-remetentes','ssw-remetentes-comparativo','dashboards'].includes(t))refreshSswRemetentes()},120000);
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasAnyPerm(['ssw_saidas','evolucao','cidade_destino'])&&['ssw-motoristas','motoristas-evolucao','dashboards'].includes(t))refreshSswMotoristas()},120000);
+  setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasPerm('evolucao')&&['motoristas-evolucao','dashboards'].includes(t))refreshDriverProgress()},120000);
   setInterval(trackingAutoTick,1000);
   window.addEventListener('focus',()=>refreshData(false));
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshData(false)})
@@ -2814,7 +2844,7 @@ function openTab(tab){
   if(tab==='ssw-atrasos')setTimeout(renderSswAtrasos,30);
   if(tab==='ssw-remetentes'||tab==='ssw-remetentes-comparativo')setTimeout(renderRemetentes,30);
   if(tab==='ssw-motoristas')setTimeout(renderSswMotoristas,30);
-  if(tab==='motoristas-evolucao')setTimeout(renderDriverProgress,30);
+  if(tab==='motoristas-evolucao'){setTimeout(renderDriverProgress,30);setTimeout(refreshDriverProgress,60)}
   loadHeavyForTab(tab);
 }
 $$('.dash-open').forEach(b=>b.onclick=()=>{if(tabAllowed(b.dataset.open))openTab(b.dataset.open)});
@@ -2840,7 +2870,9 @@ $$('.nav button').forEach(b=>b.onclick=()=>{
       renderSswMotoristas();
       renderDriverProgress();
       renderForecast();
+      refreshDriverProgress();
     }
+    if(b.dataset.tab==='motoristas-evolucao')refreshDriverProgress();
     loadHeavyForTab(b.dataset.tab);
   },30)
 });
