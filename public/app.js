@@ -2389,15 +2389,27 @@ async function trackingRefreshLogicalAnalysis(liveRows,date){
   try{
     const analysis=[];
     for(const row of active){
+      let plan=null,history=[];
       try{
-        const plan=await trackingBuildLogicalPlan(row,date);
+        const results=await Promise.allSettled([
+          trackingBuildLogicalPlan(row,date),
+          trackingHistory(row.session_id)
+        ]);
+        if(results[0].status==='fulfilled')plan=results[0].value;
+        else console.warn('Rota planejada',row.driver_name,results[0].reason);
+        if(results[1].status==='fulfilled')history=results[1].value||[];
+        else console.warn('Percurso executado',row.driver_name,results[1].reason);
+
+        // O histórico GPS é independente da rota planejada. Mesmo se o SSW não
+        // conseguir montar o plano, o percurso executado continua desenhado.
+        if(TRACKING_DATA)renderTrackingMap(TRACKING_DATA);
+
         if(!plan)continue;
         TRACKING_LOGICAL_ROUTES.set(trackingDriverKey(row.driver_name,row.vehicle_plate),plan);
-        if(TRACKING_DATA)renderTrackingMap(TRACKING_DATA);
-        const history=await trackingHistory(row.session_id);
         const rows=trackingAnalyzePlan(row,plan,history);
         plan.analysisRows=rows;
-        analysis.push(...rows)
+        analysis.push(...rows);
+        if(TRACKING_DATA)renderTrackingMap(TRACKING_DATA)
       }catch(e){console.warn('Análise de percurso',row.driver_name,e)}
     }
     TRACKING_ANALYSIS_ROWS=analysis;
