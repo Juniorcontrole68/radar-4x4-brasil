@@ -2479,14 +2479,15 @@ function trackingAnalyzePlan(row,plan,history){
   order.forEach((pointIndex,pos)=>{
     const s=points[pointIndex]||plan.stops?.[pointIndex-1];if(!s)return;
     const visit=trackingVisitWindow(s,history),arrival=visit.arrival,departure=visit.departure,baixa=trackingParseDateTime(s.baixaAt);
-    const visited=!!(arrival||baixa);
+    const sswDelivered=!!s.entregue||!!baixa;
+    const visited=!!(arrival||sswDelivered);
     let diffMin=null;if(arrival?.date&&baixa)diffMin=Math.round((baixa-arrival.date)/60000);
     let statusKey='warn',statusLabel='Pendente';
     if(arrival&&baixa){
       if(diffMin<-5){statusKey='bad';statusLabel='Baixa antes da chegada GPS'}
       else{statusKey='ok';statusLabel=diffMin>=0?'Baixa '+diffMin+' min após chegada':'Baixa quase simultânea'}
-    }else if(arrival&&!baixa){statusKey='warn';statusLabel='Visita GPS • aguardando baixa'}
-    else if(!arrival&&baixa){statusKey='ok';statusLabel='Visita confirmada pela baixa SSW'}
+    }else if(arrival&&!sswDelivered){statusKey='warn';statusLabel='Visita GPS • aguardando baixa'}
+    else if(!arrival&&sswDelivered){statusKey='ok';statusLabel='Visita confirmada pela baixa SSW'}
     const coordSource=String(s.coordinateSource||'').toUpperCase()==='SSW'||String(s.precision||'').includes('ssw')?'SSW':'Endereço';
     out.push({
       driver:row.driver_name||'',plate:row.vehicle_plate||'',romaneios:plan.romaneios||[plan.romaneio].filter(Boolean),
@@ -2494,8 +2495,8 @@ function trackingAnalyzePlan(row,plan,history){
       city:s.cidade||'',lat:Number(s.lat),lon:Number(s.lon),coordinateSource:coordSource,
       arrivalAt:arrival?.date||null,departureAt:departure?.date||null,arrivalDistanceKm:arrival?.distanceKm??null,
       baixaAt:baixa,baixaRaw:s.baixaAt||'',visited,
-      visitSource:arrival&&baixa?'GPS + baixa SSW':(arrival?'GPS':'Baixa SSW'),
-      delivered:!!s.entregue||!!baixa,diffMin,statusKey,statusLabel,sequenceKey:'warn',sequenceLabel:visited?'Visitado':'Ainda não visitado'
+      visitSource:visited?(arrival&&sswDelivered?'GPS + baixa SSW':(arrival?'GPS':'Baixa SSW')):'',
+      delivered:sswDelivered,diffMin,statusKey,statusLabel,sequenceKey:'warn',sequenceLabel:visited?'Visitado':'Ainda não visitado'
     })
   });
   const visited=out.filter(x=>x.visited).sort((a,b)=>{
