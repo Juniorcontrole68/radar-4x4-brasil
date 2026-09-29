@@ -3653,7 +3653,19 @@ if(u.pathname==='/api/evolucao-motoristas'&&req.method==='GET'){try{
     try{operation=await getSswMotoristasFast(date,date)}catch{}
   }
 
-  const detailed=operation?.motoristas38||[];
+  let detailed=operation?.motoristas38||[];
+  const quickDriverCount=new Set(quickRows.map(x=>nkey(x.motorista)).filter(Boolean)).size;
+  // Em reinício/deploy o cache pode estar vazio. Se a leitura rápida trouxer
+  // apenas 0/1 motorista, aguarda uma leitura completa uma vez antes de responder.
+  if(date===spDateISO()&&quickDriverCount<=1&&detailed.length<=1){
+    try{
+      const fullNow=await ensureSswMotoristasRefresh(date,date);
+      if((fullNow?.motoristas38||[]).length>detailed.length){
+        operation=fullNow;
+        detailed=fullNow.motoristas38||[]
+      }
+    }catch(e){console.log('EVOLUCAO leitura completa ERRO: '+String(e.message||e))}
+  }
   const matchDetailed=(motorista,veiculo)=>{
     const dk=nkey(motorista),pk=normPlate(veiculo);
     return detailed.find(x=>pk&&normPlate(x.veiculo||'')===pk)
