@@ -3860,7 +3860,7 @@ if(u.pathname==='/api/tracking/history-drivers'&&req.method==='GET'){try{
 if(u.pathname==='/api/tracking/history'&&req.method==='GET'){try{
   if(!dashboardHas(authUser,'tracking'))return dashboardDeny(res);
   const q=new URLSearchParams();
-  for(const key of ['session_id','date','driver','raw']){
+  for(const key of ['session_id','date','driver','plate','raw']){
     const v=String(u.searchParams.get(key)||'').trim();if(v)q.set(key,v)
   }
   const x=await portalAuth('/api/painel/tracking/history?'+q.toString(),{token:authUser.token,timeout:45000});
