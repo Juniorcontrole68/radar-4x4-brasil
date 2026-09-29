@@ -1076,6 +1076,7 @@ async function refreshDriverProgress(){
   if(meta)meta.textContent='Atualizando evolução diretamente pela opção 38 do SSW…';
   try{
     const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+    TRACKING_CURRENT_DATE=today;
     const r=await fetch('/api/evolucao-motoristas?date='+encodeURIComponent(today)+'&t='+Date.now(),{cache:'no-store'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar evolução dos motoristas.');
@@ -1933,6 +1934,7 @@ const TRACKING_HISTORY_CACHE=new Map();
 const TRACKING_MARKERS=new Map();
 let TRACKING_BASE_POSITION={lat:-22.69552,lon:-47.307,address:'Avenida do Algodão, 316, Distrito Industrial Salto Grande, Americana/SP'};
 let TRACKING_ANALYSIS_ROWS=[];
+let TRACKING_CURRENT_DATE=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
 let TRACKING_MAP_DRIVER_FILTER=localStorage.getItem('construlog_tracking_map_driver')||'';
 let TRACKING_MAP_ONLY_DRIVERS=localStorage.getItem('construlog_tracking_map_only_drivers')==='1';
 let TRACKING_AUTO_SECONDS=Math.max(5,Math.min(300,Number(localStorage.getItem('construlog_tracking_refresh_seconds')||30)));
@@ -2442,6 +2444,43 @@ async function trackingHistory(sessionId){
   TRACKING_HISTORY_CACHE.set(sessionId,{at:Date.now(),rows});
   return rows
 }
+function trackingDayHistoryKey(date,driver,plate=''){
+  return 'day|'+String(date||'')+'|'+trackingDriverKey(driver,plate)
+}
+function trackingMergeGpsRows(...groups){
+  const map=new Map();
+  for(const rows of groups)for(const p of (Array.isArray(rows)?rows:[])){
+    const lat=Number(p?.latitude),lon=Number(p?.longitude),at=String(p?.captured_at||'');
+    if(!Number.isFinite(lat)||!Number.isFinite(lon)||!at)continue;
+    const key=at+'|'+lat.toFixed(6)+'|'+lon.toFixed(6);
+    if(!map.has(key))map.set(key,p)
+  }
+  return[...map.values()].sort((a,b)=>{
+    const ta=trackingParseDateTime(a.captured_at)?.getTime?.()||0;
+    const tb=trackingParseDateTime(b.captured_at)?.getTime?.()||0;
+    return ta-tb
+  })
+}
+async function trackingDayHistory(date,driver,plate=''){
+  if(!date||!driver)return[];
+  const key=trackingDayHistoryKey(date,driver,plate),hit=TRACKING_HISTORY_CACHE.get(key);
+  if(hit&&Date.now()-hit.at<12000)return hit.rows;
+  const q=new URLSearchParams({date,driver,t:String(Date.now())});
+  const r=await fetch('/api/tracking/history?'+q.toString(),{cache:'no-store'});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao consultar histórico GPS do dia.');
+  const sessions=Array.isArray(j.sessions)?j.sessions:[];
+  const rows=[];
+  sessions.forEach(s=>{
+    const sid=String(s.session_id||'');
+    const pts=(s.points||[]).map(p=>({...p,_session_id:sid,_session_started_at:s.started_at||'',_session_ended_at:s.ended_at||''}));
+    rows.push(...pts);
+    if(sid)TRACKING_HISTORY_CACHE.set(sid,{at:Date.now(),rows:pts})
+  });
+  const merged=trackingMergeGpsRows(rows);
+  TRACKING_HISTORY_CACHE.set(key,{at:Date.now(),rows:merged,sessions,summary:j.summary||{}});
+  return merged
+}
 function trackingInterpolateDate(a,b,t){
   const ta=a?._date?.getTime?.(),tb=b?._date?.getTime?.();
   if(!Number.isFinite(ta)||!Number.isFinite(tb))return null;
@@ -2482,7 +2521,10 @@ function trackingVisitWindow(stop,history,allowCepApprox=false){
     }
     for(let i=1;i<valid.length&&!departure;i++){
       const a=valid[i-1],b=valid[i],aIn=a._distanceKm<=0.10,bIn=b._distanceKm<=0.10;
-      const roots=trackingSegmentCircleRoots(a,b,stop,100);
+      const gapMs=b._date-a._date;
+      const sameSession=!a._session_id||!b._session_id||a._session_id===b._session_id;
+      const continuous=sameSession&&gapMs>=0&&gapMs<=15*60*1000;
+      const roots=continuous?trackingSegmentCircleRoots(a,b,stop,100):[];
       if(!arrival){
         if(!aIn&&bIn){
           const d=roots.length?trackingInterpolateDate(a,b,roots[0]):b._date;
@@ -2496,7 +2538,7 @@ function trackingVisitWindow(stop,history,allowCepApprox=false){
           arrival={date:b._date,raw:b.captured_at,distanceKm:b._distanceKm,accuracyM:b._acc};
           inside=true
         }
-      }else if(inside&&!bIn){
+      }else if(inside&&!bIn&&continuous){
         const root=roots.length?roots[roots.length-1]:null,d=root!==null?trackingInterpolateDate(a,b,root):b._date;
         departure={date:d||b._date,raw:b.captured_at,distanceKm:b._distanceKm,accuracyM:b._acc};
         inside=false
@@ -2648,11 +2690,14 @@ async function trackingRefreshLogicalAnalysis(liveRows,date){
   if(!active.length){TRACKING_ANALYSIS_ROWS=[];trackingRenderAnalysis();return}
   window.__trackingAnalysisBusy=true;
   try{
-    // 1) Percurso executado primeiro: carrega todas as trilhas GPS em paralelo
-    // e desenha no mapa sem esperar o roteirizador do SSW.
+    // 1) Percurso executado: consulta TODO o histórico GPS do dia de cada motorista,
+    // juntando todas as sessões abertas/encerradas no período.
     await Promise.all(active.map(async row=>{
-      try{await trackingHistory(row.session_id)}
-      catch(e){console.warn('Percurso executado',row.driver_name,e)}
+      try{await trackingDayHistory(date,row.driver_name,row.vehicle_plate)}
+      catch(e){
+        console.warn('Histórico GPS do dia',row.driver_name,e);
+        try{await trackingHistory(row.session_id)}catch{}
+      }
     }));
     if(TRACKING_DATA)renderTrackingMap(TRACKING_DATA);
 
@@ -2662,7 +2707,12 @@ async function trackingRefreshLogicalAnalysis(liveRows,date){
         const plan=await trackingBuildLogicalPlan(row,date);
         if(!plan)return[];
         TRACKING_LOGICAL_ROUTES.set(trackingDriverKey(row.driver_name,row.vehicle_plate),plan);
-        const history=TRACKING_HISTORY_CACHE.get(String(row.session_id||''))?.rows||[];
+        const dayKey=trackingDayHistoryKey(date,row.driver_name,row.vehicle_plate);
+        const dayRows=TRACKING_HISTORY_CACHE.get(dayKey)?.rows||[];
+        const sessionRows=TRACKING_HISTORY_CACHE.get(String(row.session_id||''))?.rows||[];
+        let liveTrail=row.trail;
+        if(typeof liveTrail==='string'){try{liveTrail=JSON.parse(liveTrail)}catch{liveTrail=[]}}
+        const history=trackingMergeGpsRows(dayRows,sessionRows,Array.isArray(liveTrail)?liveTrail:[]);
         const rows=trackingAnalyzePlan(row,plan,history);
         plan.analysisRows=rows;
         if(TRACKING_DATA)renderTrackingMap(TRACKING_DATA);
@@ -2791,8 +2841,9 @@ function renderTrackingMap(rows){
     if(typeof liveTrail==='string'){try{liveTrail=JSON.parse(liveTrail)}catch{liveTrail=[]}}
     liveTrail=Array.isArray(liveTrail)?liveTrail:[];
     const cachedHistory=TRACKING_HISTORY_CACHE.get(String(row.session_id||''))?.rows||[];
-    const history=liveTrail.length>=cachedHistory.length?liveTrail:cachedHistory;
-    if(liveTrail.length)TRACKING_HISTORY_CACHE.set(String(row.session_id||''),{at:Date.now(),rows:history});
+    const dayHistory=TRACKING_HISTORY_CACHE.get(trackingDayHistoryKey(TRACKING_CURRENT_DATE,row.driver_name,row.vehicle_plate))?.rows||[];
+    const history=trackingMergeGpsRows(dayHistory,cachedHistory,liveTrail);
+    if(liveTrail.length)TRACKING_HISTORY_CACHE.set(String(row.session_id||''),{at:Date.now(),rows:trackingMergeGpsRows(cachedHistory,liveTrail)});
     const realCoords=history.map(p=>[Number(p.latitude),Number(p.longitude)]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1]));
     if(!TRACKING_MAP_ONLY_DRIVERS&&realCoords.length>1){
       L.polyline(realCoords,{pane:'tracking-actual',color:'#ffffff',weight:9,opacity:.94}).addTo(TRACKING_LAYER);
