@@ -55,7 +55,7 @@ const PERMISSION_OPTIONS=[
   ['cidade_destino','Entregas por cidade destino'],
   ['roteirizador','Roteirizador de romaneios'],
   ['programacao','Programação de Entregas'],
-  ['tracking','Rastreamento de Motoristas'],
+  ['tracking','Rastreio de Carga'],
   ['final_carregamento','Registro de Carga e Descarga'],
   ['operacional','Operacional / Entregas'],
   ['financeiro','Financeiro'],
@@ -2522,7 +2522,7 @@ function openTab(tab){
     'motoristas-evolucao':'Evolução por Motorista',
     'conferencia':'Registro de Carga e Descarga',
     'programacao':'Programação de Entregas',
-    'rastreamento':'Motoristas em Rota',
+    'rastreamento':'Rastreio de Carga',
     'roteirizador':'Roteirizador SSW',
     'agendamentos-copia':'Consulta de Agendamentos',
     'usuarios':'Usuários e Acessos'
