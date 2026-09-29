@@ -3541,59 +3541,119 @@ async function buildSswCityBubbles(from='',to=''){
   const today=spDateISO(),month=today.slice(0,8)+'01';
   const f=/^\d{4}-\d{2}-\d{2}$/.test(from)?from:month;
   const t=/^\d{4}-\d{2}-\d{2}$/.test(to)?to:today;
-  const key=f+'|'+t,hit=CITY_BUBBLE_CACHE.get(key);
-  if(hit&&Date.now()-hit.at<5*60*1000)return hit.value;
+  const key='ssw-v2|'+f+'|'+t,hit=CITY_BUBBLE_CACHE.get(key);
+  if(hit&&Date.now()-hit.at<2*60*1000)return hit.value;
 
-  const rep=await fetchBi2ReportFolder(174,'','ctrc'),parsed=parseBi2Csv(rep.text),rows=parsed.rows||[];
-  const seen=new Set(),groups=new Map();
-  for(const r of rows){
-    const date=cityBubbleRowDate(r);
-    if(date&&(date<f||date>t))continue;
-    const sig=String(pickField(r,'sigla_ctrc','SIGLA CTRC')||'').trim();
-    const num=String(pickField(r,'numero_ctrc','NUMERO CTRC','CTRC')||'').trim();
-    const id=(sig+'|'+num)||String(pickField(r,'nro_chave_acesso_cte','CHAVE CTE')||'');
-    if(id&&seen.has(id))continue;
-    if(id)seen.add(id);
+  // A quantidade de entregas passa a vir da operação SSW (opção 38 / romaneios),
+  // e não de uma contagem solta do arquivo BI2.
+  const ssw=await buildSswMotoristas(f,t);
+  const sswRows=Array.isArray(ssw.rows)?ssw.rows:[];
+  const sswByCtrc=new Map(),sswByNf=new Map();
+  for(const r of sswRows){
+    const ck=normCtrcLoose(r.ctrcOficial||r.ctrc),nk=normNf(r.nf);
+    if(ck&&!sswByCtrc.has(ck))sswByCtrc.set(ck,r);
+    if(nk&&!sswByNf.has(nk))sswByNf.set(nk,r)
+  }
 
-    const cidade=String(pickField(r,'cidade_destino','CIDADE DESTINO','dest_cidade','DEST CIDADE')||'').trim();
-    const uf=String(pickField(r,'uf_destino','UF DESTINO','dest_uf','DEST UF')||'SP').trim()||'SP';
+  // Valores financeiros e valor da mercadoria são lidos do cadastro do CT-e no SSW/BI2 174.
+  let financialRows=[];
+  try{
+    if(f===today&&t===today){
+      financialRows=parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text).rows||[]
+    }else{
+      const dates=bi2DateRange(f,t,31),snaps=[];
+      for(let i=0;i<dates.length;i+=4){
+        const part=await Promise.all(dates.slice(i,i+4).map(d=>fetchBi2FolderDayParsed(174,'ctrc',d)));
+        snaps.push(...part)
+      }
+      financialRows=mergeUniqueBi2Rows(snaps.filter(x=>x.ok))
+    }
+  }catch(e){
+    console.log('MAPA CIDADES SSW financeiro 174 ERRO: '+String(e.message||e))
+  }
+
+  const finByCtrc=new Map(),finByNf=new Map();
+  for(const r of financialRows){
+    const ck=normCtrcLoose(pickField(r,'numero_ctrc','NUMERO CTRC','CTRC')),nk=normNf(pickField(r,'numero_nf','NF','NUMERO NF'));
+    if(ck&&!finByCtrc.has(ck))finByCtrc.set(ck,r);
+    if(nk&&!finByNf.has(nk))finByNf.set(nk,r)
+  }
+
+  // Lista oficial de CT-es dos romaneios da opção 38.
+  const official=[];
+  const seenOfficial=new Set();
+  for(const rom of (ssw.romaneios38||[])){
+    const nfByCtrc=new Map((rom.ctrcNfs||[]).map(p=>[normCtrcLoose(p.ctrc),normNf(p.nf)]));
+    for(const raw of (rom.ctrcs||[])){
+      const ck=normCtrcLoose(raw),nk=nfByCtrc.get(ck)||'';
+      const id=ck?('C'+ck):(nk?('N'+nk):'');
+      if(!id||seenOfficial.has(id))continue;seenOfficial.add(id);
+      official.push({ctrc:raw,nf:nk,romaneio:rom.romaneio||'',motorista:rom.motorista||'',veiculo:rom.veiculo||''})
+    }
+    for(const p of (rom.ctrcNfs||[])){
+      const ck=normCtrcLoose(p.ctrc),nk=normNf(p.nf),id=ck?('C'+ck):(nk?('N'+nk):'');
+      if(!id||seenOfficial.has(id))continue;seenOfficial.add(id);
+      official.push({ctrc:p.ctrc,nf:nk,romaneio:rom.romaneio||'',motorista:rom.motorista||'',veiculo:rom.veiculo||''})
+    }
+  }
+
+  // Se a opção 38 não trouxe a lista detalhada para um período histórico, usa as linhas
+  // reconciliadas pelo próprio acompanhamento SSW.
+  const deliveries=official.length?official:sswRows.map(r=>({ctrc:r.ctrcOficial||r.ctrc,nf:r.nf||'',romaneio:r.romaneio||'',motorista:r.motorista||'',veiculo:r.veiculo||''}));
+  const groups=new Map(),seen=new Set();
+  for(const base of deliveries){
+    const ck=normCtrcLoose(base.ctrc),nk=normNf(base.nf),id=ck?('C'+ck):(nk?('N'+nk):'');
+    if(!id||seen.has(id))continue;seen.add(id);
+    const sr=sswByCtrc.get(ck)||sswByNf.get(nk)||{};
+    const fr=finByCtrc.get(ck)||finByNf.get(nk)||{};
+    const cidade=String(sr.cidade||pickField(fr,'cidade_destino','CIDADE DESTINO','dest_cidade','DEST CIDADE')||'').trim();
+    const uf=String(sr.uf||pickField(fr,'uf_destino','UF DESTINO','dest_uf','DEST UF')||'SP').trim()||'SP';
     if(!cidade)continue;
     const k=normKey(cidade)+'|'+normKey(uf);
     if(!groups.has(k))groups.set(k,{cidade,uf,valor:0,entregas:0,retornos:0,frete:0,ceps:new Set()});
     const g=groups.get(k);
     g.entregas++;
-    g.valor+=bi2Number(pickField(r,'valor_n_fiscal','VALOR N FISCAL','VAL MERC','ValorMercadoria'));
-    g.frete+=bi2Number(pickField(r,'valor_frete','VALOR FRETE','FRETE'));
-    if(cityBubbleReturnOccurrence(r))g.retornos++;
-    const cep=String(pickField(r,'dest_cep','DEST CEP','CEP DESTINO')||'').replace(/\D/g,'');
+    g.valor+=bi2Number(pickField(fr,'valor_n_fiscal','VALOR N FISCAL','VAL MERC','ValorMercadoria','VALOR MERCADORIA'));
+    g.frete+=bi2Number(pickField(fr,'valor_frete','VALOR FRETE','FRETE','FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO'));
+    const retText=normKey((sr.ocorrencia||'')+' '+(sr.ocorrenciaCodigo||'')+' '+pickField(fr,'ult_ocorr_descricao','ULT OCORR DESCRICAO','DESCRICAO ULTIMA OCORRENCIA'));
+    if(/RETORN|DEVOLU|DEVOLVID|RECUSA|RECUSAD|VOLTOU A BASE|RETORNO A BASE/.test(retText))g.retornos++;
+    const cep=String(pickField(fr,'dest_cep','DEST CEP','CEP DESTINO')||'').replace(/\D/g,'');
     if(cep.length===8&&g.ceps.size<3)g.ceps.add(cep)
   }
 
   const list=[...groups.values()];
-  await Promise.all(list.map(async g=>{
+  // Localiza pelo CEP do destinatário quando houver; caso contrário, pelo nome da cidade.
+  for(const g of list){
     const pts=(await Promise.all([...g.ceps].map(cep=>routeGeocodeCep(cep,null,null).catch(()=>null)))).filter(Boolean);
     if(pts.length){
       g.lat=pts.reduce((a,x)=>a+Number(x.lat),0)/pts.length;
       g.lon=pts.reduce((a,x)=>a+Number(x.lon),0)/pts.length;
-      g.geoSource='CEP médio da cidade'
+      g.geoSource='CEP do destinatário'
     }else{
-      const geo=ROUTE_GEO_CACHE.get(normKey(g.cidade+', '+g.uf+', Brasil')+'|0.0000|0.0000|0');
+      const geo=await routeGeocode(g.cidade+', '+g.uf+', Brasil',null,null).catch(()=>null);
       if(geo){g.lat=geo.lat;g.lon=geo.lon;g.geoSource='cidade'}
       else{g.lat=null;g.lon=null;g.geoSource='não localizada'}
     }
     delete g.ceps
-  }));
+  }
 
-  const cities=list.sort((a,b)=>b.valor-a.valor||b.entregas-a.entregas);
+  const cities=list.sort((a,b)=>b.entregas-a.entregas||b.frete-a.frete||b.valor-a.valor);
   const mapped=cities.filter(x=>Number.isFinite(x.lat)&&Number.isFinite(x.lon));
+  const totalValue=Number(cities.reduce((a,x)=>a+x.valor,0).toFixed(2));
+  const totalFreight=Number(cities.reduce((a,x)=>a+x.frete,0).toFixed(2));
+  const totalDeliveries=cities.reduce((a,x)=>a+x.entregas,0);
   const value={
-    ok:true,source:'SSW / BI2 relatório 174',from:f,to:t,
+    ok:true,
+    source:'SSW opção 38 + CT-e SSW (BI2 174)',
+    from:f,to:t,
+    officialDeliveries:Number(ssw.totalRomaneado||deliveries.length||0),
     totalCities:cities.length,mappedCities:mapped.length,
-    totalValue:Number(cities.reduce((a,x)=>a+x.valor,0).toFixed(2)),
-    totalDeliveries:cities.reduce((a,x)=>a+x.entregas,0),
+    totalValue,totalFreight,totalDeliveries,
     totalReturns:cities.reduce((a,x)=>a+x.retornos,0),
+    reconciled:true,
     cities
   };
+  console.log('MAPA CIDADES SSW: '+JSON.stringify({periodo:f+'..'+t,oficial:value.officialDeliveries,mapeadas:totalDeliveries,cidades:cities.length,frete:totalFreight,mercadoria:totalValue}));
   CITY_BUBBLE_CACHE.set(key,{at:Date.now(),value});
   return value
 }
@@ -3657,7 +3717,7 @@ http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.
       .replace('<div id="loading" class="loading">Carregando dados do Google Sheets…</div>','<div id="loading" class="loading hide" style="display:none!important"></div>');
   }
   const bootstrap='<script>window.__DASHBOARD_SESSION_TOKEN__='+JSON.stringify(String(x.token||''))+';window.__DASHBOARD_SESSION_USER__='+JSON.stringify(x.user||null)+';<\/script>';
-  html=html.replace(/<script src="\/app\.js(?:\?[^"]*)?"><\/script>/,bootstrap+'<script src="/app.js?v=20260929fixload3"></script>');
+  html=html.replace(/<script src="\/app\.js(?:\?[^"]*)?"><\/script>/,bootstrap+'<script src="/app.js?v=20260929cityfreightphotos1"></script>');
   res.writeHead(200,{
     'Content-Type':'text/html; charset=utf-8',
     'Cache-Control':'no-store, no-cache, must-revalidate',
@@ -4058,7 +4118,7 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
       .replace('<body class="auth-pending">','<body class="embedded">')
       .replace('<div id="authGate" class="auth-gate">','<div id="authGate" class="auth-gate hide" style="display:none!important">')
       .replace('<div id="loading" class="loading">Carregando dados do Google Sheets…</div>','<div id="loading" class="loading hide" style="display:none!important"></div>')
-      .replace('<script src="/app.js"></script>','<script src="/app.js?v=20260929fixload3"></script>');
+      .replace('<script src="/app.js"></script>','<script src="/app.js?v=20260929cityfreightphotos1"></script>');
     res.writeHead(200,{
       'Content-Type':'text/html; charset=utf-8',
       'Cache-Control':'no-store, no-cache, must-revalidate',
