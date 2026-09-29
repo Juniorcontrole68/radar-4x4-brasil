@@ -2598,11 +2598,12 @@ async function routeGeocode(query,center=null,maxRadiusMeters=null){
         if(Number(maxRadiusMeters)>0)list=list.filter(v=>v.distanceFromBaseMeters<=Number(maxRadiusMeters));
       }
       const v=list[0]||null;
-      ROUTE_GEO_CACHE.set(key,v);
+      if(v)ROUTE_GEO_CACHE.set(key,v);
       return v
     }
   }catch{}
-  ROUTE_GEO_CACHE.set(key,null);
+  // Falhas temporárias do geocodificador não devem ficar presas em cache.
+  // Assim a próxima atualização do rastreio pode tentar novamente.
   return null
 }
 async function routeOsrmTable(points){
@@ -2899,12 +2900,16 @@ async function buildRoutePlan(date='',romaneio=''){
   if(!baseGeo)throw new Error('Não foi possível localizar a base de Americana.');
   const stops=[],rejectedStops=[];
   for(let idx=0;idx<metas.length;idx++){
-    const meta=metas[idx],lk=normCtrcLoose(meta.ctrc),nf=normNf(meta.nf),r=byLoose.get(lk)||byNf.get(nf)||meta.__row||{};
+    const meta=metas[idx],lk=normCtrcLoose(meta.ctrc),nf=normNf(meta.nf);
+    const detail=detailByLoose.get(lk)||detailByNf.get(nf)||null;
+    const primary=byLoose.get(lk)||byNf.get(nf)||meta.__row||null;
+    // Completa o BI2 com os dados detalhados do SSW. Alguns CT-es chegam no BI2
+    // sem endereço/coordenada; o SSW ainda pode trazer cidade, CEP ou GPS.
+    const r={...(detail||{}),...(primary||{})};
     const destinatario=r.destinatario_nome||r.destinatario||routeField(r,[/(destinatario|destinat)_?nome/,/^destinatario$/])||('Entrega '+(idx+1));
     const cidade=r.cidade_destino||r.dest_cidade||r.cidade||routeField(r,[/(cidade).*(dest|destinat)/,/(dest|destinat).*cidade/,/^cidade_destino$/])||'';
     const uf=r.uf_destino||r.dest_uf||r.uf||routeField(r,[/(uf).*(dest|destinat)/,/(dest|destinat).*uf/,/^uf_destino$/])||'SP';
     const parts=routeAddressParts(r,meta);
-    const detail=detailByLoose.get(lk)||detailByNf.get(nf)||null;
     const exactCoord=routeSswCoordinates(r,meta);
     let query='',precision='cidade',geo=null,coordinateSource='';
     if(exactCoord){
@@ -2916,11 +2921,19 @@ async function buildRoutePlan(date='',romaneio=''){
       else if(cidade){query=[cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');precision='cidade'}
       if(!query){rejectedStops.push({ctrc:meta.ctrc||'',nf:meta.nf||'',destinatario,cidade,uf,reason:'sem coordenada/cidade/endereço'});continue}
       geo=await routeGeocode(query,baseGeo,ROUTE_MAX_RADIUS_METERS);
-      if(!geo&&cidade&&String(uf||'').toUpperCase()!=='SP'){
-        geo=await routeGeocode(cidade+', SP, Brasil',baseGeo,ROUTE_MAX_RADIUS_METERS);
-        if(geo){precision='cidade';query=cidade+', SP, Brasil'}
+      // Se CEP/endereço não localizar, mantém a entrega na rota usando a cidade
+      // como posição aproximada. Isso é melhor do que deixar o motorista sem rota.
+      if(!geo&&cidade){
+        const cityQuery=[cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');
+        geo=await routeGeocode(cityQuery,baseGeo,ROUTE_MAX_RADIUS_METERS);
+        if(geo){precision='cidade';query=cityQuery;coordinateSource='cidade-aproximada'}
       }
-      coordinateSource='geocodificacao'
+      if(!geo&&cidade&&String(uf||'').toUpperCase()!=='SP'){
+        const citySp=cidade+', SP, Brasil';
+        geo=await routeGeocode(citySp,baseGeo,ROUTE_MAX_RADIUS_METERS);
+        if(geo){precision='cidade';query=citySp;coordinateSource='cidade-aproximada'}
+      }
+      if(!coordinateSource)coordinateSource='geocodificacao'
     }
     if(!geo){rejectedStops.push({ctrc:meta.ctrc||'',nf:meta.nf||'',destinatario,cidade,uf,reason:'não localizado dentro de 300 km'});continue}
     const radius=routeHaversine(baseGeo,geo);
