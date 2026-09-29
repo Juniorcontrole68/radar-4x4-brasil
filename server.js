@@ -792,10 +792,11 @@ async function simulationRouteGeometry(items,optimize=false){
     order=routeExact(mt.matrix,stops.length)||routeTwoOpt(routeNearest(mt.matrix,stops.length),mt.matrix);
     distanceMeters=routeCycleDistance(order,mt.matrix)
   }
-  const geo=await routeGeometry(points,order);
+  const [geo,outboundGeo]=await Promise.all([routeGeometry(points,order),routeGeometryOpen(points,order)]);
   if(Number.isFinite(Number(geo.distanceMeters)))distanceMeters=Number(geo.distanceMeters);
   return{
     geometry:geo.geometry||null,
+    outboundGeometry:outboundGeo.geometry||null,
     distanceKm:Number.isFinite(Number(distanceMeters))?Number((Number(distanceMeters)/1000).toFixed(1)):null,
     points:[points[0],...order.map(i=>points[i])]
   }
@@ -865,7 +866,7 @@ async function buildRomaneioSimulation(force=false){
       vehicleType:type.label,vehicleTypeInferred:type.inferred,cost,kg:Number(kg.toFixed(1)),kgCapacity:type.kg,
       kgUtil:Number((kg/type.kg*100).toFixed(1)),deliveries:arr.length,freight:Number(freight.toFixed(2)),
       costFreightPct:freight>0?Number((cost/freight*100).toFixed(1)):null,
-      cities:[...new Set(arr.map(x=>x.cidade))],distanceKm:geom.distanceKm,geometry:geom.geometry,points:geom.points,items:arr
+      cities:[...new Set(arr.map(x=>x.cidade))],distanceKm:geom.distanceKm,geometry:geom.geometry,outboundGeometry:geom.outboundGeometry,points:geom.points,items:arr
     })
   }
 
