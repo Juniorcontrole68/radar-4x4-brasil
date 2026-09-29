@@ -2073,7 +2073,7 @@ async function calculateRoute(){
 
 let TRACKING_MAP=null,TRACKING_LAYER=null,TRACKING_DATA=null,TRACKING_ROUTE_DATA=null,TRACKING_DRIVER_ROWS=[];
 let TRACKING_MAP_VIEW_READY=false;
-let TRACKING_HISTORY_MAP_UI=null,TRACKING_HISTORY_LAYER_UI=null,TRACKING_HISTORY_RESULT=null;
+let TRACKING_HISTORY_MAP_UI=null,TRACKING_HISTORY_LAYER_UI=null,TRACKING_HISTORY_RESULT=null,TRACKING_HISTORY_AT=0;
 const TRACKING_LOGICAL_ROUTES=new Map();
 const TRACKING_PLAN_CACHE=new Map();
 const TRACKING_HISTORY_CACHE=new Map();
@@ -2464,7 +2464,7 @@ function trackingHistoryRenderMap(data){
   setTimeout(()=>TRACKING_HISTORY_MAP_UI.invalidateSize(),80)
 }
 function trackingHistoryRender(data){
-  TRACKING_HISTORY_RESULT=data;
+  TRACKING_HISTORY_RESULT=data;TRACKING_HISTORY_AT=Date.now();
   const sum=data?.summary||{},sessions=data?.sessions||[];
   const set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
   set('#trackingHistoryDrivers',nf(sum.drivers||0));
@@ -2507,7 +2507,7 @@ async function refreshTrackingHistory(){
     if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível consultar o histórico.');
     trackingHistoryRender(j)
   }catch(e){
-    TRACKING_HISTORY_RESULT=null;
+    TRACKING_HISTORY_RESULT=null;TRACKING_HISTORY_AT=0;
     if(info)info.textContent='Erro ao consultar histórico: '+e.message;
     const table=$('#trackingHistoryStopsTable');if(table)table.innerHTML='<tbody><tr><td class="muted">Histórico indisponível.</td></tr></tbody>'
   }finally{if(btn){btn.disabled=false;btn.textContent='Consultar histórico'}}
@@ -2907,6 +2907,17 @@ async function trackingRefreshLogicalAnalysis(liveRows,date,force=false){
     TRACKING_ANALYSIS_ROWS=pieces.flat();
     TRACKING_ANALYSIS_AT=Date.now();
     trackingRenderAnalysis();
+
+    // O relatório de paradas usa o mesmo dia do percurso lógico e se atualiza
+    // automaticamente. Evita mostrar "Nenhum histórico consultado" enquanto
+    // o sistema já possui pontos GPS e visitas processadas.
+    const histDate=$('#trackingHistoryDate');
+    if(histDate&&histDate.value!==date)histDate.value=date;
+    const histDriver=$('#trackingHistoryDriver');
+    if(histDriver&&histDriver.value)histDriver.value='';
+    const historyStale=!TRACKING_HISTORY_RESULT||TRACKING_HISTORY_RESULT.date!==date||Date.now()-TRACKING_HISTORY_AT>120000;
+    if(historyStale)refreshTrackingHistory().catch(e=>console.warn('Relatório automático de paradas',e));
+
     if(TRACKING_DATA)renderTrackingMap(TRACKING_DATA)
   }finally{
     window.__trackingAnalysisBusy=false
@@ -3196,7 +3207,7 @@ function setupTracking(){
   if($('#trackingHistorySearch'))$('#trackingHistorySearch').onclick=refreshTrackingHistory;
   if($('#trackingHistoryToday'))$('#trackingHistoryToday').onclick=trackingHistoryToday;
   if($('#trackingHistoryPrint'))$('#trackingHistoryPrint').onclick=printTrackingHistory;
-  if($('#trackingHistoryDate'))$('#trackingHistoryDate').onchange=async()=>{TRACKING_HISTORY_RESULT=null;await trackingHistoryLoadDrivers(false)};
+  if($('#trackingHistoryDate'))$('#trackingHistoryDate').onchange=async()=>{TRACKING_HISTORY_RESULT=null;TRACKING_HISTORY_AT=0;await trackingHistoryLoadDrivers(false)};
   if($('#trackingHistoryDriver'))$('#trackingHistoryDriver').onchange=()=>{};
   if($('#trackingRouteCompareDriver'))$('#trackingRouteCompareDriver').onchange=trackingRenderAnalysis;
   if($('#trackingGenerateCode'))$('#trackingGenerateCode').onclick=generateTrackingCode;
