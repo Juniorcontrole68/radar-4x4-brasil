@@ -495,10 +495,21 @@ async function fetchSsw38QuickPrefix(prefix='AMR'){
     }
 
     p.rows=(p.rows||[]).filter(x=>String(x.romaneio||'').toUpperCase().startsWith(prefix));
+    // A opção 38 às vezes responde vazia durante atualização do SSW. Não deixa
+    // uma leitura vazia apagar a última relação válida de motoristas/romaneios.
+    if(!p.rows.length){
+      const previous=SSW38_PREFIX_CACHE.get(prefix)?.value;
+      if(previous?.rows?.length){
+        console.log('SSW38 QUICK '+prefix+' vazio temporário; preservando '+previous.rows.length+' romaneio(s) válidos em cache.');
+        SSW38_PREFIX_CACHE.set(prefix,{at:Date.now(),value:previous});
+        if(prefix==='AMR')SSW38_QUICK_CACHE={at:Date.now(),value:previous};
+        return previous
+      }
+    }
     const total=p.rows.reduce((a,x)=>a+Number(x.qtdeCtrcs||0),0);
     const value={ok:true,prefix,rows:p.rows,total,motoristas:[...new Set(p.rows.map(x=>x.motorista).filter(Boolean))].length,romaneios:p.rows.length};
-    SSW38_PREFIX_CACHE.set(prefix,{at:Date.now(),value});
-    if(prefix==='AMR')SSW38_QUICK_CACHE={at:Date.now(),value};
+    if(p.rows.length)SSW38_PREFIX_CACHE.set(prefix,{at:Date.now(),value});
+    if(prefix==='AMR'&&p.rows.length)SSW38_QUICK_CACHE={at:Date.now(),value};
     console.log('SSW38 QUICK '+prefix+': '+JSON.stringify({
       total:value.total,romaneios:value.romaneios,motoristas:value.motoristas,
       rows:value.rows.map(x=>({romaneio:x.romaneio,motorista:x.motorista,veiculo:x.veiculo,total:x.qtdeCtrcs}))
@@ -3664,14 +3675,25 @@ if(u.pathname==='/api/evolucao-motoristas'&&req.method==='GET'){try{
   };
   quickRows.forEach(addQuick);
 
-  if(!groups.size){
-    for(const x of detailed){
-      const motorista=String(x.motorista||'').trim(),veiculo=String(x.veiculo||'').trim();
-      if(!motorista)continue;
-      groups.set(nkey(motorista)+'|'+normPlate(veiculo),{
+  // Sempre mescla a base detalhada do dia. Se a consulta rápida vier parcial
+  // (por exemplo só TBT), os motoristas AMR continuam no quadro de evolução.
+  for(const x of detailed){
+    const motorista=String(x.motorista||'').trim(),veiculo=String(x.veiculo||'').trim();
+    if(!motorista)continue;
+    const key=nkey(motorista)+'|'+normPlate(veiculo);
+    if(!groups.has(key)){
+      groups.set(key,{
         motorista,veiculo,total:Number(x.total||0),faltaOcorr:Number(x.pendentes||0),
         romaneios:Array.isArray(x.romaneios)?x.romaneios:[]
-      })
+      });
+      continue
+    }
+    const g=groups.get(key);
+    // Mantém o maior total conhecido e agrega romaneios sem duplicar.
+    g.total=Math.max(Number(g.total||0),Number(x.total||0));
+    if(!Number.isFinite(Number(g.faltaOcorr)))g.faltaOcorr=Number(x.pendentes||0);
+    for(const rom of (Array.isArray(x.romaneios)?x.romaneios:[])){
+      const v=String(rom||'').trim();if(v&&!g.romaneios.includes(v))g.romaneios.push(v)
     }
   }
 
@@ -3695,6 +3717,10 @@ if(u.pathname==='/api/evolucao-motoristas'&&req.method==='GET'){try{
     entregues=rows.reduce((a,x)=>a+x.entregues,0),
     pendentes=rows.reduce((a,x)=>a+x.pendentes,0),
     ocorrencias=rows.reduce((a,x)=>a+x.ocorrencias,0);
+  console.log('EVOLUCAO MOTORISTAS: '+JSON.stringify({
+    date,quickRows:quickRows.length,detailed:detailed.length,motoristas:rows.length,
+    nomes:rows.map(x=>x.motorista)
+  }));
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({
     ok:true,date,from:date,to:date,source:'SSW opção 38',rows:[],
