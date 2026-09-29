@@ -1992,21 +1992,36 @@ function trackingDriverSelectionChanged(resetCode=true){
     :'Selecione um motorista que esteja trabalhando hoje.'
 }
 function trackingFindRoute(driver,plate){
-  const n=trackingNorm(driver),p=trackingNorm(plate);if(!n)return null;
+  const n=trackingNorm(driver),p=trackingNorm(plate);
   const logical=TRACKING_LOGICAL_ROUTES.get(trackingDriverKey(driver,plate));
-  if(logical?.geometry)return logical;
-  for(const [key,plan] of TRACKING_LOGICAL_ROUTES){
-    const [kd,kp]=key.split('|');
-    if(kd===n&&(!p||!kp||kp===p)&&plan?.geometry)return plan
+  if(logical?.geometry||logical?.outboundGeometry)return logical;
+  if(p){
+    for(const [key,plan] of TRACKING_LOGICAL_ROUTES){
+      const kp=key.split('|')[1]||'';
+      if(kp===p&&(plan?.geometry||plan?.outboundGeometry))return plan
+    }
+  }
+  if(n){
+    for(const [key,plan] of TRACKING_LOGICAL_ROUTES){
+      const kd=key.split('|')[0]||'';
+      if((kd===n||kd.includes(n)||n.includes(kd))&&(plan?.geometry||plan?.outboundGeometry))return plan
+    }
   }
   const routes=TRACKING_ROUTE_DATA?.actual?.routes||[];
-  const sameDriver=routes.filter(r=>trackingNorm(r.motorista)===n);
-  if(p){const exact=sameDriver.find(r=>trackingNorm(r.veiculo)===p);if(exact)return exact}
-  if(sameDriver.length)return sameDriver[0];
-  return routes.find(r=>{
-    const rn=trackingNorm(r.motorista),rp=trackingNorm(r.veiculo);
-    return rn&&n&&(rn.includes(n)||n.includes(rn))&&(!p||!rp||rp===p)
-  })||null
+  if(p){
+    const exactPlate=routes.find(r=>trackingNorm(r.veiculo)===p);
+    if(exactPlate)return exactPlate
+  }
+  if(n){
+    const exactName=routes.find(r=>trackingNorm(r.motorista)===n);
+    if(exactName)return exactName;
+    const nearName=routes.find(r=>{
+      const rn=trackingNorm(r.motorista);
+      return rn&&n&&(rn.includes(n)||n.includes(rn))
+    });
+    if(nearName)return nearName
+  }
+  return null
 }
 function trackingStatus(row){
   if(!row.session_id)return{key:'off',label:'Inativo',distance:null};
@@ -2052,12 +2067,17 @@ function trackingFirstName(v){
   return String(v||'Motorista').trim().split(/\s+/).filter(Boolean)[0]||'Motorista'
 }
 function trackingDriverOperationRow(driver,plate){
-  const n=trackingNorm(driver),p=trackingNorm(plate);
-  return (TRACKING_DRIVER_ROWS||[]).find(r=>trackingNorm(r.motorista)===n&&(!p||!trackingNorm(r.veiculo)||trackingNorm(r.veiculo)===p))
-    ||(TRACKING_DRIVER_ROWS||[]).find(r=>{
-      const rn=trackingNorm(r.motorista),rp=trackingNorm(r.veiculo);
-      return rn&&n&&(rn.includes(n)||n.includes(rn))&&(!p||!rp||rp===p)
-    })||null
+  const n=trackingNorm(driver),p=trackingNorm(plate),rows=TRACKING_DRIVER_ROWS||[];
+  if(p){
+    const exactPlate=rows.find(r=>trackingNorm(r.veiculo)===p);
+    if(exactPlate)return exactPlate
+  }
+  const exactName=rows.find(r=>trackingNorm(r.motorista)===n);
+  if(exactName)return exactName;
+  return rows.find(r=>{
+    const rn=trackingNorm(r.motorista);
+    return rn&&n&&(rn.includes(n)||n.includes(rn))
+  })||null
 }
 function trackingRomaneiosFor(driver,plate){
   const r=trackingDriverOperationRow(driver,plate);if(!r)return[];
@@ -2239,11 +2259,44 @@ async function trackingBuildLogicalPlan(row,date){
   if(!driver&&!plate)return null;
   const key='manifestos|'+date+'|'+trackingDriverKey(driver,plate),hit=TRACKING_PLAN_CACHE.get(key);
   if(hit&&Date.now()-hit.at<2*60*1000)return hit.value;
-  const q=new URLSearchParams({date,driver,plate,t:String(Date.now())});
-  const r=await fetch('/api/tracking/planned-route?'+q.toString(),{cache:'no-store'});
-  const j=await r.json().catch(()=>({}));
-  if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível montar a rota pelas entregas dos romaneios.');
-  const plan={...j,logical:true,plannedSource:'romaneios',motorista:driver||j.motorista||'',veiculo:plate||j.veiculo||''};
+  try{
+    const q=new URLSearchParams({date,driver,plate,t:String(Date.now())});
+    const r=await fetch('/api/tracking/planned-route?'+q.toString(),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(r.ok&&j.ok){
+      const plan={...j,logical:true,plannedSource:'romaneios',motorista:driver||j.motorista||'',veiculo:plate||j.veiculo||''};
+      TRACKING_PLAN_CACHE.set(key,{at:Date.now(),value:plan});
+      return plan
+    }
+  }catch{}
+  const roms=trackingRomaneiosFor(driver,plate);
+  if(!roms.length)return null;
+  const plans=[];
+  for(const rom of roms.slice(0,8)){
+    try{
+      const p=await trackingFetchPlan(rom,date);
+      if(p?.stops?.length)plans.push(p)
+    }catch(e){console.warn('Rota '+rom,e)}
+  }
+  if(!plans.length)return null;
+  let plan=plans[0];
+  if(plans.length>1){
+    const seen=new Set(),stops=[];
+    plans.forEach(p=>(p.stops||[]).forEach(s=>{
+      const k=trackingNorm(s.ctrc||'')+'|'+String(s.nf||'')+'|'+Number(s.lat).toFixed(5)+'|'+Number(s.lon).toFixed(5);
+      if(seen.has(k))return;seen.add(k);stops.push(s)
+    }));
+    if(stops.length){
+      try{
+        const rr=await fetch('/api/roteirizador/recalcular',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+          date,romaneio:roms.join(' + '),motorista:driver,veiculo:plate,stops
+        })});
+        const jj=await rr.json().catch(()=>({}));
+        if(rr.ok&&jj.ok)plan=jj
+      }catch{}
+    }
+  }
+  plan={...plan,logical:true,plannedSource:'romaneios',romaneios:roms,motorista:driver||plan.motorista||'',veiculo:plate||plan.veiculo||''};
   TRACKING_PLAN_CACHE.set(key,{at:Date.now(),value:plan});
   return plan
 }
@@ -2370,7 +2423,13 @@ function renderTrackingMap(rows){
   if(TRACKING_LAYER)TRACKING_LAYER.remove();
   TRACKING_LAYER=L.layerGroup().addTo(TRACKING_MAP);
   const bounds=[];
-  const activeRows=(rows||[]).filter(row=>!!row?.session_id);
+  const activeRows=(rows||[]).filter(row=>{
+    if(!row?.session_id)return false;
+    if(/TESTE/i.test(String(row.driver_name||'')))return true;
+    const op=trackingDriverOperationRow(row.driver_name,row.vehicle_plate);
+    if(!op)return false;
+    return !op.concluido
+  });
   const legend=$('#trackingLiveLegend');
   if(legend){
     legend.innerHTML=activeRows.map((row,i)=>{
