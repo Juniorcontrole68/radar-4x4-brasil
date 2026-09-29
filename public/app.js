@@ -3324,7 +3324,7 @@ function openTab(tab){
   if(tab==='mapa-cidades'){cityBubbleSetDefaults();setTimeout(refreshCityBubbles,40)}
   loadHeavyForTab(tab);
 }
-$('.dash-open').forEach(b=>b.onclick=()=>{if(tabAllowed(b.dataset.open))openTab(b.dataset.open)});
+$$('.dash-open').forEach(b=>b.onclick=()=>{if(tabAllowed(b.dataset.open))openTab(b.dataset.open)});
 if($('#cityBubbleApply'))$('#cityBubbleApply').onclick=refreshCityBubbles;
 ['#cityBubbleFlagValue','#cityBubbleFlagDeliveries','#cityBubbleFlagReturns','#cityBubbleTop'].forEach(id=>{const e=$(id);if(e)e.onchange=renderCityBubbleMap});
 
