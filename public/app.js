@@ -2615,7 +2615,7 @@ async function trackingDayHistory(date,driver,plate=''){
   if(hit&&Date.now()-hit.at<120000)return hit.rows;
   if(TRACKING_DAY_HISTORY_INFLIGHT.has(key))return TRACKING_DAY_HISTORY_INFLIGHT.get(key);
   const job=(async()=>{
-    const q=new URLSearchParams({date,driver,raw:'1',t:String(Date.now())});
+    const q=new URLSearchParams({date,driver,plate:String(plate||''),raw:'1',t:String(Date.now())});
     const r=await fetch('/api/tracking/history?'+q.toString(),{cache:'no-store'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao consultar histórico GPS do dia.');
@@ -2712,31 +2712,42 @@ function trackingVisitWindow(stop,history,allowCepApprox=false,baixaAt=null){
     return{arrival:null,departure:null,approx:false}
   }
 
-  // CEP não é endereço exato. Só estima chegada/saída se houver uma parada GPS
-  // real próxima do CEP e a entrega estiver confirmada pelo SSW.
+  // CEP não representa a porta do cliente. Com baixa SSW confirmada, usamos o
+  // horário da baixa como âncora para encontrar a parada GPS real mais plausível.
   if(allowCepApprox&&valid.length){
     const baixa=baixaAt instanceof Date?baixaAt:trackingParseDateTime(baixaAt);
-    const candidates=valid.filter(p=>p._distanceKm<=0.35&&(
-      p._speed===null||p._speed<=2.5
-    )).filter(p=>!baixa||Math.abs(p._date-baixa)<=90*60*1000);
+    const nearCep=valid.filter(p=>p._distanceKm<=0.60&&(p._speed===null||p._speed<=3))
+      .filter(p=>!baixa||Math.abs(p._date-baixa)<=120*60*1000);
+    let candidates=nearCep;
+
+    // Se o centro do CEP ficou longe da rua real, procura uma parada do veículo
+    // próxima no tempo da baixa. Limita a 45 min para não atribuir outra entrega.
+    if(!candidates.length&&baixa){
+      candidates=valid.filter(p=>(p._speed===null||p._speed<=2.2)&&Math.abs(p._date-baixa)<=45*60*1000)
+    }
     if(candidates.length){
       let best=candidates[0];
       for(const p of candidates){
-        const score=(p._distanceKm*1000)+(baixa?Math.abs(p._date-baixa)/60000:0)*2;
-        const bestScore=(best._distanceKm*1000)+(baixa?Math.abs(best._date-baixa)/60000:0)*2;
-        if(score<bestScore)best=p
+        const timeMin=baixa?Math.abs(p._date-baixa)/60000:0;
+        const distancePenalty=nearCep.length?p._distanceKm*1000:0;
+        const score=timeMin*5+distancePenalty;
+        const bt=baixa?Math.abs(best._date-baixa)/60000:0;
+        const bs=bt*5+(nearCep.length?best._distanceKm*1000:0);
+        if(score<bs)best=p
       }
-      const idx=valid.indexOf(best),radius=.35;
+      const idx=valid.indexOf(best);
       let a=idx,b=idx;
-      while(a>0&&valid[a-1]._distanceKm<=radius&&(valid[a]._date-valid[a-1]._date)<=5*60*1000)a--;
-      while(b+1<valid.length&&valid[b+1]._distanceKm<=radius&&(valid[b+1]._date-valid[b]._date)<=5*60*1000)b++;
+      // Agrupa a parada real pelo deslocamento entre pontos, não pelo centro do CEP.
+      const clusterDistance=(p,q)=>trackingHaversineKm({latitude:p._lat,longitude:p._lon},{lat:q._lat,lon:q._lon});
+      while(a>0&&(valid[a]._date-valid[a-1]._date)<=7*60*1000&&clusterDistance(valid[a-1],best)<=0.18)a--;
+      while(b+1<valid.length&&(valid[b+1]._date-valid[b]._date)<=7*60*1000&&clusterDistance(valid[b+1],best)<=0.18)b++;
       const duration=valid[b]._date-valid[a]._date;
-      if(duration>=60000||best._speed===null||best._speed<=1.5){
-        const dep=(b+1<valid.length&&valid[b+1]._date-valid[b]._date<=5*60*1000)?valid[b+1]:valid[b];
+      if(duration>=30000||best._speed===null||best._speed<=1.5){
+        const dep=(b+1<valid.length&&valid[b+1]._date-valid[b]._date<=7*60*1000)?valid[b+1]:valid[b];
         return{
           arrival:{date:valid[a]._date,raw:valid[a].captured_at,distanceKm:best._distanceKm,accuracyM:valid[a]._acc},
           departure:dep?{date:dep._date,raw:dep.captured_at,distanceKm:dep._distanceKm,accuracyM:dep._acc}:null,
-          approx:true,approxDistanceKm:best._distanceKm
+          approx:true,approxDistanceKm:best._distanceKm,approxByTime:!nearCep.length
         }
       }
     }
@@ -2768,7 +2779,7 @@ function trackingAnalyzePlan(row,plan,history){
       city:s.cidade||'',lat:Number(s.lat),lon:Number(s.lon),coordinateSource:coordSource,
       arrivalAt:arrival?.date||null,departureAt:departure?.date||null,arrivalDistanceKm:arrival?.distanceKm??null,
       baixaAt:baixa,baixaRaw:s.baixaAt||'',visited,
-      visitSource:visited?(visit.approx?'GPS aproximado por CEP + baixa SSW':(arrival&&sswDelivered?'GPS + baixa SSW':(arrival?'GPS':'Baixa SSW'))):'',
+      visitSource:visited?(visit.approx?(visit.approxByTime?'GPS aproximado pelo horário da baixa SSW':'GPS aproximado por CEP + baixa SSW'):(arrival&&sswDelivered?'GPS + baixa SSW':(arrival?'GPS':'Baixa SSW'))):'',
       gpsApprox:!!visit.approx,gpsApproxDistanceKm:visit.approxDistanceKm??null,
       delivered:sswDelivered,diffMin,statusKey,statusLabel,sequenceKey:'warn',sequenceLabel:visited?'Visitado':'Ainda não visitado'
     })
@@ -2840,7 +2851,7 @@ function trackingRenderAnalysis(){
     withGps=rows.filter(x=>x.arrivalAt).length,withBaixa=rows.filter(x=>x.baixaAt).length,
     outSeq=rows.filter(x=>x.visited&&x.sequenceKey==='bad').length;
   if(summary)summary.textContent=visited+' visitada(s) • '+withGps+' por GPS • '+withBaixa+' com baixa SSW • '+outSeq+' fora da sequência';
-  if(info)info.textContent='Chegada/saída GPS exatas usam raio de 100 m, coordenada de endereço/SSW e GPS com precisão de até 80 m. Quando existe apenas CEP, o horário só aparece como aproximado se houver parada GPS próxima e baixa SSW confirmada.';
+  if(info)info.textContent='Chegada/saída exatas usam endereço/coordenada do SSW e GPS com precisão de até 80 m. Quando existe apenas CEP, a baixa SSW é usada como âncora para localizar a parada GPS mais provável do motorista e o horário é marcado como aproximado.';
   const body=rows.map(x=>{
     const diff=x.diffMin===null?'—':(x.diffMin>=0?'+':'')+x.diffMin+' min';
     return '<tr>'+
