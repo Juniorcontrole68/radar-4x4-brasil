@@ -43,6 +43,8 @@
     <div class="card kpi"><div class="label">Último registro</div><div id="overviewLoadLast" class="value">—</div></div>
   </div>
   <div id="overviewLoadInfo" class="agcopy-info" style="margin-top:10px">Carregando registros de carga e descarga…</div>
+  <div style="margin-top:12px"><b>Fotos recentes de carregamento e descarga</b></div>
+  <div id="overviewLoadPhotos" style="display:flex;gap:10px;overflow-x:auto;padding:10px 0 2px"><div class="muted">Carregando fotos…</div></div>
 </div>
 <div class="card driver-performance-panel">
   <div class="driver-performance-head">
@@ -129,32 +131,28 @@
 <div class="dash-card"><div class="dash-icon">⚖️</div><div><h3>Comparativo de Clientes Remetentes</h3><span class="dash-tag live">SSW / BI2</span></div><div id="hubRemCompare" class="dash-list">Compare dois clientes lado a lado ou veja o ranking geral por volume de CT-es.</div><div class="dash-actions"><button class="dash-open" data-open="ssw-remetentes-comparativo">Abrir comparativo</button></div></div>
 <div class="dash-card"><div class="dash-icon">⏰</div><div><h3>SSW • CT-es Atrasados</h3><span class="dash-tag live">WEBAPI</span></div><div class="dash-kpis"><div class="dash-mini"><span class="label">CT-es atrasados</span><b id="hubSswLate">—</b></div><div class="dash-mini"><span class="label">Filiais afetadas</span><b id="hubSswBranches">—</b></div></div><div id="hubSswLateMeta" class="dash-list">Carregando relatório do SSW…</div><div class="dash-actions"><button class="dash-open" data-open="ssw-atrasos">Abrir dashboard</button></div></div>
 <div class="dash-card"><div class="dash-icon">🔌</div><div><h3>SSW / BI2</h3><span id="hubBi2Tag" class="dash-tag wait">AGUARDANDO ARQUIVOS</span></div><div id="hubBi2Text" class="dash-list">Conexão BI2 preparada. Os painéis abaixo serão enriquecidos automaticamente quando os arquivos começarem a chegar.</div><div class="dash-list"><b>Próximos painéis:</b><br>CT-es e documentos • Entregas em tempo real • Ocorrências SSW • Unidades/filiais • Destinatários • Prazos e performance</div></div>
-<div class="dash-card"><div class="dash-icon">🟠</div><div><h3>Mapa de Cidades • SSW</h3><span class="dash-tag live">BOLHAS POR CIDADE</span></div><div class="dash-kpis"><div class="dash-mini"><span class="label">Cidades</span><b id="hubCityBubbleCities">—</b></div><div class="dash-mini"><span class="label">Valor mercadoria</span><b id="hubCityBubbleValue">—</b></div><div class="dash-mini"><span class="label">Entregas</span><b id="hubCityBubbleDeliveries">—</b></div><div class="dash-mini"><span class="label">Retornos</span><b id="hubCityBubbleReturns">—</b></div></div><div id="hubCityBubbleInfo" class="dash-list">Valor, entregas e retornos por cidade usando SSW / BI2.</div><div class="dash-actions"><button class="dash-open" data-open="mapa-cidades">Abrir mapa</button></div></div></div></section>
+<div class="dash-card"><div class="dash-icon">🟠</div><div><h3>Mapa de Cidades • SSW</h3><span class="dash-tag live">BOLHAS POR CIDADE</span></div><div class="dash-kpis"><div class="dash-mini"><span class="label">Cidades</span><b id="hubCityBubbleCities">—</b></div><div class="dash-mini"><span class="label">Frete</span><b id="hubCityBubbleFreight">—</b></div><div class="dash-mini"><span class="label">Valor mercadoria</span><b id="hubCityBubbleValue">—</b></div><div class="dash-mini"><span class="label">Entregas</span><b id="hubCityBubbleDeliveries">—</b></div></div><div id="hubCityBubbleInfo" class="dash-list">Frete, valor da mercadoria e quantidade de entregas por cidade, reconciliados com os romaneios do SSW.</div><div class="dash-actions"><button class="dash-open" data-open="mapa-cidades">Abrir mapa</button></div></div></div></section>
 <section id="mapa-cidades" class="section">
-<div class="dash-intro"><h2>Mapa de Cidades • SSW</h2><div class="muted">Bolhas proporcionais ao valor da mercadoria, quantidade de entregas e ocorrências de retorno/devolução.</div></div>
+<div class="dash-intro"><h2>Mapa de Cidades • SSW</h2><div class="muted">Escolha a flag de visualização: frete, valor da mercadoria ou quantidade de entregas. A base é reconciliada com os romaneios da opção 38 do SSW.</div></div>
 <div class="card">
   <div class="city-bubble-controls">
     <label>Data inicial<input id="cityBubbleFrom" type="date"></label>
     <label>Data final<input id="cityBubbleTo" type="date"></label>
     <label>Mostrar<select id="cityBubbleTop"><option value="20">Top 20</option><option value="40" selected>Top 40</option><option value="80">Top 80</option><option value="0">Todas</option></select></label>
-    <button id="cityBubbleApply" class="dash-open" type="button">Atualizar</button>
-    <div class="city-bubble-flags">
-      <label class="city-bubble-flag"><input id="cityBubbleFlagValue" type="checkbox" checked><span>💰 Valor vendido</span></label>
-      <label class="city-bubble-flag"><input id="cityBubbleFlagDeliveries" type="checkbox" checked><span>📦 Entregas</span></label>
-      <label class="city-bubble-flag"><input id="cityBubbleFlagReturns" type="checkbox" checked><span>↩️ Retornos</span></label>
-    </div>
+    <label>Visão do mapa<select id="cityBubbleMetric"><option value="deliveries" selected>📦 Quantidade de entregas</option><option value="freight">🚚 Valor do frete</option><option value="value">💰 Valor da mercadoria</option></select></label>
+    <button id="cityBubbleApply" class="dash-open" type="button">Atualizar SSW</button>
+    <div id="cityBubbleMetricLabel" class="city-bubble-flag"><span>Visão atual: Quantidade de entregas</span></div>
   </div>
   <div id="cityBubbleInfo" class="muted">Carregando SSW…</div>
   <div class="grid city-bubble-kpis">
-    <div class="card kpi"><div class="label">Valor da mercadoria</div><div id="cityBubbleTotalValue" class="value">—</div><div class="sub">VALOR N. FISCAL no SSW</div></div>
+    <div class="card kpi fin"><div class="label">Frete</div><div id="cityBubbleTotalFreight" class="value">—</div><div class="sub">valor do frete no CT-e SSW</div></div>
+    <div class="card kpi"><div class="label">Valor da mercadoria</div><div id="cityBubbleTotalValue" class="value">—</div><div class="sub">valor da NF no CT-e SSW</div></div>
     <div class="card kpi"><div class="label">Entregas / CT-es</div><div id="cityBubbleTotalDeliveries" class="value">—</div><div class="sub">período selecionado</div></div>
     <div class="card kpi"><div class="label">Retornos</div><div id="cityBubbleTotalReturns" class="value">—</div><div class="sub">retorno/devolução/recusa</div></div>
     <div class="card kpi"><div class="label">Cidades</div><div id="cityBubbleTotalCities" class="value">—</div><div class="sub">cidades destino</div></div>
   </div>
   <div class="city-bubble-legend">
-    <span style="color:#2563eb"><i class="city-bubble-dot"></i>Valor da mercadoria</span>
-    <span style="color:#f59e0b"><i class="city-bubble-dot"></i>Quantidade de entregas</span>
-    <span style="color:#dc2626"><i class="city-bubble-dot"></i>Retornos/devoluções</span>
+    <span>🚚 Frete</span><span>💰 Valor da mercadoria</span><span>📦 Quantidade de entregas</span>
   </div>
   <div class="city-bubble-layout">
     <div id="cityBubbleMap" class="city-bubble-map"></div>
@@ -543,4 +541,4 @@
   <div class="card tablecard"><div class="thead">Conferentes</div><div class="scroll"><table id="helpCheckers"></table></div></div>
 </div>
 </section>
-</main></div><script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embedded');</script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script><script src="/app.js?v=20260929fixload3"></script></body></html>
+</main></div><script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embedded');</script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script><script src="/app.js?v=20260929cityfreightphotos1"></script></body></html>
