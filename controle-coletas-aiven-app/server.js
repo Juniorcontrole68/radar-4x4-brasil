@@ -1018,6 +1018,7 @@ async function start() {
             SELECT d.id::text AS device_id,d.driver_name,d.vehicle_plate,d.device_name,d.last_seen_at,
                    s.id::text AS session_id,s.started_at,s.ended_at,s.status AS session_status,
                    p.latitude,p.longitude,p.accuracy_m,p.speed_mps,p.bearing_deg,p.battery_pct,p.captured_at,
+                   COALESCE(t.trail,'[]'::json) AS trail,
                    EXTRACT(EPOCH FROM (NOW()-p.captured_at))::int AS age_seconds,
                    EXTRACT(EPOCH FROM (NOW()-d.last_seen_at))::int AS device_age_seconds,
                    (s.id IS NOT NULL) AS map_active
@@ -1034,6 +1035,20 @@ async function start() {
               WHERE s.id IS NOT NULL AND session_id=s.id
               ORDER BY captured_at DESC LIMIT 1
             ) p ON TRUE
+            LEFT JOIN LATERAL (
+              SELECT json_agg(json_build_object(
+                'latitude',x.latitude,'longitude',x.longitude,'accuracy_m',x.accuracy_m,
+                'speed_mps',x.speed_mps,'bearing_deg',x.bearing_deg,'battery_pct',x.battery_pct,
+                'captured_at',x.captured_at
+              ) ORDER BY x.captured_at) AS trail
+              FROM (
+                SELECT latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at
+                FROM driver_tracking_points
+                WHERE s.id IS NOT NULL AND session_id=s.id
+                ORDER BY captured_at DESC
+                LIMIT 1200
+              ) x
+            ) t ON TRUE
             WHERE d.active=TRUE
             ORDER BY COALESCE(p.captured_at,d.last_seen_at) DESC NULLS LAST
             LIMIT 300
