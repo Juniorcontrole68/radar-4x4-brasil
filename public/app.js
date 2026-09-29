@@ -3189,6 +3189,49 @@ function trackingAutoTick(){
     refreshTracking();
   }
 }
+async function refreshTrackingRequests(){
+  const info=$('#trackingRequestsInfo'),tableEl=$('#trackingRequestsTable');
+  if(!tableEl)return;
+  if(info)info.textContent='Buscando solicitações de aparelhos…';
+  try{
+    const r=await fetch('/api/tracking/requests?t='+Date.now(),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar solicitações.');
+    const rows=Array.isArray(j.rows)?j.rows:[],pending=rows.filter(x=>x.status==='pending');
+    if(info)info.textContent=pending.length
+      ?nf(pending.length)+' aparelho(s) aguardando sua aprovação.'
+      :'Nenhum aparelho aguardando aprovação.';
+    const shown=rows.slice(0,30);
+    const body=shown.length?shown.map(x=>{
+      const when=x.created_at?new Date(x.created_at).toLocaleString('pt-BR'):'—';
+      const status=x.status==='pending'
+        ?'<span class="tracking-status warn">Aguardando</span>'
+        :(x.status==='approved'?'<span class="tracking-status ok">Aprovado</span>':'<span class="tracking-status bad">Recusado</span>');
+      const actions=x.status==='pending'
+        ?'<button class="primary" type="button" onclick="trackingDecideRequest(\''+safe(x.id)+'\',\'approve\')">Aprovar</button> <button class="secondary" type="button" onclick="trackingDecideRequest(\''+safe(x.id)+'\',\'reject\')">Recusar</button>'
+        :'—';
+      return '<tr><td><b>'+safe(x.driver_name||'Motorista')+'</b></td><td>'+safe(x.vehicle_plate||'—')+'</td><td>'+safe(x.device_name||'Android')+'</td><td>'+safe(when)+'</td><td>'+status+'</td><td>'+actions+'</td></tr>'
+    }).join(''):'<tr><td colspan="6" class="muted">Nenhuma solicitação encontrada.</td></tr>';
+    tableEl.innerHTML='<thead><tr><th>Motorista</th><th>Placa</th><th>Aparelho</th><th>Solicitado em</th><th>Status</th><th>Ação</th></tr></thead><tbody>'+body+'</tbody>'
+  }catch(e){
+    if(info)info.textContent='Erro ao carregar solicitações: '+e.message;
+    tableEl.innerHTML='<tbody><tr><td class="muted">Não foi possível carregar as solicitações.</td></tr></tbody>'
+  }
+}
+async function trackingDecideRequest(id,action){
+  if(!id||!['approve','reject'].includes(action))return;
+  const verb=action==='approve'?'aprovar':'recusar';
+  try{
+    const r=await fetch('/api/tracking/requests/'+encodeURIComponent(id)+'/'+action,{method:'POST'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||('Falha ao '+verb+' aparelho.'));
+    await refreshTrackingRequests();
+    TRACKING_NEXT_REFRESH=0;
+    refreshTracking().catch(()=>{})
+  }catch(e){alert('Não foi possível '+verb+': '+e.message)}
+}
+window.trackingDecideRequest=trackingDecideRequest;
+
 async function generateTrackingCode(){
   const driverEl=$('#trackingDriverName'),opt=driverEl?.selectedOptions?.[0];
   const driver=String(opt?.dataset?.driver||driverEl?.value||'').trim(),plate=String($('#trackingVehiclePlate')?.value||opt?.dataset?.plate||'').trim().toUpperCase(),msg=$('#trackingEnrollMsg'),codeBox=$('#trackingActivationCode'),btn=$('#trackingGenerateCode');
@@ -3211,6 +3254,8 @@ function setupTracking(){
   if($('#trackingHistoryDriver'))$('#trackingHistoryDriver').onchange=()=>{};
   if($('#trackingRouteCompareDriver'))$('#trackingRouteCompareDriver').onchange=trackingRenderAnalysis;
   if($('#trackingGenerateCode'))$('#trackingGenerateCode').onclick=generateTrackingCode;
+  if($('#trackingRequestsRefresh'))$('#trackingRequestsRefresh').onclick=refreshTrackingRequests;
+  refreshTrackingRequests().catch(()=>{});
   if($('#trackingUseTest'))$('#trackingUseTest').onclick=trackingUseTest;
   if($('#trackingRefresh'))$('#trackingRefresh').onclick=()=>{TRACKING_NEXT_REFRESH=0;refreshTracking()};
   if($('#trackingMapDriver'))$('#trackingMapDriver').onchange=trackingMapSelectDriver;
@@ -3322,6 +3367,7 @@ async function start(){
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasAnyPerm(['ssw_saidas','evolucao','cidade_destino'])&&['ssw-motoristas','motoristas-evolucao','dashboards'].includes(t))refreshSswMotoristas()},120000);
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasPerm('evolucao')&&['motoristas-evolucao','dashboards'].includes(t))refreshDriverProgress()},120000);
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasPerm('cidade_destino')&&['mapa-cidades','dashboards'].includes(t))refreshCityBubbles()},60000);
+  setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&t==='rastreamento')refreshTrackingRequests().catch(()=>{})},30000);
   setInterval(trackingAutoTick,1000);
   window.addEventListener('focus',()=>refreshData(false));
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshData(false)})
