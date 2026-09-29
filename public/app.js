@@ -1905,6 +1905,7 @@ let TRACKING_HISTORY_MAP_UI=null,TRACKING_HISTORY_LAYER_UI=null,TRACKING_HISTORY
 const TRACKING_LOGICAL_ROUTES=new Map();
 const TRACKING_PLAN_CACHE=new Map();
 const TRACKING_HISTORY_CACHE=new Map();
+const TRACKING_MARKERS=new Map();
 let TRACKING_ANALYSIS_ROWS=[];
 let TRACKING_AUTO_SECONDS=Math.max(5,Math.min(300,Number(localStorage.getItem('construlog_tracking_refresh_seconds')||30)));
 let TRACKING_NEXT_REFRESH=0;
@@ -2040,7 +2041,12 @@ function trackingStatus(row){
   }
   if(Number.isFinite(age)&&age>120)return{key:'warn',label:'GPS atrasado • '+trackingAgeLabel(age),distance:null};
   const route=trackingFindRoute(row.driver_name,row.vehicle_plate);
-  if(!route?.geometry)return{key:'warn',label:'Ativo • sem rota vinculada',distance:null};
+  if(!route?.geometry&&!route?.outboundGeometry){
+    const roms=trackingRomaneiosFor(row.driver_name,row.vehicle_plate);
+    return roms.length
+      ?{key:'warn',label:'Ativo • Rom. '+roms.join(', ')+' • preparando rota',distance:null}
+      :{key:'warn',label:'Ativo • aguardando romaneio',distance:null}
+  }
   const d=trackingDistanceToGeometry(Number(row.latitude),Number(row.longitude),route.outboundGeometry||route.geometry);
   if(d===null)return{key:'warn',label:'Ativo • rota indisponível',distance:null};
   return d<=TRACKING_DEVIATION_KM
@@ -2091,6 +2097,37 @@ function trackingHaversineKm(a,b){
   const R=6371,rad=Math.PI/180,dLat=(lat2-lat1)*rad,dLon=(lon2-lon1)*rad;
   const h=Math.sin(dLat/2)**2+Math.cos(lat1*rad)*Math.cos(lat2*rad)*Math.sin(dLon/2)**2;
   return 2*R*Math.asin(Math.sqrt(h))
+}
+function trackingNearestClient(row,route){
+  const lat=Number(row?.latitude),lon=Number(row?.longitude);
+  if(!Number.isFinite(lat)||!Number.isFinite(lon))return null;
+  let stops=[];
+  if(Array.isArray(route?.stops)&&route.stops.length)stops=route.stops;
+  else if(Array.isArray(route?.points)&&route.points.length>1)stops=route.points.slice(1);
+  if(!stops.length){
+    const key=trackingDriverKey(row?.driver_name,row?.vehicle_plate);
+    stops=(TRACKING_ANALYSIS_ROWS||[]).filter(x=>trackingDriverKey(x.driver,x.plate)===key).map(x=>({
+      destinatario:x.client,cidade:x.city,lat:x.lat,lon:x.lon
+    }))
+  }
+  let best=null;
+  for(const s of stops){
+    const d=trackingHaversineKm({lat,lon},s);
+    if(!Number.isFinite(d))continue;
+    if(!best||d<best.distanceKm)best={
+      client:String(s.destinatario||s.client||s.label||'Cliente').trim(),
+      city:String(s.cidade||s.city||'').trim(),
+      distanceKm:d
+    }
+  }
+  return best
+}
+function trackingFocusDriver(key){
+  const marker=TRACKING_MARKERS.get(String(key||''));
+  if(!marker||!TRACKING_MAP)return;
+  const p=marker.getLatLng();
+  if(p)TRACKING_MAP.setView(p,Math.max(TRACKING_MAP.getZoom(),14),{animate:true});
+  marker.openPopup()
 }
 function trackingParseDateTime(v){
   const raw=String(v||'').trim();if(!raw)return null;
@@ -2387,32 +2424,31 @@ async function trackingRefreshLogicalAnalysis(liveRows,date){
   if(!active.length){TRACKING_ANALYSIS_ROWS=[];trackingRenderAnalysis();return}
   window.__trackingAnalysisBusy=true;
   try{
-    const analysis=[];
-    for(const row of active){
-      let plan=null,history=[];
+    // 1) Percurso executado primeiro: carrega todas as trilhas GPS em paralelo
+    // e desenha no mapa sem esperar o roteirizador do SSW.
+    await Promise.all(active.map(async row=>{
+      try{await trackingHistory(row.session_id)}
+      catch(e){console.warn('Percurso executado',row.driver_name,e)}
+    }));
+    if(TRACKING_DATA)renderTrackingMap(TRACKING_DATA);
+
+    // 2) Rotas planejadas em paralelo. Cada motorista aparece assim que sua rota fica pronta.
+    const pieces=await Promise.all(active.map(async row=>{
       try{
-        const results=await Promise.allSettled([
-          trackingBuildLogicalPlan(row,date),
-          trackingHistory(row.session_id)
-        ]);
-        if(results[0].status==='fulfilled')plan=results[0].value;
-        else console.warn('Rota planejada',row.driver_name,results[0].reason);
-        if(results[1].status==='fulfilled')history=results[1].value||[];
-        else console.warn('Percurso executado',row.driver_name,results[1].reason);
-
-        // O histórico GPS é independente da rota planejada. Mesmo se o SSW não
-        // conseguir montar o plano, o percurso executado continua desenhado.
-        if(TRACKING_DATA)renderTrackingMap(TRACKING_DATA);
-
-        if(!plan)continue;
+        const plan=await trackingBuildLogicalPlan(row,date);
+        if(!plan)return[];
         TRACKING_LOGICAL_ROUTES.set(trackingDriverKey(row.driver_name,row.vehicle_plate),plan);
+        const history=TRACKING_HISTORY_CACHE.get(String(row.session_id||''))?.rows||[];
         const rows=trackingAnalyzePlan(row,plan,history);
         plan.analysisRows=rows;
-        analysis.push(...rows);
-        if(TRACKING_DATA)renderTrackingMap(TRACKING_DATA)
-      }catch(e){console.warn('Análise de percurso',row.driver_name,e)}
-    }
-    TRACKING_ANALYSIS_ROWS=analysis;
+        if(TRACKING_DATA)renderTrackingMap(TRACKING_DATA);
+        return rows
+      }catch(e){
+        console.warn('Rota planejada',row.driver_name,e);
+        return[]
+      }
+    }));
+    TRACKING_ANALYSIS_ROWS=pieces.flat();
     trackingRenderAnalysis();
     if(TRACKING_DATA)renderTrackingMap(TRACKING_DATA)
   }finally{
@@ -2436,6 +2472,7 @@ function renderTrackingMap(rows){
   }
   if(TRACKING_LAYER)TRACKING_LAYER.remove();
   TRACKING_LAYER=L.layerGroup().addTo(TRACKING_MAP);
+  TRACKING_MARKERS.clear();
   const bounds=[];
   const activeRows=(rows||[]).filter(row=>!!row?.session_id);
   const legend=$('#trackingLiveLegend');
@@ -2487,13 +2524,18 @@ function renderTrackingMap(rows){
       }
     }
 
-    const history=TRACKING_HISTORY_CACHE.get(String(row.session_id||''))?.rows||[];
+    let liveTrail=row.trail;
+    if(typeof liveTrail==='string'){try{liveTrail=JSON.parse(liveTrail)}catch{liveTrail=[]}}
+    liveTrail=Array.isArray(liveTrail)?liveTrail:[];
+    const cachedHistory=TRACKING_HISTORY_CACHE.get(String(row.session_id||''))?.rows||[];
+    const history=liveTrail.length>=cachedHistory.length?liveTrail:cachedHistory;
+    if(liveTrail.length)TRACKING_HISTORY_CACHE.set(String(row.session_id||''),{at:Date.now(),rows:history});
     const realCoords=history.map(p=>[Number(p.latitude),Number(p.longitude)]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1]));
     if(realCoords.length>1){
       L.polyline(realCoords,{color:'#ffffff',weight:9,opacity:.95}).addTo(TRACKING_LAYER);
       L.polyline(realCoords,{color:actualColor,weight:5,opacity:.96})
         .addTo(TRACKING_LAYER)
-        .bindTooltip('Percurso real • '+safe(row.driver_name));
+        .bindTooltip('Percurso executado • '+safe(row.driver_name)+' • '+nf(realCoords.length)+' ponto(s) GPS');
       realCoords.forEach(x=>bounds.push(x))
     }
 
@@ -2505,7 +2547,18 @@ function renderTrackingMap(rows){
         '<div style="width:30px;height:30px;border-radius:50%;background:'+actualColor+';border:3px solid #fff;box-shadow:0 2px 7px #0006;display:grid;place-items:center;color:#fff;font-size:15px">🚚</div>'+
         '</div>';
       const icon=L.divIcon({className:'',html:iconHtml,iconSize:[100,54],iconAnchor:[50,49]});
-      L.marker([lat,lon],{icon}).addTo(TRACKING_LAYER).bindPopup('<b>'+safe(row.driver_name)+'</b><br>'+safe(row.vehicle_plate||'')+'<br>'+safe(status.label)+'<br>Última posição: '+safe(trackingAgeLabel(row.age_seconds)));
+      const nearest=trackingNearestClient(row,route);
+      const clientLine=nearest
+        ?'<br><b>Cliente atual/mais próximo:</b> '+safe(nearest.client)+(nearest.city?' • '+safe(nearest.city):'')+
+          '<br>Distância do cliente: '+safe(nearest.distanceKm<1?Math.round(nearest.distanceKm*1000)+' m':nearest.distanceKm.toFixed(1).replace('.',',')+' km')
+        :'<br><b>Cliente:</b> aguardando rota planejada';
+      const marker=L.marker([lat,lon],{icon}).addTo(TRACKING_LAYER).bindPopup(
+        '<b>'+safe(row.driver_name)+'</b><br>'+safe(row.vehicle_plate||'')+
+        '<br>'+safe(status.label)+clientLine+
+        '<br>Última posição: '+safe(trackingAgeLabel(row.age_seconds))+
+        '<br>Pontos do percurso: '+nf(realCoords.length)
+      );
+      TRACKING_MARKERS.set(trackingDriverKey(row.driver_name,row.vehicle_plate),marker);
       bounds.push([lat,lon])
     }
   });
@@ -2528,9 +2581,11 @@ function renderTracking(rows){
   if(tableEl){
     const body=statuses.map(({r,s})=>{
       const speed=Number(r.speed_mps);const kmh=Number.isFinite(speed)?speed*3.6:null;
-      return '<tr><td><b>'+safe(r.driver_name||'—')+'</b></td><td>'+safe(r.vehicle_plate||'—')+'</td><td><span class="tracking-status '+safe(s.key)+'">'+safe(s.label)+'</span></td><td>'+safe(r.session_id?(String(r.session_status||'').toLowerCase()==='ended'?'Finalizada':'Em rota'):'—')+'</td><td>'+safe(trackingAgeLabel(r.age_seconds))+'</td><td>'+(kmh!==null?kmh.toFixed(0)+' km/h':'—')+'</td><td>'+(r.battery_pct!==null&&r.battery_pct!==undefined?Math.round(Number(r.battery_pct))+'%':'—')+'</td><td>'+safe(r.device_name||'—')+'</td></tr>'
+      const key=trackingDriverKey(r.driver_name,r.vehicle_plate);
+      return '<tr><td><button type="button" class="tracking-driver-link" data-tracking-key="'+safe(key)+'"><b>'+safe(r.driver_name||'—')+'</b></button></td><td>'+safe(r.vehicle_plate||'—')+'</td><td><span class="tracking-status '+safe(s.key)+'">'+safe(s.label)+'</span></td><td>'+safe(r.session_id?(String(r.session_status||'').toLowerCase()==='ended'?'Finalizada':'Em rota'):'—')+'</td><td>'+safe(trackingAgeLabel(r.age_seconds))+'</td><td>'+(kmh!==null?kmh.toFixed(0)+' km/h':'—')+'</td><td>'+(r.battery_pct!==null&&r.battery_pct!==undefined?Math.round(Number(r.battery_pct))+'%':'—')+'</td><td>'+safe(r.device_name||'—')+'</td></tr>'
     }).join('');
-    tableEl.innerHTML='<thead><tr><th>Motorista</th><th>Placa</th><th>Status</th><th>Sessão</th><th>Última posição</th><th>Velocidade</th><th>Bateria</th><th>Celular</th></tr></thead><tbody>'+body+'</tbody>'
+    tableEl.innerHTML='<thead><tr><th>Motorista</th><th>Placa</th><th>Status</th><th>Sessão</th><th>Última posição</th><th>Velocidade</th><th>Bateria</th><th>Celular</th></tr></thead><tbody>'+body+'</tbody>';
+    tableEl.querySelectorAll('[data-tracking-key]').forEach(btn=>btn.onclick=()=>trackingFocusDriver(btn.dataset.trackingKey))
   }
   const info=$('#trackingInfo');if(info)info.textContent='Atualizado às '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})+' • atualização automática a cada '+TRACKING_AUTO_SECONDS+' s • desvio configurado em '+String(TRACKING_DEVIATION_KM).replace('.',',')+' km.';
   renderTrackingMap(TRACKING_DATA)
