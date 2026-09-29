@@ -3556,7 +3556,7 @@ async function buildSswCityBubbles(from='',to=''){
   }
 
   // Valores financeiros e valor da mercadoria são lidos do cadastro do CT-e no SSW/BI2 174.
-  let financialRows=[];
+  let financialRows=[],financial13=[],financial16=[];
   try{
     if(f===today&&t===today){
       financialRows=parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text).rows||[]
@@ -3571,13 +3571,20 @@ async function buildSswCityBubbles(from='',to=''){
   }catch(e){
     console.log('MAPA CIDADES SSW financeiro 174 ERRO: '+String(e.message||e))
   }
+  try{financial13=parseBi2Csv((await fetchBi2Report(13)).text).rows||[]}catch(e){console.log('MAPA CIDADES SSW financeiro 13 ERRO: '+String(e.message||e))}
+  try{financial16=parseBi2Csv((await fetchBi2Report(16)).text).rows||[]}catch(e){console.log('MAPA CIDADES SSW financeiro 16 ERRO: '+String(e.message||e))}
 
-  const finByCtrc=new Map(),finByNf=new Map();
-  for(const r of financialRows){
-    const ck=normCtrcLoose(pickField(r,'numero_ctrc','NUMERO CTRC','CTRC')),nk=normNf(pickField(r,'numero_nf','NF','NUMERO NF'));
-    if(ck&&!finByCtrc.has(ck))finByCtrc.set(ck,r);
-    if(nk&&!finByNf.has(nk))finByNf.set(nk,r)
-  }
+  const makeFinIndex=rows=>{
+    const byCtrc=new Map(),byNf=new Map();
+    for(const r of rows||[]){
+      const ck=normCtrcLoose(pickField(r,'numero_ctrc','NUMERO CTRC','CTRC')),nk=normNf(pickField(r,'numero_nf','NF','NUMERO NF'));
+      if(ck&&!byCtrc.has(ck))byCtrc.set(ck,r);
+      if(nk&&!byNf.has(nk))byNf.set(nk,r)
+    }
+    return{byCtrc,byNf}
+  };
+  const i174=makeFinIndex(financialRows),i13=makeFinIndex(financial13),i16=makeFinIndex(financial16);
+  const finByCtrc=i174.byCtrc,finByNf=i174.byNf;
 
   // Lista oficial de CT-es dos romaneios da opção 38.
   const official=[];
@@ -3599,22 +3606,46 @@ async function buildSswCityBubbles(from='',to=''){
 
   // Se a opção 38 não trouxe a lista detalhada para um período histórico, usa as linhas
   // reconciliadas pelo próprio acompanhamento SSW.
-  const deliveries=official.length?official:sswRows.map(r=>({ctrc:r.ctrcOficial||r.ctrc,nf:r.nf||'',romaneio:r.romaneio||'',motorista:r.motorista||'',veiculo:r.veiculo||''}));
+  let deliveries=official.length?official:sswRows.map(r=>({ctrc:r.ctrcOficial||r.ctrc,nf:r.nf||'',romaneio:r.romaneio||'',motorista:r.motorista||'',veiculo:r.veiculo||''}));
+  // Não deixa uma leitura parcial da opção 38 (ex.: 3 CT-es durante atualização)
+  // substituir o mapa. Enquanto o detalhamento termina, usa os CT-es do BI2 174
+  // como base provisória de cidades e mantém o total oficial separado.
+  let quickOfficial=0;
+  try{quickOfficial=Number(quickSsw38Progress(await fetchSsw38Quick(),f,t).totalRomaneado||0)}catch{}
+  const expectedOfficial=Math.max(Number(ssw.totalRomaneado||0),quickOfficial);
+  if(expectedOfficial>=20&&deliveries.length<expectedOfficial*0.5&&financialRows.length>deliveries.length){
+    deliveries=financialRows.map(r=>({
+      ctrc:pickField(r,'numero_ctrc','NUMERO CTRC','CTRC'),
+      nf:pickField(r,'numero_nf','NF','NUMERO NF'),
+      romaneio:'',motorista:'',veiculo:'',__fallback174:true
+    }));
+    console.log('MAPA CIDADES SSW fallback BI2 174: '+JSON.stringify({esperado:expectedOfficial,detalhado:official.length,bi174:financialRows.length}))
+  }
   const groups=new Map(),seen=new Set();
   for(const base of deliveries){
     const ck=normCtrcLoose(base.ctrc),nk=normNf(base.nf),id=ck?('C'+ck):(nk?('N'+nk):'');
     if(!id||seen.has(id))continue;seen.add(id);
     const sr=sswByCtrc.get(ck)||sswByNf.get(nk)||{};
     const fr=finByCtrc.get(ck)||finByNf.get(nk)||{};
-    const cidade=String(sr.cidade||pickField(fr,'cidade_destino','CIDADE DESTINO','dest_cidade','DEST CIDADE')||'').trim();
-    const uf=String(sr.uf||pickField(fr,'uf_destino','UF DESTINO','dest_uf','DEST UF')||'SP').trim()||'SP';
+    const f13=i13.byCtrc.get(ck)||i13.byNf.get(nk)||{};
+    const f16=i16.byCtrc.get(ck)||i16.byNf.get(nk)||{};
+    const cidade=String(sr.cidade||pickField(fr,'cidade_destino','CIDADE DESTINO','dest_cidade','DEST CIDADE')||pickField(f16,'CIDADE DESTINO','CIDADE_DESTINO')||pickField(f13,'CIDADE DESTINO','CIDADE_DESTINO')||'').trim();
+    const uf=String(sr.uf||pickField(fr,'uf_destino','UF DESTINO','dest_uf','DEST UF')||pickField(f16,'UF DESTINO','UF_DESTINO')||pickField(f13,'UF DESTINO','UF_DESTINO')||'SP').trim()||'SP';
     if(!cidade)continue;
     const k=normKey(cidade)+'|'+normKey(uf);
     if(!groups.has(k))groups.set(k,{cidade,uf,valor:0,entregas:0,retornos:0,frete:0,ceps:new Set()});
     const g=groups.get(k);
     g.entregas++;
-    g.valor+=bi2Number(pickField(fr,'valor_n_fiscal','VALOR N FISCAL','VAL MERC','ValorMercadoria','VALOR MERCADORIA'));
-    g.frete+=bi2Number(pickField(fr,'valor_frete','VALOR FRETE','FRETE','FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO'));
+    const valorMercadoria=
+      bi2Number(pickField(fr,'valor_n_fiscal','VALOR N FISCAL','VAL MERC','ValorMercadoria','VALOR MERCADORIA'))||
+      bi2Number(pickField(f16,'VAL MERC','VALOR MERCADORIA','VALOR N FISCAL'))||
+      bi2Number(pickField(f13,'VAL MERC','VALOR MERCADORIA','VALOR N FISCAL'));
+    const valorFrete=
+      bi2Number(pickField(fr,'valor_frete','VALOR FRETE','FRETE','FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO'))||
+      bi2Number(pickField(f16,'FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO','FRETE TOTAL','FRETE'))||
+      bi2Number(pickField(f13,'FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO','FRETE TOTAL','FRETE'));
+    g.valor+=valorMercadoria;
+    g.frete+=valorFrete;
     const retText=normKey((sr.ocorrencia||'')+' '+(sr.ocorrenciaCodigo||'')+' '+pickField(fr,'ult_ocorr_descricao','ULT OCORR DESCRICAO','DESCRICAO ULTIMA OCORRENCIA'));
     if(/RETORN|DEVOLU|DEVOLVID|RECUSA|RECUSAD|VOLTOU A BASE|RETORNO A BASE/.test(retText))g.retornos++;
     const cep=String(pickField(fr,'dest_cep','DEST CEP','CEP DESTINO')||'').replace(/\D/g,'');
@@ -3646,7 +3677,7 @@ async function buildSswCityBubbles(from='',to=''){
     ok:true,
     source:'SSW opção 38 + CT-e SSW (BI2 174)',
     from:f,to:t,
-    officialDeliveries:Number(ssw.totalRomaneado||deliveries.length||0),
+    officialDeliveries:Number(Math.max(ssw.totalRomaneado||0,quickOfficial||0,deliveries.length||0)),
     totalCities:cities.length,mappedCities:mapped.length,
     totalValue,totalFreight,totalDeliveries,
     totalReturns:cities.reduce((a,x)=>a+x.retornos,0),
