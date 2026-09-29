@@ -449,6 +449,22 @@ async function start() {
   `);
   await pool.query('CREATE INDEX IF NOT EXISTS idx_tracking_devices_driver ON driver_tracking_devices (lower(driver_name))');
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS driver_tracking_requests (
+      id BIGSERIAL PRIMARY KEY,
+      request_token_hash TEXT NOT NULL UNIQUE,
+      driver_name TEXT NOT NULL,
+      vehicle_plate TEXT,
+      device_name TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      issued_token TEXT,
+      approved_device_id BIGINT REFERENCES driver_tracking_devices(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      decided_at TIMESTAMPTZ,
+      decided_by BIGINT
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_tracking_requests_status ON driver_tracking_requests (status, created_at DESC)');
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS driver_tracking_sessions (
       id BIGSERIAL PRIMARY KEY,
       device_id BIGINT NOT NULL REFERENCES driver_tracking_devices(id) ON DELETE CASCADE,
@@ -906,6 +922,40 @@ async function start() {
 
 
 
+      if (req.method === 'POST' && u.pathname === '/api/tracking/register-request') {
+        try {
+          const body=await readJsonBodyLimited(req,64*1024);
+          const driver=String(body.driver_name||'').trim().replace(/\s+/g,' ').slice(0,120);
+          const plate=String(body.vehicle_plate||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,10);
+          const deviceName=String(body.device_name||'Android').trim().slice(0,120);
+          if(driver.length<2)return sendJson(res,400,{ok:false,error:'Informe o nome do motorista.'});
+          if(plate&&plate.length<7)return sendJson(res,400,{ok:false,error:'Informe uma placa válida ou deixe em branco.'});
+          const requestToken=crypto.randomBytes(32).toString('hex');
+          await pool.query(
+            "INSERT INTO driver_tracking_requests(request_token_hash,driver_name,vehicle_plate,device_name,status) VALUES($1,$2,$3,$4,'pending')",
+            [dashboardTokenHash(requestToken),driver,plate,deviceName]
+          );
+          return sendJson(res,201,{ok:true,status:'pending',request_token:requestToken,message:'Solicitação enviada. Aguarde a aprovação da central.'});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao solicitar ativação.'})}
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/tracking/register-status') {
+        try {
+          const requestToken=String(u.searchParams.get('request_token')||'').trim();
+          if(requestToken.length<20)return sendJson(res,400,{ok:false,error:'Solicitação inválida.'});
+          const q=await pool.query(
+            "SELECT id::text AS id,driver_name,vehicle_plate,status,issued_token,created_at,decided_at FROM driver_tracking_requests WHERE request_token_hash=$1 LIMIT 1",
+            [dashboardTokenHash(requestToken)]
+          );
+          if(!q.rowCount)return sendJson(res,404,{ok:false,error:'Solicitação não encontrada.'});
+          const row=q.rows[0];
+          if(row.status==='approved'&&row.issued_token){
+            return sendJson(res,200,{ok:true,status:'approved',token:row.issued_token,driver_name:row.driver_name,vehicle_plate:row.vehicle_plate||''});
+          }
+          return sendJson(res,200,{ok:true,status:row.status,driver_name:row.driver_name,vehicle_plate:row.vehicle_plate||''});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao consultar aprovação.'})}
+      }
+
       if (req.method === 'POST' && u.pathname === '/api/tracking/enroll') {
         try {
           const body=await readJsonBodyLimited(req,64*1024);
@@ -986,6 +1036,54 @@ async function start() {
           await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
           return sendJson(res,200,{ok:true})
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao registrar posição.'})}
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/painel/tracking/requests') {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const q=await pool.query(
+            "SELECT id::text AS id,driver_name,vehicle_plate,device_name,status,created_at,decided_at FROM driver_tracking_requests WHERE created_at>NOW()-INTERVAL '30 days' ORDER BY (status='pending') DESC,created_at DESC LIMIT 100"
+          );
+          return sendJson(res,200,{ok:true,rows:q.rows});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar solicitações.'})}
+      }
+
+      if (req.method === 'POST' && /^\/api\/painel\/tracking\/requests\/\d+\/approve$/.test(u.pathname)) {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const id=(u.pathname.match(/requests\/(\d+)\/approve$/)||[])[1];
+          const client=await pool.connect();
+          try{
+            await client.query('BEGIN');
+            const rq=await client.query("SELECT * FROM driver_tracking_requests WHERE id=$1 FOR UPDATE",[id]);
+            if(!rq.rowCount){await client.query('ROLLBACK');return sendJson(res,404,{ok:false,error:'Solicitação não encontrada.'})}
+            const row=rq.rows[0];
+            if(row.status==='approved'){await client.query('COMMIT');return sendJson(res,200,{ok:true,status:'approved'})}
+            const token=crypto.randomBytes(32).toString('hex');
+            const dev=await client.query(
+              "INSERT INTO driver_tracking_devices(token_hash,driver_name,vehicle_plate,device_name,last_seen_at) VALUES($1,$2,$3,$4,NOW()) RETURNING id::text AS id",
+              [dashboardTokenHash(token),row.driver_name,row.vehicle_plate||'',row.device_name||'Android']
+            );
+            await client.query(
+              "UPDATE driver_tracking_requests SET status='approved',issued_token=$1,approved_device_id=$2,decided_at=NOW(),decided_by=$3 WHERE id=$4",
+              [token,dev.rows[0].id,user.id,id]
+            );
+            await client.query('COMMIT');
+            return sendJson(res,200,{ok:true,status:'approved',driver_name:row.driver_name,vehicle_plate:row.vehicle_plate||''});
+          }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao aprovar dispositivo.'})}
+      }
+
+      if (req.method === 'POST' && /^\/api\/painel\/tracking\/requests\/\d+\/reject$/.test(u.pathname)) {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const id=(u.pathname.match(/requests\/(\d+)\/reject$/)||[])[1];
+          await pool.query("UPDATE driver_tracking_requests SET status='rejected',decided_at=NOW(),decided_by=$1 WHERE id=$2 AND status='pending'",[user.id,id]);
+          return sendJson(res,200,{ok:true,status:'rejected'});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao rejeitar dispositivo.'})}
       }
 
       if (req.method === 'POST' && u.pathname === '/api/painel/tracking/enrollments') {
