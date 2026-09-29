@@ -3261,7 +3261,7 @@ http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.
       .replace('<div id="loading" class="loading">Carregando dados do Google Sheets…</div>','<div id="loading" class="loading hide" style="display:none!important"></div>');
   }
   const bootstrap='<script>window.__DASHBOARD_SESSION_TOKEN__='+JSON.stringify(String(x.token||''))+';window.__DASHBOARD_SESSION_USER__='+JSON.stringify(x.user||null)+';<\/script>';
-  html=html.replace(/<script src="\/app\.js(?:\?[^"]*)?"><\/script>/,bootstrap+'<script src="/app.js?v=20260929tracking6"></script>');
+  html=html.replace(/<script src="\/app\.js(?:\?[^"]*)?"><\/script>/,bootstrap+'<script src="/app.js?v=20260929evolucao7"></script>');
   res.writeHead(200,{
     'Content-Type':'text/html; charset=utf-8',
     'Cache-Control':'no-store, no-cache, must-revalidate',
@@ -3453,7 +3453,7 @@ if(u.pathname==='/api/evolucao-motoristas'&&req.method==='GET'){try{
       pendentes=Math.max(0,total-entregues-ocorrencias)
     }
     return{
-      motorista:g.motorista,veiculo:g.veiculo,total,entregues,pendentes,ocorrencias,
+      motorista:g.motorista,veiculo:g.veiculo,total,entregues,pendentes,ocorrencias,vinculados:total,
       romaneios:g.romaneios.length?g.romaneios:(Array.isArray(d?.romaneios)?d.romaneios:[]),
       taxa:total?((entregues+ocorrencias)/total*100):0
     }
