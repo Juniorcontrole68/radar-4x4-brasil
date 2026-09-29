@@ -2590,6 +2590,7 @@ function renderTrackingMap(rows){
       (actualLegend?'<span class="dotSep">•</span>'+actualLegend:'')
   }
   let baseMarked=false;
+  const markerCoordUse=new Map(),visitedRendered=new Set();
   const baseLat=Number(TRACKING_BASE_POSITION?.lat),baseLon=Number(TRACKING_BASE_POSITION?.lon);
   if(Number.isFinite(baseLat)&&Number.isFinite(baseLon)){
     const baseIcon=L.divIcon({className:'',html:'<div style="min-width:48px;height:32px;padding:0 8px;border-radius:8px;background:#0f172a;color:#fff;border:3px solid #fff;box-shadow:0 2px 8px #0006;display:grid;place-items:center;font-size:10px;font-weight:900">BASE</div>',iconSize:[52,36],iconAnchor:[26,18]});
@@ -2614,9 +2615,12 @@ function renderTrackingMap(rows){
         L.marker([Number(base.lat),Number(base.lon)],{icon:baseIcon}).addTo(TRACKING_LAYER).bindPopup('<b>Base CONSTRULOG</b><br>Americana/SP');
         bounds.push([Number(base.lat),Number(base.lon)]);baseMarked=true
       }
-      if(route.logical&&Array.isArray(route.optimizedOrder)){
+      if(route&&Array.isArray(route.points)&&route.points.length>1){
         const points=route.points||[];
-        route.optimizedOrder.forEach((pointIndex,pos)=>{
+        const stopOrder=(Array.isArray(route.optimizedOrder)&&route.optimizedOrder.length)
+          ?route.optimizedOrder
+          :Array.from({length:points.length-1},(_,i)=>i+1);
+        stopOrder.forEach((pointIndex,pos)=>{
           const s=points[pointIndex];if(!s)return;
           const lat=Number(s.lat),lon=Number(s.lon);if(!Number.isFinite(lat)||!Number.isFinite(lon))return;
           const analysis=(route.analysisRows||[]).find(x=>x.pointIndex===pointIndex);
@@ -2627,11 +2631,23 @@ function renderTrackingMap(rows){
           const stopIcon=L.divIcon({className:'',html:markerHtml,iconSize:[32,32],iconAnchor:[16,16]});
           const popup='<b>'+(done?'Cliente visitado por GPS nº '+displayNo:'Programada nº '+(pos+1))+' • '+safe(s.destinatario||s.label||'Cliente')+'</b><br>'+
             safe(s.cidade||'')+
-            '<br>Localização: '+safe((s.coordinateSource||'').toUpperCase()==='SSW'?'Coordenada SSW':'Endereço/geocodificação')+
+            '<br>Localização: '+safe(s.coordinateSource||s.precision||'Endereço/geocodificação')+
             '<br>Chegada GPS: '+safe(trackingTimeLabel(analysis?.arrivalAt))+
             '<br>Baixa SSW: '+safe(trackingTimeLabel(analysis?.baixaAt))+
             (analysis?.diffMin!==null&&analysis?.diffMin!==undefined?'<br>Diferença: '+safe((analysis.diffMin>=0?'+':'')+analysis.diffMin+' min'):'');
-          L.marker([lat,lon],{icon:stopIcon}).addTo(TRACKING_LAYER).bindPopup(popup).bindTooltip((pos+1)+'º '+safe(s.destinatario||s.label||'Cliente'));
+          // Se dois ou mais clientes tiverem a mesma coordenada (ex.: mesmo CEP),
+          // desloca apenas o marcador visualmente para todos ficarem clicáveis.
+          const ck=lat.toFixed(5)+'|'+lon.toFixed(5),dup=markerCoordUse.get(ck)||0;
+          markerCoordUse.set(ck,dup+1);
+          let ml=lat,mn=lon;
+          if(dup>0){
+            const ring=1+Math.floor((dup-1)/8),slot=(dup-1)%8,ang=slot*Math.PI/4;
+            const meters=18*ring;
+            ml=lat+(meters*Math.sin(ang))/111320;
+            mn=lon+(meters*Math.cos(ang))/(111320*Math.max(.2,Math.cos(lat*Math.PI/180)))
+          }
+          L.marker([ml,mn],{icon:stopIcon}).addTo(TRACKING_LAYER).bindPopup(popup).bindTooltip((pos+1)+'º '+safe(s.destinatario||s.label||'Cliente'));
+          if(done)visitedRendered.add(trackingDriverKey(row.driver_name,row.vehicle_plate)+'|'+pointIndex);
           bounds.push([lat,lon])
         })
       }
@@ -2675,6 +2691,21 @@ function renderTrackingMap(rows){
       bounds.push([lat,lon])
     }
   });
+
+  // Visitas confirmadas por GPS continuam visíveis mesmo se a rota planejada
+  // de um motorista ainda estiver sendo calculada ou não tiver desenhado o marcador.
+  for(const x of (TRACKING_ANALYSIS_ROWS||[])){
+    if(!x?.arrivalAt||!Number.isFinite(Number(x.lat))||!Number.isFinite(Number(x.lon)))continue;
+    const key=trackingDriverKey(x.driver,x.plate)+'|'+x.pointIndex;
+    if(visitedRendered.has(key))continue;
+    const no=x.actualPos||x.plannedPos||'✓';
+    const html='<div style="min-width:30px;height:30px;padding:0 5px;border-radius:15px;background:#16a34a;border:3px solid #15803d;box-shadow:0 1px 6px #0005;display:grid;place-items:center;font-size:11px;font-weight:900;color:#fff">'+no+'✓</div>';
+    const icon=L.divIcon({className:'',html,iconSize:[34,34],iconAnchor:[17,17]});
+    L.marker([Number(x.lat),Number(x.lon)],{icon}).addTo(TRACKING_LAYER)
+      .bindPopup('<b>Cliente visitado por GPS nº '+safe(no)+'</b><br>'+safe(x.client||'Cliente')+'<br>'+safe(x.city||'')+'<br>Chegada: '+safe(trackingTimeLabel(x.arrivalAt)));
+    bounds.push([Number(x.lat),Number(x.lon)])
+  }
+
   if(!TRACKING_MAP_VIEW_READY&&bounds.length){
     const bb=L.latLngBounds(bounds);
     if(bb.isValid()){
