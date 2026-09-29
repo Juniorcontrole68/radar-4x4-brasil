@@ -2442,12 +2442,29 @@ async function trackingHistory(sessionId){
   TRACKING_HISTORY_CACHE.set(sessionId,{at:Date.now(),rows});
   return rows
 }
-function trackingVisitWindow(stop,history){
+function trackingInterpolateDate(a,b,t){
+  const ta=a?._date?.getTime?.(),tb=b?._date?.getTime?.();
+  if(!Number.isFinite(ta)||!Number.isFinite(tb))return null;
+  return new Date(ta+(tb-ta)*Math.max(0,Math.min(1,t)))
+}
+function trackingSegmentCircleRoots(a,b,stop,radiusMeters=100){
+  const slat=Number(stop?.lat),slon=Number(stop?.lon);
+  const aLat=Number(a?.latitude),aLon=Number(a?.longitude),bLat=Number(b?.latitude),bLon=Number(b?.longitude);
+  if(![slat,slon,aLat,aLon,bLat,bLon].every(Number.isFinite))return[];
+  const rad=Math.PI/180,kx=111320*Math.cos(slat*rad),ky=110574;
+  const ax=(aLon-slon)*kx,ay=(aLat-slat)*ky,bx=(bLon-slon)*kx,by=(bLat-slat)*ky;
+  const dx=bx-ax,dy=by-ay,A=dx*dx+dy*dy;
+  if(A<1e-9)return[];
+  const B=2*(ax*dx+ay*dy),C=ax*ax+ay*ay-radiusMeters*radiusMeters;
+  const D=B*B-4*A*C;if(D<0)return[];
+  const q=Math.sqrt(D),r1=(-B-q)/(2*A),r2=(-B+q)/(2*A);
+  return[r1,r2].filter(t=>t>=0&&t<=1).sort((x,y)=>x-y)
+}
+function trackingVisitWindow(stop,history,allowCepApprox=false){
   const precision=String(stop?.precision||'').toLowerCase();
   const source=String(stop?.coordinateSource||'').toLowerCase();
-  // Coordenada apenas de cidade não serve para calcular chegada/saída GPS.
   if(precision==='cidade'||source.includes('cidade-aproximada')||source.includes('simulacao')||source.includes('simulação')){
-    return{arrival:null,departure:null}
+    return{arrival:null,departure:null,approx:false}
   }
   const valid=(history||[]).map(p=>({
     ...p,
@@ -2458,19 +2475,57 @@ function trackingVisitWindow(stop,history){
     .sort((a,b)=>a._date-b._date);
 
   let arrival=null,departure=null,inside=false;
-  for(const p of valid){
-    const isInside=p._distanceKm<=0.10;
-    if(!arrival&&isInside){
-      arrival={date:p._date,raw:p.captured_at,distanceKm:p._distanceKm,accuracyM:p._acc};
-      inside=true;
-      continue
+  if(valid.length){
+    if(valid[0]._distanceKm<=0.10){
+      arrival={date:valid[0]._date,raw:valid[0].captured_at,distanceKm:valid[0]._distanceKm,accuracyM:valid[0]._acc};
+      inside=true
     }
-    if(arrival&&inside&&!isInside){
-      departure={date:p._date,raw:p.captured_at,distanceKm:p._distanceKm,accuracyM:p._acc};
-      break
+    for(let i=1;i<valid.length&&!departure;i++){
+      const a=valid[i-1],b=valid[i],aIn=a._distanceKm<=0.10,bIn=b._distanceKm<=0.10;
+      const roots=trackingSegmentCircleRoots(a,b,stop,100);
+      if(!arrival){
+        if(!aIn&&bIn){
+          const d=roots.length?trackingInterpolateDate(a,b,roots[0]):b._date;
+          arrival={date:d||b._date,raw:b.captured_at,distanceKm:Math.min(a._distanceKm,b._distanceKm),accuracyM:Math.min(a._acc,b._acc)};
+          inside=true
+        }else if(!aIn&&!bIn&&roots.length>=2){
+          const ad=trackingInterpolateDate(a,b,roots[0]),dd=trackingInterpolateDate(a,b,roots[roots.length-1]);
+          arrival={date:ad||a._date,raw:a.captured_at,distanceKm:0.10,accuracyM:Math.min(a._acc,b._acc)};
+          departure={date:dd||b._date,raw:b.captured_at,distanceKm:0.10,accuracyM:Math.min(a._acc,b._acc)}
+        }else if(bIn){
+          arrival={date:b._date,raw:b.captured_at,distanceKm:b._distanceKm,accuracyM:b._acc};
+          inside=true
+        }
+      }else if(inside&&!bIn){
+        const root=roots.length?roots[roots.length-1]:null,d=root!==null?trackingInterpolateDate(a,b,root):b._date;
+        departure={date:d||b._date,raw:b.captured_at,distanceKm:b._distanceKm,accuracyM:b._acc};
+        inside=false
+      }
     }
   }
-  return{arrival,departure}
+  if(arrival)return{arrival,departure,approx:false};
+
+  // Quando o ponto é apenas o CEP e já existe baixa SSW, o CEP pode representar
+  // o centro da rua/região. Usa a passagem GPS mais próxima somente para estimar
+  // chegada/saída, sem usar essa estimativa para confirmar a visita por si só.
+  const isCep=precision==='cep'||source.includes('cep');
+  if(allowCepApprox&&isCep&&valid.length){
+    let idx=-1,min=Infinity;
+    valid.forEach((p,i)=>{if(p._distanceKm<min){min=p._distanceKm;idx=i}});
+    if(idx>=0&&min<=0.80){
+      const radius=Math.min(.80,Math.max(.25,min+.15));
+      let a=idx,b=idx;
+      while(a>0&&valid[a-1]._distanceKm<=radius&&(valid[a]._date-valid[a-1]._date)<=15*60*1000)a--;
+      while(b+1<valid.length&&valid[b+1]._distanceKm<=radius&&(valid[b+1]._date-valid[b]._date)<=15*60*1000)b++;
+      const dep=(b+1<valid.length)?valid[b+1]:valid[b];
+      return{
+        arrival:{date:valid[a]._date,raw:valid[a].captured_at,distanceKm:min,accuracyM:valid[a]._acc},
+        departure:dep?{date:dep._date,raw:dep.captured_at,distanceKm:dep._distanceKm,accuracyM:dep._acc}:null,
+        approx:true,approxDistanceKm:min
+      }
+    }
+  }
+  return{arrival:null,departure:null,approx:false}
 }
 function xTime(v){const t=v?.getTime?.();return Number.isFinite(t)?t:Number.MAX_SAFE_INTEGER}
 function trackingAnalyzePlan(row,plan,history){
@@ -2478,8 +2533,8 @@ function trackingAnalyzePlan(row,plan,history){
   const points=plan.points||[{label:'Base'},...(plan.stops||[])],out=[];
   order.forEach((pointIndex,pos)=>{
     const s=points[pointIndex]||plan.stops?.[pointIndex-1];if(!s)return;
-    const visit=trackingVisitWindow(s,history),arrival=visit.arrival,departure=visit.departure,baixa=trackingParseDateTime(s.baixaAt);
-    const sswDelivered=!!s.entregue||!!baixa;
+    const baixa=trackingParseDateTime(s.baixaAt),sswDelivered=!!s.entregue||!!baixa;
+    const visit=trackingVisitWindow(s,history,sswDelivered),arrival=visit.arrival,departure=visit.departure;
     const visited=!!(arrival||sswDelivered);
     let diffMin=null;if(arrival?.date&&baixa)diffMin=Math.round((baixa-arrival.date)/60000);
     let statusKey='warn',statusLabel='Pendente';
@@ -2495,7 +2550,8 @@ function trackingAnalyzePlan(row,plan,history){
       city:s.cidade||'',lat:Number(s.lat),lon:Number(s.lon),coordinateSource:coordSource,
       arrivalAt:arrival?.date||null,departureAt:departure?.date||null,arrivalDistanceKm:arrival?.distanceKm??null,
       baixaAt:baixa,baixaRaw:s.baixaAt||'',visited,
-      visitSource:visited?(arrival&&sswDelivered?'GPS + baixa SSW':(arrival?'GPS':'Baixa SSW')):'',
+      visitSource:visited?(visit.approx?'GPS aproximado por CEP + baixa SSW':(arrival&&sswDelivered?'GPS + baixa SSW':(arrival?'GPS':'Baixa SSW'))):'',
+      gpsApprox:!!visit.approx,gpsApproxDistanceKm:visit.approxDistanceKm??null,
       delivered:sswDelivered,diffMin,statusKey,statusLabel,sequenceKey:'warn',sequenceLabel:visited?'Visitado':'Ainda não visitado'
     })
   });
@@ -2530,8 +2586,8 @@ function trackingRenderVisitedReport(){
       '<td><b>'+safe(trackingFirstName(x.driver))+'</b><div class="muted">'+safe(x.plate||'')+'</div></td>'+
       '<td><b>'+safe(x.client||'Cliente')+'</b><div class="muted">'+safe(x.ctrc||('NF '+(x.nf||'')))+'</div></td>'+
       '<td>'+safe(x.city||'—')+'</td>'+
-      '<td>'+safe(trackingTimeLabel(x.arrivalAt))+'</td>'+
-      '<td>'+safe(trackingTimeLabel(x.departureAt))+'</td>'+
+      '<td>'+safe(trackingTimeLabel(x.arrivalAt))+(x.gpsApprox?' <span class="muted">(aprox.)</span>':'')+'</td>'+
+      '<td>'+safe(trackingTimeLabel(x.departureAt))+(x.gpsApprox?' <span class="muted">(aprox.)</span>':'')+'</td>'+
       '<td>'+safe(trackingTimeLabel(x.baixaAt))+'</td>'+
       '<td>'+safe(x.visitSource||'—')+'</td>'+
       '<td>'+safe(x.plannedPos+'ª')+'</td>'+
@@ -2709,8 +2765,8 @@ function renderTrackingMap(rows){
             safe(s.cidade||'')+
             '<br>Localização: '+safe(s.coordinateSource||s.precision||'Endereço/geocodificação')+
             '<br>Confirmação: '+safe(analysis?.visitSource||'—')+
-            '<br>Chegada GPS: '+safe(trackingTimeLabel(analysis?.arrivalAt))+
-            '<br>Saída GPS: '+safe(trackingTimeLabel(analysis?.departureAt))+
+            '<br>Chegada GPS: '+safe(trackingTimeLabel(analysis?.arrivalAt))+(analysis?.gpsApprox?' (aprox. por CEP)':'')+
+            '<br>Saída GPS: '+safe(trackingTimeLabel(analysis?.departureAt))+(analysis?.gpsApprox?' (aprox. por CEP)':'')+
             '<br>Baixa SSW: '+safe(trackingTimeLabel(analysis?.baixaAt))+
             (analysis?.diffMin!==null&&analysis?.diffMin!==undefined?'<br>Diferença: '+safe((analysis.diffMin>=0?'+':'')+analysis.diffMin+' min'):'');
           // Se dois ou mais clientes tiverem a mesma coordenada (ex.: mesmo CEP),
