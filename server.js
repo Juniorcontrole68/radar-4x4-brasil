@@ -346,6 +346,61 @@ async function fetchRomaneioCtrcs38(x,jar,apply,cookie){
   const rows=[...text.matchAll(/^\s*\S{8,14}\s+(\d{6})\b/gm)].map(m=>m[1]);
   return[...new Set(rows)];
 }
+const SSW38_ROM_DETAIL_CACHE=new Map();
+async function fetchSsw38RomaneioDetailDirect(romaneio,qtdeCtrcs=0,motorista='',veiculo=''){
+  const rom=String(romaneio||'').trim().toUpperCase();
+  if(!/^[A-Z]{3}\d+-\d+$/.test(rom))throw new Error('Romaneio inválido para leitura detalhada');
+  const hit=SSW38_ROM_DETAIL_CACHE.get(rom);
+  if(hit&&Date.now()-hit.at<5*60*1000)return hit.value;
+  if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
+
+  const jar=new Map();
+  const apply=headers=>{
+    const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);
+    for(const raw of list){
+      const pair=String(raw).split(';')[0],i=pair.indexOf('=');
+      if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())
+    }
+  };
+  const cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
+
+  let r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{
+    headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},
+    redirect:'manual',signal:AbortSignal.timeout(15000)
+  });
+  apply(r.headers);
+  const body=new URLSearchParams({
+    act:'L',
+    f1:process.env.SSW_INTERNAL_DOMINIO||'',
+    f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),
+    f3:process.env.SSW_INTERNAL_USUARIO||'',
+    f4:process.env.SSW_INTERNAL_SENHA||''
+  });
+  r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{
+    method:'POST',
+    headers:{
+      'Content-Type':'application/x-www-form-urlencoded',
+      'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36',
+      'Referer':'https://sistema.ssw.inf.br/bin/ssw0422',
+      'Cookie':cookie()
+    },
+    body:body.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)
+  });
+  apply(r.headers);await r.text();
+  if(!jar.has('token'))throw new Error('Login interno SSW não aceito');
+
+  const x={romaneio:rom,qtdeCtrcs:Number(qtdeCtrcs||0),motorista,veiculo,ctrcs:[],ctrcNfs:[],ctrcMeta:[]};
+  x.ctrcs=await fetchRomaneioCtrcs38(x,jar,apply,cookie);
+  const value=x;
+  SSW38_ROM_DETAIL_CACHE.set(rom,{at:Date.now(),value});
+  console.log('SSW38 ROMANEIO DIRETO: '+JSON.stringify({
+    romaneio:rom,esperado:Number(qtdeCtrcs||0),ctrcs:x.ctrcs.length,
+    pares:(x.ctrcNfs||[]).length,metas:(x.ctrcMeta||[]).length,
+    comCep:(x.ctrcMeta||[]).filter(z=>z.cep).length
+  }));
+  return value
+}
+
 async function fetchSsw38QuickPrefix(prefix='AMR'){
   prefix=String(prefix||'AMR').trim().toUpperCase();
   if(!/^[A-Z]{3}$/.test(prefix))prefix='AMR';
@@ -2904,19 +2959,29 @@ async function buildRoutePlan(date='',romaneio=''){
       console.log('ROTEIRIZADOR detalhe do romaneio ERRO: '+String(e.message||e))
     }
   }
-  // O cache operacional pode conter apenas o resumo do romaneio. Se ainda não
-  // houver CT-es/NFs, busca diretamente a leitura detalhada da opção 38/PDF.
+  // O cache operacional pode conter apenas o resumo. Busca o PDF do romaneio
+  // específico diretamente, funcionando para AMR, TBT e outros prefixos.
+  if(!hasSelectedDetails()&&target===spDateISO()){
+    try{
+      const detailed=await fetchSsw38RomaneioDetailDirect(
+        selected.romaneio,selected.qtdeCtrcs||0,selected.motorista||'',selected.veiculo||''
+      );
+      if(detailed){
+        selected={...selected,...detailed};
+        console.log('ROTEIRIZADOR detalhe específico '+String(selected.romaneio||'')+': '+JSON.stringify({
+          ctrcs:(selected.ctrcs||[]).length,pares:(selected.ctrcNfs||[]).length,
+          metas:(selected.ctrcMeta||[]).length,comCep:(selected.ctrcMeta||[]).filter(z=>z.cep).length
+        }))
+      }
+    }catch(e){console.log('ROTEIRIZADOR detalhe específico ERRO: '+String(e.message||e))}
+  }
+  // Contingência adicional para AMR: leitura detalhada completa da opção 38.
   if(!hasSelectedDetails()&&target===spDateISO()&&/^AMR/i.test(String(selected.romaneio||''))){
     try{
       const direct=await fetchSsw38DetailedCached();
       const detailed=(direct?.rows||[]).find(x=>String(x.romaneio||'')===String(selected.romaneio||''));
-      if(detailed){
-        selected={...selected,...detailed};
-        console.log('ROTEIRIZADOR detalhe direto '+String(selected.romaneio||'')+': '+JSON.stringify({
-          ctrcs:(selected.ctrcs||[]).length,pares:(selected.ctrcNfs||[]).length,metas:(selected.ctrcMeta||[]).length
-        }))
-      }
-    }catch(e){console.log('ROTEIRIZADOR detalhe direto ERRO: '+String(e.message||e))}
+      if(detailed)selected={...selected,...detailed}
+    }catch(e){console.log('ROTEIRIZADOR detalhe completo ERRO: '+String(e.message||e))}
   }
 
   let biRows=[];
@@ -2935,6 +3000,10 @@ async function buildRoutePlan(date='',romaneio=''){
     const lk=normCtrcLoose(r.ctrcOficial||r.ctrc),nf=normNf(r.nf);
     if(lk)detailByLoose.set(lk,r);if(nf)detailByNf.set(nf,r)
   }
+  console.log('ROTEIRIZADOR SELECIONADO '+String(selected.romaneio||'')+': '+JSON.stringify({
+    qtde:Number(selected.qtdeCtrcs||0),ctrcs:(selected.ctrcs||[]).length,
+    pares:(selected.ctrcNfs||[]).length,metasPdf:(selected.ctrcMeta||[]).length
+  }));
   let metas=(selected.ctrcMeta&&selected.ctrcMeta.length
     ?selected.ctrcMeta
     :((selected.ctrcNfs&&selected.ctrcNfs.length)
