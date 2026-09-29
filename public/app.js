@@ -1935,7 +1935,13 @@ let TRACKING_ANALYSIS_ROWS=[];
 let TRACKING_AUTO_SECONDS=Math.max(5,Math.min(300,Number(localStorage.getItem('construlog_tracking_refresh_seconds')||30)));
 let TRACKING_NEXT_REFRESH=0;
 const TRACKING_COLORS=['#2563eb','#dc2626','#16a34a','#9333ea','#ea580c','#0891b2','#ca8a04','#db2777','#4f46e5','#059669'];
+const TRACKING_PLANNED_COLOR='#2563eb';
 const TRACKING_ACTUAL_COLORS=['#f97316','#06b6d4','#eab308','#22c55e','#ec4899','#8b5cf6','#14b8a6','#ef4444','#84cc16','#6366f1'];
+function trackingActualColor(row){
+  const key=trackingDriverKey(row?.driver_name,row?.vehicle_plate)||'MOTORISTA';
+  let h=0;for(let i=0;i<key.length;i++)h=((h<<5)-h+key.charCodeAt(i))|0;
+  return TRACKING_ACTUAL_COLORS[Math.abs(h)%TRACKING_ACTUAL_COLORS.length]
+}
 const TRACKING_DEVIATION_KM=3;
 function trackingNorm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim()}
 function trackingAgeLabel(sec){
@@ -2546,6 +2552,12 @@ function renderTrackingMap(rows){
       TRACKING_MAP.setView([-22.739,-47.331],9)
     }
     TRACKING_MAP.on('moveend zoomend',trackingSaveMapView)
+    if(!TRACKING_MAP.getPane('tracking-planned')){
+      const p=TRACKING_MAP.createPane('tracking-planned');p.style.zIndex='410';p.style.pointerEvents='none'
+    }
+    if(!TRACKING_MAP.getPane('tracking-actual')){
+      const p=TRACKING_MAP.createPane('tracking-actual');p.style.zIndex='430';p.style.pointerEvents='none'
+    }
   }
   if(TRACKING_LAYER)TRACKING_LAYER.remove();
   TRACKING_LAYER=L.layerGroup().addTo(TRACKING_MAP);
@@ -2554,21 +2566,21 @@ function renderTrackingMap(rows){
   const activeRows=(rows||[]).filter(row=>!!row?.session_id);
   const legend=$('#trackingLiveLegend');
   if(legend){
-    legend.innerHTML=activeRows.map((row,i)=>{
-      const planned=TRACKING_COLORS[i%TRACKING_COLORS.length],actual=TRACKING_ACTUAL_COLORS[i%TRACKING_ACTUAL_COLORS.length];
-      return '<span><b>'+safe(trackingFirstName(row.driver_name))+'</b></span>'+
-        '<span><i class="tracking-history-dot" style="background:'+planned+'"></i>Planejada</span>'+
-        '<span><i class="tracking-history-dot" style="background:'+actual+'"></i>Percurso real</span>'
-    }).join('<span class="dotSep">•</span>')
+    const actualLegend=activeRows.map(row=>{
+      const actual=trackingActualColor(row);
+      return '<span><i class="tracking-history-dot" style="background:'+actual+'"></i>'+safe(trackingFirstName(row.driver_name))+' • percurso real</span>'
+    }).join('<span class="dotSep">•</span>');
+    legend.innerHTML='<span><i class="tracking-history-dot" style="background:'+TRACKING_PLANNED_COLOR+'"></i><b>Rota planejada</b> • azul tracejado</span>'+
+      (actualLegend?'<span class="dotSep">•</span>'+actualLegend:'')
   }
   let baseMarked=false;
   activeRows.forEach((row,i)=>{
-    const plannedColor=TRACKING_COLORS[i%TRACKING_COLORS.length],actualColor=TRACKING_ACTUAL_COLORS[i%TRACKING_ACTUAL_COLORS.length];
+    const plannedColor=TRACKING_PLANNED_COLOR,actualColor=trackingActualColor(row);
     const route=trackingFindRoute(row.driver_name,row.vehicle_plate),status=trackingStatus(row);
     const coords=trackingPlannedCoords(route);
     if(coords.length>1){
-      L.polyline(coords,{color:'#ffffff',weight:8,opacity:.92}).addTo(TRACKING_LAYER);
-      L.polyline(coords,{color:plannedColor,weight:4,opacity:.92,dashArray:'12 8'})
+      L.polyline(coords,{pane:'tracking-planned',color:'#ffffff',weight:8,opacity:.82}).addTo(TRACKING_LAYER);
+      L.polyline(coords,{pane:'tracking-planned',color:TRACKING_PLANNED_COLOR,weight:4,opacity:.95,dashArray:'12 8'})
         .addTo(TRACKING_LAYER)
         .bindTooltip('Rota programada • '+safe(row.driver_name)+' • '+nf(route?.expectedDeliveries||route?.stops?.length||0)+' entrega(s)');
       coords.forEach(x=>bounds.push(x));
@@ -2609,8 +2621,8 @@ function renderTrackingMap(rows){
     if(liveTrail.length)TRACKING_HISTORY_CACHE.set(String(row.session_id||''),{at:Date.now(),rows:history});
     const realCoords=history.map(p=>[Number(p.latitude),Number(p.longitude)]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1]));
     if(realCoords.length>1){
-      L.polyline(realCoords,{color:'#ffffff',weight:9,opacity:.95}).addTo(TRACKING_LAYER);
-      L.polyline(realCoords,{color:actualColor,weight:5,opacity:.96})
+      L.polyline(realCoords,{pane:'tracking-actual',color:'#ffffff',weight:9,opacity:.94}).addTo(TRACKING_LAYER);
+      L.polyline(realCoords,{pane:'tracking-actual',color:actualColor,weight:5,opacity:.98})
         .addTo(TRACKING_LAYER)
         .bindTooltip('Percurso executado • '+safe(row.driver_name)+' • '+nf(realCoords.length)+' ponto(s) GPS');
       realCoords.forEach(x=>bounds.push(x))
