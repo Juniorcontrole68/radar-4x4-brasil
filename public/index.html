@@ -259,16 +259,15 @@
   <div class="dash-intro"><h2>📍 Rastreio de Carga</h2><div class="muted">Rastreio da carga autorizado enquanto a rota estiver ativa no aplicativo do motorista.</div></div>
   <div class="grid two tracking-top">
     <div class="card">
-      <h3 style="margin-top:0">Ativar celular do motorista</h3>
-      <div id="trackingDriverDayInfo" class="muted" style="margin-bottom:9px">Carregando motoristas com romaneio emitido hoje…</div>
-      <div class="tracking-enroll-form">
-        <label>Motorista<select id="trackingDriverName"><option value="">Carregando motoristas...</option></select></label>
-        <label>Placa<input id="trackingVehiclePlate" type="text" placeholder="ABC1D23" autocomplete="off"></label>
-        <button id="trackingGenerateCode" class="primary" type="button">Gerar código de ativação</button>
+      <div style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+        <div>
+          <h3 style="margin:0">Aprovação de aparelhos</h3>
+          <div class="muted" style="margin-top:4px">O motorista instala o app, informa nome e placa e solicita acesso. Não é necessário código.</div>
+        </div>
+        <button id="trackingRequestsRefresh" class="secondary" type="button">Atualizar solicitações</button>
       </div>
-      <div style="margin-top:8px"><button id="trackingUseTest" class="secondary" type="button">🧪 Usar teste neste celular</button></div>
-      <div id="trackingEnrollMsg" class="agcopy-info">Selecione um motorista que esteja trabalhando hoje. A placa será associada automaticamente.</div>
-      <div id="trackingActivationCode" class="tracking-code" style="display:none"></div>
+      <div id="trackingRequestsInfo" class="agcopy-info" style="margin-top:10px">Buscando solicitações pendentes…</div>
+      <div class="scroll" style="margin-top:8px"><table id="trackingRequestsTable"><tbody><tr><td class="muted">Carregando…</td></tr></tbody></table></div>
     </div>
     <div class="card">
       <div class="tracking-summary-head">
