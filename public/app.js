@@ -55,7 +55,7 @@ const PERMISSION_OPTIONS=[
   ['cidade_destino','Entregas por cidade destino'],
   ['roteirizador','Roteirizador de romaneios'],
   ['programacao','Programação de Entregas'],
-  ['tracking','Motoristas em Rota'],
+  ['tracking','Rastreamento de Motoristas'],
   ['final_carregamento','Registro de Carga e Descarga'],
   ['operacional','Operacional / Entregas'],
   ['financeiro','Financeiro'],
@@ -2375,7 +2375,7 @@ function trackingApplyRefreshSeconds(){
 }
 function trackingAutoTick(){
   const t=$('.section.active')?.id;
-  if(document.hidden||t!=='rastreamento'||!hasAnyPerm(['tracking','dashboard']))return;
+  if(document.hidden||t!=='rastreamento'||!hasPerm('tracking'))return;
   if(!TRACKING_NEXT_REFRESH)TRACKING_NEXT_REFRESH=Date.now()+TRACKING_AUTO_SECONDS*1000;
   const remaining=Math.max(0,Math.ceil((TRACKING_NEXT_REFRESH-Date.now())/1000));
   const countdown=$('#trackingRefreshCountdown');
@@ -2451,7 +2451,7 @@ function loadHeavyForTab(tab){
     setTimeout(()=>refreshLoadingRecords(true),50);
   }else if(tab==='programacao'&&hasAnyPerm(['programacao','roteirizador','dashboard','ssw_saidas'])){
     setTimeout(()=>refreshDeliveryProgram(false),60);
-  }else if(tab==='rastreamento'&&hasAnyPerm(['tracking','dashboard'])){
+  }else if(tab==='rastreamento'&&hasPerm('tracking')){
     setTimeout(()=>refreshTracking(),60);
   }else if(tab==='agendamentos-copia'&&hasAnyPerm(['dashboard','agendamentos','agendamentos_copia'])){
     setTimeout(()=>refreshAgCopy(false),50);
