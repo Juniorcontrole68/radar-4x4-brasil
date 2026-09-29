@@ -3078,15 +3078,33 @@ async function buildRoutePlan(date='',romaneio=''){
       geo=exactCoord;precision='ssw-coordenada';coordinateSource='SSW';
       query='Coordenada cadastrada no SSW'
     }else{
-      if(parts.cep){
+      // Prioridade: endereço completo do destinatário. CEP é apenas contingência.
+      // Isso evita empilhar vários clientes no centro do mesmo CEP e melhora a
+      // confirmação de visita pelo GPS a 100 metros.
+      if(parts.endereco){
+        query=[parts.endereco,parts.numero,parts.bairro,cidade,uf||'SP','Brasil'].filter(Boolean).join(',');
+        precision='endereco';
+        geo=await routeGeocode(query,baseGeo,ROUTE_MAX_RADIUS_METERS);
+        if(geo)coordinateSource='Endereço do cliente'
+      }
+      if(!geo&&parts.cep){
         query=parts.cep+', Brasil';precision='cep';
         geo=await routeGeocodeCep(parts.cep,baseGeo,ROUTE_MAX_RADIUS_METERS);
+        if(!geo)geo=await routeGeocode(query,baseGeo,ROUTE_MAX_RADIUS_METERS);
         if(geo)coordinateSource='CEP BrasilAPI'
-      }else if(pending?.cidade){query=[cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');precision='cidade'}
-      else if(parts.endereco){query=[parts.endereco,parts.numero,parts.bairro,cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');precision='endereco'}
-      else if(cidade){query=[cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');precision='cidade'}
-      if(!query){rejectedStops.push({ctrc:meta.ctrc||'',nf:meta.nf||'',destinatario,cidade,uf,reason:'sem coordenada/cidade/endereço'});continue}
-      if(!geo)geo=await routeGeocode(query,baseGeo,ROUTE_MAX_RADIUS_METERS);
+      }
+      if(!geo&&pending?.cidade){
+        query=[cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');
+        precision='cidade';
+        geo=await routeGeocode(query,baseGeo,ROUTE_MAX_RADIUS_METERS);
+        if(geo)coordinateSource='cidade-aproximada'
+      }
+      if(!geo&&cidade){
+        const cityQuery=[cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');
+        geo=await routeGeocode(cityQuery,baseGeo,ROUTE_MAX_RADIUS_METERS);
+        if(geo){precision='cidade';query=cityQuery;coordinateSource='cidade-aproximada'}
+      }
+      if(!query&&!geo){rejectedStops.push({ctrc:meta.ctrc||'',nf:meta.nf||'',destinatario,cidade,uf,reason:'sem coordenada/cidade/endereço'});continue}
       // Se CEP/endereço não localizar, mantém a entrega na rota usando a cidade
       // como posição aproximada. Isso é melhor do que deixar o motorista sem rota.
       if(!geo&&cidade){
