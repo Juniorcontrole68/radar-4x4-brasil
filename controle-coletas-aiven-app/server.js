@@ -1014,7 +1014,32 @@ async function start() {
         try {
           const user=await dashboardSession(req,false);
           if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
-          const q=await pool.query(`
+          const light=String(u.searchParams.get('light')||'')==='1';
+          const q=await pool.query(light?`
+            SELECT d.id::text AS device_id,d.driver_name,d.vehicle_plate,d.device_name,d.last_seen_at,
+                   s.id::text AS session_id,s.started_at,s.ended_at,s.status AS session_status,
+                   p.latitude,p.longitude,p.accuracy_m,p.speed_mps,p.bearing_deg,p.battery_pct,p.captured_at,
+                   '[]'::json AS trail,
+                   EXTRACT(EPOCH FROM (NOW()-p.captured_at))::int AS age_seconds,
+                   EXTRACT(EPOCH FROM (NOW()-d.last_seen_at))::int AS device_age_seconds,
+                   (s.id IS NOT NULL) AS map_active
+            FROM driver_tracking_devices d
+            LEFT JOIN LATERAL (
+              SELECT id,started_at,ended_at,status FROM driver_tracking_sessions
+              WHERE device_id=d.id
+                AND (started_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+              ORDER BY (status='active') DESC,started_at DESC LIMIT 1
+            ) s ON TRUE
+            LEFT JOIN LATERAL (
+              SELECT latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at
+              FROM driver_tracking_points
+              WHERE s.id IS NOT NULL AND session_id=s.id
+              ORDER BY captured_at DESC LIMIT 1
+            ) p ON TRUE
+            WHERE d.active=TRUE
+            ORDER BY COALESCE(p.captured_at,d.last_seen_at) DESC NULLS LAST
+            LIMIT 300
+          `:`
             SELECT d.id::text AS device_id,d.driver_name,d.vehicle_plate,d.device_name,d.last_seen_at,
                    s.id::text AS session_id,s.started_at,s.ended_at,s.status AS session_status,
                    p.latitude,p.longitude,p.accuracy_m,p.speed_mps,p.bearing_deg,p.battery_pct,p.captured_at,
@@ -1053,7 +1078,7 @@ async function start() {
             ORDER BY COALESCE(p.captured_at,d.last_seen_at) DESC NULLS LAST
             LIMIT 300
           `);
-          return sendJson(res,200,{ok:true,rows:q.rows,server_time:new Date().toISOString()})
+          return sendJson(res,200,{ok:true,light,rows:q.rows,server_time:new Date().toISOString()})
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao consultar rastreamento.'})}
       }
 
@@ -1092,6 +1117,21 @@ async function start() {
           const date=String(u.searchParams.get('date')||'').trim();
           const driver=String(u.searchParams.get('driver')||'').trim();
           if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return sendJson(res,400,{ok:false,error:'Data inválida.'});
+          const raw=String(u.searchParams.get('raw')||'')==='1';
+          if(raw){
+            const qr=await pool.query(`
+              SELECT p.session_id::text AS session_id,d.driver_name,d.vehicle_plate,
+                     p.latitude,p.longitude,p.accuracy_m,p.speed_mps,p.bearing_deg,p.battery_pct,p.captured_at
+              FROM driver_tracking_points p
+              JOIN driver_tracking_devices d ON d.id=p.device_id
+              WHERE p.captured_at >= ($1::date::timestamp AT TIME ZONE 'America/Sao_Paulo')
+                AND p.captured_at < (($1::date + 1)::timestamp AT TIME ZONE 'America/Sao_Paulo')
+                AND ($2='' OR lower(d.driver_name)=lower($2))
+              ORDER BY p.captured_at ASC
+              LIMIT 60000
+            `,[date,driver]);
+            return sendJson(res,200,{ok:true,date,driver:driver||'',raw:true,rows:qr.rows,points:qr.rows.length})
+          }
           const q=await pool.query(`
             SELECT s.id::text AS session_id,d.driver_name,d.vehicle_plate,
                    s.started_at,s.ended_at,s.status,
