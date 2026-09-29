@@ -3524,6 +3524,80 @@ async function buildBi2Receita(from='',to=''){
   }
 }
 
+const CITY_BUBBLE_CACHE=new Map();
+function cityBubbleReturnOccurrence(r){
+  const txt=normKey([
+    pickField(r,'ult_ocorr_descricao','ULT OCORR DESCRICAO','DESCRICAO ULTIMA OCORRENCIA'),
+    pickField(r,'ult_instr','ULT INSTR','INSTRUCAO/COMPLEMENTO ULTIMA OCORRENCIA'),
+    pickField(r,'ult_ocorr_codigo','COD ULTIMA OCORRENCIA')
+  ].join(' '));
+  return /RETORN|DEVOLU|DEVOLVID|RECUSA|RECUSAD|VOLTOU A BASE|RETORNO A BASE/.test(txt)
+}
+function cityBubbleRowDate(r){
+  const raw=pickField(r,'data_emissao','DATA EMISSAO','AUTORIZACAO','DATA AUTORIZACAO');
+  return brDateToIso(raw)||String(raw||'').slice(0,10)
+}
+async function buildSswCityBubbles(from='',to=''){
+  const today=spDateISO(),month=today.slice(0,8)+'01';
+  const f=/^\d{4}-\d{2}-\d{2}$/.test(from)?from:month;
+  const t=/^\d{4}-\d{2}-\d{2}$/.test(to)?to:today;
+  const key=f+'|'+t,hit=CITY_BUBBLE_CACHE.get(key);
+  if(hit&&Date.now()-hit.at<5*60*1000)return hit.value;
+
+  const rep=await fetchBi2ReportFolder(174,'','ctrc'),parsed=parseBi2Csv(rep.text),rows=parsed.rows||[];
+  const seen=new Set(),groups=new Map();
+  for(const r of rows){
+    const date=cityBubbleRowDate(r);
+    if(date&&(date<f||date>t))continue;
+    const sig=String(pickField(r,'sigla_ctrc','SIGLA CTRC')||'').trim();
+    const num=String(pickField(r,'numero_ctrc','NUMERO CTRC','CTRC')||'').trim();
+    const id=(sig+'|'+num)||String(pickField(r,'nro_chave_acesso_cte','CHAVE CTE')||'');
+    if(id&&seen.has(id))continue;
+    if(id)seen.add(id);
+
+    const cidade=String(pickField(r,'cidade_destino','CIDADE DESTINO','dest_cidade','DEST CIDADE')||'').trim();
+    const uf=String(pickField(r,'uf_destino','UF DESTINO','dest_uf','DEST UF')||'SP').trim()||'SP';
+    if(!cidade)continue;
+    const k=normKey(cidade)+'|'+normKey(uf);
+    if(!groups.has(k))groups.set(k,{cidade,uf,valor:0,entregas:0,retornos:0,frete:0,ceps:new Set()});
+    const g=groups.get(k);
+    g.entregas++;
+    g.valor+=bi2Number(pickField(r,'valor_n_fiscal','VALOR N FISCAL','VAL MERC','ValorMercadoria'));
+    g.frete+=bi2Number(pickField(r,'valor_frete','VALOR FRETE','FRETE'));
+    if(cityBubbleReturnOccurrence(r))g.retornos++;
+    const cep=String(pickField(r,'dest_cep','DEST CEP','CEP DESTINO')||'').replace(/\D/g,'');
+    if(cep.length===8&&g.ceps.size<3)g.ceps.add(cep)
+  }
+
+  const list=[...groups.values()];
+  await Promise.all(list.map(async g=>{
+    const pts=(await Promise.all([...g.ceps].map(cep=>routeGeocodeCep(cep,null,null).catch(()=>null)))).filter(Boolean);
+    if(pts.length){
+      g.lat=pts.reduce((a,x)=>a+Number(x.lat),0)/pts.length;
+      g.lon=pts.reduce((a,x)=>a+Number(x.lon),0)/pts.length;
+      g.geoSource='CEP médio da cidade'
+    }else{
+      const geo=ROUTE_GEO_CACHE.get(normKey(g.cidade+', '+g.uf+', Brasil')+'|0.0000|0.0000|0');
+      if(geo){g.lat=geo.lat;g.lon=geo.lon;g.geoSource='cidade'}
+      else{g.lat=null;g.lon=null;g.geoSource='não localizada'}
+    }
+    delete g.ceps
+  }));
+
+  const cities=list.sort((a,b)=>b.valor-a.valor||b.entregas-a.entregas);
+  const mapped=cities.filter(x=>Number.isFinite(x.lat)&&Number.isFinite(x.lon));
+  const value={
+    ok:true,source:'SSW / BI2 relatório 174',from:f,to:t,
+    totalCities:cities.length,mappedCities:mapped.length,
+    totalValue:Number(cities.reduce((a,x)=>a+x.valor,0).toFixed(2)),
+    totalDeliveries:cities.reduce((a,x)=>a+x.entregas,0),
+    totalReturns:cities.reduce((a,x)=>a+x.retornos,0),
+    cities
+  };
+  CITY_BUBBLE_CACHE.set(key,{at:Date.now(),value});
+  return value
+}
+
 async function buildBi2Remetentes(from='',to=''){let rows=[],meta={},period=null;if(from&&to){const snaps=await fetchBi2RangeParsed(13,from,to);rows=mergeUniqueBi2Rows(snaps);period=bi2PeriodInfo(snaps,from,to);const latest=[...snaps].reverse().find(x=>x.ok);meta=latest?latest.meta:{}}else{const rep=await fetchBi2Report(13),p=parseBi2Csv(rep.text);rows=p.rows;meta=p.meta}const groups=new Map();for(const r of rows){const nome=pickField(r,'REMETENTE')||'Não informado';if(!groups.has(nome))groups.set(nome,{remetente:nome,ctrcs:0,frete:0,valorMercadoria:0,volumes:0,peso:0,m3:0,atrasoTotal:0,atrasoN:0,cidades:new Set(),destinatarios:new Set()});const g=groups.get(nome);g.ctrcs++;g.frete+=bi2Number(pickField(r,'FRETE'));g.valorMercadoria+=bi2Number(pickField(r,'VAL MERC'));g.volumes+=bi2Number(pickField(r,'QTD VOLUMES'));g.peso+=bi2Number(pickField(r,'PESO'));g.m3+=bi2Number(pickField(r,'M3'));const av=bi2Number(pickField(r,'ATRASO'));if(av||String(pickField(r,'ATRASO')).trim()==='0'){g.atrasoTotal+=av;g.atrasoN++}const cid=pickField(r,'CIDADE DESTINO');if(cid)g.cidades.add(cid);const dst=pickField(r,'DESTINATARIO');if(dst)g.destinatarios.add(dst)}const clientes=[...groups.values()].map(g=>({remetente:g.remetente,ctrcs:g.ctrcs,frete:g.frete,valorMercadoria:g.valorMercadoria,volumes:g.volumes,peso:g.peso,m3:g.m3,atrasoMedio:g.atrasoN?g.atrasoTotal/g.atrasoN:0,cidades:g.cidades.size,destinatarios:g.destinatarios.size})).sort((a,b)=>b.ctrcs-a.ctrcs);const hist=period?' • '+period.daysAvailable+'/'+period.daysRequested+' dia(s) com arquivo BI2':'';return{ok:true,sourceCode:13,sourceName:meta.relatorio||'CT-es atrasados',limited:true,note:'Base atual do BI2: CT-es atrasados únicos observados no período. O relatório 083 de performance por cliente emitente ainda não está disponível.'+hist,meta,period,totalClientes:clientes.length,totalCtrcs:rows.length,totalFrete:sumField(rows,['FRETE']),totalMercadoria:sumField(rows,['VAL MERC']),totalVolumes:sumField(rows,['QTD VOLUMES']),clientes}}
 async function buildBi2Atrasos(from='',to=''){let rows=[],meta={},bytes=0,headers=[],period=null;if(from&&to){const snaps=await fetchBi2RangeParsed(13,from,to);rows=mergeUniqueBi2Rows(snaps);period=bi2PeriodInfo(snaps,from,to);const latest=[...snaps].reverse().find(x=>x.ok);meta=latest?latest.meta:{};bytes=snaps.filter(x=>x.ok).reduce((a,x)=>a+(x.bytes||0),0);headers=latest?latest.headers:[]}else{const rep=await fetchBi2Report(13),p=parseBi2Csv(rep.text);rows=p.rows;meta=p.meta;bytes=rep.bytes;headers=p.headers}const clean=rows.slice(0,1000).map(r=>({filial:pickField(r,'FILIAL'),ctrc:pickField(r,'CTRC'),nf:pickField(r,'NF'),remetente:pickField(r,'REMETENTE'),pagador:pickField(r,'PAGADOR'),destinatario:pickField(r,'DESTINATARIO'),uf:pickField(r,'UF DESTINO','UF'),cidade:pickField(r,'CIDADE DESTINO','CIDADE'),entregaAgendada:pickField(r,'ENTREGA AGENDADA'),previsao:pickField(r,'PREVISAO ENTREGA','PREVISAO','DATA PREVISAO'),diasAtraso:pickField(r,'DIAS ATRASO','ATRASO'),unidadeAtual:pickField(r,'UNIDADE ATUAL'),localizacaoAtual:pickField(r,'LOCALIZACAO ATUAL'),ultimaOcorrencia:pickField(r,'COD ULTIMA OCORRENCIA'),instrucaoOcorrencia:pickField(r,'INSTRUCAO/COMPLEMENTO ULTIMA OCORRENCIA'),dataUltimaOcorrencia:pickField(r,'DATA ULTIMA OCORRENCIA'),responsabilidadeCliente:pickField(r,'RESPONSABILIDADE CLIENTE'),valorMercadoria:pickField(r,'VAL MERC'),frete:pickField(r,'FRETE'),volumes:pickField(r,'QTD VOLUMES'),peso:pickField(r,'PESO'),m3:pickField(r,'M3'),tipoDocumento:pickField(r,'TIPO DOCUMENTO')}));return{ok:true,codigo:13,bytes,meta,period,total:rows.length,filiaisCount:distinctCount(rows,['FILIAL']),cidadesCount:distinctCount(rows,['CIDADE DESTINO','CIDADE']),destinatariosCount:distinctCount(rows,['DESTINATARIO']),remetentesCount:distinctCount(rows,['REMETENTE']),valorMercadoria:sumField(rows,['VAL MERC']),freteTotal:sumField(rows,['FRETE']),volumesTotal:sumField(rows,['QTD VOLUMES']),pesoTotal:sumField(rows,['PESO']),m3Total:sumField(rows,['M3']),headers,filiais:topCounts(rows,['FILIAL'],12),cidades:topCounts(rows,['CIDADE DESTINO','CIDADE'],12),destinatarios:topCounts(rows,['DESTINATARIO'],12),remetentes:topCounts(rows,['REMETENTE'],12),localizacoes:topCounts(rows,['LOCALIZACAO ATUAL','UNIDADE ATUAL'],12),ocorrencias:topCounts(rows,['COD ULTIMA OCORRENCIA'],12),rows:clean}}
 async function refreshBi2ApiState(){const now=new Date().toISOString();const x=await testBi2WebApi();if(x.ok&&Array.isArray(x.reports)){const good=x.reports.filter(r=>r.status===200&&/text\/csv/i.test(r.type));BI2_API_STATE={connected:good.length>0,lastCheck:now,reports:x.reports.map(r=>({codigo:r.codigo,status:r.status,bytes:r.bytes,type:r.type})),message:good.length?'WebAPI BI2 conectada':'WebAPI BI2 sem relatórios disponíveis'};}else{BI2_API_STATE={connected:false,lastCheck:now,reports:[],message:'Falha na WebAPI BI2',error:x.error||''}}return BI2_API_STATE}
@@ -3961,7 +4035,15 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
   const x=await buildBi2Receita(u.searchParams.get('from')||'',u.searchParams.get('to')||'');
   res.writeHead(x.ok?200:503,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
-}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/remetentes'){try{if(!dashboardHasAny(authUser,['remetentes','remetentes_comparativo']))return dashboardDeny(res);const x=await buildBi2Remetentes(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/atrasos'){try{if(!dashboardHas(authUser,'ssw_atrasos'))return dashboardDeny(res);const x=await buildBi2Atrasos(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/api-status'){if(!dashboardHasAny(authUser,['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo','receita_ssw']))return dashboardDeny(res);if(!BI2_API_STATE.lastCheck||Date.now()-new Date(BI2_API_STATE.lastCheck).getTime()>60*1000)await refreshBi2ApiState();res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify(BI2_API_STATE))}if(u.pathname==='/api/bi2/status'){if(!dashboardHasAny(authUser,['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo','receita_ssw']))return dashboardDeny(res);if(!BI2_STATE.lastCheck||Date.now()-new Date(BI2_STATE.lastCheck).getTime()>5*60*1000)await refreshBi2State();res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});const x=BI2_STATE,pub={configured:x.configured,connected:x.connected,fileCount:x.fileCount||0,lastCheck:x.lastCheck,message:x.message,error:x.error||''};return res.end(JSON.stringify(pub))}if(u.pathname==='/api/ssw/status'){if(!dashboardHasAny(authUser,['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo','receita_ssw']))return dashboardDeny(res);const configured=sswConfigured();if(!configured){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:false,connected:false,source:'google-sheets',message:'SSW aguardando credenciais'}))}try{await getSswToken(false);res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:true,connected:true,source:'ssw',message:'SSW conectado'}))}catch(e){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:true,connected:false,source:'google-sheets',message:'SSW configurado, mas a autenticação falhou',error:String(e.message||e)}))}}if(u.pathname.startsWith('/api/sheet/')){const n=u.pathname.split('/').pop(),gid=GIDS[n],sheetName=SHEET_NAMES[n];if(!gid&&!sheetName){res.writeHead(404);return res.end()}try{
+}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/ssw/cidades-mapa'){try{
+  if(!dashboardHas(authUser,'cidade_destino'))return dashboardDeny(res);
+  const x=await buildSswCityBubbles(u.searchParams.get('from')||'',u.searchParams.get('to')||'');
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){
+  res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}if(u.pathname==='/api/bi2/remetentes'){try{if(!dashboardHasAny(authUser,['remetentes','remetentes_comparativo']))return dashboardDeny(res);const x=await buildBi2Remetentes(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/atrasos'){try{if(!dashboardHas(authUser,'ssw_atrasos'))return dashboardDeny(res);const x=await buildBi2Atrasos(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/api-status'){if(!dashboardHasAny(authUser,['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo','receita_ssw']))return dashboardDeny(res);if(!BI2_API_STATE.lastCheck||Date.now()-new Date(BI2_API_STATE.lastCheck).getTime()>60*1000)await refreshBi2ApiState();res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify(BI2_API_STATE))}if(u.pathname==='/api/bi2/status'){if(!dashboardHasAny(authUser,['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo','receita_ssw']))return dashboardDeny(res);if(!BI2_STATE.lastCheck||Date.now()-new Date(BI2_STATE.lastCheck).getTime()>5*60*1000)await refreshBi2State();res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});const x=BI2_STATE,pub={configured:x.configured,connected:x.connected,fileCount:x.fileCount||0,lastCheck:x.lastCheck,message:x.message,error:x.error||''};return res.end(JSON.stringify(pub))}if(u.pathname==='/api/ssw/status'){if(!dashboardHasAny(authUser,['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo','receita_ssw']))return dashboardDeny(res);const configured=sswConfigured();if(!configured){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:false,connected:false,source:'google-sheets',message:'SSW aguardando credenciais'}))}try{await getSswToken(false);res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:true,connected:true,source:'ssw',message:'SSW conectado'}))}catch(e){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:true,connected:false,source:'google-sheets',message:'SSW configurado, mas a autenticação falhou',error:String(e.message||e)}))}}if(u.pathname.startsWith('/api/sheet/')){const n=u.pathname.split('/').pop(),gid=GIDS[n],sheetName=SHEET_NAMES[n];if(!gid&&!sheetName){res.writeHead(404);return res.end()}try{
   if(n==='lancamentos'&&!dashboardHasAny(authUser,['dashboard','operacional','financeiro','motoristas','filiais','rotas','ocorrencias']))return dashboardDeny(res);
   if(n==='agendamentos'&&!dashboardHasAny(authUser,['dashboard','agendamentos']))return dashboardDeny(res);
   if(n==='agendamentos_copia'&&!dashboardHasAny(authUser,['dashboard','agendamentos','agendamentos_copia']))return dashboardDeny(res);
