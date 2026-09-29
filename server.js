@@ -3542,7 +3542,7 @@ async function buildSswCityBubbles(from='',to=''){
   const f=/^\d{4}-\d{2}-\d{2}$/.test(from)?from:month;
   const t=/^\d{4}-\d{2}-\d{2}$/.test(to)?to:today;
   const key='ssw-v2|'+f+'|'+t,hit=CITY_BUBBLE_CACHE.get(key);
-  if(hit&&Date.now()-hit.at<2*60*1000)return hit.value;
+  if(hit&&Date.now()-hit.at<20*1000)return hit.value;
 
   // A quantidade de entregas passa a vir da operação SSW (opção 38 / romaneios),
   // e não de uma contagem solta do arquivo BI2.
