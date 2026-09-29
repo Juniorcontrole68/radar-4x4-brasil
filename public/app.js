@@ -71,6 +71,7 @@ const PERMISSION_OPTIONS=[
   ['ssw_atrasos','SSW • CT-es Atrasados'],
   ['bi2','SSW / BI2']
 ];
+let CITY_BUBBLE_DATA=null,CITY_BUBBLE_MAP=null,CITY_BUBBLE_LAYER=null;
 let AUTH=null;
 function hasPerm(p){return !!(AUTH&&(AUTH.is_admin||AUTH.permissions?.includes('*')||AUTH.permissions?.includes(p)))}
 function hasAnyPerm(list){return list.some(hasPerm)}
@@ -80,7 +81,7 @@ function tabAllowed(tab){
     agendamentos:'agendamentos',ajudantes:'ajudantes',
     'ssw-motoristas':'ssw_saidas','motoristas-evolucao':'evolucao',
     'ssw-atrasos':'ssw_atrasos','ssw-remetentes':'remetentes',
-    'ssw-remetentes-comparativo':'remetentes_comparativo','receita-ssw':'receita_ssw'
+    'ssw-remetentes-comparativo':'remetentes_comparativo','receita-ssw':'receita_ssw','mapa-cidades':'cidade_destino'
   };
   if(tab==='usuarios')return !!AUTH?.is_admin;
   if(tab==='roteirizador')return hasPerm('roteirizador');
@@ -103,6 +104,7 @@ function applyPermissions(){
     'SSW • Saídas x Baixas':'ssw_saidas',
     'Evolução e Previsão por Motorista':'evolucao',
     'Entregas por Cidade Destino':'cidade_destino',
+    'Mapa de Cidades • SSW':'cidade_destino',
     'Registro de Carga e Descarga':'final_carregamento',
     'Programação de Entregas':'programacao',
     'Operacional':'operacional',
@@ -894,6 +896,129 @@ if(active==='operacoes')table('#ops',[['Data','ENTREGUE','Entregue','Data','  Da
 if(active==='agendamentos')table('#sch',[['NF','NF'],['Cidade','CIDADE'],['Cliente','NOME CLIENTE'],['Data','DATA AGENDADA'],['Status','STATUS'],['Motorista','MOTORISTA'],['Observação','OBSERVAÇÃO']],A.slice().reverse().slice(0,500));
 if(active==='ajudantes'){table('#helpHelpers',[['Data','Data'],['Nome','NOME'],['Valor','Valor'],['Função','FUNÇÃO']],HA.slice().reverse().slice(0,500));table('#helpCheckers',[['Data','Data'],['Nome','NOME'],['Valor','Valor'],['Função','FUNÇÃO']],HCf.slice().reverse().slice(0,500));}
 const now=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});$('#status').textContent='Atualização automática a cada 5 s • última: '+now+' • '+S.ops.length.toLocaleString('pt-BR')+' operações • '+S.sch.length.toLocaleString('pt-BR')+' agendamentos • '+S.help.length.toLocaleString('pt-BR')+' registros de ajudantes/conferentes'}
+function cityBubbleSetDefaults(){
+  const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+  const month=today.slice(0,8)+'01';
+  const f=$('#cityBubbleFrom'),t=$('#cityBubbleTo');
+  if(f&&!f.value)f.value=month;
+  if(t&&!t.value)t.value=today
+}
+function cityBubbleMetricFlags(){
+  return{
+    value:!!$('#cityBubbleFlagValue')?.checked,
+    deliveries:!!$('#cityBubbleFlagDeliveries')?.checked,
+    returns:!!$('#cityBubbleFlagReturns')?.checked
+  }
+}
+function cityBubbleScoreRows(rows,flags){
+  const mv=Math.max(1,...rows.map(x=>Number(x.valor||0)));
+  const md=Math.max(1,...rows.map(x=>Number(x.entregas||0)));
+  const mr=Math.max(1,...rows.map(x=>Number(x.retornos||0)));
+  return rows.map(x=>({...x,_score:Math.max(
+    flags.value?Number(x.valor||0)/mv:0,
+    flags.deliveries?Number(x.entregas||0)/md:0,
+    flags.returns?Number(x.retornos||0)/mr:0
+  )})).sort((a,b)=>b._score-a._score||b.valor-a.valor)
+}
+function cityBubbleRadius(v,max,minR=6,maxR=30){
+  const n=Math.max(0,Number(v)||0),m=Math.max(1,Number(max)||1);
+  return n<=0?0:minR+(maxR-minR)*Math.sqrt(n/m)
+}
+function cityBubbleEnsureMap(){
+  const box=$('#cityBubbleMap');if(!box||typeof L==='undefined')return null;
+  if(!CITY_BUBBLE_MAP){
+    CITY_BUBBLE_MAP=L.map(box,{zoomControl:true}).setView([-22.75,-47.15],8);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(CITY_BUBBLE_MAP)
+  }
+  if(CITY_BUBBLE_LAYER)CITY_BUBBLE_LAYER.remove();
+  CITY_BUBBLE_LAYER=L.layerGroup().addTo(CITY_BUBBLE_MAP);
+  return CITY_BUBBLE_MAP
+}
+function renderCityBubbleMap(){
+  const d=CITY_BUBBLE_DATA;if(!d?.ok)return;
+  const map=cityBubbleEnsureMap();if(!map)return;
+  const flags=cityBubbleMetricFlags();
+  if(!flags.value&&!flags.deliveries&&!flags.returns){
+    const cb=$('#cityBubbleFlagDeliveries');if(cb)cb.checked=true;flags.deliveries=true
+  }
+  const all=(d.cities||[]).filter(x=>Number.isFinite(Number(x.lat))&&Number.isFinite(Number(x.lon)));
+  const top=Number($('#cityBubbleTop')?.value||40);
+  const rows=cityBubbleScoreRows(all,flags);
+  const visible=top>0?rows.slice(0,top):rows;
+  const maxValue=Math.max(1,...visible.map(x=>Number(x.valor||0)));
+  const maxDeliveries=Math.max(1,...visible.map(x=>Number(x.entregas||0)));
+  const maxReturns=Math.max(1,...visible.map(x=>Number(x.retornos||0)));
+  const bounds=[];
+  const popup=x=>'<b>'+safe(x.cidade)+' / '+safe(x.uf)+'</b>'+
+    '<br>Valor mercadoria: <b>'+brl(x.valor||0)+'</b>'+
+    '<br>Entregas: <b>'+nf(x.entregas||0)+'</b>'+
+    '<br>Retornos: <b>'+nf(x.retornos||0)+'</b>'+
+    '<br>Taxa de retorno: <b>'+((x.entregas?x.retornos/x.entregas*100:0).toFixed(1).replace('.',','))+'%</b>'+
+    '<br>Frete: '+brl(x.frete||0);
+  for(const x of visible){
+    const lat=Number(x.lat),lon=Number(x.lon);bounds.push([lat,lon]);
+    if(flags.value&&Number(x.valor)>0){
+      L.circleMarker([lat,lon],{radius:cityBubbleRadius(x.valor,maxValue,8,34),color:'#1d4ed8',weight:2,fillColor:'#3b82f6',fillOpacity:.23}).addTo(CITY_BUBBLE_LAYER).bindPopup(popup(x))
+    }
+    if(flags.deliveries&&Number(x.entregas)>0){
+      L.circleMarker([lat,lon],{radius:cityBubbleRadius(x.entregas,maxDeliveries,6,25),color:'#d97706',weight:2,fillColor:'#f59e0b',fillOpacity:.28}).addTo(CITY_BUBBLE_LAYER).bindPopup(popup(x))
+    }
+    if(flags.returns&&Number(x.retornos)>0){
+      L.circleMarker([lat,lon],{radius:cityBubbleRadius(x.retornos,maxReturns,5,18),color:'#b91c1c',weight:2,fillColor:'#ef4444',fillOpacity:.40}).addTo(CITY_BUBBLE_LAYER).bindPopup(popup(x))
+    }
+  }
+  if(bounds.length){
+    const bb=L.latLngBounds(bounds);if(bb.isValid())map.fitBounds(bb.pad(.10),{maxZoom:10})
+  }
+  setTimeout(()=>map.invalidateSize(),80);
+
+  const ranking=$('#cityBubbleRanking');
+  if(ranking){
+    ranking.innerHTML=visible.slice(0,25).map((x,i)=>'<div class="city-bubble-row"><b>'+(i+1)+'. '+safe(x.cidade)+' / '+safe(x.uf)+'</b><div class="meta">💰 '+brl(x.valor||0)+' • 📦 '+nf(x.entregas||0)+' • ↩️ '+nf(x.retornos||0)+'</div></div>').join('')||'<div class="muted">Nenhuma cidade localizada no mapa.</div>'
+  }
+}
+function renderCityBubbles(){
+  const d=CITY_BUBBLE_DATA;if(!d?.ok)return;
+  const set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
+  set('#cityBubbleTotalValue',brl(d.totalValue||0));
+  set('#cityBubbleTotalDeliveries',nf(d.totalDeliveries||0));
+  set('#cityBubbleTotalReturns',nf(d.totalReturns||0));
+  set('#cityBubbleTotalCities',nf(d.totalCities||0));
+  set('#hubCityBubbleCities',nf(d.totalCities||0));
+  set('#hubCityBubbleValue',brl(d.totalValue||0));
+  set('#hubCityBubbleDeliveries',nf(d.totalDeliveries||0));
+  set('#hubCityBubbleReturns',nf(d.totalReturns||0));
+  set('#hubCityBubbleInfo','Período '+d.from+' a '+d.to+' • '+nf(d.mappedCities||0)+' cidade(s) localizadas no mapa.');
+  set('#cityBubbleInfo','Fonte: '+(d.source||'SSW / BI2')+' • período '+d.from+' a '+d.to+' • bolhas por cidade de destino.');
+  const rows=(d.cities||[]).map(x=>({
+    cidade:x.cidade+' / '+x.uf,
+    valor:brl(x.valor||0),
+    entregas:nf(x.entregas||0),
+    retornos:nf(x.retornos||0),
+    taxa:(x.entregas?x.retornos/x.entregas*100:0).toFixed(1).replace('.',',')+'%',
+    frete:brl(x.frete||0),
+    mapa:Number.isFinite(Number(x.lat))?'Sim':'Não'
+  }));
+  table('#cityBubbleTable',[['Cidade','cidade'],['Valor mercadoria','valor'],['Entregas','entregas'],['Retornos','retornos'],['Taxa retorno','taxa'],['Frete','frete'],['No mapa','mapa']],rows);
+  renderCityBubbleMap()
+}
+async function refreshCityBubbles(){
+  if(window.__cityBubbleBusy)return;
+  window.__cityBubbleBusy=true;
+  cityBubbleSetDefaults();
+  const info=$('#cityBubbleInfo');if(info)info.textContent='Consultando cidades no SSW…';
+  try{
+    const from=$('#cityBubbleFrom')?.value||'',to=$('#cityBubbleTo')?.value||'';
+    const q=new URLSearchParams({from,to,t:String(Date.now())});
+    const r=await fetch('/api/ssw/cidades-mapa?'+q.toString(),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar mapa de cidades.');
+    CITY_BUBBLE_DATA=j;renderCityBubbles()
+  }catch(e){
+    if(info)info.textContent='Não foi possível carregar o mapa de cidades: '+e.message
+  }finally{window.__cityBubbleBusy=false}
+}
+
 function sswRangeQuery(){const f=$('#from')?.value||'',t=$('#to')?.value||'';return f&&t?'?from='+encodeURIComponent(f)+'&to='+encodeURIComponent(t):''}
 function renderSswAtrasos(){const d=S.ssw;if(!d||!d.ok)return;const set=(id,v)=>{const e=$(id);if(e)e.textContent=v};set('#sswLateTotal',nf(d.total||0));set('#sswLateBranches',nf(d.filiaisCount||0));set('#sswLateCities',nf(d.cidadesCount||0));set('#sswLateRecipients',nf(d.destinatariosCount||0));set('#sswLateTime',(d.meta&&d.meta.hora)||'—');set('#sswLateGoods',brl(d.valorMercadoria||0));set('#sswLateFreight',brl(d.freteTotal||0));set('#sswLateVolumes',nf(d.volumesTotal||0));set('#sswLateWeight',nf(d.pesoTotal||0));set('#sswLateM3',(d.m3Total||0).toLocaleString('pt-BR',{maximumFractionDigits:2}));set('#hubSswLate',nf(d.total||0));set('#hubSswBranches',nf(d.filiaisCount||0));const p=d.period,periodText=p?('Período '+p.from+' a '+p.to+' • '+p.daysAvailable+'/'+p.daysRequested+' dia(s) com arquivo BI2'):'';const metaText=(d.meta&&d.meta.relatorio?d.meta.relatorio+' • ':'')+((d.meta&&d.meta.data)||'')+((d.meta&&d.meta.hora)?' '+d.meta.hora:'')+(periodText?' • '+periodText:'');set('#sswLateMeta',metaText||'Relatório BI2');set('#hubSswLateMeta',metaText||'Relatório BI2');set('#sswHistoryInfo',periodText||'Arquivo mais recente do BI2');if(p&&Array.isArray(p.series)){const hs=p.series.filter(x=>x.total!==null);lines('#sswHistoryChart',hs.map(x=>x.date.slice(5)),hs.map(x=>x.total),[])}const f=d.filiais||[],ci=d.cidades||[];bars('#sswBranchChart',f.map(x=>x.label),f.map(x=>x.value));bars('#sswCityChart',ci.map(x=>x.label),ci.map(x=>x.value));set('#sswLocationsList',(d.localizacoes||[]).slice(0,10).map((x,i)=>(i+1)+'. '+x.label+' — '+nf(x.value)).join(' | ')||'Sem dados');set('#sswOccurrencesList',(d.ocorrencias||[]).slice(0,10).map((x,i)=>(i+1)+'. '+x.label+' — '+nf(x.value)).join(' | ')||'Sem dados');set('#sswRecipientsList',(d.destinatarios||[]).slice(0,10).map((x,i)=>(i+1)+'. '+x.label+' — '+nf(x.value)).join(' | ')||'Sem dados');set('#sswSendersList',(d.remetentes||[]).slice(0,10).map((x,i)=>(i+1)+'. '+x.label+' — '+nf(x.value)).join(' | ')||'Sem dados');table('#sswLateTable',[['Filial','filial'],['CTRC','ctrc'],['NF','nf'],['Remetente','remetente'],['Destinatário','destinatario'],['UF','uf'],['Cidade','cidade'],['Agendada','entregaAgendada'],['Previsão','previsao'],['Atraso','diasAtraso'],['Unidade atual','unidadeAtual'],['Localização atual','localizacaoAtual'],['Última ocorrência','ultimaOcorrencia'],['Data ocorrência','dataUltimaOcorrencia'],['Tipo documento','tipoDocumento']],(d.rows||[]).slice(0,500))}
 async function refreshSswAtrasos(){try{const q=sswRangeQuery(),sep=q?'&':'?';const r=await fetch('/api/bi2/atrasos'+q+sep+'t='+Date.now(),{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw Error(j.error||'Falha ao carregar relatório SSW');S.ssw=j;renderSswAtrasos()}catch(e){const m=$('#sswLateMeta');if(m)m.textContent='Não foi possível carregar os CT-es atrasados: '+e.message;const h=$('#hubSswLateMeta');if(h)h.textContent='SSW indisponível neste momento.'}}
@@ -3177,7 +3302,8 @@ function openTab(tab){
     'rastreamento':'Rastreio de Carga',
     'roteirizador':'Roteirizador SSW',
     'agendamentos-copia':'Consulta de Agendamentos',
-    'usuarios':'Usuários e Acessos'
+    'usuarios':'Usuários e Acessos',
+    'mapa-cidades':'Mapa de Cidades • SSW'
   };
   $('#pageTitle').textContent=titles[tab]||'Dashboards';
   if(tab==='receita-ssw')setTimeout(renderSswReceita,30);
@@ -3185,9 +3311,13 @@ function openTab(tab){
   if(tab==='ssw-remetentes'||tab==='ssw-remetentes-comparativo')setTimeout(renderRemetentes,30);
   if(tab==='ssw-motoristas')setTimeout(renderSswMotoristas,30);
   if(tab==='motoristas-evolucao'){setTimeout(renderDriverProgress,30);setTimeout(refreshDriverProgress,60)}
+  if(tab==='mapa-cidades'){cityBubbleSetDefaults();setTimeout(refreshCityBubbles,40)}
   loadHeavyForTab(tab);
 }
-$$('.dash-open').forEach(b=>b.onclick=()=>{if(tabAllowed(b.dataset.open))openTab(b.dataset.open)});
+$('.dash-open').forEach(b=>b.onclick=()=>{if(tabAllowed(b.dataset.open))openTab(b.dataset.open)});
+if($('#cityBubbleApply'))$('#cityBubbleApply').onclick=refreshCityBubbles;
+['#cityBubbleFlagValue','#cityBubbleFlagDeliveries','#cityBubbleFlagReturns','#cityBubbleTop'].forEach(id=>{const e=$(id);if(e)e.onchange=renderCityBubbleMap});
+
 $$('.nav button').forEach(b=>b.onclick=()=>{
   if(!tabAllowed(b.dataset.tab))return;
   $$('.nav button').forEach(x=>x.classList.remove('active'));
@@ -3211,6 +3341,8 @@ $$('.nav button').forEach(b=>b.onclick=()=>{
       renderDriverProgress();
       renderForecast();
       refreshDriverProgress();
+      cityBubbleSetDefaults();
+      refreshCityBubbles();
     }
     if(b.dataset.tab==='motoristas-evolucao')refreshDriverProgress();
     loadHeavyForTab(b.dataset.tab);
