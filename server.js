@@ -3387,15 +3387,31 @@ if(u.pathname==='/api/roteirizador/lista'){try{
   }
   for(const g of opGroups.values())add(g,'manifesto');
 
-  const clean=[...byKey.values()].map(x=>({
-    romaneio:x.romaneios[0]||'',
-    romaneios:x.romaneios,
-    motorista:x.motorista,
-    veiculo:x.veiculo,
-    entregas:x.entregas,
-    origem:x.origens.has('romaneio')&&x.origens.has('manifesto')?'romaneio_manifesto':(x.origens.has('romaneio')?'romaneio':'manifesto'),
-    manifesto:x.origens.has('manifesto')
-  })).sort((a,b)=>String(a.motorista).localeCompare(String(b.motorista),'pt-BR')||String(a.veiculo).localeCompare(String(b.veiculo),'pt-BR'));
+  const progressRows=operation?.motoristas38||[];
+  const progressFor=(motorista,veiculo)=>{
+    const dk=normKey(motorista||''),pk=normPlate(veiculo||'');
+    return progressRows.find(g=>pk&&normPlate(g.veiculo||'')===pk)
+      ||progressRows.find(g=>dk&&normKey(g.motorista||'')===dk)
+      ||progressRows.find(g=>{
+        const gd=normKey(g.motorista||'');
+        return dk&&gd&&(gd.includes(dk)||dk.includes(gd))
+      })||null
+  };
+  const clean=[...byKey.values()].map(x=>{
+    const pg=progressFor(x.motorista,x.veiculo),total=Number(pg?.total||x.entregas||0),
+      entregues=Number(pg?.entregues||0),pendentes=Number(pg?.pendentes||0),ocorrencias=Number(pg?.ocorrencias||0);
+    return{
+      romaneio:x.romaneios[0]||'',
+      romaneios:x.romaneios,
+      motorista:x.motorista,
+      veiculo:x.veiculo,
+      entregas:x.entregas||total,
+      total,entregues,pendentes,ocorrencias,
+      concluido:!!pg&&total>0&&pendentes===0&&(entregues+ocorrencias)>=total,
+      origem:x.origens.has('romaneio')&&x.origens.has('manifesto')?'romaneio_manifesto':(x.origens.has('romaneio')?'romaneio':'manifesto'),
+      manifesto:x.origens.has('manifesto')
+    }
+  }).sort((a,b)=>String(a.motorista).localeCompare(String(b.motorista),'pt-BR')||String(a.veiculo).localeCompare(String(b.veiculo),'pt-BR'));
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:true,date,baseAddress:ROUTE_BASE_ADDRESS,rows:clean,romaneios:clean.filter(x=>x.romaneios.length).length,manifestos:clean.filter(x=>x.manifesto).length}))
 }catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
