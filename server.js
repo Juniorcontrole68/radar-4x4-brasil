@@ -2515,7 +2515,7 @@ async function getSswMotoristasFast(from='',to=''){
   }
 }
 
-const ROUTE_BASE_ADDRESS='Av. do Algodão, 316, Americana, SP, Brasil';
+const ROUTE_BASE_ADDRESS='Avenida do Algodão, 316, Distrito Industrial Salto Grande, Americana, SP, 13474-780, Brasil';
 // Ponto de segurança da Av. do Algodão / CEP 13474-780. Evita perder toda a rota
 // quando o Nominatim oscila. O endereço textual continua sendo exibido como base.
 const ROUTE_BASE_FALLBACK={lat:-22.69552,lon:-47.307,displayName:ROUTE_BASE_ADDRESS,city:'Americana',state:'São Paulo',fallback:true};
@@ -2904,6 +2904,20 @@ async function buildRoutePlan(date='',romaneio=''){
       console.log('ROTEIRIZADOR fallback de linhas ERRO: '+String(e.message||e))
     }
   }
+  // O roteirizador passa a usar também os relatórios 174/13/16 para recuperar
+  // destinatário/cidade quando a opção 38/PDF não traz esses campos.
+  let routeEnriched=[];
+  try{
+    routeEnriched=await deliveryProgramEnrich(metas.map(m=>({
+      ctrc:m.ctrc||'',nf:m.nf||'',cliente:'',cidade:'',uf:'SP',peso:0,volumes:0,m3:0,frete:0
+    })))
+  }catch(e){console.log('ROTEIRIZADOR enriquecimento BI2 ERRO: '+String(e.message||e))}
+  const enrichedByLoose=new Map(),enrichedByNf=new Map();
+  for(const r of routeEnriched){
+    const lk=normCtrcLoose(r.ctrc),nf=normNf(r.nf);
+    if(lk)enrichedByLoose.set(lk,r);if(nf)enrichedByNf.set(nf,r)
+  }
+
   const baseGeo=await routeBaseGeo();
   if(!baseGeo)throw new Error('Não foi possível localizar a base de Americana.');
   const stops=[],rejectedStops=[];
@@ -2911,12 +2925,13 @@ async function buildRoutePlan(date='',romaneio=''){
     const meta=metas[idx],lk=normCtrcLoose(meta.ctrc),nf=normNf(meta.nf);
     const detail=detailByLoose.get(lk)||detailByNf.get(nf)||null;
     const primary=byLoose.get(lk)||byNf.get(nf)||meta.__row||null;
+    const enriched=enrichedByLoose.get(lk)||enrichedByNf.get(nf)||null;
     // Completa o BI2 com os dados detalhados do SSW. Alguns CT-es chegam no BI2
     // sem endereço/coordenada; o SSW ainda pode trazer cidade, CEP ou GPS.
     const r={...(detail||{}),...(primary||{})};
-    const destinatario=r.destinatario_nome||r.destinatario||routeField(r,[/(destinatario|destinat)_?nome/,/^destinatario$/])||('Entrega '+(idx+1));
-    const cidade=r.cidade_destino||r.dest_cidade||r.cidade||routeField(r,[/(cidade).*(dest|destinat)/,/(dest|destinat).*cidade/,/^cidade_destino$/])||'';
-    const uf=r.uf_destino||r.dest_uf||r.uf||routeField(r,[/(uf).*(dest|destinat)/,/(dest|destinat).*uf/,/^uf_destino$/])||'SP';
+    const destinatario=r.destinatario_nome||r.destinatario||routeField(r,[/(destinatario|destinat)_?nome/,/^destinatario$/])||enriched?.cliente||('Entrega '+(idx+1));
+    const cidade=r.cidade_destino||r.dest_cidade||r.cidade||routeField(r,[/(cidade).*(dest|destinat)/,/(dest|destinat).*cidade/,/^cidade_destino$/])||enriched?.cidade||'';
+    const uf=r.uf_destino||r.dest_uf||r.uf||routeField(r,[/(uf).*(dest|destinat)/,/(dest|destinat).*uf/,/^uf_destino$/])||enriched?.uf||'SP';
     const parts=routeAddressParts(r,meta);
     const exactCoord=routeSswCoordinates(r,meta);
     let query='',precision='cidade',geo=null,coordinateSource='';
@@ -3022,10 +3037,54 @@ async function buildTrackingPlannedRoute(date='',driver='',plate=''){
       console.log('RASTREIO romaneio '+rom+' ERRO: '+String(e.message||e))
     }
   }
-  // Se nenhum romaneio gerou rota detalhada, monta uma rota operacional
-  // aproximada usando as cidades das próprias entregas reconciliadas do SSW/BI2.
-  // Isso garante uma linha planejada no mapa sem depender de endereço completo.
+  // Se o roteirizador detalhado falhar, reutiliza primeiro a rota operacional
+  // da simulação de romaneios, que já cruza opção 38 + BI2 por CT-e/NF.
   if(!plans.length){
+    try{
+      const sim=await buildRomaneioSimulation(false);
+      const sr=(sim?.actual?.routes||[]).find(r=>{
+        const rd=normKey(r.motorista||''),rp=normPlate(r.veiculo||'');
+        return (plateKey&&rp===plateKey)||(driverKey&&rd&&(rd===driverKey||rd.includes(driverKey)||driverKey.includes(rd)))
+      });
+      if(sr&&Array.isArray(sr.items)&&sr.items.length){
+        const base=await routeBaseGeo();
+        const fullRows=full?.rows||[];
+        const matchDetail=item=>fullRows.find(x=>{
+          const a=normCtrcLoose(x.ctrcOficial||x.ctrc),b=normCtrcLoose(item.ctrc);
+          const an=normNf(x.nf),bn=normNf(item.nf);
+          return (a&&b&&a===b)||(an&&bn&&an===bn)
+        })||null;
+        const stops=sr.items.filter(x=>Number.isFinite(Number(x.lat))&&Number.isFinite(Number(x.lon))).map((x,i)=>{
+          const d=matchDetail(x);
+          return{
+            originalOrder:i+1,ctrc:x.ctrc||'',nf:x.nf||'',
+            destinatario:x.cliente||d?.destinatario||('Entrega '+(i+1)),
+            cidade:x.cidade||d?.cidade||'',uf:x.uf||d?.uf||'SP',
+            lat:Number(x.lat),lon:Number(x.lon),precision:'cidade',coordinateSource:'BI2/simulacao',
+            label:(x.cliente||d?.destinatario||('Entrega '+(i+1)))+(x.cidade?' • '+x.cidade:''),
+            entregue:!!d?.entregue,baixaAt:d?.baixaDataHora||''
+          }
+        });
+        if(stops.length){
+          const points=[{label:'Base Americana',address:ROUTE_BASE_ADDRESS,lat:base.lat,lon:base.lon,precision:'base'},...stops];
+          const order=Array.from({length:stops.length},(_,i)=>i+1);
+          return{
+            ok:true,date:target,baseAddress:ROUTE_BASE_ADDRESS,romaneio:candidates.join(' + '),
+            motorista:driver||sr.motorista||'',veiculo:plate||sr.veiculo||'',
+            deliveries:stops.length,expectedDeliveries:Number(sr.deliveries||stops.length),
+            logical:true,plannedSource:'simulacao-romaneios',romaneios:candidates,
+            method:'ordem do romaneio',matrixSource:'simulação operacional',
+            optimizedOrder:order,originalOrder:order,points,stops,
+            geometry:sr.geometry||sr.outboundGeometry||{type:'LineString',coordinates:points.map(p=>[p.lon,p.lat])},
+            outboundGeometry:sr.outboundGeometry||sr.geometry||{type:'LineString',coordinates:points.map(p=>[p.lon,p.lat])},
+            approximate:true,rejectedStops:[]
+          }
+        }
+      }
+    }catch(e){console.log('RASTREIO fallback simulação ERRO: '+String(e.message||e))}
+
+    // Último fallback: monta uma rota operacional aproximada usando as cidades
+    // das próprias entregas reconciliadas do SSW/BI2.
     const rows=(full?.rows||[]).filter(x=>{
       const d=normKey(x.motorista||''),p=normPlate(x.veiculo||''),rom=String(x.romaneio||'').trim();
       const driverMatch=driverKey&&d&&(d===driverKey||d.includes(driverKey)||driverKey.includes(d));
