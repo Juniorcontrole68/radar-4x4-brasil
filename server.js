@@ -608,7 +608,7 @@ function deliveryProgramSector(bearing){
   return labels[Math.round(bearing/45)%8]
 }
 async function deliveryProgramGeo(rows){
-  const base=await routeGeocode(ROUTE_BASE_ADDRESS);
+  const base=await routeBaseGeo();
   if(!base)throw new Error('Não foi possível localizar a base de Americana.');
   const keys=new Map();
   for(const r of rows){
@@ -781,7 +781,7 @@ function simulationUniqueRoutePoints(items){
   return out
 }
 async function simulationRouteGeometry(items,optimize=false){
-  const base=await routeGeocode(ROUTE_BASE_ADDRESS);
+  const base=await routeBaseGeo();
   if(!base)return{geometry:null,distanceKm:null,points:[]};
   const stops=simulationUniqueRoutePoints(items);
   if(!stops.length)return{geometry:null,distanceKm:null,points:[]};
@@ -2516,6 +2516,9 @@ async function getSswMotoristasFast(from='',to=''){
 }
 
 const ROUTE_BASE_ADDRESS='Av. do Algodão, 316, Americana, SP, Brasil';
+// Ponto de segurança da Av. do Algodão / CEP 13474-780. Evita perder toda a rota
+// quando o Nominatim oscila. O endereço textual continua sendo exibido como base.
+const ROUTE_BASE_FALLBACK={lat:-22.69552,lon:-47.307,displayName:ROUTE_BASE_ADDRESS,city:'Americana',state:'São Paulo',fallback:true};
 const ROUTE_MAX_RADIUS_METERS=300000;
 const ROUTE_GEO_CACHE=new Map();
 const ROUTE_PLAN_CACHE=new Map();
@@ -2605,6 +2608,11 @@ async function routeGeocode(query,center=null,maxRadiusMeters=null){
   // Falhas temporárias do geocodificador não devem ficar presas em cache.
   // Assim a próxima atualização do rastreio pode tentar novamente.
   return null
+}
+async function routeBaseGeo(){
+  // A base é fixa. Não depende de uma chamada externa para o mapa existir.
+  // Mantemos o ponto do CEP/logradouro como fallback operacional estável.
+  return {...ROUTE_BASE_FALLBACK}
 }
 async function routeOsrmTable(points){
   if(points.length<2)return{matrix:[[0]],source:'single'};
@@ -2701,7 +2709,7 @@ async function routeGeometryOpen(points,order){
 }
 
 async function routeFinalizePlan(stops,meta={}){
-  const baseGeo=await routeGeocode(ROUTE_BASE_ADDRESS);
+  const baseGeo=await routeBaseGeo();
   if(!baseGeo)throw new Error('Não foi possível localizar a base de Americana.');
   const clean=[],rejected=[];
   for(const raw of (stops||[])){
@@ -2759,7 +2767,7 @@ function routeReadJson(req,maxBytes=1024*1024){
 async function routeResolveManualAddress(address){
   const raw=String(address||'').trim();
   if(raw.length<5)throw Object.assign(new Error('Digite um endereço completo.'),{status:400});
-  const base=await routeGeocode(ROUTE_BASE_ADDRESS);
+  const base=await routeBaseGeo();
   if(!base)throw new Error('Não foi possível localizar a base de Americana.');
   const candidates=[];
   if(!/\bSP\b|SÃO PAULO|SAO PAULO/i.test(raw))candidates.push(raw+', SP, Brasil');
@@ -2792,7 +2800,7 @@ async function routeLookupCteBarcode(code,date=''){
     return (digits.length>=40&&key===digits)||(digits.length<40&&cte===digits.replace(/^0+/,''))
   });
   if(!match)throw Object.assign(new Error('CT-e não encontrado no BI2/SSW para este código.'),{status:404});
-  const base=await routeGeocode(ROUTE_BASE_ADDRESS);
+  const base=await routeBaseGeo();
   if(!base)throw new Error('Não foi possível localizar a base de Americana.');
   const parts=routeAddressParts(match,{});
   const destinatario=match.destinatario_nome||routeField(match,[/(destinatario|destinat)_?nome/,/^destinatario$/])||'Destinatário CT-e';
@@ -2896,7 +2904,7 @@ async function buildRoutePlan(date='',romaneio=''){
       console.log('ROTEIRIZADOR fallback de linhas ERRO: '+String(e.message||e))
     }
   }
-  const baseGeo=await routeGeocode(ROUTE_BASE_ADDRESS);
+  const baseGeo=await routeBaseGeo();
   if(!baseGeo)throw new Error('Não foi possível localizar a base de Americana.');
   const stops=[],rejectedStops=[];
   for(let idx=0;idx<metas.length;idx++){
@@ -3025,7 +3033,7 @@ async function buildTrackingPlannedRoute(date='',driver='',plate=''){
       return (driverMatch||plateMatch)&&(!candidates.length||candidates.includes(rom))
     });
     const cityGeo=new Map(),fallbackStops=[],seenFallback=new Set();
-    const baseGeo=await routeGeocode(ROUTE_BASE_ADDRESS);
+    const baseGeo=await routeBaseGeo();
     for(const r of rows){
       const city=String(r.cidade||r.cidade_destino||'').trim(),uf=String(r.uf||r.uf_destino||'SP').trim()||'SP';
       if(!city)continue;
