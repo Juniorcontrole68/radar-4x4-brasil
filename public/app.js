@@ -2626,7 +2626,7 @@ function renderTrackingMap(rows){
           const analysis=(route.analysisRows||[]).find(x=>x.pointIndex===pointIndex);
           const done=!!analysis?.arrivalAt;
           const displayNo=done?(analysis?.actualPos||pos+1):(pos+1);
-          const bg=done?'#16a34a':'#fff',fg=done?'#fff':'#0f172a',border=done?'#15803d':plannedColor;
+          const bg=done?'#16a34a':actualColor,fg='#fff',border=done?'#15803d':actualColor;
           const markerHtml='<div style="min-width:28px;height:28px;padding:0 5px;border-radius:14px;background:'+bg+';border:3px solid '+border+';box-shadow:0 1px 5px #0004;display:grid;place-items:center;font-size:11px;font-weight:900;color:'+fg+'">'+displayNo+(done?'✓':'')+'</div>';
           const stopIcon=L.divIcon({className:'',html:markerHtml,iconSize:[32,32],iconAnchor:[16,16]});
           const popup='<b>'+(done?'Cliente visitado por GPS nº '+displayNo:'Programada nº '+(pos+1))+' • '+safe(s.destinatario||s.label||'Cliente')+'</b><br>'+
