@@ -1492,13 +1492,20 @@ function sswFormParamsFromHtml(html){
 }
 function parseSsw101Freight(html,nf=''){
   const plain=htmlText38(html);
-  let freight=0,ctrc='',cte='';
+  let freight=0,goodsValue=0,ctrc='',cte='';
   const moneyPatterns=[
     /VALOR\s+DO\s+FRETE\s*[:\-]?\s*R?\$?\s*([\d.]+,\d{2})/i,
     /FRETE\s+TOTAL\s*[:\-]?\s*R?\$?\s*([\d.]+,\d{2})/i,
     /\bFRETE\b.{0,80}?R?\$?\s*([\d.]+,\d{2})/i
   ];
   for(const re of moneyPatterns){const m=plain.match(re);if(m){freight=bi2Number(m[1]);if(freight>0)break}}
+  const goodsPatterns=[
+    /VALOR\s+(?:DA\s+)?MERCADORIA\s*[:\-]?\s*R?\$?\s*([\d.]+,\d{2})/i,
+    /VALOR\s+(?:DA\s+)?NOTA(?:\s+FISCAL)?\s*[:\-]?\s*R?\$?\s*([\d.]+,\d{2})/i,
+    /VALOR\s+NF\s*[:\-]?\s*R?\$?\s*([\d.]+,\d{2})/i,
+    /VLR\.?\s*MERC(?:ADORIA)?\s*[:\-]?\s*R?\$?\s*([\d.]+,\d{2})/i
+  ];
+  for(const re of goodsPatterns){const m=plain.match(re);if(m){goodsValue=bi2Number(m[1]);if(goodsValue>0)break}}
   const ctrcMatch=plain.match(/\b([A-Z]{3}\d{4,9}-\d)\b/i);
   if(ctrcMatch)ctrc=ctrcMatch[1].toUpperCase();
   const cteMatch=plain.match(/\bCT-?E\b.{0,30}?(\d{4,10})\b/i);
@@ -1507,7 +1514,11 @@ function parseSsw101Freight(html,nf=''){
     const vals=[...String(html||'').matchAll(/(?:t_vlr_frete|valor_frete|vlr_frete)[^>]{0,120}value=["']([^"']+)["']/gi)].map(m=>bi2Number(htmlText38(m[1])));
     freight=vals.find(v=>v>0)||0
   }
-  return{nf:normNf(nf),freight,ctrc,cte,plain:plain.slice(0,2500)}
+  if(!goodsValue){
+    const vals=[...String(html||'').matchAll(/(?:t_vlr_merc(?:adoria)?|valor_mercadoria|vlr_merc(?:adoria)?|t_vlr_nf|valor_nf|vlr_nf)[^>]{0,120}value=["']([^"']+)["']/gi)].map(m=>bi2Number(htmlText38(m[1])));
+    goodsValue=vals.find(v=>v>0)||0
+  }
+  return{nf:normNf(nf),freight,goodsValue,ctrc,cte,plain:plain.slice(0,2500)}
 }
 async function ssw101Session(){
   if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
@@ -1575,7 +1586,7 @@ async function fillFreightByNf(rows){
     const ck=String(x.ctrc||'').toUpperCase().trim(),nk=normNf(x.nf),id=ck?'C|'+ck:'N|'+nk;
     if(!id||seen.has(id))continue;seen.add(id);requests.push({id,ctrc:ck,nf:nk})
   }
-  const results=await mapLimit(requests,3,async req=>{
+  const results=await mapLimit(requests,6,async req=>{
     try{
       if(req.ctrc){
         const byCtrc=await fetchSsw101ByCtrc(req.ctrc,session);
@@ -1591,10 +1602,18 @@ async function fillFreightByNf(rows){
   const byId=new Map(results.map(x=>[x.id,x]));
   let found=0;
   const out=rows.map(x=>{
-    if(Number(x.frete)>0)return x;
     const ck=String(x.ctrc||'').toUpperCase().trim(),nk=normNf(x.nf),id=ck?'C|'+ck:'N|'+nk,v=byId.get(id);
-    if(v&&Number(v.freight)>0){found++;return{...x,frete:Number(v.freight),freteSource:v.source||'SSW 101',ctrcValor:v.ctrc||ck}}
-    return x
+    if(!v)return x;
+    const hasFreight=Number(v.freight)>0,hasGoods=Number(v.goodsValue)>0;
+    if(hasFreight)found++;
+    return{
+      ...x,
+      frete:Number(x.frete)>0?Number(x.frete):(hasFreight?Number(v.freight):0),
+      valor:Number(x.valor)>0?Number(x.valor):(hasGoods?Number(v.goodsValue):0),
+      freteSource:Number(x.frete)>0?(x.freteSource||'BI2'):(hasFreight?(v.source||'SSW 101'):(x.freteSource||'')),
+      valorSource:Number(x.valor)>0?(x.valorSource||'BI2'):(hasGoods?'SSW 101':''),
+      ctrcValor:v.ctrc||ck
+    }
   });
   console.log('PROGRAMAÇÃO FRETE NF->CTRC: '+JSON.stringify({consultadas:requests.length,encontradas:found,amostra:results.filter(x=>x.freight>0).slice(0,5)}));
   return out
@@ -3621,6 +3640,35 @@ async function buildSswCityBubbles(from='',to=''){
     }));
     console.log('MAPA CIDADES SSW fallback BI2 174: '+JSON.stringify({esperado:expectedOfficial,detalhado:official.length,bi174:financialRows.length}))
   }
+  // Monta a base financeira por CT-e/NF. Quando os relatórios BI2 não trazem
+  // frete/valor da mercadoria, consulta o cadastro do CT-e na opção 101 do SSW.
+  let cityFinancial=deliveries.map(base=>{
+    const ck=normCtrcLoose(base.ctrc),nk=normNf(base.nf);
+    const fr=i174.byCtrc.get(ck)||i174.byNf.get(nk)||{};
+    const f13=i13.byCtrc.get(ck)||i13.byNf.get(nk)||{};
+    const f16=i16.byCtrc.get(ck)||i16.byNf.get(nk)||{};
+    return{
+      ctrc:base.ctrc||'',nf:base.nf||'',
+      frete:
+        bi2Number(pickField(fr,'valor_frete','VALOR FRETE','FRETE','FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO','frete_liq','frete_total'))||
+        bi2Number(pickField(f16,'FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO','FRETE TOTAL','FRETE','frete_liq','frete_total'))||
+        bi2Number(pickField(f13,'FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO','FRETE TOTAL','FRETE','frete_liq','frete_total')),
+      valor:
+        bi2Number(pickField(fr,'valor_n_fiscal','VALOR N FISCAL','VAL MERC','ValorMercadoria','VALOR MERCADORIA','valor_mercadoria','valor_nf'))||
+        bi2Number(pickField(f16,'VAL MERC','VALOR MERCADORIA','VALOR N FISCAL','valor_mercadoria','valor_nf'))||
+        bi2Number(pickField(f13,'VAL MERC','VALOR MERCADORIA','VALOR N FISCAL','valor_mercadoria','valor_nf'))
+    }
+  });
+  if(cityFinancial.some(x=>!(x.frete>0)||!(x.valor>0))){
+    try{cityFinancial=await fillFreightByNf(cityFinancial)}
+    catch(e){console.log('MAPA CIDADES SSW opção 101 ERRO: '+String(e.message||e))}
+  }
+  const cityFinByCtrc=new Map(),cityFinByNf=new Map();
+  for(const x of cityFinancial){
+    const ck=normCtrcLoose(x.ctrc),nk=normNf(x.nf);
+    if(ck)cityFinByCtrc.set(ck,x);if(nk&&!cityFinByNf.has(nk))cityFinByNf.set(nk,x)
+  }
+
   const groups=new Map(),seen=new Set();
   for(const base of deliveries){
     const ck=normCtrcLoose(base.ctrc),nk=normNf(base.nf),id=ck?('C'+ck):(nk?('N'+nk):'');
@@ -3636,14 +3684,9 @@ async function buildSswCityBubbles(from='',to=''){
     if(!groups.has(k))groups.set(k,{cidade,uf,valor:0,entregas:0,retornos:0,frete:0,ceps:new Set()});
     const g=groups.get(k);
     g.entregas++;
-    const valorMercadoria=
-      bi2Number(pickField(fr,'valor_n_fiscal','VALOR N FISCAL','VAL MERC','ValorMercadoria','VALOR MERCADORIA'))||
-      bi2Number(pickField(f16,'VAL MERC','VALOR MERCADORIA','VALOR N FISCAL'))||
-      bi2Number(pickField(f13,'VAL MERC','VALOR MERCADORIA','VALOR N FISCAL'));
-    const valorFrete=
-      bi2Number(pickField(fr,'valor_frete','VALOR FRETE','FRETE','FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO'))||
-      bi2Number(pickField(f16,'FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO','FRETE TOTAL','FRETE'))||
-      bi2Number(pickField(f13,'FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO','FRETE TOTAL','FRETE'));
+    const directFin=cityFinByCtrc.get(ck)||cityFinByNf.get(nk)||{};
+    const valorMercadoria=Number(directFin.valor)||0;
+    const valorFrete=Number(directFin.frete)||0;
     g.valor+=valorMercadoria;
     g.frete+=valorFrete;
     const retText=normKey((sr.ocorrencia||'')+' '+(sr.ocorrenciaCodigo||'')+' '+pickField(fr,'ult_ocorr_descricao','ULT OCORR DESCRICAO','DESCRICAO ULTIMA OCORRENCIA'));
@@ -3684,7 +3727,7 @@ async function buildSswCityBubbles(from='',to=''){
     reconciled:true,
     cities
   };
-  console.log('MAPA CIDADES SSW: '+JSON.stringify({periodo:f+'..'+t,oficial:value.officialDeliveries,mapeadas:totalDeliveries,cidades:cities.length,frete:totalFreight,mercadoria:totalValue}));
+  console.log('MAPA CIDADES SSW: '+JSON.stringify({periodo:f+'..'+t,oficial:value.officialDeliveries,mapeadas:totalDeliveries,cidades:cities.length,frete:totalFreight,mercadoria:totalValue,financeiros:cityFinancial.filter(x=>x.frete>0||x.valor>0).length}));
   CITY_BUBBLE_CACHE.set(key,{at:Date.now(),value});
   return value
 }
@@ -4128,6 +4171,13 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
   return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/ssw/cidades-mapa'){try{
   if(!dashboardHas(authUser,'cidade_destino'))return dashboardDeny(res);
+  const force=u.searchParams.get('force')==='1';
+  if(force){
+    CITY_BUBBLE_CACHE.clear();
+    SSW_DRIVER_CACHE.clear();
+    SSW38_QUICK_CACHE={at:0,value:null};
+    SSW38_DETAIL_CACHE={at:0,value:null};
+  }
   const x=await buildSswCityBubbles(u.searchParams.get('from')||'',u.searchParams.get('to')||'');
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
