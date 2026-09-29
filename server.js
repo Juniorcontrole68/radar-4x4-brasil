@@ -312,13 +312,13 @@ async function fetchRomaneioCtrcs38(x,jar,apply,cookie){
     const m=pdfLines[i].match(/^\s*([A-Z]{3}\d{5,7}-\d)\s+(\d{4,12})\b/i);
     if(!m||m[1].toUpperCase()===rom)continue;
     let j=i+1;while(j<pdfLines.length&&!/^\s*[A-Z]{3}\d{5,7}-\d\s+\d{4,12}\b/i.test(pdfLines[j]))j++;
-    const blockLines=pdfLines.slice(i,Math.min(j,i+14)).map(v=>String(v||'').trim()).filter(Boolean);
+    const blockLines=pdfLines.slice(i,Math.min(j,i+40)).map(v=>String(v||'').trim()).filter(Boolean);
     const block=blockLines.join(' ');
     const cnpjs=[...new Set([...block.matchAll(/(?:\d{2}[.\s]?\d{3}[.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2}|\b\d{14}\b)/g)]
       .map(z=>String(z[0]).replace(/\D/g,'')).filter(z=>z.length===14))];
     const cepMatch=block.match(/\b(\d{5})[-.\s]?(\d{3})\b/);
     const streetRe=/\b(?:RUA|R\.|AVENIDA|AV\.|AV |RODOVIA|ROD\.|ESTRADA|EST\.|ALAMEDA|AL\.|TRAVESSA|TRAV\.|PRA[CÇ]A|PC\.)\b/i;
-    const addrCandidates=blockLines.filter(line=>streetRe.test(line)&&line.length>=8&&line.length<=180);
+    const addrCandidates=blockLines.filter(line=>(streetRe.test(line)||/ENDERE[CÇ]O\s*[:\-]/i.test(line))&&line.length>=8&&line.length<=220);
     const endereco=(addrCandidates.find(line=>!/REMETENTE|EMITENTE|ORIGEM/i.test(line))||addrCandidates[0]||'')
       .replace(/^.*?(ENDERE[CÇ]O\s*[:\-]?\s*)/i,'').trim();
     x.ctrcMeta.push({ctrc:m[1].toUpperCase(),nf:String(m[2]).replace(/^0+/,'' )||'0',cnpjs,cep:cepMatch?(cepMatch[1]+'-'+cepMatch[2]):'',endereco});
@@ -2064,13 +2064,45 @@ function parseTrackingPayload(text){
   }
   return{success,items}
 }
-function trackingFlags(items){
-  let saiu=false,entregue=false,last=null,delivery=null;
-  for(const it of items||[]){
-    const txt=(String(it.ocorrencia||'')+' '+String(it.descricao||'')).toUpperCase();
-    if(/SA[IÍ]DA PARA ENTREGA|\(0?85\)|\b085\b/.test(txt))saiu=true;
-    if(/MERCADORIA ENTREGUE|ENTREGA REALIZADA COM RESSALVA|\(0?1\)|\(0?37\)|\b001\b|\b037\b/.test(txt)){entregue=true;saiu=true;delivery=it}
-    last=it;
+function sswTrackingDateInfo(raw){
+  const s=String(raw||'').trim();
+  if(!s)return{epoch:NaN,date:''};
+  let d=null;
+  if(/[zZ]$|[+-]\d{2}:?\d{2}$/.test(s)){
+    d=new Date(s)
+  }else{
+    let m=s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+    if(m)d=new Date(m[1]+'-'+m[2]+'-'+m[3]+'T'+m[4]+':'+m[5]+':'+(m[6]||'00')+'-03:00');
+    if(!d){
+      m=s.match(/^(\d{2})\/(\d{2})\/(\d{2,4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+      if(m){
+        const y=m[3].length===2?String(2000+Number(m[3])):m[3];
+        d=new Date(y+'-'+m[2]+'-'+m[1]+'T'+(m[4]||'00')+':'+(m[5]||'00')+':'+(m[6]||'00')+'-03:00')
+      }
+    }
+  }
+  if(!d||!Number.isFinite(d.getTime()))return{epoch:NaN,date:''};
+  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(d);
+  const o=Object.fromEntries(parts.map(x=>[x.type,x.value]));
+  return{epoch:d.getTime(),date:o.year+'-'+o.month+'-'+o.day}
+}
+function trackingFlags(items,targetDate=''){
+  const events=(items||[]).map((it,index)=>{
+    const info=sswTrackingDateInfo(it.data_hora);
+    return{it,index,epoch:info.epoch,date:info.date,txt:(String(it.ocorrencia||'')+' '+String(it.descricao||'')).toUpperCase()}
+  });
+  let usable=events;
+  if(targetDate)usable=events.filter(e=>e.date===targetDate);
+  const ordered=usable.slice().sort((a,b)=>{
+    const ae=Number.isFinite(a.epoch)?a.epoch:-Infinity,be=Number.isFinite(b.epoch)?b.epoch:-Infinity;
+    return ae-be||a.index-b.index
+  });
+  let saiu=false,entregue=false,last=ordered.length?ordered[ordered.length-1].it:null,delivery=null;
+  for(const e of ordered){
+    if(/SA[IÍ]DA PARA ENTREGA|\(0?85\)|\b085\b/.test(e.txt))saiu=true;
+    if(/MERCADORIA ENTREGUE|ENTREGA REALIZADA COM RESSALVA|\(0?1\)|\(0?37\)|\b001\b|\b037\b/.test(e.txt)){
+      entregue=true;saiu=true;delivery=e.it
+    }
   }
   return{saiu,entregue,last,delivery}
 }
@@ -2083,14 +2115,14 @@ function postForm(url,params){
     q.setTimeout(15000,()=>q.destroy(new Error('Tempo esgotado no rastreamento SSW')));q.on('error',no);q.write(body);q.end()
   })
 }
-async function trackingDestQuery(cnpj,nf){
+async function trackingDestQuery(cnpj,nf,targetDate=''){
   const doc=String(cnpj||'').replace(/\D/g,''),n=String(nf||'').trim();
   if(doc.length!==14||!n)return{ok:false,items:[],saiu:false,entregue:false};
-  const key=doc+'|'+n,hit=SSW_TRACK_CACHE.get(key),ttl=hit?.value?.entregue?10*60*1000:25*1000;
+  const key=doc+'|'+n+'|'+String(targetDate||''),hit=SSW_TRACK_CACHE.get(key),ttl=hit?.value?.entregue?10*60*1000:25*1000;
   if(hit&&Date.now()-hit.at<ttl)return hit.value;
   const body=new URLSearchParams();body.append('cnpjdest',doc);body.append('cnpj',doc);body.append('NR',n);body.append('nro_nf',n);body.append('urlori','https://ssw.inf.br/ajuda/rastreamentodestnf.html');
   try{
-    const raw=await postForm('https://ssw.inf.br/api/trackingdest',body),p=parseTrackingPayload(raw),f=trackingFlags(p.items);
+    const raw=await postForm('https://ssw.inf.br/api/trackingdest',body),p=parseTrackingPayload(raw),f=trackingFlags(p.items,targetDate);
     const value={ok:p.success!==false,items:p.items,saiu:f.saiu,entregue:f.entregue,last:f.last||null,delivery:f.delivery||null};
     SSW_TRACK_CACHE.set(key,{at:Date.now(),value});return value
   }catch(e){
@@ -2278,14 +2310,14 @@ async function buildSswMotoristas(from='',to=''){
     if(r.__pdf&&Array.isArray(r.__cnpjs)&&r.__cnpjs.length){
       let best=null,bestDoc='';
       for(const doc of r.__cnpjs){
-        const tr=await trackingDestQuery(doc,nf);
+        const tr=await trackingDestQuery(doc,nf,from===to?to:'');
         if(!best||((tr.items||[]).length>(best.items||[]).length)){best=tr;bestDoc=doc}
         if((tr.items||[]).length){r.dest_cnpj=doc;return{r,tr}}
       }
       if(bestDoc)r.dest_cnpj=bestDoc;
       return{r,tr:best||{ok:false,items:[],saiu:false,entregue:false}}
     }
-    const tr=await trackingDestQuery(r.dest_cnpj||r['CNPJ DESTINATARIO'],nf);
+    const tr=await trackingDestQuery(r.dest_cnpj||r['CNPJ DESTINATARIO'],nf,from===to?to:'');
     return{r,tr}
   });
 
@@ -2327,7 +2359,7 @@ async function buildSswMotoristas(from='',to=''){
     const k=(r.ocorrenciaCodigo?String(r.ocorrenciaCodigo)+' | ':'')+(r.ocorrencia||'(sem ocorrência)');
     trackDiag[k]=(trackDiag[k]||0)+1;
   }
-  console.log('TRACKING ATUAL DETALHES: '+JSON.stringify({consultados:rows.length,ok:trackingOk,status:trackDiag,amostra:rows.filter(x=>x.trackingOk).slice(0,40).map(x=>({ctrc:x.ctrc,motorista:x.motorista,entregue:x.entregue,saida:x.saida,codigo:x.ocorrenciaCodigo,ocorrencia:x.ocorrencia,data:x.dataOcorrencia}))}));
+  console.log('TRACKING ATUAL DETALHES: '+JSON.stringify({consultados:rows.length,ok:trackingOk,status:trackDiag,amostra:rows.filter(x=>x.trackingOk).slice(0,40).map(x=>({ctrc:x.ctrc,motorista:x.motorista,entregue:x.entregue,saida:x.saida,codigo:x.ocorrenciaCodigo,ocorrencia:x.ocorrencia,data:x.dataOcorrencia,baixa:x.baixaDataHora}))}));
   const saiuRows=rows.filter(x=>x.saida||x.entregue);
   const groups=new Map();
   saiuRows.forEach(r=>{
