@@ -1909,6 +1909,7 @@ let TRACKING_ANALYSIS_ROWS=[];
 let TRACKING_AUTO_SECONDS=Math.max(5,Math.min(300,Number(localStorage.getItem('construlog_tracking_refresh_seconds')||30)));
 let TRACKING_NEXT_REFRESH=0;
 const TRACKING_COLORS=['#2563eb','#dc2626','#16a34a','#9333ea','#ea580c','#0891b2','#ca8a04','#db2777','#4f46e5','#059669'];
+const TRACKING_ACTUAL_COLORS=['#f97316','#06b6d4','#eab308','#22c55e','#ec4899','#8b5cf6','#14b8a6','#ef4444','#84cc16','#6366f1'];
 const TRACKING_DEVIATION_KM=3;
 function trackingNorm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim()}
 function trackingAgeLabel(sec){
@@ -2350,10 +2351,10 @@ async function trackingRefreshLogicalAnalysis(liveRows,date){
     const analysis=[];
     for(const row of active){
       try{
+        const history=await trackingHistory(row.session_id);
         const plan=await trackingBuildLogicalPlan(row,date);
         if(!plan)continue;
         TRACKING_LOGICAL_ROUTES.set(trackingDriverKey(row.driver_name,row.vehicle_plate),plan);
-        const history=await trackingHistory(row.session_id);
         const rows=trackingAnalyzePlan(row,plan,history);
         plan.analysisRows=rows;
         analysis.push(...rows)
@@ -2384,21 +2385,35 @@ function renderTrackingMap(rows){
   if(TRACKING_LAYER)TRACKING_LAYER.remove();
   TRACKING_LAYER=L.layerGroup().addTo(TRACKING_MAP);
   const bounds=[];
-  const activeRows=(rows||[]).filter(row=>{
-    if(!row?.session_id)return false;
-    if(row.map_active===false||row.map_active==='false')return false;
-    const deviceAge=Number(row.device_age_seconds);
-    return !Number.isFinite(deviceAge)||deviceAge<=300
-  });
+  const activeRows=(rows||[]).filter(row=>!!row?.session_id);
+  const legend=$('#trackingLiveLegend');
+  if(legend){
+    legend.innerHTML=activeRows.map((row,i)=>{
+      const planned=TRACKING_COLORS[i%TRACKING_COLORS.length],actual=TRACKING_ACTUAL_COLORS[i%TRACKING_ACTUAL_COLORS.length];
+      return '<span><b>'+safe(trackingFirstName(row.driver_name))+'</b></span>'+
+        '<span><i class="tracking-history-dot" style="background:'+planned+'"></i>Planejada</span>'+
+        '<span><i class="tracking-history-dot" style="background:'+actual+'"></i>Percurso real</span>'
+    }).join('<span class="dotSep">•</span>')
+  }
+  let baseMarked=false;
   activeRows.forEach((row,i)=>{
-    const color=TRACKING_COLORS[i%TRACKING_COLORS.length],route=trackingFindRoute(row.driver_name,row.vehicle_plate),status=trackingStatus(row);
-    if(route?.geometry?.coordinates?.length){
-      const coords=route.geometry.coordinates.map(x=>[Number(x[1]),Number(x[0])]).filter(x=>Number.isFinite(x[0])&&Number.isFinite(x[1]));
+    const plannedColor=TRACKING_COLORS[i%TRACKING_COLORS.length],actualColor=TRACKING_ACTUAL_COLORS[i%TRACKING_ACTUAL_COLORS.length];
+    const route=trackingFindRoute(row.driver_name,row.vehicle_plate),status=trackingStatus(row);
+    const plannedGeometry=route?.outboundGeometry||route?.geometry;
+    if(plannedGeometry?.coordinates?.length){
+      const coords=plannedGeometry.coordinates.map(x=>[Number(x[1]),Number(x[0])]).filter(x=>Number.isFinite(x[0])&&Number.isFinite(x[1]));
       if(coords.length){
-        L.polyline(coords,{color,weight:route.logical?5:4,opacity:route.logical?.72:.38,dashArray:route.logical?null:'7 7'})
+        L.polyline(coords,{color:'#ffffff',weight:8,opacity:.92}).addTo(TRACKING_LAYER);
+        L.polyline(coords,{color:plannedColor,weight:4,opacity:.82,dashArray:'10 7'})
           .addTo(TRACKING_LAYER)
-          .bindTooltip((route.logical?'Percurso lógico':'Rota')+' • '+safe(row.driver_name));
+          .bindTooltip('Rota planejada • '+safe(row.driver_name));
         coords.forEach(x=>bounds.push(x))
+      }
+      const base=route?.points?.[0];
+      if(!baseMarked&&Number.isFinite(Number(base?.lat))&&Number.isFinite(Number(base?.lon))){
+        const baseIcon=L.divIcon({className:'',html:'<div style="min-width:34px;height:30px;padding:0 7px;border-radius:7px;background:#0f172a;color:#fff;border:2px solid #fff;box-shadow:0 2px 7px #0005;display:grid;place-items:center;font-size:10px;font-weight:900">BASE</div>',iconSize:[38,34],iconAnchor:[19,17]});
+        L.marker([Number(base.lat),Number(base.lon)],{icon:baseIcon}).addTo(TRACKING_LAYER).bindPopup('<b>Base CONSTRULOG</b><br>Americana/SP');
+        bounds.push([Number(base.lat),Number(base.lon)]);baseMarked=true
       }
       if(route.logical&&Array.isArray(route.optimizedOrder)){
         const points=route.points||[];
@@ -2406,7 +2421,7 @@ function renderTrackingMap(rows){
           const s=points[pointIndex];if(!s)return;
           const lat=Number(s.lat),lon=Number(s.lon);if(!Number.isFinite(lat)||!Number.isFinite(lon))return;
           const analysis=(route.analysisRows||[]).find(x=>x.pointIndex===pointIndex);
-          const markerHtml='<div style="min-width:26px;height:26px;padding:0 5px;border-radius:13px;background:#fff;border:2px solid '+color+';box-shadow:0 1px 5px #0004;display:grid;place-items:center;font-size:11px;font-weight:900;color:#0f172a">'+(pos+1)+'</div>';
+          const markerHtml='<div style="min-width:26px;height:26px;padding:0 5px;border-radius:13px;background:#fff;border:2px solid '+plannedColor+';box-shadow:0 1px 5px #0004;display:grid;place-items:center;font-size:11px;font-weight:900;color:#0f172a">'+(pos+1)+'</div>';
           const stopIcon=L.divIcon({className:'',html:markerHtml,iconSize:[30,30],iconAnchor:[15,15]});
           const popup='<b>'+(pos+1)+'º • '+safe(s.destinatario||s.label||'Cliente')+'</b><br>'+
             safe(s.cidade||'')+
@@ -2419,12 +2434,23 @@ function renderTrackingMap(rows){
         })
       }
     }
+
+    const history=TRACKING_HISTORY_CACHE.get(String(row.session_id||''))?.rows||[];
+    const realCoords=history.map(p=>[Number(p.latitude),Number(p.longitude)]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1]));
+    if(realCoords.length>1){
+      L.polyline(realCoords,{color:'#ffffff',weight:9,opacity:.95}).addTo(TRACKING_LAYER);
+      L.polyline(realCoords,{color:actualColor,weight:5,opacity:.96})
+        .addTo(TRACKING_LAYER)
+        .bindTooltip('Percurso real • '+safe(row.driver_name));
+      realCoords.forEach(x=>bounds.push(x))
+    }
+
     const lat=Number(row.latitude),lon=Number(row.longitude);
     if(Number.isFinite(lat)&&Number.isFinite(lon)){
       const firstName=trackingFirstName(row.driver_name);
       const iconHtml='<div style="width:100px;height:54px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;pointer-events:none">'+
         '<div style="max-width:96px;padding:2px 6px;margin-bottom:2px;border-radius:7px;background:rgba(255,255,255,.96);border:1px solid #cbd5e1;box-shadow:0 1px 4px #0003;color:#0f172a;font-size:11px;font-weight:800;line-height:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+safe(firstName)+'</div>'+
-        '<div style="width:30px;height:30px;border-radius:50%;background:'+color+';border:3px solid #fff;box-shadow:0 2px 7px #0006;display:grid;place-items:center;color:#fff;font-size:15px">🚚</div>'+
+        '<div style="width:30px;height:30px;border-radius:50%;background:'+actualColor+';border:3px solid #fff;box-shadow:0 2px 7px #0006;display:grid;place-items:center;color:#fff;font-size:15px">🚚</div>'+
         '</div>';
       const icon=L.divIcon({className:'',html:iconHtml,iconSize:[100,54],iconAnchor:[50,49]});
       L.marker([lat,lon],{icon}).addTo(TRACKING_LAYER).bindPopup('<b>'+safe(row.driver_name)+'</b><br>'+safe(row.vehicle_plate||'')+'<br>'+safe(status.label)+'<br>Última posição: '+safe(trackingAgeLabel(row.age_seconds)));
