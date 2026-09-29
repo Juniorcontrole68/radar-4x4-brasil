@@ -2473,8 +2473,10 @@ function trackingRenderAnalysis(){
     trackingRenderVisitedReport();
     return
   }
-  const visited=rows.filter(x=>x.arrivalAt).length,withBaixa=rows.filter(x=>x.baixaAt).length,outSeq=rows.filter(x=>x.arrivalAt&&x.sequenceKey==='bad').length;
-  if(summary)summary.textContent=visited+' chegada(s) GPS • '+withBaixa+' baixa(s) SSW • '+outSeq+' fora da sequência';
+  const visited=rows.filter(x=>x.visited||x.arrivalAt||x.baixaAt||x.delivered).length,
+    withGps=rows.filter(x=>x.arrivalAt).length,withBaixa=rows.filter(x=>x.baixaAt).length,
+    outSeq=rows.filter(x=>x.visited&&x.sequenceKey==='bad').length;
+  if(summary)summary.textContent=visited+' visitada(s) • '+withGps+' confirmada(s) por GPS • '+withBaixa+' baixa(s) SSW • '+outSeq+' fora da sequência';
   if(info)info.textContent='Chegada considerada quando o GPS entra aproximadamente em um raio de 250–600 m do cliente, ajustado pela precisão do celular. Coordenadas SSW têm prioridade; endereço é usado apenas como fallback.';
   const body=rows.map(x=>{
     const diff=x.diffMin===null?'—':(x.diffMin>=0?'+':'')+x.diffMin+' min';
