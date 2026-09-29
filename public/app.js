@@ -2248,7 +2248,8 @@ function renderTrackingMap(rows){
   if(TRACKING_LAYER)TRACKING_LAYER.remove();
   TRACKING_LAYER=L.layerGroup().addTo(TRACKING_MAP);
   const bounds=[];
-  (rows||[]).forEach((row,i)=>{
+  const activeRows=(rows||[]).filter(row=>!!row.session_id);
+  activeRows.forEach((row,i)=>{
     const color=TRACKING_COLORS[i%TRACKING_COLORS.length],route=trackingFindRoute(row.driver_name,row.vehicle_plate),status=trackingStatus(row);
     if(route?.geometry?.coordinates?.length){
       const coords=route.geometry.coordinates.map(x=>[Number(x[1]),Number(x[0])]).filter(x=>Number.isFinite(x[0])&&Number.isFinite(x[1]));
