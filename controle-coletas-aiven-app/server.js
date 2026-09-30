@@ -1498,6 +1498,28 @@ async function start() {
         }
       }
 
+      const carregamentoColetaDevMatch = u.pathname.match(/^\/api\/painel\/carregamentos-finais\/(\d+)\/coleta-devolucao$/);
+      if (req.method === 'PATCH' && carregamentoColetaDevMatch) {
+        try {
+          const body=await readJsonBodyLimited(req, 3 * 1024 * 1024);
+          const conferente=String(body.conferente_coleta_devolucao||'').trim();
+          const captured=new Date(body.capturada_em||Date.now());
+          if(!conferente)return sendJson(res,400,{ok:false,error:'Informe o nome do conferente.'});
+          if(!Number.isFinite(captured.getTime()))return sendJson(res,400,{ok:false,error:'Data/hora da foto inválida.'});
+          const photo=parseImageDataUrl(body.foto);
+          const current=await pool.query('SELECT tipo FROM carregamentos_finais WHERE id=$1 LIMIT 1',[carregamentoColetaDevMatch[1]]);
+          if(!current.rowCount)return sendJson(res,404,{ok:false,error:'Registro de carregamento não encontrado.'});
+          if(String(current.rows[0].tipo||'').toLowerCase()!=='carregamento')return sendJson(res,400,{ok:false,error:'Este registro não é um carregamento.'});
+          const r=await pool.query(
+            'UPDATE carregamentos_finais SET conferente_coleta_devolucao=$1,foto4=$2,foto4_mime=$3,foto4_bytes=$4 WHERE id=$5 RETURNING id::text AS id,conferente_coleta_devolucao,foto4_bytes',
+            [conferente,photo.buffer,photo.mime,photo.buffer.length,carregamentoColetaDevMatch[1]]
+          );
+          return sendJson(res,200,{ok:true,...r.rows[0],capturada_em:captured.toISOString()});
+        } catch(e) {
+          return sendJson(res,e.status||500,{ok:false,error:e.message||'Não foi possível atualizar coleta e devolução.'});
+        }
+      }
+
       if (req.method === 'POST' && u.pathname === '/api/painel/carregamentos-finais') {
         try {
           const body = await readJsonBodyLimited(req, 14 * 1024 * 1024);
