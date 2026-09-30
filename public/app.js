@@ -3208,7 +3208,7 @@ async function refreshTrackingRequests(){
         ?'<span class="tracking-status warn">Aguardando</span>'
         :(x.status==='approved'?'<span class="tracking-status ok">Aprovado</span>':'<span class="tracking-status bad">Recusado</span>');
       const actions=x.status==='pending'
-        ?'<button class="primary" type="button" onclick="trackingDecideRequest(\''+safe(x.id)+'\',\'approve\')">Aprovar</button> <button class="secondary" type="button" onclick="trackingDecideRequest(\''+safe(x.id)+'\',\'reject\')">Recusar</button>'
+        ?'<button class="primary tracking-request-action" type="button" data-request-id="'+safe(x.id)+'" data-action="approve">Aprovar</button> <button class="secondary tracking-request-action" type="button" data-request-id="'+safe(x.id)+'" data-action="reject">Recusar</button>'
         :'—';
       return '<tr><td><b>'+safe(x.driver_name||'Motorista')+'</b></td><td>'+safe(x.vehicle_plate||'—')+'</td><td>'+safe(x.device_name||'Android')+'</td><td>'+safe(when)+'</td><td>'+status+'</td><td>'+actions+'</td></tr>'
     }).join(''):'<tr><td colspan="6" class="muted">Nenhuma solicitação encontrada.</td></tr>';
@@ -3218,17 +3218,23 @@ async function refreshTrackingRequests(){
     tableEl.innerHTML='<tbody><tr><td class="muted">Não foi possível carregar as solicitações.</td></tr></tbody>'
   }
 }
-async function trackingDecideRequest(id,action){
+async function trackingDecideRequest(id,action,button=null){
   if(!id||!['approve','reject'].includes(action))return;
-  const verb=action==='approve'?'aprovar':'recusar';
+  const verb=action==='approve'?'aprovar':'recusar',info=$('#trackingRequestsInfo');
+  if(button){button.disabled=true;button.textContent=action==='approve'?'Aprovando…':'Recusando…'}
+  if(info)info.textContent=(action==='approve'?'Aprovando':'Recusando')+' aparelho…';
   try{
-    const r=await fetch('/api/tracking/requests/'+encodeURIComponent(id)+'/'+action,{method:'POST'});
+    const r=await fetch('/api/tracking/requests/'+encodeURIComponent(id)+'/'+action,{method:'POST',headers:{'Accept':'application/json'},cache:'no-store'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||('Falha ao '+verb+' aparelho.'));
+    if(info)info.textContent=action==='approve'?'Aparelho aprovado. O celular será liberado automaticamente.':'Solicitação recusada.';
     await refreshTrackingRequests();
     TRACKING_NEXT_REFRESH=0;
     refreshTracking().catch(()=>{})
-  }catch(e){alert('Não foi possível '+verb+': '+e.message)}
+  }catch(e){
+    if(info)info.textContent='Erro ao '+verb+' aparelho: '+e.message;
+    if(button){button.disabled=false;button.textContent=action==='approve'?'Aprovar':'Recusar'}
+  }
 }
 window.trackingDecideRequest=trackingDecideRequest;
 
@@ -3255,6 +3261,11 @@ function setupTracking(){
   if($('#trackingRouteCompareDriver'))$('#trackingRouteCompareDriver').onchange=trackingRenderAnalysis;
   if($('#trackingGenerateCode'))$('#trackingGenerateCode').onclick=generateTrackingCode;
   if($('#trackingRequestsRefresh'))$('#trackingRequestsRefresh').onclick=refreshTrackingRequests;
+  const reqTable=$('#trackingRequestsTable');
+  if(reqTable)reqTable.onclick=e=>{
+    const b=e.target?.closest?.('.tracking-request-action');if(!b)return;
+    trackingDecideRequest(String(b.dataset.requestId||''),String(b.dataset.action||''),b)
+  };
   refreshTrackingRequests().catch(()=>{});
   if($('#trackingUseTest'))$('#trackingUseTest').onclick=trackingUseTest;
   if($('#trackingRefresh'))$('#trackingRefresh').onclick=()=>{TRACKING_NEXT_REFRESH=0;refreshTracking()};
