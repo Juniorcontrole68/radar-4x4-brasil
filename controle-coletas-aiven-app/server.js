@@ -478,6 +478,24 @@ async function start() {
     )
   `);
   await pool.query('CREATE INDEX IF NOT EXISTS idx_tracking_sessions_device ON driver_tracking_sessions (device_id, started_at DESC)');
+  // Dispositivos recém-aprovados já entram com uma sessão ativa, mesmo se o app
+  // ainda não tiver chamado /session/start. Isso evita sumir do mapa após a aprovação.
+  await pool.query(`
+    INSERT INTO driver_tracking_sessions(device_id,status)
+    SELECT d.id,'active'
+    FROM driver_tracking_devices d
+    JOIN (
+      SELECT DISTINCT ON (lower(trim(driver_name)), upper(trim(COALESCE(vehicle_plate,''))))
+             id
+      FROM driver_tracking_devices
+      WHERE active=TRUE
+        AND enrolled_at >= NOW()-INTERVAL '1 day'
+      ORDER BY lower(trim(driver_name)), upper(trim(COALESCE(vehicle_plate,''))), enrolled_at DESC, id DESC
+    ) latest ON latest.id=d.id
+    WHERE NOT EXISTS (
+      SELECT 1 FROM driver_tracking_sessions s WHERE s.device_id=d.id
+    )
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS driver_tracking_points (
       id BIGSERIAL PRIMARY KEY,
@@ -1014,12 +1032,20 @@ async function start() {
           const device=await trackingDeviceFromReq(req);
           const body=await readJsonBodyLimited(req,16*1024);
           const sessionId=String(body.session_id||'').trim();
+          let effectiveSessionId=sessionId;
           if(sessionId){
-            const sess=await pool.query("SELECT 1 FROM driver_tracking_sessions WHERE id::text=$1 AND device_id=$2 AND status='active' LIMIT 1",[sessionId,device.id]);
-            if(!sess.rowCount)return sendJson(res,409,{ok:false,error:'Sessão de rota não está ativa.'});
+            const sess=await pool.query("SELECT id::text AS id FROM driver_tracking_sessions WHERE id::text=$1 AND device_id=$2 AND status='active' LIMIT 1",[sessionId,device.id]);
+            if(!sess.rowCount){
+              const active=await pool.query("SELECT id::text AS id FROM driver_tracking_sessions WHERE device_id=$1 AND status='active' ORDER BY started_at DESC LIMIT 1",[device.id]);
+              effectiveSessionId=active.rows[0]?.id||'';
+              if(!effectiveSessionId)return sendJson(res,409,{ok:false,error:'Sessão de rota não está ativa.'});
+            }
+          }else{
+            const active=await pool.query("SELECT id::text AS id FROM driver_tracking_sessions WHERE device_id=$1 AND status='active' ORDER BY started_at DESC LIMIT 1",[device.id]);
+            effectiveSessionId=active.rows[0]?.id||'';
           }
           await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
-          return sendJson(res,200,{ok:true,server_time:new Date().toISOString()})
+          return sendJson(res,200,{ok:true,session_id:effectiveSessionId||null,server_time:new Date().toISOString()})
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao confirmar comunicação do dispositivo.'})}
       }
 
@@ -1029,17 +1055,24 @@ async function start() {
           const body=await readJsonBodyLimited(req,48*1024);
           const sessionId=String(body.session_id||'').trim(),lat=Number(body.latitude),lon=Number(body.longitude);
           const captured=new Date(body.captured_at||Date.now());
-          if(!sessionId)return sendJson(res,400,{ok:false,error:'Sessão não informada.'});
           if(!Number.isFinite(lat)||lat<-90||lat>90||!Number.isFinite(lon)||lon<-180||lon>180)return sendJson(res,400,{ok:false,error:'Coordenadas inválidas.'});
           if(!Number.isFinite(captured.getTime()))return sendJson(res,400,{ok:false,error:'Data/hora inválida.'});
-          const sess=await pool.query("SELECT id FROM driver_tracking_sessions WHERE id::text=$1 AND device_id=$2 AND status='active' LIMIT 1",[sessionId,device.id]);
-          if(!sess.rowCount)return sendJson(res,409,{ok:false,error:'Sessão de rota não está ativa.'});
+          let effectiveSessionId=sessionId;
+          if(sessionId){
+            const sess=await pool.query("SELECT id::text AS id FROM driver_tracking_sessions WHERE id::text=$1 AND device_id=$2 AND status='active' LIMIT 1",[sessionId,device.id]);
+            if(!sess.rowCount)effectiveSessionId='';
+          }
+          if(!effectiveSessionId){
+            const active=await pool.query("SELECT id::text AS id FROM driver_tracking_sessions WHERE device_id=$1 AND status='active' ORDER BY started_at DESC LIMIT 1",[device.id]);
+            effectiveSessionId=active.rows[0]?.id||'';
+          }
+          if(!effectiveSessionId)return sendJson(res,409,{ok:false,error:'Sessão de rota não está ativa.'});
           await pool.query(
             "INSERT INTO driver_tracking_points(session_id,device_id,latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-            [sessionId,device.id,lat,lon,Number.isFinite(Number(body.accuracy_m))?Number(body.accuracy_m):null,Number.isFinite(Number(body.speed_mps))?Number(body.speed_mps):null,Number.isFinite(Number(body.bearing_deg))?Number(body.bearing_deg):null,Number.isFinite(Number(body.battery_pct))?Number(body.battery_pct):null,captured.toISOString()]
+            [effectiveSessionId,device.id,lat,lon,Number.isFinite(Number(body.accuracy_m))?Number(body.accuracy_m):null,Number.isFinite(Number(body.speed_mps))?Number(body.speed_mps):null,Number.isFinite(Number(body.bearing_deg))?Number(body.bearing_deg):null,Number.isFinite(Number(body.battery_pct))?Number(body.battery_pct):null,captured.toISOString()]
           );
           await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
-          return sendJson(res,200,{ok:true})
+          return sendJson(res,200,{ok:true,session_id:effectiveSessionId})
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao registrar posição.'})}
       }
 
