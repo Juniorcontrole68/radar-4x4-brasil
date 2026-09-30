@@ -2515,39 +2515,41 @@ async function buildSswMotoristas(from='',to=''){
       }
     }
 
-    // Progresso oficial da opção 38:
-    // processados = total - Falta Ocorr.; destes, somente ocorrências explícitas ficam vermelhas.
-    // O restante é entrega realizada.
+    // "Falta Ocorr." da opção 38 NÃO confirma entrega.
+    // Verde só pode vir de baixa de entrega explicitamente confirmada no SSW.
+    // Ocorrência explícita fica vermelha; todo o restante permanece pendente/amarelo.
     for(const g of gm.values()){
-      const explicitOcc=Math.max(0,Math.min(g.explicitOccurrences,g.total-g.pendingOfficial));
-      const deliveredBy38=Math.max(0,g.total-g.pendingOfficial-explicitOcc);
-      g.entregues=Math.max(g.entregues,deliveredBy38);
-      g.explicitOccurrences=explicitOcc;
+      g.entregues=Math.max(0,Math.min(g.total,g.entregues));
+      g.explicitOccurrences=Math.max(0,Math.min(g.explicitOccurrences,g.total-g.entregues));
     }
 
-    console.log('SSW38 PROGRESSO OFICIAL: '+JSON.stringify([...gm.values()].map(g=>({
+    console.log('SSW38 PROGRESSO CONFIRMADO: '+JSON.stringify([...gm.values()].map(g=>({
       motorista:g.motorista,total:g.total,faltaOcorr:g.pendingOfficial,
-      entreguesCalculadas:g.entregues,ocorrenciasExplicitas:g.explicitOccurrences
+      entreguesConfirmadas:g.entregues,ocorrenciasExplicitas:g.explicitOccurrences
     }))));
 
-    // Uma entrega confirmada não pode voltar a pendente numa leitura seguinte.
-    // Mantemos o maior total confirmado do motorista no dia, protegendo contra
-    // oscilações temporárias/rate limit do endpoint de rastreamento.
+    // Mantém somente baixas realmente confirmadas. Se a leitura atual completa não
+    // confirma entrega alguma para o motorista, não preserva contagem inferida anterior.
     for(const g of gm.values()){
       const persistKey=to+'|'+normDriverKey(g.motorista);
-      const prev=SSW_DRIVER_CONFIRMED_DAY.get(persistKey)||0;
-      const now=Math.min(g.total,Math.max(prev,g.entregues));
+      const dk=normDriverKey(g.motorista),pk=normPlate(g.veiculo);
+      const confirmedNow=Math.max(
+        g.entregues,
+        directDriverStats.get(dk)?.entregues?.size||0,
+        confirmedByDriver.get(dk)?.size||0,
+        confirmedByPlate.get(pk)?.size||0
+      );
+      const now=Math.min(g.total,Math.max(0,confirmedNow));
       SSW_DRIVER_CONFIRMED_DAY.set(persistKey,now);
       g.entregues=now;
     }
 
     motoristas38=[...gm.values()].map(g=>{
-      // Vermelho somente para ocorrência explicitamente identificada.
-      // A coluna "Falta Ocorr." orienta o amarelo; uma entrega confirmada mais recente
-      // pode reduzir esse pendente caso o tracking esteja à frente da tela 38.
-      const ocorrencias=Math.max(0,Math.min(g.explicitOccurrences,g.total-g.entregues));
-      const pendentes=Math.max(0,Math.min(g.pendingOfficial,g.total-g.entregues-ocorrencias));
-      const entregues=Math.max(0,g.total-pendentes-ocorrencias);
+      // Verde = baixa de entrega confirmada. Vermelho = ocorrência explícita.
+      // Sem uma dessas confirmações, o CT-e permanece amarelo/pendente.
+      const entregues=Math.max(0,Math.min(g.total,g.entregues));
+      const ocorrencias=Math.max(0,Math.min(g.explicitOccurrences,g.total-entregues));
+      const pendentes=Math.max(0,g.total-entregues-ocorrencias);
       return{...g,entregues,pendentes,ocorrencias,baixadas:entregues+ocorrencias,taxa:g.total?(entregues+ocorrencias)/g.total*100:0};
     }).sort((a,b)=>b.total-a.total||a.motorista.localeCompare(b.motorista,'pt-BR'));
 
