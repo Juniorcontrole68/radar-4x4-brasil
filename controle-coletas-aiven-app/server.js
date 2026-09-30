@@ -464,6 +464,10 @@ async function start() {
     )
   `);
   await pool.query('CREATE INDEX IF NOT EXISTS idx_tracking_requests_status ON driver_tracking_requests (status, created_at DESC)');
+  await pool.query("ALTER TABLE driver_tracking_requests ADD COLUMN IF NOT EXISTS issued_token TEXT");
+  await pool.query("ALTER TABLE driver_tracking_requests ADD COLUMN IF NOT EXISTS approved_device_id BIGINT");
+  await pool.query("ALTER TABLE driver_tracking_requests ADD COLUMN IF NOT EXISTS decided_at TIMESTAMPTZ");
+  await pool.query("ALTER TABLE driver_tracking_requests ADD COLUMN IF NOT EXISTS decided_by BIGINT");
   await pool.query(`
     CREATE TABLE IF NOT EXISTS driver_tracking_sessions (
       id BIGSERIAL PRIMARY KEY,
@@ -935,6 +939,7 @@ async function start() {
             "INSERT INTO driver_tracking_requests(request_token_hash,driver_name,vehicle_plate,device_name,status) VALUES($1,$2,$3,$4,'pending')",
             [dashboardTokenHash(requestToken),driver,plate,deviceName]
           );
+          console.log('TRACKING APROVACAO solicitada: '+JSON.stringify({driver,plate,deviceName}));
           return sendJson(res,201,{ok:true,status:'pending',request_token:requestToken,message:'Solicitação enviada. Aguarde a aprovação da central.'});
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao solicitar ativação.'})}
       }
@@ -1071,7 +1076,8 @@ async function start() {
               [token,dev.rows[0].id,user.id,id]
             );
             await client.query('COMMIT');
-            return sendJson(res,200,{ok:true,status:'approved',driver_name:row.driver_name,vehicle_plate:row.vehicle_plate||''});
+            console.log('TRACKING APROVACAO aprovada: '+JSON.stringify({id,driver:row.driver_name,plate:row.vehicle_plate||'',deviceId:dev.rows[0].id}));
+            return sendJson(res,200,{ok:true,status:'approved',driver_name:row.driver_name,vehicle_plate:row.vehicle_plate||'',device_id:dev.rows[0].id});
           }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao aprovar dispositivo.'})}
       }
