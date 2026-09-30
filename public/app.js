@@ -1419,7 +1419,12 @@ function renderLoadingRecords(rows){
     else{
       box.innerHTML=rows.map(r=>{
         const dt=loadingDateTime(r.capturada_em),tipo=cargoTypeLabel(r.tipo);
-        return '<div class="load-record"><a class="load-photo-link" data-loading-photo-id="'+safe(r.id)+'" title="Abrir foto"><img class="load-photo-pending" data-loading-photo-id="'+safe(r.id)+'" alt="Carregando foto do registro"></a><div><b>'+safe(tipo)+' • '+safe(r.motorista||'Motorista não informado')+'</b><div class="meta">Conferente: '+safe(r.conferente||'—')+'<br>Quantidade: <b>'+nf(Number(r.quantidade_entregas||0))+'</b><br>Registro: '+safe(dt)+'</div></div></div>'
+        const extras=[];
+        if(Number(r.foto2_bytes||0)>0)extras.push('<a href="/api/carregamentos-finais/'+encodeURIComponent(r.id)+'/foto/2" target="_blank" class="secondary" style="padding:4px 7px;font-size:10px">Foto 2</a>');
+        if(Number(r.foto3_bytes||0)>0)extras.push('<a href="/api/carregamentos-finais/'+encodeURIComponent(r.id)+'/foto/3" target="_blank" class="secondary" style="padding:4px 7px;font-size:10px">'+(String(r.tipo||'').toLowerCase()==='descarga'?'Coletas e Devoluções':'Foto 3')+'</a>');
+        if(Number(r.foto4_bytes||0)>0)extras.push('<a href="/api/carregamentos-finais/'+encodeURIComponent(r.id)+'/foto/4" target="_blank" class="secondary" style="padding:4px 7px;font-size:10px">'+(String(r.tipo||'').toLowerCase()==='descarga'?'Lacre':'Coleta e Devolução')+'</a>');
+        const returnChecker=(String(r.tipo||'').toLowerCase()==='carregamento'&&r.conferente_coleta_devolucao)?'<br>Conferente coleta/devolução: <b>'+safe(r.conferente_coleta_devolucao)+'</b>':'';
+        return '<div class="load-record"><a class="load-photo-link" data-loading-photo-id="'+safe(r.id)+'" title="Abrir foto"><img class="load-photo-pending" data-loading-photo-id="'+safe(r.id)+'" alt="Carregando foto do registro"></a><div><b>'+safe(tipo)+' • '+safe(r.motorista||'Motorista não informado')+'</b><div class="meta">Conferente: '+safe(r.conferente||'—')+returnChecker+'<br>Quantidade: <b>'+nf(Number(r.quantidade_entregas||0))+'</b><br>Registro: '+safe(dt)+'</div><div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap">'+extras.join(' ')+'</div></div></div>'
       }).join('');
       hydrateLoadingPhotos().catch(()=>{})
     }
@@ -1508,6 +1513,10 @@ function setupCargoOperationForm(cfg){
     if(msg){msg.style.color='#475569';msg.textContent='Salvando '+cfg.label.toLowerCase()+'…'}
     try{
       const payload={tipo:cfg.tipo,conferente,motorista,quantidade_entregas:quantidade,capturada_em:state.captured||new Date().toISOString(),foto:state.photos[0]};
+      if(cfg.returnChecker){
+        const rc=$(cfg.returnChecker)?.value?.trim()||'';
+        if(rc)payload.conferente_coleta_devolucao=rc
+      }
       if(state.photos[1])payload.foto2=state.photos[1];
       if(state.photos[2])payload.foto3=state.photos[2];
       if(state.photos[3])payload.foto4=state.photos[3];
@@ -1523,7 +1532,7 @@ function setupCargoOperationForm(cfg){
 }
 function setupLoadingForm(){
   const refresh=$('#loadRefresh'),search=$('#loadSearch'),clear=$('#loadClear');
-  setupCargoOperationForm({tipo:'carregamento',label:'Carregamento',form:'#loadFinalForm',photos:['#loadPhoto','#loadPhoto2','#loadPhoto3','#loadPhoto4'],photoLabels:['Foto 1','Foto 2','Foto 3','Coleta e Devolução'],msg:'#loadMsg',save:'#loadSave',checker:'#loadChecker',driver:'#loadDriver',qty:'#loadQty',preview:'#loadPreview',previewImgs:'#loadPreviewImgs',photoTime:'#loadPhotoTime'});
+  setupCargoOperationForm({tipo:'carregamento',label:'Carregamento',form:'#loadFinalForm',photos:['#loadPhoto','#loadPhoto2','#loadPhoto3','#loadPhoto4'],photoLabels:['Carregamento','Carregamento','Carregamento','Coleta e Devolução'],returnChecker:'#loadReturnChecker',msg:'#loadMsg',save:'#loadSave',checker:'#loadChecker',driver:'#loadDriver',qty:'#loadQty',preview:'#loadPreview',previewImgs:'#loadPreviewImgs',photoTime:'#loadPhotoTime'});
   setupCargoOperationForm({tipo:'descarga',label:'Descarga',form:'#unloadFinalForm',photos:['#unloadPhoto','#unloadPhoto2','#unloadPhoto3','#unloadPhoto4'],photoLabels:['Descarga','Descarga','Coletas e Devoluções','Lacre'],msg:'#unloadMsg',save:'#unloadSave',checker:'#unloadChecker',driver:'#unloadDriver',qty:'#unloadQty',preview:'#unloadPreview',previewImgs:'#unloadPreviewImgs',photoTime:'#unloadPhotoTime'});
   if(refresh)refresh.onclick=()=>refreshLoadingRecords(true);
   if(search)search.onclick=()=>refreshLoadingRecords(true);
