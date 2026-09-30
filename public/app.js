@@ -1451,41 +1451,51 @@ async function refreshLoadingRecords(useFilters=true){
   }finally{window.__loadingRecordsBusy=false}
 }
 function setupCargoOperationForm(cfg){
-  const form=$(cfg.form),photo=$(cfg.photo),msg=$(cfg.msg),btn=$(cfg.save);
-  if(!form||!photo)return;
+  const form=$(cfg.form),msg=$(cfg.msg),btn=$(cfg.save);
+  const photoEls=(cfg.photos||[]).map(x=>$(x)).filter(Boolean);
+  if(!form||!photoEls.length)return;
   if(!window.__cargoFormState)window.__cargoFormState={};
-  const state=window.__cargoFormState[cfg.tipo]={photo:'',captured:''};
-  photo.onchange=async()=>{
-    const file=photo.files&&photo.files[0];
-    if(!file){state.photo='';state.captured='';return}
-    try{
-      if(msg){msg.style.color='#475569';msg.textContent='Preparando foto…'}
-      const captured=new Date(file.lastModified||Date.now());
-      state.captured=captured.toISOString();
-      state.photo=await compressLoadingPhoto(file);
-      $(cfg.previewImg).src=state.photo;
-      $(cfg.photoTime).textContent='Foto registrada em '+captured.toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'medium'});
-      $(cfg.preview).style.display='block';
-      if(msg)msg.textContent='Foto pronta para salvar.'
-    }catch(e){
-      state.photo='';state.captured='';
-      if(msg){msg.style.color='#b91c1c';msg.textContent=e.message}
-    }
+  const state=window.__cargoFormState[cfg.tipo]={photos:['','','',''],captured:''};
+  const renderPreviews=()=>{
+    const box=$(cfg.previewImgs);if(!box)return;
+    box.innerHTML=state.photos.map((src,i)=>src?'<div style="width:105px"><img src="'+src+'" style="width:105px;height:85px;object-fit:cover;border-radius:8px"><div class="muted" style="font-size:10px;text-align:center">'+safe(cfg.photoLabels?.[i]||('Foto '+(i+1)))+'</div></div>':'').join('');
+    $(cfg.preview).style.display=state.photos.some(Boolean)?'block':'none'
   };
+  photoEls.forEach((photo,idx)=>{
+    photo.onchange=async()=>{
+      const file=photo.files&&photo.files[0];
+      if(!file){state.photos[idx]='';renderPreviews();return}
+      try{
+        if(msg){msg.style.color='#475569';msg.textContent='Preparando '+String(cfg.photoLabels?.[idx]||('foto '+(idx+1))).toLowerCase()+'…'}
+        const captured=new Date(file.lastModified||Date.now());
+        if(!state.captured)state.captured=captured.toISOString();
+        state.photos[idx]=await compressLoadingPhoto(file);
+        $(cfg.photoTime).textContent='Fotos registradas em '+captured.toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'medium'});
+        renderPreviews();
+        if(msg)msg.textContent='Foto pronta para salvar.'
+      }catch(e){
+        state.photos[idx]='';
+        renderPreviews();
+        if(msg){msg.style.color='#b91c1c';msg.textContent=e.message}
+      }
+    }
+  });
   form.onsubmit=async ev=>{
     ev.preventDefault();
     const conferente=$(cfg.checker).value.trim(),motorista=$(cfg.driver).value.trim(),quantidade=Number($(cfg.qty).value);
-    if(!state.photo){if(msg){msg.style.color='#b91c1c';msg.textContent='Tire a foto da operação antes de salvar.'}return}
+    if(!state.photos[0]){if(msg){msg.style.color='#b91c1c';msg.textContent='Tire a Foto 1 da operação antes de salvar.'}return}
     btn.disabled=true;
     if(msg){msg.style.color='#475569';msg.textContent='Salvando '+cfg.label.toLowerCase()+'…'}
     try{
-      const r=await fetch('/api/carregamentos-finais',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-        tipo:cfg.tipo,conferente,motorista,quantidade_entregas:quantidade,capturada_em:state.captured||new Date().toISOString(),foto:state.photo
-      })});
+      const payload={tipo:cfg.tipo,conferente,motorista,quantidade_entregas:quantidade,capturada_em:state.captured||new Date().toISOString(),foto:state.photos[0]};
+      if(state.photos[1])payload.foto2=state.photos[1];
+      if(state.photos[2])payload.foto3=state.photos[2];
+      if(state.photos[3])payload.foto4=state.photos[3];
+      const r=await fetch('/api/carregamentos-finais',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível salvar.');
       if(msg){msg.style.color='#15803d';msg.textContent='✓ '+cfg.label+' salvo com sucesso.'}
-      form.reset();state.photo='';state.captured='';
-      $(cfg.preview).style.display='none';$(cfg.previewImg).removeAttribute('src');
+      form.reset();state.photos=['','','',''];state.captured='';
+      renderPreviews();
       await refreshLoadingRecords(true)
     }catch(e){if(msg){msg.style.color='#b91c1c';msg.textContent=e.message}}
     finally{btn.disabled=false}
@@ -1493,8 +1503,8 @@ function setupCargoOperationForm(cfg){
 }
 function setupLoadingForm(){
   const refresh=$('#loadRefresh'),search=$('#loadSearch'),clear=$('#loadClear');
-  setupCargoOperationForm({tipo:'carregamento',label:'Carregamento',form:'#loadFinalForm',photo:'#loadPhoto',msg:'#loadMsg',save:'#loadSave',checker:'#loadChecker',driver:'#loadDriver',qty:'#loadQty',preview:'#loadPreview',previewImg:'#loadPreviewImg',photoTime:'#loadPhotoTime'});
-  setupCargoOperationForm({tipo:'descarga',label:'Descarga',form:'#unloadFinalForm',photo:'#unloadPhoto',msg:'#unloadMsg',save:'#unloadSave',checker:'#unloadChecker',driver:'#unloadDriver',qty:'#unloadQty',preview:'#unloadPreview',previewImg:'#unloadPreviewImg',photoTime:'#unloadPhotoTime'});
+  setupCargoOperationForm({tipo:'carregamento',label:'Carregamento',form:'#loadFinalForm',photos:['#loadPhoto','#loadPhoto2','#loadPhoto3','#loadPhoto4'],photoLabels:['Foto 1','Foto 2','Foto 3','Foto 4'],msg:'#loadMsg',save:'#loadSave',checker:'#loadChecker',driver:'#loadDriver',qty:'#loadQty',preview:'#loadPreview',previewImgs:'#loadPreviewImgs',photoTime:'#loadPhotoTime'});
+  setupCargoOperationForm({tipo:'descarga',label:'Descarga',form:'#unloadFinalForm',photos:['#unloadPhoto','#unloadPhoto2','#unloadPhoto3','#unloadPhoto4'],photoLabels:['Foto 1','Foto 2','Foto 3','Foto do lacre'],msg:'#unloadMsg',save:'#unloadSave',checker:'#unloadChecker',driver:'#unloadDriver',qty:'#unloadQty',preview:'#unloadPreview',previewImgs:'#unloadPreviewImgs',photoTime:'#unloadPhotoTime'});
   if(refresh)refresh.onclick=()=>refreshLoadingRecords(true);
   if(search)search.onclick=()=>refreshLoadingRecords(true);
   if(clear)clear.onclick=()=>{
