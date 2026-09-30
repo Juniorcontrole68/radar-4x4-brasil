@@ -450,12 +450,13 @@ function renderAgCopy(){
   window.__agCopyReportRows=reportRows;
   const reportTable=$('#agcTable');
   if(reportTable){
-    reportTable.innerHTML='<thead><tr><th>Última movimentação</th><th>Status</th><th>Nota Fiscal</th><th>Nome do cliente</th><th>Cidade</th><th>Mercadoria</th></tr></thead><tbody>'+reportRows.map((r,i)=>{
+    const body=reportRows.length?reportRows.map((r,i)=>{
       const cliente=r.observacao
         ?'<button type="button" class="ag-observation-link" data-ag-observation="'+i+'" title="Ver observação">'+safe(r.cliente||'Cliente sem nome')+'</button>'
-        :safe(r.cliente);
-      return '<tr><td>'+safe(r.ultimaMovimentacao)+'</td><td>'+safe(r.status)+'</td><td>'+safe(r.notaFiscal)+'</td><td>'+cliente+'</td><td>'+safe(r.cidade)+'</td><td>'+safe(r.mercadoria)+'</td></tr>'
-    }).join('')+'</tbody>';
+        :safe(r.cliente||'—');
+      return '<tr><td>'+safe(r.ultimaMovimentacao||'—')+'</td><td>'+safe(r.status||'Sem status')+'</td><td>'+safe(r.notaFiscal||'—')+'</td><td>'+cliente+'</td><td>'+safe(r.cidade||'—')+'</td><td>'+safe(r.mercadoria||'—')+'</td></tr>'
+    }).join(''):'<tr><td colspan="6" class="muted">Nenhum registro encontrado para os filtros atuais.</td></tr>';
+    reportTable.innerHTML='<thead><tr><th>Última movimentação</th><th>Status</th><th>Nota Fiscal</th><th>Nome do cliente</th><th>Cidade</th><th>Mercadoria</th></tr></thead><tbody>'+body+'</tbody>';
     reportTable.querySelectorAll('[data-ag-observation]').forEach(btn=>btn.onclick=()=>openAgObservation(Number(btn.dataset.agObservation)))
   }
 }
@@ -503,7 +504,10 @@ async function refreshAgCopy(force=false){
     agCopyPopulateFilters();renderAgCopy();renderAgCopyHub();renderAgStatusCards('#agStatusCards',(S.agCopy||[]).filter(o=>!agCopyOldDelivered(o)))
   }catch(e){
     if(info)info.textContent='Não foi possível carregar os agendamentos: '+e.message;
-    const h=$('#hubAgCopyInfo');if(h)h.textContent='Consulta de agendamentos indisponível: '+e.message
+    const h=$('#hubAgCopyInfo');if(h)h.textContent='Consulta de agendamentos indisponível: '+e.message;
+    const table=$('#agcTable');
+    if(table)table.innerHTML='<thead><tr><th>Última movimentação</th><th>Status</th><th>Nota Fiscal</th><th>Nome do cliente</th><th>Cidade</th><th>Mercadoria</th></tr></thead><tbody><tr><td colspan="6" class="muted">Relatório de status indisponível: '+safe(e.message)+'</td></tr></tbody>';
+    renderAgStatusCards('#agcStatusSummary',[])
   }finally{window.__agCopyLoading=false}
 }
 function setupAgCopy(){
@@ -3333,7 +3337,8 @@ function loadHeavyForTab(tab){
     setTimeout(()=>refreshTracking(),60);
     setTimeout(()=>trackingHistoryLoadDrivers(true),120);
   }else if(tab==='agendamentos-copia'&&hasAnyPerm(['dashboard','agendamentos','agendamentos_copia'])){
-    setTimeout(()=>refreshAgCopy(false),50);
+    renderAgCopy();
+    setTimeout(()=>refreshAgCopy(true),50);
   }else if(tab==='roteirizador'&&hasPerm('roteirizador')){
     setTimeout(()=>loadRouteManifests(false),50);
   }else if(tab==='motoristas-evolucao'&&tabAllowed(tab)){
