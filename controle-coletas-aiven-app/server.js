@@ -1131,7 +1131,10 @@ async function start() {
             LEFT JOIN LATERAL (
               SELECT id,started_at,ended_at,status FROM driver_tracking_sessions
               WHERE device_id=d.id
-                AND (started_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+                AND (
+                  status='active'
+                  OR (started_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+                )
               ORDER BY (status='active') DESC,started_at DESC LIMIT 1
             ) s ON TRUE
             LEFT JOIN LATERAL (
@@ -1155,7 +1158,10 @@ async function start() {
             LEFT JOIN LATERAL (
               SELECT id,started_at,ended_at,status FROM driver_tracking_sessions
               WHERE device_id=d.id
-                AND (started_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+                AND (
+                  status='active'
+                  OR (started_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+                )
               ORDER BY (status='active') DESC,started_at DESC LIMIT 1
             ) s ON TRUE
             LEFT JOIN LATERAL (
