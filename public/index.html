@@ -201,8 +201,13 @@
           <div class="load-field"><label for="loadDriver">Nome do motorista</label><input id="loadDriver" list="loadDriverList" placeholder="Selecione ou digite" required><datalist id="loadDriverList"></datalist></div>
         </div>
         <div class="load-field"><label for="loadQty">Quantidade carregada / entregas</label><input id="loadQty" type="number" min="0" max="1000" inputmode="numeric" placeholder="Ex.: 18" required></div>
-        <label class="load-photo-btn" for="loadPhoto">📷 Tirar foto do carregamento<input id="loadPhoto" type="file" accept="image/*" capture="environment" required></label>
-        <div id="loadPreview" class="load-preview"><img id="loadPreviewImg" alt="Pré-visualização da foto do carregamento"><div id="loadPhotoTime" class="load-photo-meta">—</div></div>
+        <div class="load-photo-grid">
+          <label class="load-photo-btn" for="loadPhoto">📷 Foto 1 • carregamento<input id="loadPhoto" type="file" accept="image/*" capture="environment" required></label>
+          <label class="load-photo-btn" for="loadPhoto2">📷 Foto 2<input id="loadPhoto2" type="file" accept="image/*" capture="environment"></label>
+          <label class="load-photo-btn" for="loadPhoto3">📷 Foto 3<input id="loadPhoto3" type="file" accept="image/*" capture="environment"></label>
+          <label class="load-photo-btn" for="loadPhoto4">📷 Foto 4<input id="loadPhoto4" type="file" accept="image/*" capture="environment"></label>
+        </div>
+        <div id="loadPreview" class="load-preview"><div id="loadPreviewImgs" style="display:flex;gap:8px;flex-wrap:wrap"></div><div id="loadPhotoTime" class="load-photo-meta">—</div></div>
         <button id="loadSave" class="load-save" type="submit">Salvar carregamento</button>
         <div id="loadMsg" class="load-msg"></div>
       </form>
@@ -215,8 +220,13 @@
           <div class="load-field"><label for="unloadDriver">Nome do motorista</label><input id="unloadDriver" list="loadDriverList" placeholder="Selecione ou digite" required></div>
         </div>
         <div class="load-field"><label for="unloadQty">Quantidade descarregada / entregas</label><input id="unloadQty" type="number" min="0" max="1000" inputmode="numeric" placeholder="Ex.: 18" required></div>
-        <label class="load-photo-btn" for="unloadPhoto">📷 Tirar foto da descarga<input id="unloadPhoto" type="file" accept="image/*" capture="environment" required></label>
-        <div id="unloadPreview" class="load-preview"><img id="unloadPreviewImg" alt="Pré-visualização da foto da descarga"><div id="unloadPhotoTime" class="load-photo-meta">—</div></div>
+        <div class="load-photo-grid">
+          <label class="load-photo-btn" for="unloadPhoto">📷 Foto 1 • descarga<input id="unloadPhoto" type="file" accept="image/*" capture="environment" required></label>
+          <label class="load-photo-btn" for="unloadPhoto2">📷 Foto 2<input id="unloadPhoto2" type="file" accept="image/*" capture="environment"></label>
+          <label class="load-photo-btn" for="unloadPhoto3">📷 Foto 3<input id="unloadPhoto3" type="file" accept="image/*" capture="environment"></label>
+          <label class="load-photo-btn" for="unloadPhoto4">🔒 Foto do lacre<input id="unloadPhoto4" type="file" accept="image/*" capture="environment"></label>
+        </div>
+        <div id="unloadPreview" class="load-preview"><div id="unloadPreviewImgs" style="display:flex;gap:8px;flex-wrap:wrap"></div><div id="unloadPhotoTime" class="load-photo-meta">—</div></div>
         <button id="unloadSave" class="load-save" type="submit">Salvar descarga</button>
         <div id="unloadMsg" class="load-msg"></div>
       </form>
