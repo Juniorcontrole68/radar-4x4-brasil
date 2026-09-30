@@ -403,6 +403,11 @@ async function start() {
   await pool.query('CREATE INDEX IF NOT EXISTS idx_carregamentos_finais_capturada_em ON carregamentos_finais (capturada_em DESC)');
   await pool.query("ALTER TABLE carregamentos_finais ADD COLUMN IF NOT EXISTS tipo TEXT NOT NULL DEFAULT 'carregamento'");
   await pool.query("UPDATE carregamentos_finais SET tipo='carregamento' WHERE tipo IS NULL OR trim(tipo)=''");
+  for (const n of [2,3,4]) {
+    await pool.query(`ALTER TABLE carregamentos_finais ADD COLUMN IF NOT EXISTS foto${n} BYTEA`);
+    await pool.query(`ALTER TABLE carregamentos_finais ADD COLUMN IF NOT EXISTS foto${n}_mime TEXT`);
+    await pool.query(`ALTER TABLE carregamentos_finais ADD COLUMN IF NOT EXISTS foto${n}_bytes INTEGER NOT NULL DEFAULT 0`);
+  }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS nf_materiais (
       id BIGSERIAL PRIMARY KEY,
@@ -1423,7 +1428,7 @@ async function start() {
           params.push(limit);
           const sql =
             'SELECT id::text AS id, tipo, conferente, motorista, quantidade_entregas, ' +
-            'capturada_em, criado_em, foto_mime, foto_bytes ' +
+            'capturada_em, criado_em, foto_mime, foto_bytes, foto2_bytes, foto3_bytes, foto4_bytes ' +
             'FROM carregamentos_finais ' +
             (where.length ? 'WHERE ' + where.join(' AND ') + ' ' : '') +
             'ORDER BY capturada_em DESC, id DESC LIMIT $' + params.length;
@@ -1434,14 +1439,17 @@ async function start() {
         }
       }
 
-      const carregamentoFotoMatch = u.pathname.match(/^\/api\/painel\/carregamentos-finais\/(\d+)\/foto$/);
+      const carregamentoFotoMatch = u.pathname.match(/^\/api\/painel\/carregamentos-finais\/(\d+)\/foto(?:\/(\d))?$/);
       if (req.method === 'GET' && carregamentoFotoMatch) {
         try {
+          const slot=Math.max(1,Math.min(4,Number(carregamentoFotoMatch[2]||1)));
+          const photoCol=slot===1?'foto':'foto'+slot;
+          const mimeCol=slot===1?'foto_mime':'foto'+slot+'_mime';
           const r = await pool.query(
-            'SELECT foto, foto_mime FROM carregamentos_finais WHERE id=$1 LIMIT 1',
+            'SELECT '+photoCol+' AS foto, '+mimeCol+' AS foto_mime FROM carregamentos_finais WHERE id=$1 LIMIT 1',
             [carregamentoFotoMatch[1]]
           );
-          if (!r.rowCount) return sendJson(res, 404, { ok: false, error: 'Foto não encontrada.' });
+          if (!r.rowCount || !r.rows[0].foto) return sendJson(res, 404, { ok: false, error: 'Foto não encontrada.' });
           const row = r.rows[0];
           res.writeHead(200, {
             'Content-Type': row.foto_mime || 'image/jpeg',
@@ -1456,7 +1464,7 @@ async function start() {
 
       if (req.method === 'POST' && u.pathname === '/api/painel/carregamentos-finais') {
         try {
-          const body = await readJsonBodyLimited(req, 2 * 1024 * 1024);
+          const body = await readJsonBodyLimited(req, 6 * 1024 * 1024);
           const tipo = String(body.tipo || 'carregamento').trim().toLowerCase();
           const conferente = String(body.conferente || '').trim();
           const motorista = String(body.motorista || '').trim();
@@ -1474,13 +1482,20 @@ async function start() {
           }
 
           const photo = parseImageDataUrl(body.foto);
+          const extras=[body.foto2,body.foto3,body.foto4].map(v=>v?parseImageDataUrl(v):null);
           const r = await pool.query(`
             INSERT INTO carregamentos_finais
-              (tipo, conferente, motorista, quantidade_entregas, foto, foto_mime, foto_bytes, capturada_em)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-            RETURNING id::text AS id, tipo, conferente, motorista, quantidade_entregas, capturada_em, criado_em, foto_bytes
+              (tipo, conferente, motorista, quantidade_entregas, foto, foto_mime, foto_bytes,
+               foto2, foto2_mime, foto2_bytes, foto3, foto3_mime, foto3_bytes, foto4, foto4_mime, foto4_bytes, capturada_em)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+            RETURNING id::text AS id, tipo, conferente, motorista, quantidade_entregas, capturada_em, criado_em,
+              foto_bytes, foto2_bytes, foto3_bytes, foto4_bytes
           `, [
-            tipo, conferente, motorista, quantidade, photo.buffer, photo.mime, photo.buffer.length, captured.toISOString()
+            tipo, conferente, motorista, quantidade, photo.buffer, photo.mime, photo.buffer.length,
+            extras[0]?.buffer||null,extras[0]?.mime||null,extras[0]?.buffer?.length||0,
+            extras[1]?.buffer||null,extras[1]?.mime||null,extras[1]?.buffer?.length||0,
+            extras[2]?.buffer||null,extras[2]?.mime||null,extras[2]?.buffer?.length||0,
+            captured.toISOString()
           ]);
           return sendJson(res, 201, { ok: true, ...r.rows[0] });
         } catch (e) {
