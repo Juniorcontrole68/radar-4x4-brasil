@@ -3879,7 +3879,7 @@ if(u.pathname==='/api/auth/login'&&req.method==='POST'){try{  const body=await r
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
 if(u.pathname==='/api/carregamentos-finais'&&req.method==='POST'){try{if(!dashboardHas(authUser,'final_carregamento'))return dashboardDeny(res);
-  const body=await readJsonLimited(req,2*1024*1024);
+  const body=await readJsonLimited(req,6*1024*1024);
   const x=await portalJson('/api/painel/carregamentos-finais',{method:'POST',body,timeout:30000});
   res.writeHead(201,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
@@ -3887,9 +3887,10 @@ if(u.pathname==='/api/carregamentos-finais'&&req.method==='POST'){try{if(!dashbo
   res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
-const carregamentoFoto=u.pathname.match(/^\/api\/carregamentos-finais\/(\d+)\/foto$/);
+const carregamentoFoto=u.pathname.match(/^\/api\/carregamentos-finais\/(\d+)\/foto(?:\/(\d))?$/);
 if(carregamentoFoto&&req.method==='GET'){try{if(!dashboardHas(authUser,'final_carregamento'))return dashboardDeny(res);
-  const ru=new URL('/api/painel/carregamentos-finais/'+carregamentoFoto[1]+'/foto',COLETAS_PORTAL_URL);
+  const slot=carregamentoFoto[2]||'';
+  const ru=new URL('/api/painel/carregamentos-finais/'+carregamentoFoto[1]+'/foto'+(slot?'/'+slot:''),COLETAS_PORTAL_URL);
   const rr=await fetch(ru,{headers:{'User-Agent':'CONSTRULOG-Dashboard/1.0'},signal:AbortSignal.timeout(20000)});
   if(!rr.ok)throw Object.assign(new Error('Foto não encontrada.'),{status:rr.status});
   const buf=Buffer.from(await rr.arrayBuffer());
