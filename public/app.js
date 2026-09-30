@@ -1289,7 +1289,7 @@ async function refreshData(first=false){
       if(ro.status==='fulfilled'){S.ops=ro.value||[];S.opsUpdatedAt=Date.now();updated=true}else errors.push('Operações: '+(ro.reason?.message||ro.reason))
     }else S.ops=[];
     if(needSch){
-      if(ra.status==='fulfilled'){S.sch=ra.value||[];updated=true}else errors.push('Agendamentos: '+(ra.reason?.message||ra.reason))
+      if(ra.status==='fulfilled'){S.sch=ra.value||[];S.agCopy=S.sch;window.__agCopyLoadedAt=Date.now();updated=true}else errors.push('Agendamentos: '+(ra.reason?.message||ra.reason))
     }else S.sch=[];
     if(needHelp){
       if(rh.status==='fulfilled'){S.help=rh.value||[];updated=true}else errors.push('Ajudantes: '+(rh.reason?.message||rh.reason))
