@@ -2110,7 +2110,7 @@ function trackingMapPopulateControls(rows){
       localStorage.removeItem('construlog_tracking_map_driver')
     }
     select.innerHTML='<option value="">Todos os motoristas</option>'+
-      [...unique.entries()].map(([key,r])=>'<option value="'+safe(key)+'">'+safe(r.driver_name||'Motorista')+(r.vehicle_plate?' • '+safe(r.vehicle_plate):'')+'</option>').join('');
+      [...unique.entries()].map(([key,r])=>'<option value="'+safe(key)+'">'+safe(trackingDisplayName(r.driver_name))+(r.vehicle_plate?' • '+safe(r.vehicle_plate):'')+'</option>').join('');
     select.value=TRACKING_MAP_DRIVER_FILTER
   }
   if(check)check.checked=TRACKING_MAP_ONLY_DRIVERS
@@ -2144,6 +2144,12 @@ function trackingMapSelectDriver(){
 }
 const TRACKING_DEVIATION_KM=3;
 function trackingNorm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim()}
+function trackingDisplayName(v){
+  const raw=String(v||'').trim().toLocaleLowerCase('pt-BR');
+  if(!raw)return'Motorista';
+  const small=new Set(['da','das','de','do','dos','e']);
+  return raw.split(/\s+/).filter(Boolean).map((w,i)=>i>0&&small.has(w)?w:(w.charAt(0).toLocaleUpperCase('pt-BR')+w.slice(1))).join(' ')
+}
 function trackingAgeLabel(sec){
   const s=Number(sec);if(!Number.isFinite(s))return'—';
   if(s<60)return Math.max(0,Math.round(s))+' s';
@@ -2203,7 +2209,7 @@ function trackingPopulateDriverList(){
     const sourceLabel=x.romaneios.length
       ?(' • Rom. '+x.romaneios.join(', ')+(x.manifesto?' • Manifesto':''))
       :(x.manifesto?' • Manifesto':'');
-    o.textContent=x.driver+(x.plate?' • '+x.plate:' • placa não informada')+sourceLabel;
+    o.textContent=trackingDisplayName(x.driver)+(x.plate?' • '+x.plate:' • placa não informada')+sourceLabel;
     sel.appendChild(o)
   });
   if(previous&&rows.some(x=>x.key===previous))sel.value=previous;
@@ -2315,7 +2321,7 @@ function trackingSaveMapView(){
   TRACKING_MAP_VIEW_READY=true
 }
 function trackingFirstName(v){
-  return String(v||'Motorista').trim().split(/\s+/).filter(Boolean)[0]||'Motorista'
+  return trackingDisplayName(v).split(/\s+/).filter(Boolean)[0]||'Motorista'
 }
 function trackingDriverOperationRow(driver,plate){
   const n=trackingNorm(driver),p=trackingNorm(plate),rows=TRACKING_DRIVER_ROWS||[];
@@ -2442,14 +2448,14 @@ function trackingHistoryRenderMap(data){
     const coords=(session.points||[]).map(p=>[Number(p.latitude),Number(p.longitude)]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1]));
     if(coords.length){
       L.polyline(coords,{color,weight:4,opacity:.8}).addTo(TRACKING_HISTORY_LAYER_UI)
-        .bindTooltip(safe(session.driver_name||'Motorista')+(session.vehicle_plate?' • '+safe(session.vehicle_plate):''));
+        .bindTooltip(safe(trackingDisplayName(session.driver_name||'Motorista'))+(session.vehicle_plate?' • '+safe(session.vehicle_plate):''));
       coords.forEach(p=>bounds.push(p))
     }
     (session.stops||[]).forEach(stop=>{
       const driver=String(session.driver_name||'Motorista'),n=(stopCounters.get(driver)||0)+1;stopCounters.set(driver,n);
       const lat=Number(stop.latitude),lon=Number(stop.longitude);if(!Number.isFinite(lat)||!Number.isFinite(lon))return;
       const icon=L.divIcon({className:'',html:'<div style="min-width:30px;height:30px;padding:0 5px;border-radius:15px;background:#fff;border:3px solid '+color+';box-shadow:0 2px 7px #0005;display:grid;place-items:center;font-size:11px;font-weight:900">'+n+'</div>',iconSize:[34,34],iconAnchor:[17,17]});
-      const popup='<b>'+safe(driver)+' • Parada '+n+'</b><br>'+safe(session.vehicle_plate||'')+
+      const popup='<b>'+safe(trackingDisplayName(driver))+' • Parada '+n+'</b><br>'+safe(session.vehicle_plate||'')+
         '<br>Chegada: '+safe(trackingTimeLabel(stop.arrived_at))+
         '<br>Saída: '+safe(trackingTimeLabel(stop.left_at))+
         '<br>Tempo parado: <b>'+safe(trackingHistoryDuration(stop.duration_seconds))+'</b>'+
@@ -2482,7 +2488,7 @@ function trackingHistoryRender(data){
     const body=flat.length?flat.map(x=>{
       const s=x.session,p=x.stop,lat=Number(p.latitude),lon=Number(p.longitude);
       return '<tr>'+
-        '<td><b>'+safe(s.driver_name||'—')+'</b><div class="muted">'+safe(s.vehicle_plate||'')+'</div></td>'+
+        '<td><b>'+safe(trackingDisplayName(s.driver_name||'Motorista'))+'</b><div class="muted">'+safe(s.vehicle_plate||'')+'</div></td>'+
         '<td>'+x.index+'º</td>'+
         '<td>'+safe(trackingTimeLabel(p.arrived_at))+'</td>'+
         '<td>'+safe(trackingTimeLabel(p.left_at))+'</td>'+
@@ -2983,7 +2989,7 @@ function renderTrackingMap(rows){
       L.polyline(coords,{pane:'tracking-planned',color:'#ffffff',weight:8,opacity:.88,dashArray:'14 7'}).addTo(TRACKING_LAYER);
       L.polyline(coords,{pane:'tracking-planned',color:TRACKING_PLANNED_COLOR,weight:5,opacity:1,dashArray:'14 7'})
         .addTo(TRACKING_LAYER)
-        .bindTooltip('Rota programada • '+safe(row.driver_name)+' • '+nf(route?.expectedDeliveries||route?.stops?.length||0)+' entrega(s)');
+        .bindTooltip('Rota programada • '+safe(trackingDisplayName(row.driver_name))+' • '+nf(route?.stops?.length||0)+' no mapa de '+nf(route?.expectedDeliveries||route?.stops?.length||0)+' entrega(s)');
       coords.forEach(x=>bounds.push(x));
       const base=route?.points?.[0];
       if(!baseMarked&&Number.isFinite(Number(base?.lat))&&Number.isFinite(Number(base?.lon))){
@@ -3043,7 +3049,7 @@ function renderTrackingMap(rows){
       L.polyline(realCoords,{pane:'tracking-actual',color:'#ffffff',weight:9,opacity:.94}).addTo(TRACKING_LAYER);
       L.polyline(realCoords,{pane:'tracking-actual',color:actualColor,weight:5,opacity:.98})
         .addTo(TRACKING_LAYER)
-        .bindTooltip('Percurso executado • '+safe(row.driver_name)+' • '+nf(realCoords.length)+' ponto(s) GPS');
+        .bindTooltip('Percurso executado • '+safe(trackingDisplayName(row.driver_name))+' • '+nf(realCoords.length)+' ponto(s) GPS');
       realCoords.forEach(x=>bounds.push(x))
     }
 
@@ -3061,7 +3067,7 @@ function renderTrackingMap(rows){
           '<br>Distância do cliente: '+safe(nearest.distanceKm<1?Math.round(nearest.distanceKm*1000)+' m':nearest.distanceKm.toFixed(1).replace('.',',')+' km')
         :'<br><b>Cliente:</b> aguardando rota planejada';
       const marker=L.marker([lat,lon],{icon}).addTo(TRACKING_LAYER).bindPopup(
-        '<b>'+safe(row.driver_name)+'</b><br>'+safe(row.vehicle_plate||'')+
+        '<b>'+safe(trackingDisplayName(row.driver_name))+'</b><br>'+safe(row.vehicle_plate||'')+
         '<br>'+safe(status.label)+clientLine+
         '<br>Última posição: '+safe(trackingAgeLabel(row.age_seconds))+
         '<br>Pontos do percurso: '+nf(realCoords.length)
