@@ -404,6 +404,19 @@ async function start() {
   await pool.query("ALTER TABLE carregamentos_finais ADD COLUMN IF NOT EXISTS tipo TEXT NOT NULL DEFAULT 'carregamento'");
   await pool.query("UPDATE carregamentos_finais SET tipo='carregamento' WHERE tipo IS NULL OR trim(tipo)=''");
   await pool.query("ALTER TABLE carregamentos_finais ADD COLUMN IF NOT EXISTS conferente_coleta_devolucao TEXT");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS carregamentos_avarias (
+      id BIGSERIAL PRIMARY KEY,
+      carregamento_id BIGINT NOT NULL REFERENCES carregamentos_finais(id) ON DELETE CASCADE,
+      ordem INTEGER NOT NULL CHECK (ordem BETWEEN 1 AND 10),
+      foto BYTEA NOT NULL,
+      foto_mime TEXT NOT NULL DEFAULT 'image/jpeg',
+      foto_bytes INTEGER NOT NULL DEFAULT 0,
+      capturada_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(carregamento_id, ordem)
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_carregamentos_avarias_registro ON carregamentos_avarias (carregamento_id, ordem)');
   for (const n of [2,3,4]) {
     await pool.query(`ALTER TABLE carregamentos_finais ADD COLUMN IF NOT EXISTS foto${n} BYTEA`);
     await pool.query(`ALTER TABLE carregamentos_finais ADD COLUMN IF NOT EXISTS foto${n}_mime TEXT`);
@@ -1429,7 +1442,8 @@ async function start() {
           params.push(limit);
           const sql =
             'SELECT id::text AS id, tipo, conferente, motorista, quantidade_entregas, ' +
-            'capturada_em, criado_em, foto_mime, foto_bytes, foto2_bytes, foto3_bytes, foto4_bytes, conferente_coleta_devolucao ' +
+            'capturada_em, criado_em, foto_mime, foto_bytes, foto2_bytes, foto3_bytes, foto4_bytes, conferente_coleta_devolucao, ' +
+            '(SELECT COUNT(*)::int FROM carregamentos_avarias a WHERE a.carregamento_id=carregamentos_finais.id) AS avaria_count ' +
             'FROM carregamentos_finais ' +
             (where.length ? 'WHERE ' + where.join(' AND ') + ' ' : '') +
             'ORDER BY capturada_em DESC, id DESC LIMIT $' + params.length;
@@ -1463,9 +1477,30 @@ async function start() {
         }
       }
 
+      const avariaFotoMatch = u.pathname.match(/^\/api\/painel\/carregamentos-finais\/(\d+)\/avaria\/(\d+)$/);
+      if (req.method === 'GET' && avariaFotoMatch) {
+        try {
+          const ordem=Math.max(1,Math.min(10,Number(avariaFotoMatch[2]||1)));
+          const r=await pool.query(
+            'SELECT foto, foto_mime FROM carregamentos_avarias WHERE carregamento_id=$1 AND ordem=$2 LIMIT 1',
+            [avariaFotoMatch[1],ordem]
+          );
+          if(!r.rowCount)return sendJson(res,404,{ok:false,error:'Foto de avaria não encontrada.'});
+          const row=r.rows[0];
+          res.writeHead(200,{
+            'Content-Type':row.foto_mime||'image/jpeg',
+            'Content-Length':row.foto.length,
+            'Cache-Control':'private, max-age=3600'
+          });
+          return res.end(row.foto);
+        } catch(e) {
+          return sendJson(res,500,{ok:false,error:e.message||'Não foi possível carregar a foto de avaria.'});
+        }
+      }
+
       if (req.method === 'POST' && u.pathname === '/api/painel/carregamentos-finais') {
         try {
-          const body = await readJsonBodyLimited(req, 6 * 1024 * 1024);
+          const body = await readJsonBodyLimited(req, 14 * 1024 * 1024);
           const tipo = String(body.tipo || 'carregamento').trim().toLowerCase();
           const conferente = String(body.conferente || '').trim();
           const motorista = String(body.motorista || '').trim();
@@ -1485,6 +1520,10 @@ async function start() {
 
           const photo = parseImageDataUrl(body.foto);
           const extras=[body.foto2,body.foto3,body.foto4].map(v=>v?parseImageDataUrl(v):null);
+          const avarias=(Array.isArray(body.avarias)?body.avarias:[]).slice(0,10).filter(Boolean).map((v,i)=>({
+            ordem:i+1,
+            photo:parseImageDataUrl(v)
+          }));
           const r = await pool.query(`
             INSERT INTO carregamentos_finais
               (tipo, conferente, motorista, quantidade_entregas, foto, foto_mime, foto_bytes,
@@ -1501,7 +1540,14 @@ async function start() {
             tipo==='carregamento'?(conferenteColetaDevolucao||null):null,
             captured.toISOString()
           ]);
-          return sendJson(res, 201, { ok: true, ...r.rows[0] });
+          const registroId=r.rows[0].id;
+          for(const av of avarias){
+            await pool.query(
+              'INSERT INTO carregamentos_avarias(carregamento_id,ordem,foto,foto_mime,foto_bytes,capturada_em) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(carregamento_id,ordem) DO UPDATE SET foto=EXCLUDED.foto,foto_mime=EXCLUDED.foto_mime,foto_bytes=EXCLUDED.foto_bytes,capturada_em=EXCLUDED.capturada_em',
+              [registroId,av.ordem,av.photo.buffer,av.photo.mime,av.photo.buffer.length,captured.toISOString()]
+            )
+          }
+          return sendJson(res, 201, { ok: true, ...r.rows[0], avaria_count:avarias.length });
         } catch (e) {
           return sendJson(res, e.status || 500, { ok: false, error: e.message || 'Não foi possível salvar o final do carregamento.' });
         }
