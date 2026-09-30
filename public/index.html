@@ -232,6 +232,17 @@
           <label class="load-photo-btn" for="unloadPhoto4">🔒 Foto 4 • Lacre<input id="unloadPhoto4" type="file" accept="image/*" capture="environment"></label>
         </div>
         <div id="unloadPreview" class="load-preview"><div id="unloadPreviewImgs" style="display:flex;gap:8px;flex-wrap:wrap"></div><div id="unloadPhotoTime" class="load-photo-meta">—</div></div>
+        <div style="margin-top:14px;padding:12px;border:1px solid #fecaca;border-radius:10px;background:#fff7f7">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap">
+            <h4 style="margin:0">⚠️ Avarias</h4>
+            <button id="unloadAddDamagePhoto" class="secondary" type="button">+ Adicionar foto de avaria</button>
+          </div>
+          <div class="muted" style="margin:5px 0 9px">Começa com 1 foto e permite adicionar até 10 conforme a necessidade.</div>
+          <div id="unloadDamagePhotos" class="load-photo-grid">
+            <label class="load-photo-btn" data-damage-slot="1" for="unloadDamagePhoto1">📷 Avaria 1<input id="unloadDamagePhoto1" type="file" accept="image/*" capture="environment"></label>
+          </div>
+          <div id="unloadDamagePreview" class="load-preview" style="display:none"><div id="unloadDamagePreviewImgs" style="display:flex;gap:8px;flex-wrap:wrap"></div></div>
+        </div>
         <button id="unloadSave" class="load-save" type="submit">Salvar descarga</button>
         <div id="unloadMsg" class="load-msg"></div>
       </form>
