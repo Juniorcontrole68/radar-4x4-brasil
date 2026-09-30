@@ -3,7 +3,7 @@ const {URL}=require('url');
 const PORT=process.env.PORT||3000;
 const ID=process.env.SPREADSHEET_ID||'1miU5AW514LbRk5UsXYsVgXL1JTj_ZJgafRmBDF-tzWU';
 const GIDS={lancamentos:824972758,agendamentos:1232883750,ajudantes:438556395};
-const SHEET_NAMES={agendamentos_copia:'Cópia de AGENDAMENTOS'};
+const SHEET_NAMES={agendamentos:'Cópia de AGENDAMENTOS',agendamentos_copia:'Cópia de AGENDAMENTOS'};
 const PUB=path.join(__dirname,'public');
 const COLETAS_PORTAL_URL=process.env.COLETAS_PORTAL_URL||'https://controle-coletas-jr.onrender.com';
 const SSW_TOKEN_URL=process.env.SSW_TOKEN_URL||'https://ssw.inf.br/api/generateToken';
@@ -4202,7 +4202,7 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
   if(n==='agendamentos'&&!dashboardHasAny(authUser,['dashboard','agendamentos']))return dashboardDeny(res);
   if(n==='agendamentos_copia'&&!dashboardHasAny(authUser,['dashboard','agendamentos','agendamentos_copia']))return dashboardDeny(res);
   if(n==='ajudantes'&&!dashboardHasAny(authUser,['dashboard','ajudantes','financeiro']))return dashboardDeny(res);
-  const x=sheetName?await rowsByName(sheetName):await rows(gid),safeRows=n==='lancamentos'?filterLancamentosForUser(x,authUser):(n==='ajudantes'?filterAjudantesForUser(x,authUser):x);
+  const x=sheetName?await rowsByName(sheetName):await rows(gid),baseRows=n==='lancamentos'?filterLancamentosForUser(x,authUser):(n==='ajudantes'?filterAjudantesForUser(x,authUser):x),safeRows=n==='agendamentos'?baseRows.map(r=>({...r,NF:String(r.NF??'').trim()?r.NF:(r['2']??'')})):baseRows;
   res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:true,rows:safeRows,count:safeRows.length}))
 }catch(e){res.writeHead(502,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:false,error:e.message}))}}if(req.method==='GET'&&u.pathname==='/'&&u.searchParams.get('embed')==='1'){
