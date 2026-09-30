@@ -1177,7 +1177,7 @@ async function start() {
                    '[]'::json AS trail,
                    EXTRACT(EPOCH FROM (NOW()-p.captured_at))::int AS age_seconds,
                    EXTRACT(EPOCH FROM (NOW()-d.last_seen_at))::int AS device_age_seconds,
-                   (s.id IS NOT NULL) AS map_active
+                   (s.id IS NOT NULL OR p.captured_at IS NOT NULL OR d.last_seen_at >= NOW()-INTERVAL '15 minutes') AS map_active
             FROM driver_tracking_devices d
             LEFT JOIN LATERAL (
               SELECT id,started_at,ended_at,status FROM driver_tracking_sessions
@@ -1191,8 +1191,12 @@ async function start() {
             LEFT JOIN LATERAL (
               SELECT latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at
               FROM driver_tracking_points
-              WHERE s.id IS NOT NULL AND session_id=s.id
-              ORDER BY captured_at DESC LIMIT 1
+              WHERE device_id=d.id
+                AND (
+                  (s.id IS NOT NULL AND session_id=s.id)
+                  OR (captured_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+                )
+              ORDER BY (s.id IS NOT NULL AND session_id=s.id) DESC,captured_at DESC LIMIT 1
             ) p ON TRUE
             WHERE d.active=TRUE
             ORDER BY COALESCE(p.captured_at,d.last_seen_at) DESC NULLS LAST
@@ -1204,7 +1208,7 @@ async function start() {
                    COALESCE(t.trail,'[]'::json) AS trail,
                    EXTRACT(EPOCH FROM (NOW()-p.captured_at))::int AS age_seconds,
                    EXTRACT(EPOCH FROM (NOW()-d.last_seen_at))::int AS device_age_seconds,
-                   (s.id IS NOT NULL) AS map_active
+                   (s.id IS NOT NULL OR p.captured_at IS NOT NULL OR d.last_seen_at >= NOW()-INTERVAL '15 minutes') AS map_active
             FROM driver_tracking_devices d
             LEFT JOIN LATERAL (
               SELECT id,started_at,ended_at,status FROM driver_tracking_sessions
@@ -1218,8 +1222,12 @@ async function start() {
             LEFT JOIN LATERAL (
               SELECT latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at
               FROM driver_tracking_points
-              WHERE s.id IS NOT NULL AND session_id=s.id
-              ORDER BY captured_at DESC LIMIT 1
+              WHERE device_id=d.id
+                AND (
+                  (s.id IS NOT NULL AND session_id=s.id)
+                  OR (captured_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+                )
+              ORDER BY (s.id IS NOT NULL AND session_id=s.id) DESC,captured_at DESC LIMIT 1
             ) p ON TRUE
             LEFT JOIN LATERAL (
               SELECT json_agg(json_build_object(
