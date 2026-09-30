@@ -3878,6 +3878,17 @@ if(u.pathname==='/api/auth/login'&&req.method==='POST'){try{  const body=await r
   res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
+const carregamentoColetaDev=u.pathname.match(/^\/api\/carregamentos-finais\/(\d+)\/coleta-devolucao$/);
+if(carregamentoColetaDev&&req.method==='PATCH'){try{if(!dashboardHas(authUser,'final_carregamento'))return dashboardDeny(res);
+  const body=await readJsonLimited(req,3*1024*1024);
+  const x=await portalJson('/api/painel/carregamentos-finais/'+carregamentoColetaDev[1]+'/coleta-devolucao',{method:'PATCH',body,timeout:30000});
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){
+  res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}
+
 if(u.pathname==='/api/carregamentos-finais'&&req.method==='POST'){try{if(!dashboardHas(authUser,'final_carregamento'))return dashboardDeny(res);
   const body=await readJsonLimited(req,14*1024*1024);
   const x=await portalJson('/api/painel/carregamentos-finais',{method:'POST',body,timeout:30000});
