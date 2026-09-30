@@ -1006,6 +1006,19 @@ async function start() {
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao ativar dispositivo.'})}
       }
 
+      async function trackingEnsureTodaySession(deviceId) {
+        const active=await pool.query("SELECT id::text AS id FROM driver_tracking_sessions WHERE device_id=$1 AND status='active' ORDER BY started_at DESC LIMIT 1",[deviceId]);
+        if(active.rowCount)return active.rows[0].id;
+        const today=await pool.query(
+          "SELECT id::text AS id,status FROM driver_tracking_sessions WHERE device_id=$1 AND (started_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date ORDER BY started_at DESC LIMIT 1",
+          [deviceId]
+        );
+        // Se a rota foi encerrada explicitamente hoje, não reabre automaticamente.
+        if(today.rowCount&&today.rows[0].status==='ended')return '';
+        const q=await pool.query("INSERT INTO driver_tracking_sessions(device_id,status) VALUES($1,'active') RETURNING id::text AS id",[deviceId]);
+        return q.rows[0]?.id||'';
+      }
+
       if (req.method === 'POST' && u.pathname === '/api/tracking/session/start') {
         try {
           const device=await trackingDeviceFromReq(req);
@@ -1041,8 +1054,10 @@ async function start() {
               if(!effectiveSessionId)return sendJson(res,409,{ok:false,error:'Sessão de rota não está ativa.'});
             }
           }else{
-            const active=await pool.query("SELECT id::text AS id FROM driver_tracking_sessions WHERE device_id=$1 AND status='active' ORDER BY started_at DESC LIMIT 1",[device.id]);
-            effectiveSessionId=active.rows[0]?.id||'';
+            effectiveSessionId=await trackingEnsureTodaySession(device.id);
+          }
+          if(!effectiveSessionId&&!sessionId){
+            effectiveSessionId=await trackingEnsureTodaySession(device.id);
           }
           await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
           return sendJson(res,200,{ok:true,session_id:effectiveSessionId||null,server_time:new Date().toISOString()})
@@ -1063,10 +1078,9 @@ async function start() {
             if(!sess.rowCount)effectiveSessionId='';
           }
           if(!effectiveSessionId){
-            const active=await pool.query("SELECT id::text AS id FROM driver_tracking_sessions WHERE device_id=$1 AND status='active' ORDER BY started_at DESC LIMIT 1",[device.id]);
-            effectiveSessionId=active.rows[0]?.id||'';
+            effectiveSessionId=await trackingEnsureTodaySession(device.id);
           }
-          if(!effectiveSessionId)return sendJson(res,409,{ok:false,error:'Sessão de rota não está ativa.'});
+          if(!effectiveSessionId)return sendJson(res,409,{ok:false,error:'Sessão de rota foi encerrada hoje. Inicie uma nova rota para voltar ao mapa.'});
           await pool.query(
             "INSERT INTO driver_tracking_points(session_id,device_id,latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
             [effectiveSessionId,device.id,lat,lon,Number.isFinite(Number(body.accuracy_m))?Number(body.accuracy_m):null,Number.isFinite(Number(body.speed_mps))?Number(body.speed_mps):null,Number.isFinite(Number(body.bearing_deg))?Number(body.bearing_deg):null,Number.isFinite(Number(body.battery_pct))?Number(body.battery_pct):null,captured.toISOString()]
@@ -1103,6 +1117,10 @@ async function start() {
             const dev=await client.query(
               "INSERT INTO driver_tracking_devices(token_hash,driver_name,vehicle_plate,device_name,last_seen_at) VALUES($1,$2,$3,$4,NOW()) RETURNING id::text AS id",
               [dashboardTokenHash(token),row.driver_name,row.vehicle_plate||'',row.device_name||'Android']
+            );
+            await client.query(
+              "INSERT INTO driver_tracking_sessions(device_id,status) VALUES($1,'active')",
+              [dev.rows[0].id]
             );
             await client.query(
               "UPDATE driver_tracking_requests SET status='approved',issued_token=$1,approved_device_id=$2,decided_at=NOW(),decided_by=$3 WHERE id=$4",
