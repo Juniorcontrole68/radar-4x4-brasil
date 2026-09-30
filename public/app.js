@@ -1423,6 +1423,10 @@ function renderLoadingRecords(rows){
         if(Number(r.foto2_bytes||0)>0)extras.push('<a href="/api/carregamentos-finais/'+encodeURIComponent(r.id)+'/foto/2" target="_blank" class="secondary" style="padding:4px 7px;font-size:10px">Foto 2</a>');
         if(Number(r.foto3_bytes||0)>0)extras.push('<a href="/api/carregamentos-finais/'+encodeURIComponent(r.id)+'/foto/3" target="_blank" class="secondary" style="padding:4px 7px;font-size:10px">'+(String(r.tipo||'').toLowerCase()==='descarga'?'Coletas e Devoluções':'Foto 3')+'</a>');
         if(Number(r.foto4_bytes||0)>0)extras.push('<a href="/api/carregamentos-finais/'+encodeURIComponent(r.id)+'/foto/4" target="_blank" class="secondary" style="padding:4px 7px;font-size:10px">'+(String(r.tipo||'').toLowerCase()==='descarga'?'Lacre':'Coleta e Devolução')+'</a>');
+        if(String(r.tipo||'').toLowerCase()==='descarga'){
+          const damageCount=Math.max(0,Math.min(10,Number(r.avaria_count||0)));
+          for(let n=1;n<=damageCount;n++)extras.push('<a href="/api/carregamentos-finais/'+encodeURIComponent(r.id)+'/avaria/'+n+'" target="_blank" class="secondary" style="padding:4px 7px;font-size:10px">Avaria '+n+'</a>')
+        }
         const returnChecker=(String(r.tipo||'').toLowerCase()==='carregamento'&&r.conferente_coleta_devolucao)?'<br>Conferente coleta/devolução: <b>'+safe(r.conferente_coleta_devolucao)+'</b>':'';
         return '<div class="load-record"><a class="load-photo-link" data-loading-photo-id="'+safe(r.id)+'" title="Abrir foto"><img class="load-photo-pending" data-loading-photo-id="'+safe(r.id)+'" alt="Carregando foto do registro"></a><div><b>'+safe(tipo)+' • '+safe(r.motorista||'Motorista não informado')+'</b><div class="meta">Conferente: '+safe(r.conferente||'—')+returnChecker+'<br>Quantidade: <b>'+nf(Number(r.quantidade_entregas||0))+'</b><br>Registro: '+safe(dt)+'</div><div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap">'+extras.join(' ')+'</div></div></div>'
       }).join('');
@@ -1480,7 +1484,7 @@ function setupCargoOperationForm(cfg){
   const photoEls=(cfg.photos||[]).map(x=>$(x)).filter(Boolean);
   if(!form||!photoEls.length)return;
   if(!window.__cargoFormState)window.__cargoFormState={};
-  const state=window.__cargoFormState[cfg.tipo]={photos:['','','',''],captured:''};
+  const state=window.__cargoFormState[cfg.tipo]={photos:['','','',''],damages:[],captured:''};
   const renderPreviews=()=>{
     const box=$(cfg.previewImgs);if(!box)return;
     box.innerHTML=state.photos.map((src,i)=>src?'<div style="width:105px"><img src="'+src+'" style="width:105px;height:85px;object-fit:cover;border-radius:8px"><div class="muted" style="font-size:10px;text-align:center">'+safe(cfg.photoLabels?.[i]||('Foto '+(i+1)))+'</div></div>':'').join('');
@@ -1505,6 +1509,43 @@ function setupCargoOperationForm(cfg){
       }
     }
   });
+  const renderDamagePreviews=()=>{
+    if(!cfg.damagePreviewImgs)return;
+    const box=$(cfg.damagePreviewImgs);if(!box)return;
+    box.innerHTML=(state.damages||[]).map((src,i)=>src?'<div style="width:105px"><img src="'+src+'" style="width:105px;height:85px;object-fit:cover;border-radius:8px"><div class="muted" style="font-size:10px;text-align:center">Avaria '+(i+1)+'</div></div>':'').join('');
+    const wrap=$(cfg.damagePreview);if(wrap)wrap.style.display=(state.damages||[]).some(Boolean)?'block':'none'
+  };
+  const bindDamageInput=(input,idx)=>{
+    if(!input)return;
+    input.onchange=async()=>{
+      const file=input.files&&input.files[0];
+      if(!file){state.damages[idx]='';renderDamagePreviews();return}
+      try{
+        if(msg){msg.style.color='#475569';msg.textContent='Preparando foto de avaria '+(idx+1)+'…'}
+        const captured=new Date(file.lastModified||Date.now());
+        state.damages[idx]=await compressLoadingPhoto(file,captured,'Avaria '+(idx+1));
+        renderDamagePreviews();
+        if(msg)msg.textContent='Foto de avaria pronta para salvar.'
+      }catch(e){
+        state.damages[idx]='';renderDamagePreviews();
+        if(msg){msg.style.color='#b91c1c';msg.textContent=e.message}
+      }
+    }
+  };
+  if(cfg.damageBox){
+    const box=$(cfg.damageBox),add=$(cfg.damageAdd);
+    if(box){
+      [...box.querySelectorAll('input[type=file]')].forEach((el,i)=>bindDamageInput(el,i));
+      if(add)add.onclick=()=>{
+        const count=box.querySelectorAll('input[type=file]').length;
+        if(count>=10){if(msg){msg.style.color='#b45309';msg.textContent='Limite de 10 fotos de avaria atingido.'}return}
+        const n=count+1,label=document.createElement('label');
+        label.className='load-photo-btn';label.dataset.damageSlot=String(n);label.htmlFor='unloadDamagePhoto'+n;
+        label.innerHTML='📷 Avaria '+n+'<input id="unloadDamagePhoto'+n+'" type="file" accept="image/*" capture="environment">';
+        box.appendChild(label);bindDamageInput(label.querySelector('input'),n-1)
+      }
+    }
+  }
   form.onsubmit=async ev=>{
     ev.preventDefault();
     const conferente=$(cfg.checker).value.trim(),motorista=$(cfg.driver).value.trim(),quantidade=Number($(cfg.qty).value);
@@ -1520,11 +1561,17 @@ function setupCargoOperationForm(cfg){
       if(state.photos[1])payload.foto2=state.photos[1];
       if(state.photos[2])payload.foto3=state.photos[2];
       if(state.photos[3])payload.foto4=state.photos[3];
+      if(cfg.damageBox)payload.avarias=(state.damages||[]).filter(Boolean).slice(0,10);
       const r=await fetch('/api/carregamentos-finais',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível salvar.');
       if(msg){msg.style.color='#15803d';msg.textContent='✓ '+cfg.label+' salvo com sucesso.'}
-      form.reset();state.photos=['','','',''];state.captured='';
-      renderPreviews();
+      form.reset();state.photos=['','','',''];state.damages=[];state.captured='';
+      renderPreviews();renderDamagePreviews();
+      if(cfg.damageBox){
+        const box=$(cfg.damageBox);
+        if(box)box.innerHTML='<label class="load-photo-btn" data-damage-slot="1" for="unloadDamagePhoto1">📷 Avaria 1<input id="unloadDamagePhoto1" type="file" accept="image/*" capture="environment"></label>';
+        bindDamageInput($('#unloadDamagePhoto1'),0)
+      }
       await refreshLoadingRecords(true)
     }catch(e){if(msg){msg.style.color='#b91c1c';msg.textContent=e.message}}
     finally{btn.disabled=false}
@@ -1533,7 +1580,7 @@ function setupCargoOperationForm(cfg){
 function setupLoadingForm(){
   const refresh=$('#loadRefresh'),search=$('#loadSearch'),clear=$('#loadClear');
   setupCargoOperationForm({tipo:'carregamento',label:'Carregamento',form:'#loadFinalForm',photos:['#loadPhoto','#loadPhoto2','#loadPhoto3','#loadPhoto4'],photoLabels:['Carregamento','Carregamento','Carregamento','Coleta e Devolução'],returnChecker:'#loadReturnChecker',msg:'#loadMsg',save:'#loadSave',checker:'#loadChecker',driver:'#loadDriver',qty:'#loadQty',preview:'#loadPreview',previewImgs:'#loadPreviewImgs',photoTime:'#loadPhotoTime'});
-  setupCargoOperationForm({tipo:'descarga',label:'Descarga',form:'#unloadFinalForm',photos:['#unloadPhoto','#unloadPhoto2','#unloadPhoto3','#unloadPhoto4'],photoLabels:['Descarga','Descarga','Coletas e Devoluções','Lacre'],msg:'#unloadMsg',save:'#unloadSave',checker:'#unloadChecker',driver:'#unloadDriver',qty:'#unloadQty',preview:'#unloadPreview',previewImgs:'#unloadPreviewImgs',photoTime:'#unloadPhotoTime'});
+  setupCargoOperationForm({tipo:'descarga',label:'Descarga',form:'#unloadFinalForm',photos:['#unloadPhoto','#unloadPhoto2','#unloadPhoto3','#unloadPhoto4'],photoLabels:['Descarga','Descarga','Coletas e Devoluções','Lacre'],damageBox:'#unloadDamagePhotos',damageAdd:'#unloadAddDamagePhoto',damagePreview:'#unloadDamagePreview',damagePreviewImgs:'#unloadDamagePreviewImgs',msg:'#unloadMsg',save:'#unloadSave',checker:'#unloadChecker',driver:'#unloadDriver',qty:'#unloadQty',preview:'#unloadPreview',previewImgs:'#unloadPreviewImgs',photoTime:'#unloadPhotoTime'});
   if(refresh)refresh.onclick=()=>refreshLoadingRecords(true);
   if(search)search.onclick=()=>refreshLoadingRecords(true);
   if(clear)clear.onclick=()=>{
