@@ -1428,9 +1428,13 @@ function renderLoadingRecords(rows){
           for(let n=1;n<=damageCount;n++)extras.push('<a href="/api/carregamentos-finais/'+encodeURIComponent(r.id)+'/avaria/'+n+'" target="_blank" class="secondary" style="padding:4px 7px;font-size:10px">Avaria '+n+'</a>')
         }
         const returnChecker=(String(r.tipo||'').toLowerCase()==='carregamento'&&r.conferente_coleta_devolucao)?'<br>Conferente coleta/devolução: <b>'+safe(r.conferente_coleta_devolucao)+'</b>':'';
-        return '<div class="load-record"><a class="load-photo-link" data-loading-photo-id="'+safe(r.id)+'" title="Abrir foto"><img class="load-photo-pending" data-loading-photo-id="'+safe(r.id)+'" alt="Carregando foto do registro"></a><div><b>'+safe(tipo)+' • '+safe(r.motorista||'Motorista não informado')+'</b><div class="meta">Conferente: '+safe(r.conferente||'—')+returnChecker+'<br>Quantidade: <b>'+nf(Number(r.quantidade_entregas||0))+'</b><br>Registro: '+safe(dt)+'</div><div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap">'+extras.join(' ')+'</div></div></div>'
+        const editColeta=String(r.tipo||'').toLowerCase()==='carregamento'
+          ?'<button type="button" class="secondary" data-edit-coleta-dev="'+safe(r.id)+'" data-checker="'+safe(r.conferente_coleta_devolucao||'')+'" style="padding:4px 7px;font-size:10px">✏️ Coleta e Devolução</button>'
+          :'';
+        return '<div class="load-record"><a class="load-photo-link" data-loading-photo-id="'+safe(r.id)+'" title="Abrir foto"><img class="load-photo-pending" data-loading-photo-id="'+safe(r.id)+'" alt="Carregando foto do registro"></a><div><b>'+safe(tipo)+' • '+safe(r.motorista||'Motorista não informado')+'</b><div class="meta">Conferente: '+safe(r.conferente||'—')+returnChecker+'<br>Quantidade: <b>'+nf(Number(r.quantidade_entregas||0))+'</b><br>Registro: '+safe(dt)+'</div><div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap">'+extras.join(' ')+editColeta+'</div></div></div>'
       }).join('');
-      hydrateLoadingPhotos().catch(()=>{})
+      hydrateLoadingPhotos().catch(()=>{});
+      box.querySelectorAll('[data-edit-coleta-dev]').forEach(btn=>btn.onclick=()=>editLoadingCollectReturn(btn.dataset.editColetaDev,btn.dataset.checker||''))
     }
   }
   const today=iso(new Date()),todayRows=rows.filter(r=>{const d=new Date(r.capturada_em);return !isNaN(d)&&iso(d)===today});
@@ -1450,6 +1454,31 @@ function renderLoadingRecords(rows){
   if(overviewInfo)overviewInfo.textContent=rows.length?('Último registro: '+cargoTypeLabel(rows[0].tipo)+' • '+(rows[0].motorista||'—')+' • '+loadingDateTime(rows[0].capturada_em)):'Nenhum carregamento ou descarga registrado ainda.';
   renderOverviewLoadingPhotos(rows).catch(()=>{})
 }
+async function editLoadingCollectReturn(id,currentChecker=''){
+  const nome=prompt('Nome do conferente:',currentChecker||'');
+  if(nome===null)return;
+  const conferente=String(nome||'').trim();
+  if(!conferente){alert('Informe o nome do conferente.');return}
+  const input=document.createElement('input');
+  input.type='file';input.accept='image/*';input.capture='environment';
+  input.onchange=async()=>{
+    const file=input.files&&input.files[0];if(!file)return;
+    try{
+      const captured=new Date(file.lastModified||Date.now());
+      const foto=await compressLoadingPhoto(file,captured,'Coleta e Devolução');
+      const r=await fetch('/api/carregamentos-finais/'+encodeURIComponent(id)+'/coleta-devolucao',{
+        method:'PATCH',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({conferente_coleta_devolucao:conferente,capturada_em:captured.toISOString(),foto})
+      });
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível atualizar.');
+      alert('Coleta e Devolução atualizada com sucesso.');
+      await refreshLoadingRecords(true)
+    }catch(e){alert('Erro ao atualizar: '+e.message)}
+  };
+  input.click()
+}
+
 async function refreshLoadingRecords(useFilters=true){
   if(window.__loadingRecordsBusy)return;
   window.__loadingRecordsBusy=true;
