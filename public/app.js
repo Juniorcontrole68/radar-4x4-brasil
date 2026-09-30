@@ -2097,7 +2097,7 @@ function trackingActualColor(row){
 }
 function trackingMapPopulateControls(rows){
   const select=$('#trackingMapDriver'),check=$('#trackingMapOnlyDrivers');
-  const active=(rows||[]).filter(r=>r?.session_id);
+  const active=(rows||[]).filter(r=>r&&(r.session_id||r.map_active||Number.isFinite(Number(r.latitude))&&Number.isFinite(Number(r.longitude))));
   const unique=new Map();
   active.forEach(r=>{
     const key=trackingDriverKey(r.driver_name,r.vehicle_plate);
@@ -2274,7 +2274,7 @@ function trackingFindRoute(driver,plate){
   return null
 }
 function trackingStatus(row){
-  if(!row.session_id)return{key:'off',label:'Inativo',distance:null};
+  if(!row.session_id&&!row.map_active&&!Number.isFinite(Number(row.latitude))&&!Number.isFinite(Number(row.longitude)))return{key:'off',label:'Inativo',distance:null};
   if(String(row.session_status||'').toLowerCase()==='ended')return{key:'off',label:'Rota finalizada • permanece no mapa até o fim do dia',distance:null};
   const age=Number(row.age_seconds),deviceAge=Number(row.device_age_seconds);
   if(Number.isFinite(deviceAge)&&deviceAge>300)return{key:'bad',label:'Sem sinal do app • '+trackingAgeLabel(deviceAge),distance:null};
@@ -2879,7 +2879,7 @@ function trackingRenderAnalysis(){
 }
 async function trackingRefreshLogicalAnalysis(liveRows,date,force=false){
   if(window.__trackingAnalysisBusy)return;
-  const active=(liveRows||[]).filter(r=>r.session_id);
+  const active=(liveRows||[]).filter(r=>r&&(r.session_id||r.map_active||Number.isFinite(Number(r.latitude))&&Number.isFinite(Number(r.longitude))));
   if(!active.length){TRACKING_ANALYSIS_ROWS=[];trackingRenderAnalysis();return}
   if(!force&&TRACKING_ANALYSIS_ROWS.length&&Date.now()-TRACKING_ANALYSIS_AT<90000)return;
   window.__trackingAnalysisBusy=true;
@@ -2957,7 +2957,7 @@ function renderTrackingMap(rows){
   TRACKING_LAYER=L.layerGroup().addTo(TRACKING_MAP);
   TRACKING_MARKERS.clear();
   const bounds=[];
-  const activeRows=(rows||[]).filter(row=>!!row?.session_id).filter(row=>{
+  const activeRows=(rows||[]).filter(row=>row&&(row.session_id||row.map_active||Number.isFinite(Number(row.latitude))&&Number.isFinite(Number(row.longitude)))).filter(row=>{
     if(!TRACKING_MAP_DRIVER_FILTER)return true;
     return trackingDriverKey(row.driver_name,row.vehicle_plate)===TRACKING_MAP_DRIVER_FILTER
   });
@@ -3104,7 +3104,7 @@ function renderTrackingMap(rows){
 function renderTracking(rows){
   TRACKING_DATA=rows||[];
   const statuses=TRACKING_DATA.map(r=>({r,s:trackingStatus(r)}));
-  const active=statuses.filter(x=>x.r.session_id).length,on=statuses.filter(x=>x.s.key==='ok').length,dev=statuses.filter(x=>x.r.session_id&&x.s.key==='bad'&&x.s.distance!==null).length,offline=statuses.filter(x=>x.r.session_id&&x.s.key==='bad'&&x.s.distance===null).length;
+  const active=statuses.filter(x=>x.r.session_id||x.r.map_active||Number.isFinite(Number(x.r.latitude))&&Number.isFinite(Number(x.r.longitude))).length,on=statuses.filter(x=>x.s.key==='ok').length,dev=statuses.filter(x=>(x.r.session_id||x.r.map_active)&&x.s.key==='bad'&&x.s.distance!==null).length,offline=statuses.filter(x=>(x.r.session_id||x.r.map_active)&&x.s.key==='bad'&&x.s.distance===null).length;
   const set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
   set('#trackingActive',nf(active));set('#trackingOnRoute',nf(on));set('#trackingDeviation',nf(dev));set('#trackingOffline',nf(offline));
   const tableEl=$('#trackingTable');
