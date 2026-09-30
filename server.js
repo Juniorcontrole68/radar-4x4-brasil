@@ -3879,10 +3879,22 @@ if(u.pathname==='/api/auth/login'&&req.method==='POST'){try{  const body=await r
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
 if(u.pathname==='/api/carregamentos-finais'&&req.method==='POST'){try{if(!dashboardHas(authUser,'final_carregamento'))return dashboardDeny(res);
-  const body=await readJsonLimited(req,6*1024*1024);
+  const body=await readJsonLimited(req,14*1024*1024);
   const x=await portalJson('/api/painel/carregamentos-finais',{method:'POST',body,timeout:30000});
   res.writeHead(201,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
+}catch(e){
+  res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}
+const carregamentoAvaria=u.pathname.match(/^\/api\/carregamentos-finais\/(\d+)\/avaria\/(\d+)$/);
+if(carregamentoAvaria&&req.method==='GET'){try{if(!dashboardHas(authUser,'final_carregamento'))return dashboardDeny(res);
+  const ru=new URL('/api/painel/carregamentos-finais/'+carregamentoAvaria[1]+'/avaria/'+carregamentoAvaria[2],COLETAS_PORTAL_URL);
+  const rr=await fetch(ru,{headers:{'User-Agent':'CONSTRULOG-Dashboard/1.0'},signal:AbortSignal.timeout(20000)});
+  if(!rr.ok)throw Object.assign(new Error('Foto de avaria não encontrada.'),{status:rr.status});
+  const buf=Buffer.from(await rr.arrayBuffer());
+  res.writeHead(200,{'Content-Type':rr.headers.get('content-type')||'image/jpeg','Content-Length':buf.length,'Cache-Control':'private, max-age=3600'});
+  return res.end(buf)
 }catch(e){
   res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
