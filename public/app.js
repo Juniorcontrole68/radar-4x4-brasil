@@ -1325,13 +1325,15 @@ function loadingDateTime(v){
   if(isNaN(d))return'—';
   return d.toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})
 }
-async function compressLoadingPhoto(file){
+async function compressLoadingPhoto(file,capturedAt=null,label=''){
   const dataUrl=await new Promise((resolve,reject)=>{
     const fr=new FileReader();fr.onload=()=>resolve(fr.result);fr.onerror=()=>reject(new Error('Não foi possível ler a foto.'));fr.readAsDataURL(file)
   });
   const img=await new Promise((resolve,reject)=>{
     const im=new Image();im.onload=()=>resolve(im);im.onerror=()=>reject(new Error('Foto inválida.'));im.src=dataUrl
   });
+  const stampDate=capturedAt instanceof Date?capturedAt:new Date(capturedAt||file.lastModified||Date.now());
+  const stamp=stampDate.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'});
   let max=1280,quality=.72,result='';
   for(let attempt=0;attempt<4;attempt++){
     const scale=Math.min(1,max/Math.max(img.naturalWidth||img.width,img.naturalHeight||img.height));
@@ -1339,6 +1341,24 @@ async function compressLoadingPhoto(file){
     const h=Math.max(1,Math.round((img.naturalHeight||img.height)*scale));
     const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;
     const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0,w,h);
+
+    // Grava data/hora diretamente na imagem para ficar registrada no arquivo.
+    const fontSize=Math.max(18,Math.round(w*.022));
+    ctx.font='700 '+fontSize+'px Arial';
+    ctx.textBaseline='middle';
+    const text=(label?label+' • ':'')+stamp;
+    const pad=Math.max(10,Math.round(fontSize*.55));
+    const textW=Math.min(w-pad*2,ctx.measureText(text).width);
+    const barH=fontSize+pad*1.4;
+    const y=h-barH;
+    ctx.fillStyle='rgba(0,0,0,.68)';
+    ctx.fillRect(0,y,w,barH);
+    ctx.fillStyle='#fff';
+    ctx.shadowColor='rgba(0,0,0,.65)';
+    ctx.shadowBlur=2;
+    ctx.fillText(text,pad,y+barH/2,Math.max(10,w-pad*2));
+    ctx.shadowBlur=0;
+
     result=canvas.toDataURL('image/jpeg',quality);
     const approx=Math.round((result.length-result.indexOf(',')-1)*.75);
     if(approx<=850*1024)return result;
@@ -1469,7 +1489,7 @@ function setupCargoOperationForm(cfg){
         if(msg){msg.style.color='#475569';msg.textContent='Preparando '+String(cfg.photoLabels?.[idx]||('foto '+(idx+1))).toLowerCase()+'…'}
         const captured=new Date(file.lastModified||Date.now());
         if(!state.captured)state.captured=captured.toISOString();
-        state.photos[idx]=await compressLoadingPhoto(file);
+        state.photos[idx]=await compressLoadingPhoto(file,captured,cfg.photoLabels?.[idx]||('Foto '+(idx+1)));
         $(cfg.photoTime).textContent='Fotos registradas em '+captured.toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'medium'});
         renderPreviews();
         if(msg)msg.textContent='Foto pronta para salvar.'
