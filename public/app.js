@@ -1504,7 +1504,7 @@ function setupCargoOperationForm(cfg){
 function setupLoadingForm(){
   const refresh=$('#loadRefresh'),search=$('#loadSearch'),clear=$('#loadClear');
   setupCargoOperationForm({tipo:'carregamento',label:'Carregamento',form:'#loadFinalForm',photos:['#loadPhoto','#loadPhoto2','#loadPhoto3','#loadPhoto4'],photoLabels:['Foto 1','Foto 2','Foto 3','Foto 4'],msg:'#loadMsg',save:'#loadSave',checker:'#loadChecker',driver:'#loadDriver',qty:'#loadQty',preview:'#loadPreview',previewImgs:'#loadPreviewImgs',photoTime:'#loadPhotoTime'});
-  setupCargoOperationForm({tipo:'descarga',label:'Descarga',form:'#unloadFinalForm',photos:['#unloadPhoto','#unloadPhoto2','#unloadPhoto3','#unloadPhoto4'],photoLabels:['Foto 1','Foto 2','Foto 3','Foto do lacre'],msg:'#unloadMsg',save:'#unloadSave',checker:'#unloadChecker',driver:'#unloadDriver',qty:'#unloadQty',preview:'#unloadPreview',previewImgs:'#unloadPreviewImgs',photoTime:'#unloadPhotoTime'});
+  setupCargoOperationForm({tipo:'descarga',label:'Descarga',form:'#unloadFinalForm',photos:['#unloadPhoto','#unloadPhoto2','#unloadPhoto3','#unloadPhoto4'],photoLabels:['Foto 1','Foto 2','Coletas e Devoluções','Foto do lacre'],msg:'#unloadMsg',save:'#unloadSave',checker:'#unloadChecker',driver:'#unloadDriver',qty:'#unloadQty',preview:'#unloadPreview',previewImgs:'#unloadPreviewImgs',photoTime:'#unloadPhotoTime'});
   if(refresh)refresh.onclick=()=>refreshLoadingRecords(true);
   if(search)search.onclick=()=>refreshLoadingRecords(true);
   if(clear)clear.onclick=()=>{
