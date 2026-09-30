@@ -403,6 +403,7 @@ async function start() {
   await pool.query('CREATE INDEX IF NOT EXISTS idx_carregamentos_finais_capturada_em ON carregamentos_finais (capturada_em DESC)');
   await pool.query("ALTER TABLE carregamentos_finais ADD COLUMN IF NOT EXISTS tipo TEXT NOT NULL DEFAULT 'carregamento'");
   await pool.query("UPDATE carregamentos_finais SET tipo='carregamento' WHERE tipo IS NULL OR trim(tipo)=''");
+  await pool.query("ALTER TABLE carregamentos_finais ADD COLUMN IF NOT EXISTS conferente_coleta_devolucao TEXT");
   for (const n of [2,3,4]) {
     await pool.query(`ALTER TABLE carregamentos_finais ADD COLUMN IF NOT EXISTS foto${n} BYTEA`);
     await pool.query(`ALTER TABLE carregamentos_finais ADD COLUMN IF NOT EXISTS foto${n}_mime TEXT`);
@@ -1428,7 +1429,7 @@ async function start() {
           params.push(limit);
           const sql =
             'SELECT id::text AS id, tipo, conferente, motorista, quantidade_entregas, ' +
-            'capturada_em, criado_em, foto_mime, foto_bytes, foto2_bytes, foto3_bytes, foto4_bytes ' +
+            'capturada_em, criado_em, foto_mime, foto_bytes, foto2_bytes, foto3_bytes, foto4_bytes, conferente_coleta_devolucao ' +
             'FROM carregamentos_finais ' +
             (where.length ? 'WHERE ' + where.join(' AND ') + ' ' : '') +
             'ORDER BY capturada_em DESC, id DESC LIMIT $' + params.length;
@@ -1468,6 +1469,7 @@ async function start() {
           const tipo = String(body.tipo || 'carregamento').trim().toLowerCase();
           const conferente = String(body.conferente || '').trim();
           const motorista = String(body.motorista || '').trim();
+          const conferenteColetaDevolucao = String(body.conferente_coleta_devolucao || '').trim();
           const quantidade = Number(body.quantidade_entregas);
           const captured = new Date(body.capturada_em || Date.now());
 
@@ -1486,15 +1488,17 @@ async function start() {
           const r = await pool.query(`
             INSERT INTO carregamentos_finais
               (tipo, conferente, motorista, quantidade_entregas, foto, foto_mime, foto_bytes,
-               foto2, foto2_mime, foto2_bytes, foto3, foto3_mime, foto3_bytes, foto4, foto4_mime, foto4_bytes, capturada_em)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+               foto2, foto2_mime, foto2_bytes, foto3, foto3_mime, foto3_bytes, foto4, foto4_mime, foto4_bytes,
+               conferente_coleta_devolucao, capturada_em)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
             RETURNING id::text AS id, tipo, conferente, motorista, quantidade_entregas, capturada_em, criado_em,
-              foto_bytes, foto2_bytes, foto3_bytes, foto4_bytes
+              foto_bytes, foto2_bytes, foto3_bytes, foto4_bytes, conferente_coleta_devolucao
           `, [
             tipo, conferente, motorista, quantidade, photo.buffer, photo.mime, photo.buffer.length,
             extras[0]?.buffer||null,extras[0]?.mime||null,extras[0]?.buffer?.length||0,
             extras[1]?.buffer||null,extras[1]?.mime||null,extras[1]?.buffer?.length||0,
             extras[2]?.buffer||null,extras[2]?.mime||null,extras[2]?.buffer?.length||0,
+            tipo==='carregamento'?(conferenteColetaDevolucao||null):null,
             captured.toISOString()
           ]);
           return sendJson(res, 201, { ok: true, ...r.rows[0] });
