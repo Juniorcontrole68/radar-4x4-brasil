@@ -3403,13 +3403,63 @@ async function buildTrackingPlannedRoute(date='',driver='',plate=''){
   }
 
   const seen=new Set(),stops=[];
+  const deliveryKey=s=>{
+    const c=normCtrcLoose(s?.ctrc),n=normNf(s?.nf);
+    if(c)return'C|'+c;
+    if(n)return'N|'+n;
+    return''
+  };
   for(const p of plans){
     for(const s of (p.stops||[])){
-      const key=(normCtrcLoose(s.ctrc)||'')+'|'+normNf(s.nf)+'|'+Number(s.lat).toFixed(5)+'|'+Number(s.lon).toFixed(5);
+      const primary=deliveryKey(s);
+      const key=primary||('G|'+Number(s.lat).toFixed(5)+'|'+Number(s.lon).toFixed(5)+'|'+normKey(s.destinatario||s.label||''));
       if(seen.has(key))continue;seen.add(key);
       stops.push({...s,sourceRomaneio:p.romaneio||''})
     }
   }
+
+  // Segunda passagem: completa entregas do motorista/romaneios que ficaram fora
+  // do primeiro roteirizador. Quando não há endereço exato, usa a cidade como
+  // posição aproximada para que a entrega continue visível no Mapa ao Vivo.
+  const supplementalRows=(full?.rows||[]).filter(x=>{
+    const d=normKey(x.motorista||''),p=normPlate(x.veiculo||''),rom=String(x.romaneio||'').trim();
+    const driverMatch=driverKey&&d&&(d===driverKey||d.includes(driverKey)||driverKey.includes(d));
+    const plateMatch=plateKey&&p&&p===plateKey;
+    return (driverMatch||plateMatch)&&candidates.includes(rom)
+  });
+  if(supplementalRows.length){
+    const baseGeo=await routeBaseGeo();
+    const cityGeo=new Map();
+    for(const r of supplementalRows){
+      const primary=deliveryKey({ctrc:r.ctrcOficial||r.ctrc,nf:r.nf});
+      if(primary&&seen.has(primary))continue;
+      const cidade=String(r.cidade||r.cidade_destino||'').trim();
+      const uf=String(r.uf||r.uf_destino||'SP').trim()||'SP';
+      if(!cidade)continue;
+      const ck=normKey(cidade)+'|'+normKey(uf);
+      let geo=cityGeo.get(ck);
+      if(geo===undefined){
+        geo=await routeGeocode(cidade+', '+uf+', Brasil',baseGeo,ROUTE_MAX_RADIUS_METERS).catch(()=>null);
+        cityGeo.set(ck,geo||null)
+      }
+      if(!geo)continue;
+      const key=primary||('S|'+normKey(r.destinatario||'')+'|'+ck+'|'+stops.length);
+      if(seen.has(key))continue;seen.add(key);
+      stops.push({
+        originalOrder:stops.length+1,
+        ctrc:r.ctrcOficial||r.ctrc||'',nf:r.nf||'',
+        destinatario:r.destinatario||('Entrega '+(stops.length+1)),
+        cidade,uf,lat:geo.lat,lon:geo.lon,
+        precision:'cidade',coordinateSource:'cidade-aproximada • complemento SSW',
+        label:(r.destinatario||'Entrega')+' • '+cidade,
+        entregue:!!r.entregue,
+        baixaAt:r.entregue?(r.baixaDataHora||''):'',
+        baixaConfirmed:!!r.entregue,
+        sourceRomaneio:r.romaneio||''
+      })
+    }
+  }
+
   if(!stops.length)throw Object.assign(new Error('Nenhuma entrega válida foi localizada nos romaneios do motorista.'),{status:422});
 
   const plan=await routeFinalizePlan(stops,{
@@ -3421,8 +3471,14 @@ async function buildTrackingPlannedRoute(date='',driver='',plate=''){
   plan.logical=true;
   plan.plannedSource='romaneios';
   plan.romaneios=candidates;
-  plan.expectedDeliveries=stops.length;
-  plan.sourcePlans=plans.map(p=>({romaneio:p.romaneio||'',deliveries:(p.stops||[]).length,rejected:(p.rejectedStops||[]).length}));
+  const expectedByPlans=plans.reduce((a,p)=>a+Math.max(Number(p.expectedDeliveries||0),Number((p.stops||[]).length||0)),0);
+  const expectedByOperation=(full?.motoristas38||[]).filter(x=>{
+    const d=normKey(x.motorista||''),p=normPlate(x.veiculo||'');
+    return (plateKey&&p===plateKey)||(driverKey&&d&&(d===driverKey||d.includes(driverKey)||driverKey.includes(d)))
+  }).reduce((a,x)=>a+Number(x.total||0),0);
+  plan.expectedDeliveries=Math.max(stops.length,expectedByPlans,expectedByOperation);
+  plan.unlocatedDeliveries=Math.max(0,plan.expectedDeliveries-stops.length);
+  plan.sourcePlans=plans.map(p=>({romaneio:p.romaneio||'',deliveries:(p.stops||[]).length,expected:Number(p.expectedDeliveries||0),rejected:(p.rejectedStops||[]).length}));
   return plan
 }
 
