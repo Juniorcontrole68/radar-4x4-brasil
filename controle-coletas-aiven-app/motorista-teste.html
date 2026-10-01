@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CONSTRULOG Motorista — Teste</title>
+<style>
+body{margin:0;font-family:Arial,sans-serif;background:#f5f7fa;color:#1f2937}
+.wrap{max-width:520px;margin:auto;padding:24px}
+.card{background:white;border-radius:18px;padding:20px;box-shadow:0 6px 24px #0001;margin-bottom:16px}
+h1{color:#0057a8;margin:0 0 4px;font-size:28px}.sub{color:#f28c00;font-weight:700;margin-bottom:18px}
+.badge{display:inline-block;background:#fff3e0;color:#b75c00;padding:7px 10px;border-radius:999px;font-weight:700;font-size:12px;margin-bottom:16px}
+input,button{width:100%;box-sizing:border-box;padding:14px;border-radius:12px;font-size:16px}
+input{border:1px solid #cbd5e1;margin:7px 0;background:#fff}
+button{border:0;font-weight:700;margin-top:10px}
+.primary{background:#f28c00;color:#fff}.secondary{background:#e8f1fb;color:#0057a8}
+.status{padding:14px;border-radius:12px;background:#f8fafc;margin-top:14px;white-space:pre-line}
+.ok{color:#0a8f55}.warn{color:#b75c00}.muted{color:#64748b;font-size:13px}
+</style>
+</head>
+<body><div class="wrap">
+<div class="card">
+<h1>CONSTRULOG</h1><div class="sub">Motorista — Ambiente de Teste</div>
+<div class="badge">100% ISOLADO DO APP REAL</div>
+<p class="muted">Você pode usar o nome e a placa de um motorista real. Os pontos GPS vão para uma base separada e não alteram o rastreio de produção.</p>
+<div id="form">
+<input id="driver" placeholder="Nome do motorista">
+<input id="plate" placeholder="Placa do veículo" maxlength="10">
+<button class="primary" onclick="startTest()">INICIAR TESTE</button>
+</div>
+<div id="running" style="display:none">
+<div id="who" style="font-weight:700;font-size:18px"></div>
+<div id="status" class="status">Preparando GPS…</div>
+<button class="primary" onclick="sendNow()">ENVIAR POSIÇÃO AGORA</button>
+<button class="secondary" onclick="stopTest()">ENCERRAR TESTE</button>
+</div>
+</div>
+</div>
+<script>
+let token=localStorage.getItem('cl_test_token')||'',watchId=null,last=null;
+const $=id=>document.getElementById(id);
+function api(path,opt={}){opt.headers=Object.assign({'Content-Type':'application/json'},opt.headers||{});if(token)opt.headers.Authorization='Bearer '+token;return fetch(path,opt).then(async r=>{let j={};try{j=await r.json()}catch{}if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j})}
+function normPlate(v){return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'')}
+async function startTest(){
+ const driver=$('driver').value.trim(),plate=normPlate($('plate').value);
+ if(driver.length<2)return alert('Informe o nome do motorista.');
+ if(plate.length<7)return alert('Informe uma placa válida.');
+ try{
+  const j=await api('/api/tracking/test/start',{method:'POST',body:JSON.stringify({driver_name:driver,vehicle_plate:plate,device_name:navigator.userAgent.slice(0,100)})});
+  token=j.token;localStorage.setItem('cl_test_token',token);
+  localStorage.setItem('cl_test_driver',j.driver_name);localStorage.setItem('cl_test_plate',j.vehicle_plate);
+  showRunning(j.driver_name,j.vehicle_plate);startGps();
+ }catch(e){alert(e.message)}
+}
+function showRunning(driver,plate){$('form').style.display='none';$('running').style.display='block';$('who').textContent=driver+' • '+plate}
+function startGps(){
+ if(!navigator.geolocation){$('status').textContent='GPS não disponível neste navegador.';return}
+ $('status').textContent='Solicitando permissão de localização…';
+ watchId=navigator.geolocation.watchPosition(p=>{
+   last=p;
+   $('status').innerHTML='GPS recebido\nPrecisão: '+Math.round(p.coords.accuracy||0)+' m\nÚltima leitura: '+new Date().toLocaleTimeString();
+   sendPosition(p);
+ },e=>{$('status').textContent='Erro no GPS: '+e.message+'\nConfira se a localização está permitida.'},{enableHighAccuracy:true,maximumAge:5000,timeout:20000});
+}
+async function sendPosition(p){
+ try{
+  const j=await api('/api/tracking/test/point',{method:'POST',body:JSON.stringify({latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy_m:p.coords.accuracy,captured_at:new Date(p.timestamp).toISOString()})});
+  $('status').className='status ok';
+  $('status').textContent='TESTE ATIVO\nGPS enviado para ambiente isolado\nPrecisão: '+Math.round(p.coords.accuracy||0)+' m\nServidor: '+new Date(j.server_time).toLocaleTimeString();
+ }catch(e){$('status').className='status warn';$('status').textContent='Sem envio agora: '+e.message}
+}
+function sendNow(){if(last)sendPosition(last);else startGps()}
+function stopTest(){
+ if(watchId!==null)navigator.geolocation.clearWatch(watchId);
+ localStorage.removeItem('cl_test_token');localStorage.removeItem('cl_test_driver');localStorage.removeItem('cl_test_plate');token='';location.reload();
+}
+(async()=>{
+ if(token){
+  try{
+   const j=await api('/api/tracking/test/status');
+   const r=j.row;showRunning(r.driver_name,r.vehicle_plate);
+   $('status').textContent='Teste recuperado\nPontos enviados: '+(r.points||0)+(r.captured_at?'\nÚltimo GPS: '+new Date(r.captured_at).toLocaleString():'');
+   startGps();
+  }catch(e){stopTest()}
+ }
+})();
+</script></body></html>
