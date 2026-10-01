@@ -2421,8 +2421,17 @@ function trackingDriverSelectionChanged(resetCode=true){
     ?'Motorista selecionado: '+opt.dataset.driver+(plate?' • placa '+plate:' • placa não identificada no SSW')+'. Gere o código para ativar o celular.'
     :'Selecione um motorista que esteja trabalhando hoje.'
 }
+function trackingBaseIdentity(rowOrDriver,plate=''){
+  if(rowOrDriver&&typeof rowOrDriver==='object'){
+    return {
+      driver:String(rowOrDriver.original_driver_name||rowOrDriver.driver_name||'').replace(/^TESTE\s*-\s*/i,'').trim(),
+      plate:String(rowOrDriver.original_vehicle_plate||rowOrDriver.vehicle_plate||'').replace(/\s+T$/i,'').trim()
+    }
+  }
+  return {driver:String(rowOrDriver||'').replace(/^TESTE\s*-\s*/i,'').trim(),plate:String(plate||'').replace(/\s+T$/i,'').trim()}
+}
 function trackingFindRoute(driver,plate){
-  const n=trackingNorm(driver),p=trackingNorm(plate);
+  const base=trackingBaseIdentity(driver,plate),n=trackingNorm(base.driver),p=trackingNorm(base.plate);
   const logical=TRACKING_LOGICAL_ROUTES.get(trackingDriverKey(driver,plate));
   if(logical?.geometry||logical?.outboundGeometry||(Array.isArray(logical?.points)&&logical.points.length>1))return logical;
   if(p){
@@ -2454,6 +2463,7 @@ function trackingFindRoute(driver,plate){
   return null
 }
 function trackingStatus(row){
+  if(row.test_only&&!trackingHasPosition(row))return{key:'warn',label:'TESTE • aguardando GPS',distance:null};
   if(row.operation_active&&!row.session_id&&!row.map_active&&!trackingHasPosition(row))return{key:'bad',label:'Sem sinal / sem GPS hoje',distance:null};
   if(!row.session_id&&!row.map_active&&!trackingHasPosition(row))return{key:'off',label:'Inativo',distance:null};
   if(String(row.session_status||'').toLowerCase()==='ended')return{key:'off',label:'Rota finalizada • permanece no mapa até o fim do dia',distance:null};
@@ -3076,7 +3086,8 @@ async function trackingRefreshLogicalAnalysis(liveRows,date,force=false){
 
     const pieces=await Promise.all(active.map(async row=>{
       try{
-        const plan=await trackingBuildLogicalPlan(row,date);
+        const baseRow=row?.test_only?{...row,driver_name:row.original_driver_name||String(row.driver_name||'').replace(/^TESTE\s*-\s*/i,''),vehicle_plate:row.original_vehicle_plate||String(row.vehicle_plate||'').replace(/\s+T$/i,'')}:row;
+        const plan=await trackingBuildLogicalPlan(baseRow,date);
         if(!plan)return[];
         TRACKING_LOGICAL_ROUTES.set(trackingDriverKey(row.driver_name,row.vehicle_plate),plan);
         const dayKey=trackingDayHistoryKey(date,row.driver_name,row.vehicle_plate);
@@ -3307,11 +3318,12 @@ async function refreshTracking(){
   const info=$('#trackingInfo');if(info)info.textContent='Atualizando motoristas e posições GPS…';
   try{
     const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
-    const [liveRes,driverRes]=await Promise.all([
+    const [liveRes,testRes,driverRes]=await Promise.all([
       fetch('/api/tracking/live?light=1&t='+Date.now(),{cache:'no-store'}),
+      fetch('/api/tracking/test-live?t='+Date.now(),{cache:'no-store'}),
       fetch('/api/roteirizador/lista?date='+encodeURIComponent(today)+'&t='+Date.now(),{cache:'no-store'})
     ]);
-    const live=await liveRes.json().catch(()=>({})),drivers=await driverRes.json().catch(()=>({}));
+    const live=await liveRes.json().catch(()=>({})),testLive=await testRes.json().catch(()=>({})),drivers=await driverRes.json().catch(()=>({}));
     if(!liveRes.ok||!live.ok)throw new Error(live.error||'Falha ao consultar GPS.');
     if(driverRes.ok&&drivers.ok&&Array.isArray(drivers.rows)){
       TRACKING_DRIVER_ROWS=drivers.rows.filter(x=>{
@@ -3347,7 +3359,8 @@ async function refreshTracking(){
       const heartbeatFresh=Number.isFinite(Number(r.device_age_seconds))&&Number(r.device_age_seconds)<=300;
       return inOperation&&(pointToday||heartbeatFresh);
     }).map(r=>({...r,operation_active:true}));
-    const mergedRows=[...currentRows];
+    const testRows=normalizeDriverNames(testRes.ok&&testLive.ok&&Array.isArray(testLive.rows)?testLive.rows:[]).map(r=>({...r,operation_active:true,test_only:true}));
+    const mergedRows=[...currentRows,...testRows];
     for(const op of operationRows){
       const opPlate=trackingNorm(op.veiculo||op.vehicle_plate||''),opDriver=trackingNorm(op.motorista||op.driver_name||'');
       const found=mergedRows.some(r=>{
