@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CONSTRULOG Motorista — Teste</title>
+<meta name="theme-color" content="#0057A8">
+<style>
+body{margin:0;font-family:Arial,sans-serif;background:#f5f7fa;color:#1f2937}
+.wrap{max-width:520px;margin:auto;padding:24px}.card{background:#fff;border-radius:18px;padding:22px;box-shadow:0 8px 28px #0001}
+.logo{font-size:30px;font-weight:900;color:#0057a8;text-align:center}.sub{font-size:18px;font-weight:800;color:#f28c00;text-align:center;margin-bottom:18px}
+.badge{display:inline-block;padding:7px 10px;border-radius:999px;background:#fff3e0;color:#b75c00;font-size:12px;font-weight:800;margin:0 0 16px}
+.info{background:#f8fafc;border-radius:14px;padding:14px;line-height:1.55;margin:12px 0}.btn{display:block;width:100%;box-sizing:border-box;border:0;border-radius:12px;padding:15px;font-size:16px;font-weight:800;text-align:center;text-decoration:none;margin-top:12px}
+.primary{background:#f28c00;color:#fff}.secondary{background:#e8f1fb;color:#0057a8}.muted{font-size:13px;color:#64748b;line-height:1.5}.ok{color:#0a8f55;font-weight:800}
+</style>
+</head>
+<body><div class="wrap"><div class="card">
+<div class="logo">CONSTRULOG</div><div class="sub">Motorista — TESTE</div>
+<div class="badge">AMBIENTE ISOLADO • NÃO ALTERA A PRODUÇÃO</div>
+<div id="content" class="info">Carregando romaneio de teste…</div>
+<a id="openTest" class="btn primary" href="/motorista-teste">ABRIR APP DE TESTE</a>
+<div class="info"><b>Como funciona</b><br>Este link usa os mesmos dados de nome, placa e romaneio, mas grava o GPS e as sessões apenas na base de teste. O aplicativo real do motorista continua funcionando normalmente.</div>
+<div class="muted">No seu celular, permita a localização quando solicitado. Você pode testar como se fosse o motorista, sem substituir a posição real dele.</div>
+</div></div>
+<script>
+const qs=new URLSearchParams(location.search),token=qs.get('i')||'';
+async function load(){
+ const box=document.getElementById('content'),btn=document.getElementById('openTest');
+ if(!token){box.textContent='Convite de teste inválido.';return}
+ try{
+  const r=await fetch('/api/tracking/test-invite?token='+encodeURIComponent(token),{cache:'no-store'});
+  const j=await r.json();
+  if(!r.ok||!j.ok)throw new Error(j.error||'Convite de teste inválido.');
+  const a=j.assignment||{},roms=Array.isArray(a.romaneios)?a.romaneios:[];
+  box.innerHTML='<div class="ok">Romaneio de teste associado</div>'+
+    '<b>Motorista:</b> '+esc(a.driver_name||'')+'<br>'+
+    '<b>Placa:</b> '+esc(a.vehicle_plate||'')+'<br>'+
+    '<b>Romaneio(s):</b> '+esc(roms.join(', ')||'—')+'<br>'+
+    '<b>Data:</b> '+esc(String(a.work_date||''));
+  btn.href='/motorista-teste?driver='+encodeURIComponent(a.driver_name||'')+
+           '&plate='+encodeURIComponent(a.vehicle_plate||'')+
+           '&rom='+encodeURIComponent(roms.join(', '));
+ }catch(e){box.textContent=e.message}
+}
+function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+load();
+</script></body></html>
