@@ -1061,8 +1061,21 @@ async function start() {
       }
 
       async function trackingEnsureTodaySession(deviceId) {
-        const active=await pool.query("SELECT id::text AS id FROM driver_tracking_sessions WHERE device_id=$1 AND status='active' ORDER BY started_at DESC LIMIT 1",[deviceId]);
-        if(active.rowCount)return active.rows[0].id;
+        const active=await pool.query(
+          "SELECT id::text AS id,started_at FROM driver_tracking_sessions WHERE device_id=$1 AND status='active' ORDER BY started_at DESC LIMIT 1",
+          [deviceId]
+        );
+        if(active.rowCount){
+          const sameDay=await pool.query(
+            "SELECT (($1::timestamptz AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date) AS ok",
+            [active.rows[0].started_at]
+          );
+          if(sameDay.rows[0]?.ok)return active.rows[0].id;
+          await pool.query(
+            "UPDATE driver_tracking_sessions SET status='ended',ended_at=COALESCE(ended_at,NOW()) WHERE id::text=$1",
+            [active.rows[0].id]
+          );
+        }
         const today=await pool.query(
           "SELECT id::text AS id,status FROM driver_tracking_sessions WHERE device_id=$1 AND (started_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date ORDER BY started_at DESC LIMIT 1",
           [deviceId]
@@ -1231,25 +1244,19 @@ async function start() {
                    '[]'::json AS trail,
                    EXTRACT(EPOCH FROM (NOW()-p.captured_at))::int AS age_seconds,
                    EXTRACT(EPOCH FROM (NOW()-d.last_seen_at))::int AS device_age_seconds,
-                   (s.id IS NOT NULL OR p.captured_at IS NOT NULL OR d.last_seen_at >= NOW()-INTERVAL '15 minutes') AS map_active
+                   (p.captured_at IS NOT NULL OR d.last_seen_at >= NOW()-INTERVAL '5 minutes') AS map_active
             FROM driver_tracking_devices d
             LEFT JOIN LATERAL (
               SELECT id,started_at,ended_at,status FROM driver_tracking_sessions
               WHERE device_id=d.id
-                AND (
-                  status='active'
-                  OR (started_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
-                )
+                AND (started_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
               ORDER BY (status='active') DESC,started_at DESC LIMIT 1
             ) s ON TRUE
             LEFT JOIN LATERAL (
               SELECT latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at
               FROM driver_tracking_points
               WHERE device_id=d.id
-                AND (
-                  (s.id IS NOT NULL AND session_id=s.id)
-                  OR (captured_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
-                )
+                AND (captured_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
               ORDER BY (s.id IS NOT NULL AND session_id=s.id) DESC,captured_at DESC LIMIT 1
             ) p ON TRUE
             WHERE d.active=TRUE
@@ -1262,25 +1269,19 @@ async function start() {
                    COALESCE(t.trail,'[]'::json) AS trail,
                    EXTRACT(EPOCH FROM (NOW()-p.captured_at))::int AS age_seconds,
                    EXTRACT(EPOCH FROM (NOW()-d.last_seen_at))::int AS device_age_seconds,
-                   (s.id IS NOT NULL OR p.captured_at IS NOT NULL OR d.last_seen_at >= NOW()-INTERVAL '15 minutes') AS map_active
+                   (p.captured_at IS NOT NULL OR d.last_seen_at >= NOW()-INTERVAL '5 minutes') AS map_active
             FROM driver_tracking_devices d
             LEFT JOIN LATERAL (
               SELECT id,started_at,ended_at,status FROM driver_tracking_sessions
               WHERE device_id=d.id
-                AND (
-                  status='active'
-                  OR (started_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
-                )
+                AND (started_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
               ORDER BY (status='active') DESC,started_at DESC LIMIT 1
             ) s ON TRUE
             LEFT JOIN LATERAL (
               SELECT latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at
               FROM driver_tracking_points
               WHERE device_id=d.id
-                AND (
-                  (s.id IS NOT NULL AND session_id=s.id)
-                  OR (captured_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
-                )
+                AND (captured_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
               ORDER BY (s.id IS NOT NULL AND session_id=s.id) DESC,captured_at DESC LIMIT 1
             ) p ON TRUE
             LEFT JOIN LATERAL (
