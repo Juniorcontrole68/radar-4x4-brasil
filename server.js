@@ -4034,24 +4034,117 @@ if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
   if(!dashboardHasAny(authUser,['agendamentos','dashboard','programacao']))return dashboardDeny(res);
   const nf=normNf(u.searchParams.get('nf')||'');
   if(!nf){res.writeHead(400,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:'Informe a nota fiscal.'}))}
-  const data=await buildDeliveryProgram(deliveryProgramTomorrow(),false);
-  const row=(data.openRows||[]).find(x=>normNf(x.nf)===nf);
+
+  // A busca de agendamento não pode depender apenas da lista já filtrada da programação.
+  // Primeiro atualiza as pendências da opção 38 e depois faz fallback nos relatórios BI2
+  // e na opção 101 por NF/CTRC.
+  SSW_PENDING_CACHE={at:0,value:null};
+  DELIVERY_PROGRAM_CACHE.clear();
+
+  let pending={rows:[],source:'SSW'},enriched=[],row=null,source='';
+  try{
+    pending=await fetchSswPendingDeliveries();
+    enriched=await deliveryProgramEnrich(pending.rows||[]);
+    row=enriched.find(x=>normNf(x.nf)===nf)||null;
+    if(row)source=pending.source||'SSW opção 38';
+  }catch(e){
+    console.log('AGENDAMENTO NF pendências: '+String(e.message||e));
+  }
+
+  let biRows=[];
+  if(!row){
+    const reports=await Promise.allSettled([
+      fetchBi2ReportFolder(174,'','ctrc'),
+      fetchBi2Report(13),
+      fetchBi2Report(16)
+    ]);
+    const parsed=reports.map(r=>{
+      if(r.status!=='fulfilled')return[];
+      try{return parseBi2Csv(r.value.text).rows||[]}catch{return[]}
+    });
+    biRows=parsed.flat();
+    const hit=biRows.find(r=>normNf(r.numero_nf||r.NF||pickField(r,'NF','NUMERO NF','NUMERO_NF'))===nf)||null;
+    if(hit){
+      row={
+        nf,
+        ctrc:pickField(hit,'CTRC','NUMERO CTRC','NUMERO_CTRC')||hit.numero_ctrc||'',
+        cliente:pickField(hit,'DESTINATARIO','DESTINATARIO NOME','DESTINATARIO_NOME','CLIENTE')||'',
+        cidade:pickField(hit,'CIDADE DESTINO','CIDADE_DESTINO','DEST CIDADE','DEST_CIDADE')||'',
+        uf:pickField(hit,'UF DESTINO','UF_DESTINO','DEST UF','DEST_UF')||'SP',
+        mercadoria:pickField(hit,'TIPO MERCADORIA','TIPO_MERCADORIA','MERCADORIA','PRODUTO')||'',
+        peso:bi2Number(pickField(hit,'PESO','PESO REAL','PESO KG','PESO_REAL')),
+        volumes:bi2Number(pickField(hit,'QTD VOLUMES','QTDE VOLUME','QTDE_VOLUME','VOLUMES')),
+        previsao:pickField(hit,'PREV ENTREGA','PREVISAO ENTREGA','PREVISÃO ENTREGA','PREV_ENT')||'',
+        status:pickField(hit,'STATUS','SITUACAO','SITUAÇÃO','ULT OCORR DESCRICAO','ULT_OCORR_DESCRICAO')||''
+      };
+      source='SSW BI2 por NF';
+    }
+  }
+
+  let direct101=null;
+  if(!row||!row.ctrc){
+    try{direct101=await fetchSsw101ByNf(nf)}catch(e){console.log('AGENDAMENTO NF opção 101: '+String(e.message||e))}
+    if(direct101?.ctrc){
+      if(!row)row={nf,ctrc:direct101.ctrc,cliente:'',cidade:'',uf:'SP',mercadoria:'',peso:0,volumes:0,previsao:'',status:''};
+      else if(!row.ctrc)row.ctrc=direct101.ctrc;
+      source=source||'SSW opção 101 por NF';
+      if(biRows.length){
+        const ck=normCtrc(direct101.ctrc),lk=normCtrcLoose(direct101.ctrc);
+        const hit=biRows.find(r=>{
+          const raw=r.numero_ctrc||r.CTRC||pickField(r,'CTRC','NUMERO CTRC','NUMERO_CTRC');
+          return (ck&&normCtrc(raw)===ck)||(lk&&normCtrcLoose(raw)===lk)
+        });
+        if(hit){
+          row.cliente=row.cliente||pickField(hit,'DESTINATARIO','DESTINATARIO NOME','DESTINATARIO_NOME','CLIENTE')||'';
+          row.cidade=row.cidade||pickField(hit,'CIDADE DESTINO','CIDADE_DESTINO','DEST CIDADE','DEST_CIDADE')||'';
+          row.uf=row.uf||pickField(hit,'UF DESTINO','UF_DESTINO','DEST UF','DEST_UF')||'SP';
+          row.mercadoria=row.mercadoria||pickField(hit,'TIPO MERCADORIA','TIPO_MERCADORIA','MERCADORIA','PRODUTO')||'';
+          row.peso=Number(row.peso||0)||bi2Number(pickField(hit,'PESO','PESO REAL','PESO KG','PESO_REAL'));
+          row.volumes=Number(row.volumes||0)||bi2Number(pickField(hit,'QTD VOLUMES','QTDE VOLUME','QTDE_VOLUME','VOLUMES'));
+          row.previsao=row.previsao||pickField(hit,'PREV ENTREGA','PREVISAO ENTREGA','PREVISÃO ENTREGA','PREV_ENT')||'';
+          row.status=row.status||pickField(hit,'STATUS','SITUACAO','SITUAÇÃO','ULT OCORR DESCRICAO','ULT_OCORR_DESCRICAO')||'';
+        }
+      }
+    }
+  }
+
   if(!row){
     res.writeHead(404,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
-    return res.end(JSON.stringify({ok:false,error:'Nota fiscal não localizada entre as entregas em aberto do SSW.'}))
+    return res.end(JSON.stringify({ok:false,error:'NF '+nf+' não foi localizada na opção 38, nos relatórios BI2 nem na opção 101 do SSW.'}))
   }
-  const cityKey=normKey(row.cidade||'');
-  const cityRule=(data.cityRules||[]).find(x=>normKey(x.city||'')===cityKey)||null;
+
+  // Se temos CTRC, enriquece produto/tipo de mercadoria pela opção 101.
+  if(row.ctrc){
+    try{
+      const session=await deliveryProgramCreateSsw101Session();
+      const det=await deliveryProgramFetchSsw101Detail(session,{ctrc:row.ctrc,frete:0},true);
+      if(det){
+        row.mercadoria=row.mercadoria||det.tipoMercadoria||det.especieMercadoria||'';
+      }
+    }catch(e){console.log('AGENDAMENTO NF detalhe 101: '+String(e.message||e))}
+  }
+
+  // Regras de rota por cidade: usa toda a base aberta atual do SSW, sem depender da NF estar nela.
+  let cityRule=null;
+  if(row.cidade){
+    try{
+      const ruleBase=enriched.length?enriched:await deliveryProgramEnrich((await fetchSswPendingDeliveries()).rows||[]);
+      const schedule=deliveryProgramCitySchedule(ruleBase);
+      cityRule=schedule.get(normKey(row.cidade))||null;
+    }catch(e){console.log('AGENDAMENTO NF regra cidade: '+String(e.message||e))}
+  }
+
   const out={
     ok:true,
     row:{
       nf:row.nf||nf,ctrc:row.ctrc||'',cliente:row.cliente||'',cidade:row.cidade||'',uf:row.uf||'SP',
-      status_ssw:row.status||'',mercadoria:row.tipoMercadoria||row.especieMercadoria||'',
+      status_ssw:row.status||'',mercadoria:row.tipoMercadoria||row.mercadoria||row.especieMercadoria||'',
       peso:Number(row.peso||0),volumes:Number(row.volumes||0),previsao_ssw:row.previsao||'',
-      dia_rota:cityRule?.weekday||'',amostras_rota:cityRule?.samples||[]
+      dia_rota:cityRule?.weekdayLabel||'',amostras_rota:cityRule?.samples||[]
     },
-    source:data.source||'SSW',generatedAt:data.generatedAt
+    source:source||'SSW',generatedAt:new Date().toISOString()
   };
+  console.log('AGENDAMENTO NF LOCALIZADA: '+JSON.stringify({nf,source:out.source,ctrc:out.row.ctrc,cidade:out.row.cidade,cliente:out.row.cliente}));
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(out))
 }catch(e){
