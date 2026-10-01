@@ -42,6 +42,10 @@ button{border:0;font-weight:700;margin-top:10px}
 <script>
 let token=localStorage.getItem('cl_test_token')||'',watchId=null,last=null;
 const $=id=>document.getElementById(id);
+const inviteQs=new URLSearchParams(location.search);
+const inviteDriver=inviteQs.get('driver')||'';
+const invitePlate=inviteQs.get('plate')||'';
+const inviteRom=inviteQs.get('rom')||'';
 function api(path,opt={}){opt.headers=Object.assign({'Content-Type':'application/json'},opt.headers||{});if(token)opt.headers.Authorization='Bearer '+token;return fetch(path,opt).then(async r=>{let j={};try{j=await r.json()}catch{}if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j})}
 function normPlate(v){return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'')}
 async function startTest(){
@@ -78,6 +82,14 @@ function stopTest(){
  localStorage.removeItem('cl_test_token');localStorage.removeItem('cl_test_driver');localStorage.removeItem('cl_test_plate');token='';location.reload();
 }
 (async()=>{
+ if(inviteDriver&&$('driver'))$('driver').value=inviteDriver;
+ if(invitePlate&&$('plate'))$('plate').value=invitePlate;
+ if(inviteRom){
+   const note=document.createElement('div');
+   note.className='status';
+   note.textContent='Romaneio de teste: '+inviteRom;
+   $('form')?.prepend(note);
+ }
  if(token){
   try{
    const j=await api('/api/tracking/test/status');
