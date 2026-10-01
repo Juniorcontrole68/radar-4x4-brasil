@@ -2276,7 +2276,7 @@ function trackingActualColor(row){
 }
 function trackingMapPopulateControls(rows){
   const select=$('#trackingMapDriver'),check=$('#trackingMapOnlyDrivers');
-  const active=(rows||[]).filter(r=>r&&(r.operation_active||r.session_id||r.map_active||Number.isFinite(Number(r.latitude))&&Number.isFinite(Number(r.longitude))));
+  const active=(rows||[]).filter(r=>r&&(r.operation_active||r.session_id||r.map_active||trackingHasPosition(r)));
   const unique=new Map();
   active.forEach(r=>{
     const key=trackingDriverKey(r.driver_name,r.vehicle_plate);
@@ -2358,6 +2358,12 @@ function trackingPlannedCoords(route){
     :Array.from({length:Math.max(0,points.length-1)},(_,i)=>i+1);
   const seq=[0,...order];
   return seq.map(i=>[Number(points[i]?.lat),Number(points[i]?.lon)]).filter(x=>Number.isFinite(x[0])&&Number.isFinite(x[1]))
+}
+function trackingHasPosition(row){
+  const lat=row?.latitude,lon=row?.longitude;
+  if(lat===null||lat===undefined||lat===''||lon===null||lon===undefined||lon==='')return false;
+  const a=Number(lat),b=Number(lon);
+  return Number.isFinite(a)&&Number.isFinite(b)&&a>=-90&&a<=90&&b>=-180&&b<=180
 }
 function trackingDriverKey(driver,plate){return trackingNorm(driver)+'|'+trackingNorm(plate)}
 function trackingPopulateDriverList(){
@@ -2448,12 +2454,12 @@ function trackingFindRoute(driver,plate){
   return null
 }
 function trackingStatus(row){
-  if(row.operation_active&&!row.session_id&&!row.map_active&&!Number.isFinite(Number(row.latitude))&&!Number.isFinite(Number(row.longitude)))return{key:'bad',label:'Sem sinal / sem GPS hoje',distance:null};
-  if(!row.session_id&&!row.map_active&&!Number.isFinite(Number(row.latitude))&&!Number.isFinite(Number(row.longitude)))return{key:'off',label:'Inativo',distance:null};
+  if(row.operation_active&&!row.session_id&&!row.map_active&&!trackingHasPosition(row))return{key:'bad',label:'Sem sinal / sem GPS hoje',distance:null};
+  if(!row.session_id&&!row.map_active&&!trackingHasPosition(row))return{key:'off',label:'Inativo',distance:null};
   if(String(row.session_status||'').toLowerCase()==='ended')return{key:'off',label:'Rota finalizada • permanece no mapa até o fim do dia',distance:null};
   const age=Number(row.age_seconds),deviceAge=Number(row.device_age_seconds);
   if(Number.isFinite(deviceAge)&&deviceAge>300)return{key:'bad',label:'Sem sinal do app • '+trackingAgeLabel(deviceAge),distance:null};
-  if(!Number.isFinite(Number(row.latitude))||!Number.isFinite(Number(row.longitude))){
+  if(!trackingHasPosition(row)){
     return Number.isFinite(deviceAge)&&deviceAge<=120
       ?{key:'warn',label:'App conectado • aguardando GPS',distance:null}
       :{key:'warn',label:'Aguardando GPS',distance:null}
@@ -3054,7 +3060,7 @@ function trackingRenderAnalysis(){
 }
 async function trackingRefreshLogicalAnalysis(liveRows,date,force=false){
   if(window.__trackingAnalysisBusy)return;
-  const active=(liveRows||[]).filter(r=>r&&(r.session_id||r.map_active||Number.isFinite(Number(r.latitude))&&Number.isFinite(Number(r.longitude))));
+  const active=(liveRows||[]).filter(r=>r&&(r.session_id||r.map_active||trackingHasPosition(r)));
   if(!active.length){TRACKING_ANALYSIS_ROWS=[];trackingRenderAnalysis();return}
   if(!force&&TRACKING_ANALYSIS_ROWS.length&&Date.now()-TRACKING_ANALYSIS_AT<90000)return;
   window.__trackingAnalysisBusy=true;
@@ -3279,7 +3285,7 @@ function renderTrackingMap(rows){
 function renderTracking(rows){
   TRACKING_DATA=rows||[];
   const statuses=TRACKING_DATA.map(r=>({r,s:trackingStatus(r)}));
-  const active=statuses.filter(x=>x.r.operation_active||x.r.session_id||x.r.map_active||Number.isFinite(Number(x.r.latitude))&&Number.isFinite(Number(x.r.longitude))).length,on=statuses.filter(x=>x.s.key==='ok').length,dev=statuses.filter(x=>(x.r.operation_active||x.r.session_id||x.r.map_active)&&x.s.key==='bad'&&x.s.distance!==null).length,offline=statuses.filter(x=>(x.r.operation_active||x.r.session_id||x.r.map_active)&&x.s.key==='bad'&&x.s.distance===null).length;
+  const active=statuses.filter(x=>x.r.operation_active||x.r.session_id||x.r.map_active||trackingHasPosition(x.r)).length,on=statuses.filter(x=>x.s.key==='ok').length,dev=statuses.filter(x=>(x.r.operation_active||x.r.session_id||x.r.map_active)&&x.s.key==='bad'&&x.s.distance!==null).length,offline=statuses.filter(x=>(x.r.operation_active||x.r.session_id||x.r.map_active)&&x.s.key==='bad'&&x.s.distance===null).length;
   const set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
   set('#trackingActive',nf(active));set('#trackingOnRoute',nf(on));set('#trackingDeviation',nf(dev));set('#trackingOffline',nf(offline));
   const tableEl=$('#trackingTable');
@@ -3308,7 +3314,10 @@ async function refreshTracking(){
     const live=await liveRes.json().catch(()=>({})),drivers=await driverRes.json().catch(()=>({}));
     if(!liveRes.ok||!live.ok)throw new Error(live.error||'Falha ao consultar GPS.');
     if(driverRes.ok&&drivers.ok&&Array.isArray(drivers.rows)){
-      TRACKING_DRIVER_ROWS=drivers.rows;
+      TRACKING_DRIVER_ROWS=drivers.rows.filter(x=>{
+        const roms=Array.isArray(x.romaneios)?x.romaneios:[x.romaneio].filter(Boolean);
+        return roms.some(v=>String(v||'').trim());
+      });
       const bl=Number(drivers.baseLat),bo=Number(drivers.baseLon);
       if(Number.isFinite(bl)&&Number.isFinite(bo)){
         TRACKING_BASE_POSITION={lat:bl,lon:bo,address:drivers.baseAddress||TRACKING_BASE_POSITION.address}
