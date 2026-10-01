@@ -2054,12 +2054,915 @@ start().catch(err => {
   process.exit(1);
 });
 +params.length)}
-          params.push(Math.max(1,Math.min(500,Number(u.searchParams.get('limit')||100))));
-          const q=await pool.query(
-            `SELECT id::text AS id,nf,ctrc,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,criado_em,atualizado_em
-             FROM agendamento_teste ${where.length?'WHERE '+where.join(' AND '):''}
-             ORDER BY criado_em DESC LIMIT ${params.length}`,params
+          const limit=Math.max(1,Math.min(500,Number(u.searchParams.get('limit')||100)));
+          params.push(limit);
+          const sql='SELECT id::text AS id,nf,ctrc,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,criado_em,atualizado_em FROM agendamento_teste ' +
+            (where.length?('WHERE '+where.join(' AND ')+' '):'') + 'ORDER BY criado_em DESC LIMIT 
+        const from=String(u.searchParams.get('from')||'').trim();
+        const to=String(u.searchParams.get('to')||'').trim();
+        const params=[],where=[];
+        if(/^\d{4}-\d{2}-\d{2}$/.test(from)){params.push(from);where.push("COALESCE(NULLIF(to_jsonb(c)->>'data_carregamento',''),NULLIF(to_jsonb(c)->>'data_coleta',''),NULLIF(to_jsonb(c)->>'collection_date',''),LEFT(COALESCE(to_jsonb(c)->>'created_at',''),10)) >= $"+params.length)}
+        if(/^\d{4}-\d{2}-\d{2}$/.test(to)){params.push(to);where.push("COALESCE(NULLIF(to_jsonb(c)->>'data_carregamento',''),NULLIF(to_jsonb(c)->>'data_coleta',''),NULLIF(to_jsonb(c)->>'collection_date',''),LEFT(COALESCE(to_jsonb(c)->>'created_at',''),10)) <= $"+params.length)}
+        const result = await pool.query(`
+          SELECT
+            id::text AS id,
+            COALESCE(to_jsonb(c)->>'os_numero', to_jsonb(c)->>'numero_os', to_jsonb(c)->>'os', to_jsonb(c)->>'numero_coleta', to_jsonb(c)->>'collection_number', '') AS os,
+            COALESCE(to_jsonb(c)->>'cliente', to_jsonb(c)->>'client', to_jsonb(c)->>'nome_cliente', to_jsonb(c)->>'customer', '') AS cliente,
+            COALESCE(to_jsonb(c)->>'destinatario', '') AS destinatario,
+            COALESCE(to_jsonb(c)->>'origem', to_jsonb(c)->>'cidade_coleta', to_jsonb(c)->>'endereco_coleta', '') AS origem,
+            COALESCE(to_jsonb(c)->>'destino', to_jsonb(c)->>'cidade_entrega', to_jsonb(c)->>'endereco_entrega', to_jsonb(c)->>'delivery_address', '') AS destino,
+            COALESCE(to_jsonb(c)->>'motorista', to_jsonb(c)->>'driver', to_jsonb(c)->>'nome_motorista', '') AS motorista,
+            COALESCE(to_jsonb(c)->>'placa', to_jsonb(c)->>'plate', '') AS placa,
+            COALESCE(to_jsonb(c)->>'status','') AS status,
+            COALESCE(to_jsonb(c)->>'data_carregamento', to_jsonb(c)->>'data_coleta', to_jsonb(c)->>'collection_date', to_jsonb(c)->>'created_at', '') AS data,
+            COALESCE(
+              NULLIF(to_jsonb(c)->>'frete_receber','')::numeric,
+              NULLIF(to_jsonb(c)->>'frete_a_receber','')::numeric,
+              NULLIF(to_jsonb(c)->>'frete_cobrado','')::numeric,
+              NULLIF(to_jsonb(c)->>'valor_frete','')::numeric,
+              0
+            ) AS frete_receber,
+            COALESCE(
+              NULLIF(to_jsonb(c)->>'frete_pago','')::numeric,
+              NULLIF(to_jsonb(c)->>'frete_motorista','')::numeric,
+              NULLIF(to_jsonb(c)->>'valor_motorista','')::numeric,
+              0
+            ) AS frete_pago,
+            COALESCE(
+              NULLIF(to_jsonb(c)->>'pedagio','')::numeric,
+              NULLIF(to_jsonb(c)->>'pedágio','')::numeric,
+              0
+            ) AS pedagio,
+            COALESCE(to_jsonb(c)->>'adiantamento', to_jsonb(c)->>'percentual_adiantamento', '') AS adiantamento,
+            COALESCE(c.recebido,false) AS recebido,
+            c.data_recebimento,
+            c.previsao_pagamento_fatura
+          FROM coletas c
+          ${where.length?'WHERE '+where.join(' AND '):''}
+          ORDER BY COALESCE(NULLIF(to_jsonb(c)->>'data_carregamento',''),NULLIF(to_jsonb(c)->>'data_coleta',''),NULLIF(to_jsonb(c)->>'collection_date',''),LEFT(COALESCE(to_jsonb(c)->>'created_at',''),10)) DESC, id DESC
+          LIMIT 500
+        `,params);
+        const rows=result.rows.map(r=>{
+          const receber=Number(r.frete_receber||0),pago=Number(r.frete_pago||0),pedagio=Number(r.pedagio||0);
+          return {...r,lucro:receber-pago-pedagio,margem:receber>0?((receber-pago-pedagio)/receber*100):0}
+        });
+        return sendJson(res, 200, {ok:true,rows});
+      }
+
+
+
+      if (req.method === 'POST' && u.pathname === '/api/tracking/register-request') {
+        try {
+          const body=await readJsonBodyLimited(req,64*1024);
+          const driver=String(body.driver_name||'').trim().replace(/\s+/g,' ').slice(0,120);
+          const plate=String(body.vehicle_plate||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,10);
+          const deviceName=String(body.device_name||'Android').trim().slice(0,120);
+          if(driver.length<2)return sendJson(res,400,{ok:false,error:'Informe o nome do motorista.'});
+          if(plate&&plate.length<7)return sendJson(res,400,{ok:false,error:'Informe uma placa válida ou deixe em branco.'});
+          const requestToken=crypto.randomBytes(32).toString('hex');
+          await pool.query(
+            "INSERT INTO driver_tracking_requests(request_token_hash,driver_name,vehicle_plate,device_name,status) VALUES($1,$2,$3,$4,'pending')",
+            [dashboardTokenHash(requestToken),driver,plate,deviceName]
           );
+          console.log('TRACKING APROVACAO solicitada: '+JSON.stringify({driver,plate,deviceName}));
+          return sendJson(res,201,{ok:true,status:'pending',request_token:requestToken,message:'Solicitação enviada. Aguarde a aprovação da central.'});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao solicitar ativação.'})}
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/tracking/register-status') {
+        try {
+          const requestToken=String(u.searchParams.get('request_token')||'').trim();
+          if(requestToken.length<20)return sendJson(res,400,{ok:false,error:'Solicitação inválida.'});
+          const q=await pool.query(
+            "SELECT id::text AS id,driver_name,vehicle_plate,status,issued_token,created_at,decided_at FROM driver_tracking_requests WHERE request_token_hash=$1 LIMIT 1",
+            [dashboardTokenHash(requestToken)]
+          );
+          if(!q.rowCount)return sendJson(res,404,{ok:false,error:'Solicitação não encontrada.'});
+          const row=q.rows[0];
+          if(row.status==='approved'&&row.issued_token){
+            return sendJson(res,200,{ok:true,status:'approved',token:row.issued_token,driver_name:row.driver_name,vehicle_plate:row.vehicle_plate||''});
+          }
+          return sendJson(res,200,{ok:true,status:row.status,driver_name:row.driver_name,vehicle_plate:row.vehicle_plate||''});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao consultar aprovação.'})}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/tracking/enroll') {
+        try {
+          const body=await readJsonBodyLimited(req,64*1024);
+          const code=String(body.code||'').replace(/\D/g,'');
+          const deviceName=String(body.device_name||'Android').trim().slice(0,120);
+          if(!/^\d{6}$/.test(code))return sendJson(res,400,{ok:false,error:'Código de ativação inválido.'});
+          const codeHash=dashboardTokenHash(code);
+          const q=await pool.query(
+            "SELECT id::text AS id, driver_name, vehicle_plate FROM driver_tracking_enrollments WHERE code_hash=$1 AND used_at IS NULL AND expires_at>NOW() LIMIT 1",
+            [codeHash]
+          );
+          if(!q.rowCount)return sendJson(res,401,{ok:false,error:'Código expirado ou já utilizado.'});
+          const row=q.rows[0],token=crypto.randomBytes(32).toString('hex');
+          const client=await pool.connect();
+          try{
+            await client.query('BEGIN');
+            await client.query(
+              `UPDATE driver_tracking_devices
+               SET active=FALSE
+               WHERE active=TRUE
+                 AND lower(trim(driver_name))=lower(trim($1))
+                 AND upper(trim(COALESCE(vehicle_plate,'')))=upper(trim(COALESCE($2,'')))`,
+              [row.driver_name,row.vehicle_plate||'']
+            );
+            const dev=await client.query(
+              "INSERT INTO driver_tracking_devices(token_hash,driver_name,vehicle_plate,device_name,last_seen_at) VALUES($1,$2,$3,$4,NOW()) RETURNING id::text AS id",
+              [dashboardTokenHash(token),row.driver_name,row.vehicle_plate||'',deviceName]
+            );
+            await client.query('UPDATE driver_tracking_enrollments SET used_at=NOW() WHERE id=$1',[row.id]);
+            await client.query('COMMIT');
+            return sendJson(res,200,{ok:true,token,device_id:dev.rows[0].id,driver_name:row.driver_name,vehicle_plate:row.vehicle_plate||''})
+          }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao ativar dispositivo.'})}
+      }
+
+      async function trackingEnsureTodaySession(deviceId) {
+        const active=await pool.query(
+          "SELECT id::text AS id,started_at FROM driver_tracking_sessions WHERE device_id=$1 AND status='active' ORDER BY started_at DESC LIMIT 1",
+          [deviceId]
+        );
+        if(active.rowCount){
+          const sameDay=await pool.query(
+            "SELECT (($1::timestamptz AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date) AS ok",
+            [active.rows[0].started_at]
+          );
+          if(sameDay.rows[0]?.ok)return active.rows[0].id;
+          await pool.query(
+            "UPDATE driver_tracking_sessions SET status='ended',ended_at=COALESCE(ended_at,NOW()) WHERE id::text=$1",
+            [active.rows[0].id]
+          );
+        }
+        const today=await pool.query(
+          "SELECT id::text AS id,status FROM driver_tracking_sessions WHERE device_id=$1 AND (started_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date ORDER BY started_at DESC LIMIT 1",
+          [deviceId]
+        );
+        // Se a rota foi encerrada explicitamente hoje, não reabre automaticamente.
+        if(today.rowCount&&today.rows[0].status==='ended')return '';
+        const q=await pool.query("INSERT INTO driver_tracking_sessions(device_id,status) VALUES($1,'active') RETURNING id::text AS id",[deviceId]);
+        return q.rows[0]?.id||'';
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/tracking/session/start') {
+        try {
+          const device=await trackingDeviceFromReq(req);
+          await pool.query("UPDATE driver_tracking_sessions SET status='ended',ended_at=COALESCE(ended_at,NOW()) WHERE device_id=$1 AND status='active'",[device.id]);
+          const q=await pool.query("INSERT INTO driver_tracking_sessions(device_id,status) VALUES($1,'active') RETURNING id::text AS id,started_at",[device.id]);
+          await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
+          return sendJson(res,200,{ok:true,session_id:q.rows[0].id,started_at:q.rows[0].started_at,driver_name:device.driver_name,vehicle_plate:device.vehicle_plate||''})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao iniciar rota.'})}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/tracking/session/stop') {
+        try {
+          const device=await trackingDeviceFromReq(req);
+          const body=await readJsonBodyLimited(req,32*1024),sessionId=String(body.session_id||'').trim();
+          if(sessionId)await pool.query("UPDATE driver_tracking_sessions SET status='ended',ended_at=NOW() WHERE id::text=$1 AND device_id=$2",[sessionId,device.id]);
+          else await pool.query("UPDATE driver_tracking_sessions SET status='ended',ended_at=NOW() WHERE device_id=$1 AND status='active'",[device.id]);
+          await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
+          return sendJson(res,200,{ok:true})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao encerrar rota.'})}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/tracking/heartbeat') {
+        try {
+          const device=await trackingDeviceFromReq(req);
+          const body=await readJsonBodyLimited(req,16*1024);
+          const sessionId=String(body.session_id||'').trim();
+          let effectiveSessionId=sessionId;
+          if(sessionId){
+            const sess=await pool.query("SELECT id::text AS id FROM driver_tracking_sessions WHERE id::text=$1 AND device_id=$2 AND status='active' LIMIT 1",[sessionId,device.id]);
+            if(!sess.rowCount){
+              const active=await pool.query("SELECT id::text AS id FROM driver_tracking_sessions WHERE device_id=$1 AND status='active' ORDER BY started_at DESC LIMIT 1",[device.id]);
+              effectiveSessionId=active.rows[0]?.id||'';
+              if(!effectiveSessionId)return sendJson(res,409,{ok:false,error:'Sessão de rota não está ativa.'});
+            }
+          }else{
+            effectiveSessionId=await trackingEnsureTodaySession(device.id);
+          }
+          if(!effectiveSessionId&&!sessionId){
+            effectiveSessionId=await trackingEnsureTodaySession(device.id);
+          }
+          await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
+          return sendJson(res,200,{ok:true,session_id:effectiveSessionId||null,server_time:new Date().toISOString()})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao confirmar comunicação do dispositivo.'})}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/tracking/point') {
+        try {
+          const device=await trackingDeviceFromReq(req);
+          const body=await readJsonBodyLimited(req,48*1024);
+          const sessionId=String(body.session_id||'').trim(),lat=Number(body.latitude),lon=Number(body.longitude);
+          const captured=new Date(body.captured_at||Date.now());
+          if(!Number.isFinite(lat)||lat<-90||lat>90||!Number.isFinite(lon)||lon<-180||lon>180)return sendJson(res,400,{ok:false,error:'Coordenadas inválidas.'});
+          if(!Number.isFinite(captured.getTime()))return sendJson(res,400,{ok:false,error:'Data/hora inválida.'});
+          let effectiveSessionId=sessionId;
+          if(sessionId){
+            const sess=await pool.query("SELECT id::text AS id FROM driver_tracking_sessions WHERE id::text=$1 AND device_id=$2 AND status='active' LIMIT 1",[sessionId,device.id]);
+            if(!sess.rowCount)effectiveSessionId='';
+          }
+          if(!effectiveSessionId){
+            effectiveSessionId=await trackingEnsureTodaySession(device.id);
+          }
+          if(!effectiveSessionId)return sendJson(res,409,{ok:false,error:'Sessão de rota foi encerrada hoje. Inicie uma nova rota para voltar ao mapa.'});
+          await pool.query(
+            "INSERT INTO driver_tracking_points(session_id,device_id,latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+            [effectiveSessionId,device.id,lat,lon,Number.isFinite(Number(body.accuracy_m))?Number(body.accuracy_m):null,Number.isFinite(Number(body.speed_mps))?Number(body.speed_mps):null,Number.isFinite(Number(body.bearing_deg))?Number(body.bearing_deg):null,Number.isFinite(Number(body.battery_pct))?Number(body.battery_pct):null,captured.toISOString()]
+          );
+          await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
+          return sendJson(res,200,{ok:true,session_id:effectiveSessionId})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao registrar posição.'})}
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/painel/tracking/requests') {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const q=await pool.query(`
+            SELECT id::text AS id,driver_name,vehicle_plate,device_name,status,created_at,decided_at
+            FROM (
+              SELECT r.*,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY lower(trim(driver_name)), upper(trim(COALESCE(vehicle_plate,'')))
+                       ORDER BY created_at DESC,id DESC
+                     ) AS rn
+              FROM driver_tracking_requests r
+              WHERE status='pending'
+                 OR (created_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+            ) x
+            WHERE rn=1
+            ORDER BY (status='pending') DESC,created_at DESC
+            LIMIT 100
+          `);
+          return sendJson(res,200,{ok:true,rows:q.rows});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar solicitações.'})}
+      }
+
+      if (req.method === 'POST' && /^\/api\/painel\/tracking\/requests\/\d+\/approve$/.test(u.pathname)) {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const id=(u.pathname.match(/requests\/(\d+)\/approve$/)||[])[1];
+          const client=await pool.connect();
+          try{
+            await client.query('BEGIN');
+            const rq=await client.query("SELECT * FROM driver_tracking_requests WHERE id=$1 FOR UPDATE",[id]);
+            if(!rq.rowCount){await client.query('ROLLBACK');return sendJson(res,404,{ok:false,error:'Solicitação não encontrada.'})}
+            const row=rq.rows[0];
+            if(row.status==='approved'){await client.query('COMMIT');return sendJson(res,200,{ok:true,status:'approved'})}
+            const token=crypto.randomBytes(32).toString('hex');
+            await client.query(
+              `UPDATE driver_tracking_devices
+               SET active=FALSE
+               WHERE active=TRUE
+                 AND lower(trim(driver_name))=lower(trim($1))
+                 AND upper(trim(COALESCE(vehicle_plate,'')))=upper(trim(COALESCE($2,'')))`,
+              [row.driver_name,row.vehicle_plate||'']
+            );
+            const dev=await client.query(
+              "INSERT INTO driver_tracking_devices(token_hash,driver_name,vehicle_plate,device_name,last_seen_at) VALUES($1,$2,$3,$4,NOW()) RETURNING id::text AS id",
+              [dashboardTokenHash(token),row.driver_name,row.vehicle_plate||'',row.device_name||'Android']
+            );
+            await client.query(
+              "INSERT INTO driver_tracking_sessions(device_id,status) VALUES($1,'active')",
+              [dev.rows[0].id]
+            );
+            await client.query(
+              "UPDATE driver_tracking_requests SET status='approved',issued_token=$1,approved_device_id=$2,decided_at=NOW(),decided_by=$3 WHERE id=$4",
+              [token,dev.rows[0].id,user.id,id]
+            );
+            await client.query('COMMIT');
+            console.log('TRACKING APROVACAO aprovada: '+JSON.stringify({id,driver:row.driver_name,plate:row.vehicle_plate||'',deviceId:dev.rows[0].id}));
+            return sendJson(res,200,{ok:true,status:'approved',driver_name:row.driver_name,vehicle_plate:row.vehicle_plate||'',device_id:dev.rows[0].id});
+          }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao aprovar dispositivo.'})}
+      }
+
+      if (req.method === 'POST' && /^\/api\/painel\/tracking\/requests\/\d+\/reject$/.test(u.pathname)) {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const id=(u.pathname.match(/requests\/(\d+)\/reject$/)||[])[1];
+          await pool.query("UPDATE driver_tracking_requests SET status='rejected',decided_at=NOW(),decided_by=$1 WHERE id=$2 AND status='pending'",[user.id,id]);
+          return sendJson(res,200,{ok:true,status:'rejected'});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao rejeitar dispositivo.'})}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/painel/tracking/test-assignment') {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const body=await readJsonBodyLimited(req,64*1024);
+          const driver=String(body.driver_name||'').trim().replace(/\s+/g,' ').slice(0,120);
+          const plate=String(body.vehicle_plate||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,10);
+          const romaneios=[...new Set((Array.isArray(body.romaneios)?body.romaneios:[body.romaneio]).map(x=>String(x||'').trim()).filter(Boolean))].slice(0,20);
+          const workDate=/^\d{4}-\d{2}-\d{2}$/.test(String(body.work_date||''))?String(body.work_date):(new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}));
+          if(driver.length<2)return sendJson(res,400,{ok:false,error:'Motorista inválido.'});
+          if(plate.length<7)return sendJson(res,400,{ok:false,error:'Placa inválida.'});
+          if(!romaneios.length)return sendJson(res,400,{ok:false,error:'Romaneio não informado.'});
+          const invite=crypto.randomBytes(32).toString('hex');
+          await pool.query(
+            "INSERT INTO driver_tracking_test_assignments(invite_token_hash,driver_name,vehicle_plate,romaneios,work_date,active) VALUES($1,$2,$3,$4::jsonb,$5::date,TRUE)",
+            [dashboardTokenHash(invite),driver,plate,JSON.stringify(romaneios),workDate]
+          );
+          const installUrl=DRIVER_PUBLIC_BASE+'/motorista-teste-instalar?i='+encodeURIComponent(invite);
+          return sendJson(res,201,{ok:true,driver_name:driver,vehicle_plate:plate,romaneios,work_date:workDate,install_url:installUrl,test_only:true});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao criar convite de teste.'})}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/painel/tracking/assignment') {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const body=await readJsonBodyLimited(req,64*1024);
+          const driver=String(body.driver_name||'').trim().replace(/\s+/g,' ').slice(0,120);
+          const plate=String(body.vehicle_plate||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,10);
+          const romaneios=[...new Set((Array.isArray(body.romaneios)?body.romaneios:[body.romaneio]).map(x=>String(x||'').trim()).filter(Boolean))].slice(0,20);
+          const workDate=/^\d{4}-\d{2}-\d{2}$/.test(String(body.work_date||''))?String(body.work_date):(new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}));
+          if(driver.length<2)return sendJson(res,400,{ok:false,error:'Motorista inválido.'});
+          if(plate.length<7)return sendJson(res,400,{ok:false,error:'Placa inválida.'});
+          if(!romaneios.length)return sendJson(res,400,{ok:false,error:'Romaneio não informado.'});
+          const invite=crypto.randomBytes(32).toString('hex');
+          const client=await pool.connect();
+          try{
+            await client.query('BEGIN');
+            await client.query(
+              `UPDATE driver_tracking_assignments SET active=FALSE,updated_at=NOW()
+               WHERE work_date=$1::date AND active=TRUE
+                 AND (upper(trim(COALESCE(vehicle_plate,'')))=upper(trim($2)) OR lower(trim(driver_name))=lower(trim($3)))`,
+              [workDate,plate,driver]
+            );
+            await client.query(
+              "INSERT INTO driver_tracking_assignments(invite_token_hash,driver_name,vehicle_plate,romaneios,work_date,active,created_by) VALUES($1,$2,$3,$4::jsonb,$5::date,TRUE,$6)",
+              [dashboardTokenHash(invite),driver,plate,JSON.stringify(romaneios),workDate,user.id]
+            );
+            await client.query('COMMIT');
+          }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+          const installUrl=DRIVER_PUBLIC_BASE+'/motorista-instalar?i='+encodeURIComponent(invite);
+          return sendJson(res,201,{ok:true,driver_name:driver,vehicle_plate:plate,romaneios,work_date:workDate,invite_token:invite,install_url:installUrl});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao associar romaneio ao motorista.'})}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/painel/tracking/enrollments') {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const body=await readJsonBodyLimited(req,32*1024);
+          const driver=String(body.driver_name||'').trim(),plate=String(body.vehicle_plate||'').trim().toUpperCase().slice(0,20);
+          const hours=Math.max(1,Math.min(168,Number(body.expires_hours||24)));
+          if(!driver)return sendJson(res,400,{ok:false,error:'Informe o motorista.'});
+          let code='';
+          for(let i=0;i<10;i++){
+            code=trackingCode();
+            const exists=await pool.query('SELECT 1 FROM driver_tracking_enrollments WHERE code_hash=$1 AND used_at IS NULL AND expires_at>NOW() LIMIT 1',[dashboardTokenHash(code)]);
+            if(!exists.rowCount)break
+          }
+          await pool.query(
+            "INSERT INTO driver_tracking_enrollments(code_hash,driver_name,vehicle_plate,expires_at,created_by) VALUES($1,$2,$3,NOW()+($4*INTERVAL '1 hour'),$5)",
+            [dashboardTokenHash(code),driver,plate,hours,user.id]
+          );
+          return sendJson(res,201,{ok:true,code,driver_name:driver,vehicle_plate:plate,expires_hours:hours})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao gerar código.'})}
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/painel/tracking/test-live') {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const q=await pool.query(`
+            SELECT d.id::text AS device_id,d.driver_name,d.vehicle_plate,d.device_name,d.last_seen_at,
+                   p.latitude,p.longitude,p.accuracy_m,p.captured_at,
+                   EXTRACT(EPOCH FROM (NOW()-p.captured_at))::int AS age_seconds,
+                   EXTRACT(EPOCH FROM (NOW()-d.last_seen_at))::int AS device_age_seconds
+            FROM driver_tracking_test_devices d
+            LEFT JOIN LATERAL (
+              SELECT latitude,longitude,accuracy_m,captured_at
+              FROM driver_tracking_test_points
+              WHERE test_device_id=d.id
+                AND (captured_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+              ORDER BY captured_at DESC LIMIT 1
+            ) p ON TRUE
+            WHERE d.last_seen_at IS NOT NULL
+              AND (d.last_seen_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+            ORDER BY COALESCE(p.captured_at,d.last_seen_at) DESC
+            LIMIT 100
+          `);
+          const rows=q.rows.map(r=>({
+            ...r,
+            original_driver_name:r.driver_name,
+            original_vehicle_plate:r.vehicle_plate,
+            driver_name:'TESTE - '+r.driver_name,
+            vehicle_plate:(String(r.vehicle_plate||'').trim()+' T').trim(),
+            session_id:'TEST-'+r.device_id,
+            session_status:'active',
+            map_active:!!r.captured_at||Number(r.device_age_seconds)<=300,
+            test_only:true,
+            speed_mps:null,bearing_deg:null,battery_pct:null,trail:[]
+          }));
+          return sendJson(res,200,{ok:true,rows,test_only:true});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar GPS de teste.'})}
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/painel/tracking/live') {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const light=String(u.searchParams.get('light')||'')==='1';
+          const q=await pool.query(light?`
+            SELECT d.id::text AS device_id,d.driver_name,d.vehicle_plate,d.device_name,d.last_seen_at,
+                   s.id::text AS session_id,s.started_at,s.ended_at,s.status AS session_status,
+                   p.latitude,p.longitude,p.accuracy_m,p.speed_mps,p.bearing_deg,p.battery_pct,p.captured_at,
+                   '[]'::json AS trail,
+                   EXTRACT(EPOCH FROM (NOW()-p.captured_at))::int AS age_seconds,
+                   EXTRACT(EPOCH FROM (NOW()-d.last_seen_at))::int AS device_age_seconds,
+                   (p.captured_at IS NOT NULL OR d.last_seen_at >= NOW()-INTERVAL '5 minutes') AS map_active
+            FROM driver_tracking_devices d
+            LEFT JOIN LATERAL (
+              SELECT id,started_at,ended_at,status FROM driver_tracking_sessions
+              WHERE device_id=d.id
+                AND (started_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+              ORDER BY (status='active') DESC,started_at DESC LIMIT 1
+            ) s ON TRUE
+            LEFT JOIN LATERAL (
+              SELECT latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at
+              FROM driver_tracking_points
+              WHERE device_id=d.id
+                AND (captured_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+              ORDER BY (s.id IS NOT NULL AND session_id=s.id) DESC,captured_at DESC LIMIT 1
+            ) p ON TRUE
+            WHERE d.active=TRUE
+            ORDER BY COALESCE(p.captured_at,d.last_seen_at) DESC NULLS LAST
+            LIMIT 300
+          `:`
+            SELECT d.id::text AS device_id,d.driver_name,d.vehicle_plate,d.device_name,d.last_seen_at,
+                   s.id::text AS session_id,s.started_at,s.ended_at,s.status AS session_status,
+                   p.latitude,p.longitude,p.accuracy_m,p.speed_mps,p.bearing_deg,p.battery_pct,p.captured_at,
+                   COALESCE(t.trail,'[]'::json) AS trail,
+                   EXTRACT(EPOCH FROM (NOW()-p.captured_at))::int AS age_seconds,
+                   EXTRACT(EPOCH FROM (NOW()-d.last_seen_at))::int AS device_age_seconds,
+                   (p.captured_at IS NOT NULL OR d.last_seen_at >= NOW()-INTERVAL '5 minutes') AS map_active
+            FROM driver_tracking_devices d
+            LEFT JOIN LATERAL (
+              SELECT id,started_at,ended_at,status FROM driver_tracking_sessions
+              WHERE device_id=d.id
+                AND (started_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+              ORDER BY (status='active') DESC,started_at DESC LIMIT 1
+            ) s ON TRUE
+            LEFT JOIN LATERAL (
+              SELECT latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at
+              FROM driver_tracking_points
+              WHERE device_id=d.id
+                AND (captured_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+              ORDER BY (s.id IS NOT NULL AND session_id=s.id) DESC,captured_at DESC LIMIT 1
+            ) p ON TRUE
+            LEFT JOIN LATERAL (
+              SELECT json_agg(json_build_object(
+                'latitude',x.latitude,'longitude',x.longitude,'accuracy_m',x.accuracy_m,
+                'speed_mps',x.speed_mps,'bearing_deg',x.bearing_deg,'battery_pct',x.battery_pct,
+                'captured_at',x.captured_at
+              ) ORDER BY x.captured_at) AS trail
+              FROM (
+                SELECT latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at
+                FROM driver_tracking_points
+                WHERE s.id IS NOT NULL AND session_id=s.id
+                ORDER BY captured_at DESC
+                LIMIT 1200
+              ) x
+            ) t ON TRUE
+            WHERE d.active=TRUE
+            ORDER BY COALESCE(p.captured_at,d.last_seen_at) DESC NULLS LAST
+            LIMIT 300
+          `);
+          const freshest=new Map();
+          for(const row of q.rows){
+            const plate=String(row.vehicle_plate||'').trim().toUpperCase();
+            const driver=String(row.driver_name||'').trim().toLocaleUpperCase('pt-BR');
+            const key=plate?('P|'+plate):('D|'+driver);
+            const at=Math.max(
+              row.captured_at?new Date(row.captured_at).getTime():0,
+              row.last_seen_at?new Date(row.last_seen_at).getTime():0,
+              row.started_at?new Date(row.started_at).getTime():0
+            );
+            const prev=freshest.get(key);
+            if(!prev||at>prev._freshAt)freshest.set(key,{...row,_freshAt:at});
+          }
+          const rows=[...freshest.values()].map(({_freshAt,...row})=>row)
+            .sort((a,b)=>{
+              const ta=Math.max(a.captured_at?new Date(a.captured_at).getTime():0,a.last_seen_at?new Date(a.last_seen_at).getTime():0);
+              const tb=Math.max(b.captured_at?new Date(b.captured_at).getTime():0,b.last_seen_at?new Date(b.last_seen_at).getTime():0);
+              return tb-ta
+            });
+          return sendJson(res,200,{ok:true,light,rows,server_time:new Date().toISOString()})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao consultar rastreamento.'})}
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/painel/tracking/history-drivers') {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const date=String(u.searchParams.get('date')||'').trim();
+          if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return sendJson(res,400,{ok:false,error:'Data inválida.'});
+          const q=await pool.query(`
+            SELECT d.driver_name,d.vehicle_plate,COUNT(*)::int AS points,
+                   MIN(p.captured_at) AS first_point,MAX(p.captured_at) AS last_point
+            FROM driver_tracking_points p
+            JOIN driver_tracking_devices d ON d.id=p.device_id
+            WHERE p.captured_at >= ($1::date::timestamp AT TIME ZONE 'America/Sao_Paulo')
+              AND p.captured_at < (($1::date + 1)::timestamp AT TIME ZONE 'America/Sao_Paulo')
+            GROUP BY d.driver_name,d.vehicle_plate
+            ORDER BY lower(d.driver_name),d.vehicle_plate
+          `,[date]);
+          return sendJson(res,200,{ok:true,date,rows:q.rows})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao listar motoristas do histórico.'})}
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/painel/tracking/history') {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const sessionId=String(u.searchParams.get('session_id')||'').trim();
+          if(sessionId){
+            const q=await pool.query(
+              "SELECT latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at FROM driver_tracking_points WHERE session_id::text=$1 ORDER BY captured_at ASC LIMIT 10000",
+              [sessionId]
+            );
+            return sendJson(res,200,{ok:true,rows:q.rows})
+          }
+          const date=String(u.searchParams.get('date')||'').trim();
+          const driver=String(u.searchParams.get('driver')||'').trim();
+          if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return sendJson(res,400,{ok:false,error:'Data inválida.'});
+          const raw=String(u.searchParams.get('raw')||'')==='1';
+          if(raw){
+            const qr=await pool.query(`
+              SELECT p.session_id::text AS session_id,d.driver_name,d.vehicle_plate,
+                     p.latitude,p.longitude,p.accuracy_m,p.speed_mps,p.bearing_deg,p.battery_pct,p.captured_at
+              FROM driver_tracking_points p
+              JOIN driver_tracking_devices d ON d.id=p.device_id
+              WHERE p.captured_at >= ($1::date::timestamp AT TIME ZONE 'America/Sao_Paulo')
+                AND p.captured_at < (($1::date + 1)::timestamp AT TIME ZONE 'America/Sao_Paulo')
+                AND ($2='' OR lower(d.driver_name)=lower($2))
+              ORDER BY p.captured_at ASC
+              LIMIT 60000
+            `,[date,driver]);
+            return sendJson(res,200,{ok:true,date,driver:driver||'',raw:true,rows:qr.rows,points:qr.rows.length})
+          }
+          const q=await pool.query(`
+            SELECT s.id::text AS session_id,d.driver_name,d.vehicle_plate,
+                   s.started_at,s.ended_at,s.status,
+                   p.latitude,p.longitude,p.accuracy_m,p.speed_mps,p.bearing_deg,p.battery_pct,p.captured_at
+            FROM driver_tracking_points p
+            JOIN driver_tracking_sessions s ON s.id=p.session_id
+            JOIN driver_tracking_devices d ON d.id=p.device_id
+            WHERE p.captured_at >= ($1::date::timestamp AT TIME ZONE 'America/Sao_Paulo')
+              AND p.captured_at < (($1::date + 1)::timestamp AT TIME ZONE 'America/Sao_Paulo')
+              AND ($2='' OR lower(d.driver_name)=lower($2))
+            ORDER BY lower(d.driver_name),s.started_at,p.captured_at
+            LIMIT 60000
+          `,[date,driver]);
+          const map=new Map();
+          for(const r of q.rows){
+            if(!map.has(r.session_id))map.set(r.session_id,{
+              session_id:r.session_id,driver_name:r.driver_name,vehicle_plate:r.vehicle_plate,
+              started_at:r.started_at,ended_at:r.ended_at,status:r.status,points:[]
+            });
+            map.get(r.session_id).points.push({
+              latitude:r.latitude,longitude:r.longitude,accuracy_m:r.accuracy_m,
+              speed_mps:r.speed_mps,bearing_deg:r.bearing_deg,battery_pct:r.battery_pct,captured_at:r.captured_at
+            })
+          }
+          const sessions=[...map.values()].map(trackingHistorySessionSummary);
+          const drivers=new Set(sessions.map(x=>String(x.driver_name||'').trim()).filter(Boolean));
+          const totalStops=sessions.reduce((a,x)=>a+(x.stops?.length||0),0);
+          const distanceKm=sessions.reduce((a,x)=>a+Number(x.distance_km||0),0);
+          return sendJson(res,200,{ok:true,date,driver:driver||'',sessions,summary:{
+            drivers:drivers.size,sessions:sessions.length,points:q.rows.length,stops:totalStops,
+            distance_km:Math.round(distanceKm*10)/10,stop_min_minutes:5,stop_radius_meters:150
+          }})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao consultar histórico.'})}
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/painel/nf-materiais') {
+        try {
+          const special = String(u.searchParams.get('special') || '').trim() === '1';
+          const limit = Math.max(1, Math.min(3000, Number(u.searchParams.get('limit') || 1500)));
+          const where = special ? "WHERE classificacao <> 'normal'" : '';
+          const qr = await pool.query(
+            'SELECT id::text AS id, chave, nf, emitente_cnpj, emitente_nome, cliente, cidade, uf, classificacao, produtos, importado_em, atualizado_em ' +
+            'FROM nf_materiais ' + where + ' ORDER BY atualizado_em DESC LIMIT $1',
+            [limit]
+          );
+          return sendJson(res, 200, { ok: true, rows: qr.rows, count: qr.rows.length });
+        } catch (e) {
+          return sendJson(res, 500, { ok: false, error: e.message || 'Não foi possível consultar a classificação das notas.' });
+        }
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/painel/nf-materiais/import') {
+        try {
+          const body = await readJsonBodyLimited(req, 4 * 1024 * 1024);
+          const rows = Array.isArray(body.rows) ? body.rows.slice(0, 1000) : [];
+          if (!rows.length) return sendJson(res, 400, { ok: false, error: 'Nenhuma nota foi enviada para importação.' });
+          let imported = 0;
+          for (const item of rows) {
+            const chave = String(item.chave || '').replace(/\D/g, '').trim();
+            const nf = String(item.nf || '').replace(/\D/g, '').replace(/^0+/, '') || '0';
+            const classificacao = String(item.classificacao || 'normal').trim().toLowerCase();
+            const allowed = ['normal','tubos','caixa_agua','tubos_caixa_agua'];
+            if (chave.length !== 44 || !allowed.includes(classificacao)) continue;
+            const produtos = Array.isArray(item.produtos) ? item.produtos.map(x=>String(x||'').trim()).filter(Boolean).slice(0,250) : [];
+            await pool.query(`
+              INSERT INTO nf_materiais
+                (chave,nf,emitente_cnpj,emitente_nome,cliente,cidade,uf,classificacao,produtos,atualizado_em)
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,NOW())
+              ON CONFLICT (chave) DO UPDATE SET
+                nf=EXCLUDED.nf,
+                emitente_cnpj=EXCLUDED.emitente_cnpj,
+                emitente_nome=EXCLUDED.emitente_nome,
+                cliente=EXCLUDED.cliente,
+                cidade=EXCLUDED.cidade,
+                uf=EXCLUDED.uf,
+                classificacao=EXCLUDED.classificacao,
+                produtos=EXCLUDED.produtos,
+                atualizado_em=NOW()
+            `, [
+              chave,nf,String(item.emitente_cnpj||'').trim(),String(item.emitente_nome||'').trim(),
+              String(item.cliente||'').trim(),String(item.cidade||'').trim(),String(item.uf||'').trim(),
+              classificacao,JSON.stringify(produtos)
+            ]);
+            imported++;
+          }
+          return sendJson(res, 200, { ok: true, imported });
+        } catch (e) {
+          return sendJson(res, e.status || 500, { ok: false, error: e.message || 'Não foi possível importar os XMLs.' });
+        }
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/painel/carregamentos-finais') {
+        try {
+          const limit = Math.max(1, Math.min(100, Number(u.searchParams.get('limit') || 30)));
+          const motorista = String(u.searchParams.get('motorista') || '').trim();
+          const data = String(u.searchParams.get('data') || '').trim();
+          const tipo = String(u.searchParams.get('tipo') || '').trim().toLowerCase();
+          const where = [];
+          const params = [];
+
+          if (motorista) {
+            params.push('%' + motorista + '%');
+            where.push('motorista ILIKE $' + params.length);
+          }
+          if (tipo) {
+            if (!['carregamento','descarga'].includes(tipo)) {
+              return sendJson(res, 400, { ok: false, error: 'Tipo de operação inválido.' });
+            }
+            params.push(tipo);
+            where.push('lower(tipo) = $' + params.length);
+          }
+          if (data) {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) {
+              return sendJson(res, 400, { ok: false, error: 'Data de consulta inválida.' });
+            }
+            params.push(data);
+            where.push("(capturada_em AT TIME ZONE 'America/Sao_Paulo')::date = $" + params.length + '::date');
+          }
+
+          params.push(limit);
+          const sql =
+            'SELECT id::text AS id, tipo, conferente, motorista, quantidade_entregas, ' +
+            'capturada_em, criado_em, foto_mime, foto_bytes, foto2_bytes, foto3_bytes, foto4_bytes, conferente_coleta_devolucao, ' +
+            '(SELECT COUNT(*)::int FROM carregamentos_avarias a WHERE a.carregamento_id=carregamentos_finais.id) AS avaria_count ' +
+            'FROM carregamentos_finais ' +
+            (where.length ? 'WHERE ' + where.join(' AND ') + ' ' : '') +
+            'ORDER BY capturada_em DESC, id DESC LIMIT $' + params.length;
+          const qr = await pool.query(sql, params);
+          return sendJson(res, 200, { ok: true, motorista: motorista || null, data: data || null, tipo: tipo || null, rows: qr.rows });
+        } catch (e) {
+          return sendJson(res, 500, { ok: false, error: e.message || 'Não foi possível carregar os registros de carga e descarga.' });
+        }
+      }
+
+      const carregamentoFotoMatch = u.pathname.match(/^\/api\/painel\/carregamentos-finais\/(\d+)\/foto(?:\/(\d))?$/);
+      if (req.method === 'GET' && carregamentoFotoMatch) {
+        try {
+          const slot=Math.max(1,Math.min(4,Number(carregamentoFotoMatch[2]||1)));
+          const photoCol=slot===1?'foto':'foto'+slot;
+          const mimeCol=slot===1?'foto_mime':'foto'+slot+'_mime';
+          const r = await pool.query(
+            'SELECT '+photoCol+' AS foto, '+mimeCol+' AS foto_mime FROM carregamentos_finais WHERE id=$1 LIMIT 1',
+            [carregamentoFotoMatch[1]]
+          );
+          if (!r.rowCount || !r.rows[0].foto) return sendJson(res, 404, { ok: false, error: 'Foto não encontrada.' });
+          const row = r.rows[0];
+          res.writeHead(200, {
+            'Content-Type': row.foto_mime || 'image/jpeg',
+            'Content-Length': row.foto.length,
+            'Cache-Control': 'private, max-age=3600'
+          });
+          return res.end(row.foto);
+        } catch (e) {
+          return sendJson(res, 500, { ok: false, error: e.message || 'Não foi possível carregar a foto.' });
+        }
+      }
+
+      const avariaFotoMatch = u.pathname.match(/^\/api\/painel\/carregamentos-finais\/(\d+)\/avaria\/(\d+)$/);
+      if (req.method === 'GET' && avariaFotoMatch) {
+        try {
+          const ordem=Math.max(1,Math.min(10,Number(avariaFotoMatch[2]||1)));
+          const r=await pool.query(
+            'SELECT foto, foto_mime FROM carregamentos_avarias WHERE carregamento_id=$1 AND ordem=$2 LIMIT 1',
+            [avariaFotoMatch[1],ordem]
+          );
+          if(!r.rowCount)return sendJson(res,404,{ok:false,error:'Foto de avaria não encontrada.'});
+          const row=r.rows[0];
+          res.writeHead(200,{
+            'Content-Type':row.foto_mime||'image/jpeg',
+            'Content-Length':row.foto.length,
+            'Cache-Control':'private, max-age=3600'
+          });
+          return res.end(row.foto);
+        } catch(e) {
+          return sendJson(res,500,{ok:false,error:e.message||'Não foi possível carregar a foto de avaria.'});
+        }
+      }
+
+      const carregamentoColetaDevMatch = u.pathname.match(/^\/api\/painel\/carregamentos-finais\/(\d+)\/coleta-devolucao$/);
+      if (req.method === 'PATCH' && carregamentoColetaDevMatch) {
+        try {
+          const body=await readJsonBodyLimited(req, 3 * 1024 * 1024);
+          const conferente=String(body.conferente_coleta_devolucao||'').trim();
+          const captured=new Date(body.capturada_em||Date.now());
+          if(!conferente)return sendJson(res,400,{ok:false,error:'Informe o nome do conferente.'});
+          if(!Number.isFinite(captured.getTime()))return sendJson(res,400,{ok:false,error:'Data/hora da foto inválida.'});
+          const photo=parseImageDataUrl(body.foto);
+          const current=await pool.query('SELECT tipo FROM carregamentos_finais WHERE id=$1 LIMIT 1',[carregamentoColetaDevMatch[1]]);
+          if(!current.rowCount)return sendJson(res,404,{ok:false,error:'Registro de carregamento não encontrado.'});
+          if(String(current.rows[0].tipo||'').toLowerCase()!=='carregamento')return sendJson(res,400,{ok:false,error:'Este registro não é um carregamento.'});
+          const r=await pool.query(
+            'UPDATE carregamentos_finais SET conferente_coleta_devolucao=$1,foto4=$2,foto4_mime=$3,foto4_bytes=$4 WHERE id=$5 RETURNING id::text AS id,conferente_coleta_devolucao,foto4_bytes',
+            [conferente,photo.buffer,photo.mime,photo.buffer.length,carregamentoColetaDevMatch[1]]
+          );
+          return sendJson(res,200,{ok:true,...r.rows[0],capturada_em:captured.toISOString()});
+        } catch(e) {
+          return sendJson(res,e.status||500,{ok:false,error:e.message||'Não foi possível atualizar coleta e devolução.'});
+        }
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/painel/carregamentos-finais') {
+        try {
+          const body = await readJsonBodyLimited(req, 14 * 1024 * 1024);
+          const tipo = String(body.tipo || 'carregamento').trim().toLowerCase();
+          const conferente = String(body.conferente || '').trim();
+          const motorista = String(body.motorista || '').trim();
+          const conferenteColetaDevolucao = String(body.conferente_coleta_devolucao || '').trim();
+          const quantidade = Number(body.quantidade_entregas);
+          const captured = new Date(body.capturada_em || Date.now());
+
+          if (!['carregamento','descarga'].includes(tipo)) return sendJson(res, 400, { ok: false, error: 'Tipo de operação inválido.' });
+          if (!conferente) return sendJson(res, 400, { ok: false, error: 'Informe o nome do conferente.' });
+          if (!motorista) return sendJson(res, 400, { ok: false, error: 'Informe o nome do motorista.' });
+          if (!Number.isInteger(quantidade) || quantidade < 0 || quantidade > 1000) {
+            return sendJson(res, 400, { ok: false, error: 'Quantidade de entregas inválida.' });
+          }
+          if (!Number.isFinite(captured.getTime())) {
+            return sendJson(res, 400, { ok: false, error: 'Data/hora da foto inválida.' });
+          }
+
+          const photo = parseImageDataUrl(body.foto);
+          const extras=[body.foto2,body.foto3,body.foto4].map(v=>v?parseImageDataUrl(v):null);
+          const avarias=(Array.isArray(body.avarias)?body.avarias:[]).slice(0,10).filter(Boolean).map((v,i)=>({
+            ordem:i+1,
+            photo:parseImageDataUrl(v)
+          }));
+          const r = await pool.query(`
+            INSERT INTO carregamentos_finais
+              (tipo, conferente, motorista, quantidade_entregas, foto, foto_mime, foto_bytes,
+               foto2, foto2_mime, foto2_bytes, foto3, foto3_mime, foto3_bytes, foto4, foto4_mime, foto4_bytes,
+               conferente_coleta_devolucao, capturada_em)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+            RETURNING id::text AS id, tipo, conferente, motorista, quantidade_entregas, capturada_em, criado_em,
+              foto_bytes, foto2_bytes, foto3_bytes, foto4_bytes, conferente_coleta_devolucao
+          `, [
+            tipo, conferente, motorista, quantidade, photo.buffer, photo.mime, photo.buffer.length,
+            extras[0]?.buffer||null,extras[0]?.mime||null,extras[0]?.buffer?.length||0,
+            extras[1]?.buffer||null,extras[1]?.mime||null,extras[1]?.buffer?.length||0,
+            extras[2]?.buffer||null,extras[2]?.mime||null,extras[2]?.buffer?.length||0,
+            tipo==='carregamento'?(conferenteColetaDevolucao||null):null,
+            captured.toISOString()
+          ]);
+          const registroId=r.rows[0].id;
+          for(const av of avarias){
+            await pool.query(
+              'INSERT INTO carregamentos_avarias(carregamento_id,ordem,foto,foto_mime,foto_bytes,capturada_em) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(carregamento_id,ordem) DO UPDATE SET foto=EXCLUDED.foto,foto_mime=EXCLUDED.foto_mime,foto_bytes=EXCLUDED.foto_bytes,capturada_em=EXCLUDED.capturada_em',
+              [registroId,av.ordem,av.photo.buffer,av.photo.mime,av.photo.buffer.length,captured.toISOString()]
+            )
+          }
+          return sendJson(res, 201, { ok: true, ...r.rows[0], avaria_count:avarias.length });
+        } catch (e) {
+          return sendJson(res, e.status || 500, { ok: false, error: e.message || 'Não foi possível salvar o final do carregamento.' });
+        }
+      }
+
+      const duplicarMatch = u.pathname.match(/^\/api\/painel\/coletas-duplicar\/([^/]+)$/);
+      if (req.method === 'POST' && duplicarMatch) {
+        const id = decodeURIComponent(duplicarMatch[1]);
+        const body = await readJsonBody(req);
+        try {
+          const nova = await duplicateColetaMinimal(id, body.data);
+          return sendJson(res, 201, { ok: true, ...nova });
+        } catch (e) {
+          return sendJson(res, e.status || 500, { error: e.message || 'Não foi possível duplicar a coleta.' });
+        }
+      }
+
+      const destinatarioMatch = u.pathname.match(/^\/api\/painel\/coletas-destinatario\/([^/]+)$/);
+      if (req.method === 'PATCH' && destinatarioMatch) {
+        const id = decodeURIComponent(destinatarioMatch[1]);
+        const body = await readJsonBody(req);
+        const destinatario = String(body.destinatario || '').trim();
+        const result = await pool.query(
+          'UPDATE coletas SET destinatario=$1, updated_at=NOW() WHERE id::text=$2 RETURNING id::text AS id, destinatario',
+          [destinatario, id]
+        );
+        if (!result.rowCount) return sendJson(res, 404, { error: 'Coleta não encontrada.' });
+        return sendJson(res, 200, { ok: true, ...result.rows[0] });
+      }
+
+      const recebimentoMatch = u.pathname.match(/^\/api\/painel\/coletas-financeiro\/([^/]+)$/);
+      if (req.method === 'PATCH' && recebimentoMatch) {
+        const id = decodeURIComponent(recebimentoMatch[1]);
+        const body = await readJsonBody(req);
+        const recebido = body.recebido === true || body.recebido === 'true' || body.recebido === 1 || body.recebido === '1';
+        let dataRecebimento = body.data_recebimento ? String(body.data_recebimento).slice(0,10) : null;
+        if (recebido && !dataRecebimento) dataRecebimento = new Date().toISOString().slice(0,10);
+        if (!recebido) dataRecebimento = null;
+
+        const result = await pool.query(
+          'UPDATE coletas SET recebido=$1, data_recebimento=$2, updated_at=NOW() WHERE id::text=$3 RETURNING id::text AS id, recebido, data_recebimento',
+          [recebido, dataRecebimento, id]
+        );
+        if (!result.rowCount) return sendJson(res, 404, { error: 'Coleta não encontrada.' });
+        return sendJson(res, 200, { ok: true, ...result.rows[0] });
+      }
+
+      const previsaoMatch = u.pathname.match(/^\/api\/painel\/coletas-previsao\/([^/]+)$/);
+      if (req.method === 'PATCH' && previsaoMatch) {
+        const id = decodeURIComponent(previsaoMatch[1]);
+        const body = await readJsonBody(req);
+        const previsao = body.previsao_pagamento_fatura ? String(body.previsao_pagamento_fatura).slice(0,10) : null;
+        if (previsao && !/^\d{4}-\d{2}-\d{2}$/.test(previsao)) {
+          return sendJson(res, 400, { error: 'Data de previsão inválida.' });
+        }
+        const result = await pool.query(
+          'UPDATE coletas SET previsao_pagamento_fatura=$1, updated_at=NOW() WHERE id::text=$2 RETURNING id::text AS id, previsao_pagamento_fatura',
+          [previsao, id]
+        );
+        if (!result.rowCount) return sendJson(res, 404, { error: 'Coleta não encontrada.' });
+        return sendJson(res, 200, { ok: true, ...result.rows[0] });
+      }
+
+      const deleteMatch = u.pathname.match(/^\/api\/painel\/coletas\/([^/]+)$/);
+      if (req.method === 'DELETE' && deleteMatch) {
+        const id = decodeURIComponent(deleteMatch[1]);
+        const result = await pool.query(
+          'DELETE FROM coletas WHERE id::text = $1 RETURNING id::text AS id',
+          [id]
+        );
+        if (!result.rowCount) return sendJson(res, 404, { error: 'Coleta não encontrada.' });
+        return sendJson(res, 200, { ok: true, id: result.rows[0].id });
+      }
+
+      if (u.pathname.startsWith('/api/') && !u.pathname.startsWith('/api/painel/')) {
+        try {
+          const user=await dashboardSession(req,false);
+          const p=u.pathname;
+          const allowed=p.startsWith('/api/bills')||p==='/api/export.csv'
+            ? dashboardHas(user,'contas_pagar')
+            : (dashboardHas(user,'coletas')||dashboardHas(user,'financeiro'));
+          if(!allowed)return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+        } catch(e){
+          return sendJson(res,e.status||401,{ok:false,error:e.message||'Sessão inválida.'});
+        }
+      }
+      return handler(req, res);
+    } catch (e) {
+      console.error(e);
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Erro interno');
+    }
+  }).listen(PORT, '0.0.0.0', () => {
+    console.log('Painel da Transportadora ativo na porta ' + PORT + ' com PostgreSQL Aiven');
+  });
+}
+
+start().catch(err => {
+  console.error('Falha ao iniciar Painel da Transportadora:', err);
+  process.exit(1);
+});
++params.length;
+          const q=await pool.query(sql,params);
           return sendJson(res,200,{ok:true,rows:q.rows});
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao consultar agendamentos de teste.'})}
       }
@@ -2075,17 +2978,12 @@ start().catch(err => {
           const data=/^\d{4}-\d{2}-\d{2}$/.test(String(b.data_agendamento||''))?String(b.data_agendamento):null;
           if(agendado&&!data)return sendJson(res,400,{ok:false,error:'Informe a data do agendamento.'});
           const q=await pool.query(
-            `INSERT INTO agendamento_teste
-             (nf,ctrc,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,criado_por)
-             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-             RETURNING id::text AS id,nf,ctrc,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,criado_em`,
-            [nf,String(b.ctrc||''),String(b.cliente||''),String(b.cidade||''),String(b.uf||''),String(b.status_ssw||''),String(b.mercadoria||''),
-             Number(b.peso||0),Number(b.volumes||0),String(b.previsao_ssw||''),String(b.dia_rota||''),agendado,data,user.id]
+            'INSERT INTO agendamento_teste (nf,ctrc,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,criado_por) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id::text AS id,nf,ctrc,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,criado_em',
+            [nf,String(b.ctrc||''),String(b.cliente||''),String(b.cidade||''),String(b.uf||''),String(b.status_ssw||''),String(b.mercadoria||''),Number(b.peso||0),Number(b.volumes||0),String(b.previsao_ssw||''),String(b.dia_rota||''),agendado,data,user.id]
           );
           return sendJson(res,201,{ok:true,row:q.rows[0]});
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao salvar agendamento de teste.'})}
       }
-
       if (req.method === 'GET' && u.pathname === '/api/painel/coletas-resumo') {
         const from=String(u.searchParams.get('from')||'').trim();
         const to=String(u.searchParams.get('to')||'').trim();
