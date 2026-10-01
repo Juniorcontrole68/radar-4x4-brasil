@@ -28,6 +28,7 @@ const PANEL = path.join(__dirname, 'painel.html');
 const DRIVER_TEST_PAGE = path.join(__dirname, 'motorista-teste.html');
 const DRIVER_INSTALL_PAGE = path.join(__dirname, 'motorista-instalar.html');
 const DRIVER_TEST_INSTALL_PAGE = path.join(__dirname, 'motorista-teste-instalar.html');
+const LOTACAO_PAGE = path.join(__dirname, 'lotacao.html');
 const ACCOUNTS_INDEX = path.join(__dirname, '..', 'contas-a-pagar-v3', 'public', 'index.html');
 const DRIVER_DOWNLOADS = path.join(__dirname, 'downloads');
 const DRIVER_UPDATE_FILE = path.join(DRIVER_DOWNLOADS, 'update.json');
@@ -842,6 +843,20 @@ async function start() {
         return sendHtml(res, PANEL);
       }
 
+      if (req.method === 'GET' && (u.pathname === '/lotacao' || u.pathname === '/lotacao/')) {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'lotacao')||dashboardHas(user,'coletas')||dashboardHas(user,'financeiro'))){
+            res.writeHead(403,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+            return res.end('<!doctype html><meta charset="utf-8"><style>body{font-family:Segoe UI,Arial;padding:30px;color:#334155}h2{color:#991b1b}</style><h2>Acesso não autorizado</h2><p>Este usuário não possui permissão para Lotação.</p>');
+          }
+          return sendHtml(res,LOTACAO_PAGE);
+        } catch(e){
+          res.writeHead(302,{Location:'/?login=1#lotacao','Cache-Control':'no-store'});
+          return res.end();
+        }
+      }
+
       if (req.method === 'GET' && (u.pathname === '/coletas' || u.pathname === '/coletas/' || u.pathname === '/contas' || u.pathname === '/contas/')) {
         try {
           const user=await dashboardSession(req,false);
@@ -859,7 +874,7 @@ async function start() {
       }
 
       if (req.method === 'GET' && (u.pathname === '/coletas' || u.pathname === '/coletas/') && u.searchParams.get('embed') !== '1') {
-        res.writeHead(302, { Location: '/#coletas', 'Cache-Control': 'no-store' });
+        res.writeHead(302, { Location: '/#lotacao', 'Cache-Control': 'no-store' });
         return res.end();
       }
 
