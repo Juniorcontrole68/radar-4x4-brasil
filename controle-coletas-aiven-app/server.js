@@ -945,20 +945,55 @@ async function start() {
       }
 
       if (req.method === 'GET' && u.pathname === '/api/painel/coletas-resumo') {
+        const from=String(u.searchParams.get('from')||'').trim();
+        const to=String(u.searchParams.get('to')||'').trim();
+        const params=[],where=[];
+        if(/^\d{4}-\d{2}-\d{2}$/.test(from)){params.push(from);where.push("COALESCE(NULLIF(to_jsonb(c)->>'data_carregamento',''),NULLIF(to_jsonb(c)->>'data_coleta',''),NULLIF(to_jsonb(c)->>'collection_date',''),LEFT(COALESCE(to_jsonb(c)->>'created_at',''),10)) >= $"+params.length)}
+        if(/^\d{4}-\d{2}-\d{2}$/.test(to)){params.push(to);where.push("COALESCE(NULLIF(to_jsonb(c)->>'data_carregamento',''),NULLIF(to_jsonb(c)->>'data_coleta',''),NULLIF(to_jsonb(c)->>'collection_date',''),LEFT(COALESCE(to_jsonb(c)->>'created_at',''),10)) <= $"+params.length)}
         const result = await pool.query(`
           SELECT
             id::text AS id,
             COALESCE(to_jsonb(c)->>'os_numero', to_jsonb(c)->>'numero_os', to_jsonb(c)->>'os', to_jsonb(c)->>'numero_coleta', to_jsonb(c)->>'collection_number', '') AS os,
             COALESCE(to_jsonb(c)->>'cliente', to_jsonb(c)->>'client', to_jsonb(c)->>'nome_cliente', to_jsonb(c)->>'customer', '') AS cliente,
             COALESCE(to_jsonb(c)->>'destinatario', '') AS destinatario,
+            COALESCE(to_jsonb(c)->>'origem', to_jsonb(c)->>'cidade_coleta', to_jsonb(c)->>'endereco_coleta', '') AS origem,
             COALESCE(to_jsonb(c)->>'destino', to_jsonb(c)->>'cidade_entrega', to_jsonb(c)->>'endereco_entrega', to_jsonb(c)->>'delivery_address', '') AS destino,
+            COALESCE(to_jsonb(c)->>'motorista', to_jsonb(c)->>'driver', to_jsonb(c)->>'nome_motorista', '') AS motorista,
             COALESCE(to_jsonb(c)->>'placa', to_jsonb(c)->>'plate', '') AS placa,
+            COALESCE(to_jsonb(c)->>'status','') AS status,
             COALESCE(to_jsonb(c)->>'data_carregamento', to_jsonb(c)->>'data_coleta', to_jsonb(c)->>'collection_date', to_jsonb(c)->>'created_at', '') AS data,
-            previsao_pagamento_fatura
+            COALESCE(
+              NULLIF(to_jsonb(c)->>'frete_receber','')::numeric,
+              NULLIF(to_jsonb(c)->>'frete_a_receber','')::numeric,
+              NULLIF(to_jsonb(c)->>'frete_cobrado','')::numeric,
+              NULLIF(to_jsonb(c)->>'valor_frete','')::numeric,
+              0
+            ) AS frete_receber,
+            COALESCE(
+              NULLIF(to_jsonb(c)->>'frete_pago','')::numeric,
+              NULLIF(to_jsonb(c)->>'frete_motorista','')::numeric,
+              NULLIF(to_jsonb(c)->>'valor_motorista','')::numeric,
+              0
+            ) AS frete_pago,
+            COALESCE(
+              NULLIF(to_jsonb(c)->>'pedagio','')::numeric,
+              NULLIF(to_jsonb(c)->>'pedágio','')::numeric,
+              0
+            ) AS pedagio,
+            COALESCE(to_jsonb(c)->>'adiantamento', to_jsonb(c)->>'percentual_adiantamento', '') AS adiantamento,
+            COALESCE(c.recebido,false) AS recebido,
+            c.data_recebimento,
+            c.previsao_pagamento_fatura
           FROM coletas c
+          ${where.length?'WHERE '+where.join(' AND '):''}
+          ORDER BY COALESCE(NULLIF(to_jsonb(c)->>'data_carregamento',''),NULLIF(to_jsonb(c)->>'data_coleta',''),NULLIF(to_jsonb(c)->>'collection_date',''),LEFT(COALESCE(to_jsonb(c)->>'created_at',''),10)) DESC, id DESC
           LIMIT 500
-        `);
-        return sendJson(res, 200, result.rows);
+        `,params);
+        const rows=result.rows.map(r=>{
+          const receber=Number(r.frete_receber||0),pago=Number(r.frete_pago||0),pedagio=Number(r.pedagio||0);
+          return {...r,lucro:receber-pago-pedagio,margem:receber>0?((receber-pago-pedagio)/receber*100):0}
+        });
+        return sendJson(res, 200, {ok:true,rows});
       }
 
 
