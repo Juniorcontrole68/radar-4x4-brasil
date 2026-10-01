@@ -1178,7 +1178,8 @@ async function start() {
                        ORDER BY created_at DESC,id DESC
                      ) AS rn
               FROM driver_tracking_requests r
-              WHERE created_at>NOW()-INTERVAL '30 days'
+              WHERE status='pending'
+                 OR (created_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
             ) x
             WHERE rn=1
             ORDER BY (status='pending') DESC,created_at DESC
