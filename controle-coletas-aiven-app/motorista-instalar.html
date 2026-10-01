@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CONSTRULOG Motorista</title>
+<meta name="theme-color" content="#0057A8">
+<style>
+body{margin:0;font-family:Arial,sans-serif;background:#f5f7fa;color:#1f2937}
+.wrap{max-width:520px;margin:auto;padding:24px}
+.card{background:#fff;border-radius:18px;padding:22px;box-shadow:0 8px 28px #0001}
+.logo{font-size:30px;font-weight:900;color:#0057a8;text-align:center}
+.sub{font-size:18px;font-weight:800;color:#f28c00;text-align:center;margin-bottom:18px}
+.badge{display:inline-block;padding:7px 10px;border-radius:999px;background:#e8f1fb;color:#0057a8;font-size:12px;font-weight:800;margin:0 0 16px}
+.info{background:#f8fafc;border-radius:14px;padding:14px;line-height:1.55;margin:12px 0}
+.btn{display:block;width:100%;box-sizing:border-box;border:0;border-radius:12px;padding:15px;font-size:16px;font-weight:800;text-align:center;text-decoration:none;margin-top:12px}
+.primary{background:#f28c00;color:#fff}.secondary{background:#e8f1fb;color:#0057a8}
+.muted{font-size:13px;color:#64748b;line-height:1.5}
+.ok{color:#0a8f55;font-weight:800}
+</style>
+</head>
+<body><div class="wrap"><div class="card">
+<div class="logo">CONSTRULOG</div><div class="sub">Motorista</div>
+<div class="badge">Convite da operação</div>
+<div id="content" class="info">Carregando dados do romaneio…</div>
+<a id="download" class="btn primary" href="/downloads/CONSTRULOG-Motorista-NORMAL.apk">BAIXAR APP</a>
+<div class="info">
+<b>Primeiro acesso</b><br>
+1. Baixe o aplicativo.<br>
+2. O Android poderá pedir autorização para instalar apps desta fonte. Autorize uma única vez.<br>
+3. Abra o CONSTRULOG Motorista.<br>
+4. Informe seu nome e a placa do veículo somente no primeiro cadastro.
+</div>
+<div class="muted">Depois do primeiro cadastro, o aplicativo identifica automaticamente os romaneios associados à placa. O motorista não precisa escolher romaneio todos os dias.</div>
+</div></div>
+<script>
+const qs=new URLSearchParams(location.search),token=qs.get('i')||'';
+async function load(){
+ const box=document.getElementById('content');
+ if(!token){box.textContent='Convite inválido.';return}
+ try{
+  const r=await fetch('/api/tracking/invite?token='+encodeURIComponent(token),{cache:'no-store'});
+  const j=await r.json();
+  if(!r.ok||!j.ok)throw new Error(j.error||'Convite inválido.');
+  const a=j.assignment||{},roms=Array.isArray(a.romaneios)?a.romaneios:[];
+  box.innerHTML='<div class="ok">Romaneio associado</div>'+
+    '<b>Motorista:</b> '+esc(a.driver_name||'')+'<br>'+
+    '<b>Placa:</b> '+esc(a.vehicle_plate||'')+'<br>'+
+    '<b>Romaneio(s):</b> '+esc(roms.join(', ')||'—')+'<br>'+
+    '<b>Data:</b> '+esc(String(a.work_date||''));
+ }catch(e){box.textContent=e.message}
+}
+function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+load();
+</script></body></html>
