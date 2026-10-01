@@ -1149,7 +1149,34 @@ async function start() {
           if(!(user.is_admin||dashboardHas(user,'agendamentos')||dashboardHas(user,'dashboard')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
           const nf=String(u.searchParams.get('nf')||'').replace(/\D/g,'').replace(/^0+(?=\d)/,'');
           const params=[],where=[];
-          if(nf){params.push(nf);where.push('nf=
+          if(nf){params.push(nf);where.push('nf=$'+params.length)}
+          const limit=Math.max(1,Math.min(500,Number(u.searchParams.get('limit')||100)));
+          params.push(limit);
+          const sql='SELECT id::text AS id,nf,ctrc,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,criado_em,atualizado_em FROM agendamento_teste ' +
+            (where.length?('WHERE '+where.join(' AND ')+' '):'') + 'ORDER BY criado_em DESC LIMIT $'+params.length;
+          const q=await pool.query(sql,params);
+          return sendJson(res,200,{ok:true,rows:q.rows});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao consultar agendamentos de teste.'})}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/painel/agendamento-teste') {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'agendamentos')||dashboardHas(user,'dashboard')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const body=await readJsonBodyLimited(req,64*1024);
+          const nf=String(body.nf||'').replace(/\D/g,'').replace(/^0+(?=\d)/,'');
+          if(!nf)return sendJson(res,400,{ok:false,error:'Informe a nota fiscal.'});
+          const agendado=!!body.agendado;
+          const data=/^\d{4}-\d{2}-\d{2}$/.test(String(body.data_agendamento||''))?String(body.data_agendamento):null;
+          if(agendado&&!data)return sendJson(res,400,{ok:false,error:'Informe a data do agendamento.'});
+          const q=await pool.query(
+            'INSERT INTO agendamento_teste (nf,ctrc,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,criado_por) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id::text AS id,nf,ctrc,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,criado_em',
+            [nf,String(body.ctrc||''),String(body.cliente||''),String(body.cidade||''),String(body.uf||''),String(body.status_ssw||''),String(body.mercadoria||''),Number(body.peso||0),Number(body.volumes||0),String(body.previsao_ssw||''),String(body.dia_rota||''),agendado,data,user.id]
+          );
+          return sendJson(res,201,{ok:true,row:q.rows[0]});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao salvar agendamento de teste.'})}
+      }
+      if (req.method === 'GET' && u.pathname === '/api/painel/coletas-resumo') {
         const from=String(u.searchParams.get('from')||'').trim();
         const to=String(u.searchParams.get('to')||'').trim();
         const params=[],where=[];
