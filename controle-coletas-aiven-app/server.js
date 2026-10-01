@@ -25,6 +25,7 @@ const { handler } = require('../contas-a-pagar-v3/src/handler');
 
 const PORT = process.env.PORT || 10000;
 const PANEL = path.join(__dirname, 'painel.html');
+const DRIVER_TEST_PAGE = path.join(__dirname, 'motorista-teste.html');
 const ACCOUNTS_INDEX = path.join(__dirname, '..', 'contas-a-pagar-v3', 'public', 'index.html');
 const DRIVER_DOWNLOADS = path.join(__dirname, 'downloads');
 const DRIVER_UPDATE_FILE = path.join(DRIVER_DOWNLOADS, 'update.json');
@@ -363,6 +364,24 @@ async function start() {
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS recebido BOOLEAN NOT NULL DEFAULT FALSE');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS data_recebimento DATE');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS previsao_pagamento_fatura DATE');
+  await pool.query(`CREATE TABLE IF NOT EXISTS driver_tracking_test_devices (
+    id BIGSERIAL PRIMARY KEY,
+    token_hash TEXT UNIQUE NOT NULL,
+    driver_name TEXT NOT NULL,
+    vehicle_plate TEXT,
+    device_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ
+  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS driver_tracking_test_points (
+    id BIGSERIAL PRIMARY KEY,
+    test_device_id BIGINT NOT NULL REFERENCES driver_tracking_test_devices(id) ON DELETE CASCADE,
+    latitude DOUBLE PRECISION NOT NULL,
+    longitude DOUBLE PRECISION NOT NULL,
+    accuracy_m DOUBLE PRECISION,
+    captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_tracking_test_points_device_time ON driver_tracking_test_points(test_device_id,captured_at DESC)');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS destinatario TEXT');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS motorista_cpf TEXT');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS motorista_rg TEXT');
@@ -555,6 +574,67 @@ async function start() {
   http.createServer(async (req, res) => {
     try {
       const u = new URL(req.url, 'http://localhost');
+
+      if (req.method === 'GET' && u.pathname === '/motorista-teste') {
+        return sendHtml(res, DRIVER_TEST_PAGE);
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/tracking/test/start') {
+        try {
+          const body=await readJsonBodyLimited(req,32*1024);
+          const driver=String(body.driver_name||'').trim().replace(/\s+/g,' ').slice(0,120);
+          const plate=String(body.vehicle_plate||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,10);
+          if(driver.length<2)return sendJson(res,400,{ok:false,error:'Informe o nome do motorista.'});
+          if(plate.length<7)return sendJson(res,400,{ok:false,error:'Informe uma placa válida.'});
+          const token=crypto.randomBytes(32).toString('hex');
+          const q=await pool.query(
+            "INSERT INTO driver_tracking_test_devices(token_hash,driver_name,vehicle_plate,device_name,last_seen_at) VALUES($1,$2,$3,$4,NOW()) RETURNING id::text AS id",
+            [dashboardTokenHash(token),driver,plate,String(body.device_name||'Celular de teste').slice(0,120)]
+          );
+          return sendJson(res,201,{ok:true,token,test_device_id:q.rows[0].id,driver_name:driver,vehicle_plate:plate,test_only:true});
+        } catch(e){return sendJson(res,500,{ok:false,error:e.message||'Falha ao iniciar teste.'})}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/tracking/test/point') {
+        try {
+          const token=trackingBearer(req);
+          if(!token)return sendJson(res,401,{ok:false,error:'Teste não autenticado.'});
+          const d=await pool.query("SELECT id::text AS id FROM driver_tracking_test_devices WHERE token_hash=$1 LIMIT 1",[dashboardTokenHash(token)]);
+          if(!d.rowCount)return sendJson(res,401,{ok:false,error:'Teste inválido.'});
+          const body=await readJsonBodyLimited(req,16*1024);
+          const lat=Number(body.latitude),lon=Number(body.longitude),acc=Number(body.accuracy_m);
+          const captured=new Date(body.captured_at||Date.now());
+          if(!Number.isFinite(lat)||lat<-90||lat>90||!Number.isFinite(lon)||lon<-180||lon>180)return sendJson(res,400,{ok:false,error:'Coordenadas inválidas.'});
+          await pool.query(
+            "INSERT INTO driver_tracking_test_points(test_device_id,latitude,longitude,accuracy_m,captured_at) VALUES($1,$2,$3,$4,$5)",
+            [d.rows[0].id,lat,lon,Number.isFinite(acc)?acc:null,captured.toISOString()]
+          );
+          await pool.query("UPDATE driver_tracking_test_devices SET last_seen_at=NOW() WHERE id=$1",[d.rows[0].id]);
+          return sendJson(res,200,{ok:true,test_only:true,server_time:new Date().toISOString()});
+        } catch(e){return sendJson(res,500,{ok:false,error:e.message||'Falha ao registrar ponto de teste.'})}
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/tracking/test/status') {
+        try {
+          const token=trackingBearer(req);
+          if(!token)return sendJson(res,401,{ok:false,error:'Teste não autenticado.'});
+          const q=await pool.query(`
+            SELECT d.id::text AS id,d.driver_name,d.vehicle_plate,d.last_seen_at,
+                   p.latitude,p.longitude,p.accuracy_m,p.captured_at,
+                   (SELECT COUNT(*)::int FROM driver_tracking_test_points x WHERE x.test_device_id=d.id) AS points
+            FROM driver_tracking_test_devices d
+            LEFT JOIN LATERAL (
+              SELECT latitude,longitude,accuracy_m,captured_at
+              FROM driver_tracking_test_points
+              WHERE test_device_id=d.id
+              ORDER BY captured_at DESC LIMIT 1
+            ) p ON TRUE
+            WHERE d.token_hash=$1 LIMIT 1
+          `,[dashboardTokenHash(token)]);
+          if(!q.rowCount)return sendJson(res,404,{ok:false,error:'Teste não encontrado.'});
+          return sendJson(res,200,{ok:true,row:q.rows[0],test_only:true});
+        } catch(e){return sendJson(res,500,{ok:false,error:e.message||'Falha ao consultar teste.'})}
+      }
 
       if (req.method === 'GET' && u.pathname === '/api/tracking/app-update') {
         try {
