@@ -405,7 +405,7 @@ async function fetchSsw38QuickPrefix(prefix='AMR'){
   prefix=String(prefix||'AMR').trim().toUpperCase();
   if(!/^[A-Z]{3}$/.test(prefix))prefix='AMR';
   const cached=SSW38_PREFIX_CACHE.get(prefix);
-  if(cached&&Date.now()-cached.at<60000)return cached.value;
+  if(cached&&Date.now()-cached.at<10000)return cached.value;
   if(SSW38_PREFIX_INFLIGHT.has(prefix))return SSW38_PREFIX_INFLIGHT.get(prefix);
   const job=(async()=>{
     if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
