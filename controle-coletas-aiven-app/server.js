@@ -1049,6 +1049,14 @@ async function start() {
           const client=await pool.connect();
           try{
             await client.query('BEGIN');
+            await client.query(
+              `UPDATE driver_tracking_devices
+               SET active=FALSE
+               WHERE active=TRUE
+                 AND lower(trim(driver_name))=lower(trim($1))
+                 AND upper(trim(COALESCE(vehicle_plate,'')))=upper(trim(COALESCE($2,'')))`,
+              [row.driver_name,row.vehicle_plate||'']
+            );
             const dev=await client.query(
               "INSERT INTO driver_tracking_devices(token_hash,driver_name,vehicle_plate,device_name,last_seen_at) VALUES($1,$2,$3,$4,NOW()) RETURNING id::text AS id",
               [dashboardTokenHash(token),row.driver_name,row.vehicle_plate||'',deviceName]
@@ -1161,9 +1169,21 @@ async function start() {
         try {
           const user=await dashboardSession(req,false);
           if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
-          const q=await pool.query(
-            "SELECT id::text AS id,driver_name,vehicle_plate,device_name,status,created_at,decided_at FROM driver_tracking_requests WHERE created_at>NOW()-INTERVAL '30 days' ORDER BY (status='pending') DESC,created_at DESC LIMIT 100"
-          );
+          const q=await pool.query(`
+            SELECT id::text AS id,driver_name,vehicle_plate,device_name,status,created_at,decided_at
+            FROM (
+              SELECT r.*,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY lower(trim(driver_name)), upper(trim(COALESCE(vehicle_plate,'')))
+                       ORDER BY created_at DESC,id DESC
+                     ) AS rn
+              FROM driver_tracking_requests r
+              WHERE created_at>NOW()-INTERVAL '30 days'
+            ) x
+            WHERE rn=1
+            ORDER BY (status='pending') DESC,created_at DESC
+            LIMIT 100
+          `);
           return sendJson(res,200,{ok:true,rows:q.rows});
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar solicitações.'})}
       }
@@ -1181,6 +1201,14 @@ async function start() {
             const row=rq.rows[0];
             if(row.status==='approved'){await client.query('COMMIT');return sendJson(res,200,{ok:true,status:'approved'})}
             const token=crypto.randomBytes(32).toString('hex');
+            await client.query(
+              `UPDATE driver_tracking_devices
+               SET active=FALSE
+               WHERE active=TRUE
+                 AND lower(trim(driver_name))=lower(trim($1))
+                 AND upper(trim(COALESCE(vehicle_plate,'')))=upper(trim(COALESCE($2,'')))`,
+              [row.driver_name,row.vehicle_plate||'']
+            );
             const dev=await client.query(
               "INSERT INTO driver_tracking_devices(token_hash,driver_name,vehicle_plate,device_name,last_seen_at) VALUES($1,$2,$3,$4,NOW()) RETURNING id::text AS id",
               [dashboardTokenHash(token),row.driver_name,row.vehicle_plate||'',row.device_name||'Android']
