@@ -48,6 +48,7 @@ window.fetch=function(input,init){
 
 const PERMISSION_OPTIONS=[
   ['coletas','Controle de Coletas'],
+  ['lotacao','Lotação • Coletas e Financeiro'],
   ['contas_pagar','Contas a Pagar'],
   ['dashboard','Dashboard principal'],
   ['ssw_saidas','SSW • Saídas x Baixas'],
@@ -77,20 +78,21 @@ function hasPerm(p){return !!(AUTH&&(AUTH.is_admin||AUTH.permissions?.includes('
 function hasAnyPerm(list){return list.some(hasPerm)}
 function tabAllowed(tab){
   const map={
-    dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',rastreamento:'tracking',
+    dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',rastreamento:'tracking',lotacao:'lotacao',
     agendamentos:'agendamentos',ajudantes:'ajudantes',
     'ssw-motoristas':'ssw_saidas','motoristas-evolucao':'evolucao',
     'ssw-atrasos':'ssw_atrasos','ssw-remetentes':'remetentes',
     'ssw-remetentes-comparativo':'remetentes_comparativo','receita-ssw':'receita_ssw','mapa-cidades':'cidade_destino'
   };
   if(tab==='usuarios')return !!AUTH?.is_admin;
+  if(tab==='lotacao')return hasAnyPerm(['lotacao','coletas','financeiro']);
   if(tab==='roteirizador')return hasPerm('roteirizador');
   if(tab==='agendamentos-copia')return hasAnyPerm(['dashboard','agendamentos','agendamentos_copia']);
   if(tab==='dashboards')return AUTH?.is_admin||PERMISSION_OPTIONS.some(([p])=>hasPerm(p)&&p!=='dashboard');
   return map[tab]?hasPerm(map[tab]):false
 }
 function applyPermissions(){
-  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',rastreamento:'tracking',agendamentos:'agendamentos',ajudantes:'ajudantes'};
+  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',rastreamento:'tracking',lotacao:'lotacao',agendamentos:'agendamentos',ajudantes:'ajudantes'};
   document.querySelectorAll('.nav button').forEach(b=>{
     let show=true;
     if(b.dataset.adminOnly==='1')show=!!AUTH?.is_admin;
@@ -320,7 +322,7 @@ function bootstrapEmbeddedAuth(){
   tryExisting();
 }
 
-const S={ops:[],sch:[],help:[],agCopy:[],ssw:null,remetentes:null,receita:null,coletas:null,sswMotoristas:null},$=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+const S={ops:[],sch:[],help:[],agCopy:[],ssw:null,remetentes:null,receita:null,coletas:null,lotacao:[],sswMotoristas:null},$=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const gd=o=>o['ENTREGUE']??o['Entregue']??o['Data']??o['  Data']??o['DATA']??'',g=(o,...k)=>{for(const x of k)if(o[x]!==undefined)return o[x];return''};
 const pd=s=>{if(!s)return null;const p=String(s).trim().split('/');if(p.length!==3)return null;const d=new Date(+p[2],+p[1]-1,+p[0]);return isNaN(d)?null:d};
 const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -1275,6 +1277,46 @@ function renderRemetentes(){const d=S.remetentes;if(!d||!d.ok)return;const set=(
 function renderRemCompare(){const d=S.remetentes;if(!d||!d.ok)return;const C=d.clientes||[],a=$('#remClientA'),b=$('#remClientB');if(!a||!b)return;const A=C.find(x=>x.remetente===a.value),B=C.find(x=>x.remetente===b.value),set=(id,v)=>{const e=$(id);if(e)e.textContent=v};const fill=(p,x)=>{set('#rem'+p+'Name',x?x.remetente:'—');set('#rem'+p+'Ctrcs',x?nf(x.ctrcs):'—');set('#rem'+p+'Freight',x?brl(x.frete):'—');set('#rem'+p+'Goods',x?brl(x.valorMercadoria):'—');set('#rem'+p+'Volumes',x?nf(x.volumes):'—');set('#rem'+p+'Weight',x?nf(x.peso):'—');set('#rem'+p+'Delay',x?(x.atrasoMedio||0).toFixed(1).replace('.',',')+' d':'—');set('#rem'+p+'Cities',x?nf(x.cidades):'—');set('#rem'+p+'Recipients',x?nf(x.destinatarios):'—')};fill('A',A);fill('B',B);set('#remCompareMeta',(d.note||'')+(d.meta&&d.meta.data?' • '+d.meta.data+' '+(d.meta.hora||''):''))}
 async function refreshSswRemetentes(){try{const q=sswRangeQuery(),sep=q?'&':'?';const r=await fetch('/api/bi2/remetentes'+q+sep+'t='+Date.now(),{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw Error(j.error||'Falha ao carregar clientes remetentes');S.remetentes=j;renderRemetentes()}catch(e){const ids=['#remMeta','#hubRemNote','#remCompareMeta'];ids.forEach(id=>{const el=$(id);if(el)el.textContent='Não foi possível carregar os clientes remetentes: '+e.message})}}
 async function checkSsw(){try{const [rs,rb,ra]=await Promise.all([fetch('/api/ssw/status?t='+Date.now(),{cache:'no-store'}),fetch('/api/bi2/status?t='+Date.now(),{cache:'no-store'}),fetch('/api/bi2/api-status?t='+Date.now(),{cache:'no-store'})]),s=await rs.json(),b2=await rb.json(),api=await ra.json(),b=$('#sswSource');if(!b)return;if(api.connected){b.textContent='BI2 WebAPI conectada • consulta a cada 1 min • usando Google Sheets';const tag=$('#hubBi2Tag'),txt=$('#hubBi2Text');if(tag){tag.textContent='WEBAPI BI2 CONECTADA';tag.classList.remove('wait');tag.classList.add('live')}if(txt)txt.textContent='WebAPI BI2 conectada. Relatórios monitorados a cada 1 minuto; SFTP mantido como contingência.';b.style.background='#dcfce7';b.style.color='#166534';b.style.borderColor='#86efac'}else if(b2.connected){b.textContent=(b2.fileCount>0?'BI2 SFTP conectado • '+b2.fileCount+' arquivo(s) disponível(is) • usando Google Sheets':'BI2 SFTP conectado • aguardando arquivos do SSW • usando Google Sheets');const tag=$('#hubBi2Tag'),txt=$('#hubBi2Text');if(tag){tag.textContent=b2.fileCount>0?'ARQUIVOS DISPONÍVEIS':'BI2 CONECTADO';tag.classList.remove('wait');tag.classList.add('live')}if(txt)txt.textContent=b2.fileCount>0?'BI2 conectado com '+b2.fileCount+' arquivo(s) disponível(is) para processamento.':'BI2 conectado com sucesso. Aguardando o SSW publicar os primeiros arquivos.';b.style.background='#dcfce7';b.style.color='#166534';b.style.borderColor='#86efac'}else if(b2.configured){b.textContent='BI2 configurado • conexão indisponível • usando Google Sheets';const tag=$('#hubBi2Tag'),txt=$('#hubBi2Text');if(tag){tag.textContent='BI2 INDISPONÍVEL';tag.classList.remove('live');tag.classList.add('wait')}if(txt)txt.textContent='Credenciais configuradas, mas a conexão BI2 não está disponível neste momento.';b.style.background='#fee2e2';b.style.color='#991b1b';b.style.borderColor='#fecaca'}else if(s.connected){b.textContent='SSW WebAPI conectado • usando Google Sheets';b.style.background='#dcfce7';b.style.color='#166534';b.style.borderColor='#86efac'}else if(s.configured){b.textContent='SSW WebAPI: falha de autenticação • usando Google Sheets';b.style.background='#fee2e2';b.style.color='#991b1b';b.style.borderColor='#fecaca'}else{b.textContent='SSW/BI2 aguardando configuração • usando Google Sheets';b.style.background='#ecfeff';b.style.color='#0f766e';b.style.borderColor='#99f6e4'}}catch(e){const b=$('#sswSource');if(b)b.textContent='Fontes SSW indisponíveis • usando Google Sheets'}}
+function lotacaoIsoDate(v){
+  const s=String(v||'').slice(0,10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s)?s:''
+}
+function renderLotacao(){
+  const q=($('#lotacaoSearch')?.value||'').trim().toLowerCase();
+  const rows=(S.lotacao||[]).filter(r=>{
+    if(!q)return true;
+    return [r.os,r.cliente,r.destinatario,r.origem,r.destino,r.motorista,r.placa,r.status].some(v=>String(v||'').toLowerCase().includes(q))
+  });
+  const receber=rows.reduce((s,r)=>s+Number(r.frete_receber||0),0);
+  const pago=rows.reduce((s,r)=>s+Number(r.frete_pago||0),0);
+  const pedagio=rows.reduce((s,r)=>s+Number(r.pedagio||0),0);
+  const lucro=rows.reduce((s,r)=>s+Number(r.lucro||0),0);
+  const margem=receber>0?lucro/receber*100:0;
+  const setv=(id,v)=>{const el=$(id);if(el)el.textContent=v};
+  setv('#lotacaoTotal',nf(rows.length));setv('#lotacaoReceber',brl(receber));setv('#lotacaoPago',brl(pago));
+  setv('#lotacaoPedagio',brl(pedagio));setv('#lotacaoLucro',brl(lucro));setv('#lotacaoMargem',margem.toFixed(1).replace('.',',')+'%');
+  const t=$('#lotacaoTable');
+  if(t)t.innerHTML='<thead><tr><th>Data</th><th>OS/Coleta</th><th>Cliente</th><th>Origem → Destino</th><th>Motorista / Placa</th><th>Status</th><th>Frete receber</th><th>Frete pago</th><th>Pedágio</th><th>Lucro</th><th>Margem</th><th>Recebido</th></tr></thead><tbody>'+
+    (rows.length?rows.map(r=>'<tr><td>'+safe(lotacaoIsoDate(r.data)?.split('-').reverse().join('/')||'—')+'</td><td><b>'+safe(r.os||r.id||'—')+'</b></td><td>'+safe(r.cliente||'—')+'</td><td>'+safe(r.origem||'—')+' → '+safe(r.destino||'—')+'</td><td>'+safe(r.motorista||'—')+(r.placa?' • '+safe(r.placa):'')+'</td><td>'+safe(r.status||'—')+'</td><td>'+brl(Number(r.frete_receber||0))+'</td><td>'+brl(Number(r.frete_pago||0))+'</td><td>'+brl(Number(r.pedagio||0))+'</td><td><b>'+brl(Number(r.lucro||0))+'</b></td><td>'+Number(r.margem||0).toFixed(1).replace('.',',')+'%</td><td>'+(r.recebido?'Sim':'Não')+'</td></tr>').join(''):'<tr><td colspan="12" class="muted">Nenhuma lotação encontrada para os filtros atuais.</td></tr>')+'</tbody>';
+  const info=$('#lotacaoInfo');
+  if(info)info.textContent=nf(rows.length)+' lotação(ões) • '+brl(receber)+' a receber • '+brl(lucro)+' de lucro';
+}
+async function refreshLotacao(){
+  if(window.__lotacaoBusy)return;
+  window.__lotacaoBusy=true;
+  try{
+    const q=new URLSearchParams();
+    const from=$('#lotacaoFrom')?.value||'',to=$('#lotacaoTo')?.value||'';
+    if(from)q.set('from',from);if(to)q.set('to',to);
+    const r=await fetch('/api/lotacao?'+q.toString(),{cache:'no-store'});
+    const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível carregar lotações.');
+    S.lotacao=Array.isArray(j.rows)?j.rows:[];
+    renderLotacao()
+  }catch(e){
+    const info=$('#lotacaoInfo');if(info)info.textContent='Lotação indisponível: '+e.message;
+    S.lotacao=[];renderLotacao()
+  }finally{window.__lotacaoBusy=false}
+}
 async function refreshData(first=false){
   if(window.__refreshing)return;
   window.__refreshing=true;
@@ -3432,6 +3474,7 @@ function setupRoteirizador(){
 }
 
 function loadHeavyForTab(tab){
+  if(tab==='lotacao'){setTimeout(()=>refreshLotacao(),30);return}
   if(tab==='dashboard'){
     if(hasAnyPerm(['dashboard','agendamentos','agendamentos_copia']))setTimeout(()=>refreshAgCopy(false),80);
     if(hasPerm('final_carregamento'))setTimeout(()=>refreshLoadingRecords(false),140);
@@ -3528,6 +3571,7 @@ function openTab(tab){
     'conferencia':'Registro de Carga e Descarga',
     'programacao':'Programação de Entregas',
     'rastreamento':'Rastreio de Carga',
+    'lotacao':'Lotação',
     'roteirizador':'Roteirizador SSW',
     'agendamentos-copia':'Consulta de Agendamentos',
     'usuarios':'Usuários e Acessos',
@@ -3546,7 +3590,9 @@ $$('.dash-open').forEach(b=>b.onclick=()=>{if(tabAllowed(b.dataset.open))openTab
 if($('#cityBubbleApply'))$('#cityBubbleApply').onclick=()=>refreshCityBubbles(true);
 ['#cityBubbleMetric','#cityBubbleTop'].forEach(id=>{const e=$(id);if(e)e.onchange=renderCityBubbleMap});
 
-$$('.nav button').forEach(b=>b.onclick=()=>{
+if($('#lotacaoRefresh'))$('#lotacaoRefresh').onclick=()=>refreshLotacao();
+if($('#lotacaoSearch'))$('#lotacaoSearch').oninput=()=>renderLotacao();
+$('.nav button').forEach(b=>b.onclick=()=>{
   if(!tabAllowed(b.dataset.tab))return;
   $$('.nav button').forEach(x=>x.classList.remove('active'));
   b.classList.add('active');
