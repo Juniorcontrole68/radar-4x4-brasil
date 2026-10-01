@@ -2276,7 +2276,7 @@ function trackingActualColor(row){
 }
 function trackingMapPopulateControls(rows){
   const select=$('#trackingMapDriver'),check=$('#trackingMapOnlyDrivers');
-  const active=(rows||[]).filter(r=>r&&(r.session_id||r.map_active||Number.isFinite(Number(r.latitude))&&Number.isFinite(Number(r.longitude))));
+  const active=(rows||[]).filter(r=>r&&(r.operation_active||r.session_id||r.map_active||Number.isFinite(Number(r.latitude))&&Number.isFinite(Number(r.longitude))));
   const unique=new Map();
   active.forEach(r=>{
     const key=trackingDriverKey(r.driver_name,r.vehicle_plate);
@@ -2448,6 +2448,7 @@ function trackingFindRoute(driver,plate){
   return null
 }
 function trackingStatus(row){
+  if(row.operation_active&&!row.session_id&&!row.map_active&&!Number.isFinite(Number(row.latitude))&&!Number.isFinite(Number(row.longitude)))return{key:'bad',label:'Sem sinal / sem GPS hoje',distance:null};
   if(!row.session_id&&!row.map_active&&!Number.isFinite(Number(row.latitude))&&!Number.isFinite(Number(row.longitude)))return{key:'off',label:'Inativo',distance:null};
   if(String(row.session_status||'').toLowerCase()==='ended')return{key:'off',label:'Rota finalizada • permanece no mapa até o fim do dia',distance:null};
   const age=Number(row.age_seconds),deviceAge=Number(row.device_age_seconds);
@@ -3278,7 +3279,7 @@ function renderTrackingMap(rows){
 function renderTracking(rows){
   TRACKING_DATA=rows||[];
   const statuses=TRACKING_DATA.map(r=>({r,s:trackingStatus(r)}));
-  const active=statuses.filter(x=>x.r.session_id||x.r.map_active||Number.isFinite(Number(x.r.latitude))&&Number.isFinite(Number(x.r.longitude))).length,on=statuses.filter(x=>x.s.key==='ok').length,dev=statuses.filter(x=>(x.r.session_id||x.r.map_active)&&x.s.key==='bad'&&x.s.distance!==null).length,offline=statuses.filter(x=>(x.r.session_id||x.r.map_active)&&x.s.key==='bad'&&x.s.distance===null).length;
+  const active=statuses.filter(x=>x.r.operation_active||x.r.session_id||x.r.map_active||Number.isFinite(Number(x.r.latitude))&&Number.isFinite(Number(x.r.longitude))).length,on=statuses.filter(x=>x.s.key==='ok').length,dev=statuses.filter(x=>(x.r.operation_active||x.r.session_id||x.r.map_active)&&x.s.key==='bad'&&x.s.distance!==null).length,offline=statuses.filter(x=>(x.r.operation_active||x.r.session_id||x.r.map_active)&&x.s.key==='bad'&&x.s.distance===null).length;
   const set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
   set('#trackingActive',nf(active));set('#trackingOnRoute',nf(on));set('#trackingDeviation',nf(dev));set('#trackingOffline',nf(offline));
   const tableEl=$('#trackingTable');
@@ -3334,9 +3335,28 @@ async function refreshTracking(){
       const pointToday=r.captured_at&&new Date(r.captured_at).toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'})===today;
       const heartbeatFresh=Number.isFinite(Number(r.device_age_seconds))&&Number(r.device_age_seconds)<=300;
       return inOperation&&(pointToday||heartbeatFresh);
-    });
-    renderTracking(currentRows);
-    trackingRefreshLogicalAnalysis(currentRows,today).catch(()=>{});
+    }).map(r=>({...r,operation_active:true}));
+    const mergedRows=[...currentRows];
+    for(const op of operationRows){
+      const opPlate=trackingNorm(op.veiculo||op.vehicle_plate||''),opDriver=trackingNorm(op.motorista||op.driver_name||'');
+      const found=mergedRows.some(r=>{
+        const rp=trackingNorm(r.vehicle_plate||''),rd=trackingNorm(r.driver_name||'');
+        return (opPlate&&rp===opPlate)||(opDriver&&rd===opDriver)
+      });
+      if(!found){
+        mergedRows.push({
+          driver_name:driverDisplayName(op.motorista||op.driver_name||''),
+          vehicle_plate:String(op.veiculo||op.vehicle_plate||'').trim(),
+          operation_active:true,
+          romaneio:op.romaneio||'',
+          romaneios:Array.isArray(op.romaneios)?op.romaneios:[op.romaneio].filter(Boolean),
+          session_id:null,map_active:false,latitude:null,longitude:null,
+          age_seconds:null,device_age_seconds:null,session_status:'active'
+        });
+      }
+    }
+    renderTracking(mergedRows);
+    trackingRefreshLogicalAnalysis(mergedRows,today).catch(()=>{});
 
     // A geometria das rotas é mais pesada. Ela é atualizada em separado para
     // nunca segurar a lista de Motorista + Placa.
