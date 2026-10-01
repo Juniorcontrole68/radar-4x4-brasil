@@ -79,7 +79,7 @@ function hasAnyPerm(list){return list.some(hasPerm)}
 function tabAllowed(tab){
   const map={
     dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',rastreamento:'tracking',lotacao:'lotacao',
-    agendamentos:'agendamentos',ajudantes:'ajudantes',
+    agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes',
     'ssw-motoristas':'ssw_saidas','motoristas-evolucao':'evolucao',
     'ssw-atrasos':'ssw_atrasos','ssw-remetentes':'remetentes',
     'ssw-remetentes-comparativo':'remetentes_comparativo','receita-ssw':'receita_ssw','mapa-cidades':'cidade_destino'
@@ -92,7 +92,7 @@ function tabAllowed(tab){
   return map[tab]?hasPerm(map[tab]):false
 }
 function applyPermissions(){
-  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',rastreamento:'tracking',lotacao:'lotacao',agendamentos:'agendamentos',ajudantes:'ajudantes'};
+  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',rastreamento:'tracking',lotacao:'lotacao',agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes'};
   document.querySelectorAll('.nav button').forEach(b=>{
     let show=true;
     if(b.dataset.adminOnly==='1')show=!!AUTH?.is_admin;
@@ -3694,6 +3694,70 @@ async function start(){
   window.addEventListener('focus',()=>refreshData(false));
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshData(false)})
 }
+let AGT_CURRENT=null;
+function agtVal(id,v){const e=$(id);if(e)e.value=v??''}
+function agtReset(){
+  AGT_CURRENT=null;
+  agtVal('#agtNf','');['#agtF_Nf','#agtF_Ctrc','#agtF_Cliente','#agtF_Cidade','#agtF_Uf','#agtF_Rota','#agtF_Status','#agtF_Mercadoria','#agtF_Peso','#agtF_Volumes','#agtF_Previsao','#agtF_Data'].forEach(id=>agtVal(id,''));
+  if($('#agtF_Agendado'))$('#agtF_Agendado').value='nao';
+  if($('#agtF_Data'))$('#agtF_Data').disabled=true;
+  if($('#agtForm'))$('#agtForm').style.display='none';
+  if($('#agtMsg'))$('#agtMsg').textContent='Informe uma nota fiscal para começar.'
+}
+async function agtBuscar(){
+  const nf=String($('#agtNf')?.value||'').replace(/\D/g,'').replace(/^0+(?=\d)/,'');
+  const msg=$('#agtMsg'),btn=$('#agtBuscar');
+  if(!nf){if(msg)msg.textContent='Informe o número da nota fiscal.';return}
+  if(btn){btn.disabled=true;btn.textContent='Buscando…'};if(msg)msg.textContent='Consultando nota no SSW…';
+  try{
+    const r=await fetch('/api/agendamento-teste/nf?nf='+encodeURIComponent(nf)+'&t='+Date.now(),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Nota não localizada.');
+    AGT_CURRENT=j.row;
+    agtVal('#agtF_Nf',j.row.nf);agtVal('#agtF_Ctrc',j.row.ctrc);agtVal('#agtF_Cliente',j.row.cliente);agtVal('#agtF_Cidade',j.row.cidade);agtVal('#agtF_Uf',j.row.uf);
+    agtVal('#agtF_Rota',j.row.dia_rota);agtVal('#agtF_Status',j.row.status_ssw);agtVal('#agtF_Mercadoria',j.row.mercadoria);agtVal('#agtF_Peso',Number(j.row.peso||0).toLocaleString('pt-BR',{maximumFractionDigits:3}));
+    agtVal('#agtF_Volumes',Number(j.row.volumes||0).toLocaleString('pt-BR',{maximumFractionDigits:0}));agtVal('#agtF_Previsao',j.row.previsao_ssw);
+    if($('#agtF_Agendado'))$('#agtF_Agendado').value='nao';if($('#agtF_Data')){$('#agtF_Data').value='';$('#agtF_Data').disabled=true}
+    if($('#agtForm'))$('#agtForm').style.display='block';
+    if(msg)msg.textContent='✓ Dados preenchidos pelo SSW. O operador precisa informar apenas se houve agendamento e a data.';
+  }catch(e){
+    AGT_CURRENT=null;if($('#agtForm'))$('#agtForm').style.display='none';if(msg)msg.textContent='Erro: '+e.message
+  }finally{if(btn){btn.disabled=false;btn.textContent='Buscar no SSW'}}
+}
+async function agtSalvar(e){
+  e?.preventDefault();if(!AGT_CURRENT)return;
+  const agendado=$('#agtF_Agendado')?.value==='sim',data=$('#agtF_Data')?.value||'',msg=$('#agtMsg'),btn=$('#agtSalvar');
+  if(agendado&&!data){if(msg)msg.textContent='Informe a data do agendamento.';return}
+  if(btn){btn.disabled=true;btn.textContent='Salvando…'}
+  try{
+    const body={...AGT_CURRENT,agendado,data_agendamento:agendado?data:null};
+    const r=await fetch('/api/agendamento-teste',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível salvar.');
+    if(msg)msg.textContent='✓ Registro salvo no ambiente de teste.';
+    await agtLista();
+  }catch(e){if(msg)msg.textContent='Erro ao salvar: '+e.message}
+  finally{if(btn){btn.disabled=false;btn.textContent='Salvar teste'}}
+}
+async function agtLista(){
+  const table=$('#agtTabela');if(!table)return;
+  try{
+    const r=await fetch('/api/agendamento-teste?limit=100&t='+Date.now(),{cache:'no-store'}),j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar.');
+    const rows=j.rows||[];
+    const body=rows.length?rows.map(x=>'<tr><td><b>'+safe(x.nf||'')+'</b></td><td>'+safe(x.cliente||'')+'</td><td>'+safe(x.cidade||'')+'</td><td>'+safe(x.dia_rota||'')+'</td><td>'+safe(x.status_ssw||'')+'</td><td>'+programFmtNumber(Number(x.peso||0),0)+' kg</td><td>'+(x.agendado?'SIM':'NÃO')+'</td><td>'+safe(x.data_agendamento?String(x.data_agendamento).slice(0,10).split('-').reverse().join('/'):'—')+'</td></tr>').join(''):'<tr><td colspan="8" class="muted">Nenhum registro de teste salvo.</td></tr>';
+    table.innerHTML='<thead><tr><th>NF</th><th>Cliente</th><th>Cidade</th><th>Dia rota</th><th>Status SSW</th><th>Peso</th><th>Agendado</th><th>Data</th></tr></thead><tbody>'+body+'</tbody>'
+  }catch(e){table.innerHTML='<tbody><tr><td class="muted">Erro: '+safe(e.message)+'</td></tr></tbody>'}
+}
+function setupAgendamentoTeste(){
+  if($('#agtBuscar'))$('#agtBuscar').onclick=agtBuscar;
+  if($('#agtNf'))$('#agtNf').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();agtBuscar()}};
+  if($('#agtF_Agendado'))$('#agtF_Agendado').onchange=()=>{const yes=$('#agtF_Agendado').value==='sim';$('#agtF_Data').disabled=!yes;if(!yes)$('#agtF_Data').value=''};
+  if($('#agtForm'))$('#agtForm').onsubmit=agtSalvar;
+  if($('#agtNovo'))$('#agtNovo').onclick=agtReset;
+  if($('#agtAtualizar'))$('#agtAtualizar').onclick=agtLista;
+}
+
 function openTab(tab){
   if(!tabAllowed(tab))return;
   const b=$('.nav button[data-tab="'+tab+'"]');
@@ -3715,7 +3779,7 @@ function openTab(tab){
     'rastreamento':'Rastreio de Carga',
     'lotacao':'Lotação',
     'roteirizador':'Roteirizador SSW',
-    'agendamentos-copia':'Consulta de Agendamentos',
+    'agendamentos-copia':'Consulta de Agendamentos','agendamento-teste':'Agendamento Teste',
     'usuarios':'Usuários e Acessos',
     'mapa-cidades':'Mapa de Cidades • SSW'
   };
@@ -3734,6 +3798,7 @@ if($('#cityBubbleApply'))$('#cityBubbleApply').onclick=()=>refreshCityBubbles(tr
 
 if($('#lotacaoRefresh'))$('#lotacaoRefresh').onclick=()=>refreshLotacao();
 if($('#lotacaoSearch'))$('#lotacaoSearch').oninput=()=>renderLotacao();
+setupAgendamentoTeste();
 $$('.nav button').forEach(b=>b.onclick=()=>{
   if(!tabAllowed(b.dataset.tab))return;
   $$('.nav button').forEach(x=>x.classList.remove('active'));
@@ -3761,6 +3826,7 @@ $$('.nav button').forEach(b=>b.onclick=()=>{
       refreshCityBubbles();
     }
     if(b.dataset.tab==='motoristas-evolucao')refreshDriverProgress();
+    if(b.dataset.tab==='agendamento-teste')agtLista();
     loadHeavyForTab(b.dataset.tab);
   },30)
 });
