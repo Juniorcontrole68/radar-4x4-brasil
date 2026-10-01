@@ -4030,6 +4030,50 @@ if(u.pathname==='/api/programacao-simulacao'&&req.method==='GET'){try{
   res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
+if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
+  if(!dashboardHasAny(authUser,['agendamentos','dashboard','programacao']))return dashboardDeny(res);
+  const nf=normNf(u.searchParams.get('nf')||'');
+  if(!nf){res.writeHead(400,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:'Informe a nota fiscal.'}))}
+  const data=await buildDeliveryProgram(deliveryProgramTomorrow(),false);
+  const row=(data.openRows||[]).find(x=>normNf(x.nf)===nf);
+  if(!row){
+    res.writeHead(404,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+    return res.end(JSON.stringify({ok:false,error:'Nota fiscal não localizada entre as entregas em aberto do SSW.'}))
+  }
+  const cityKey=normKey(row.cidade||'');
+  const cityRule=(data.cityRules||[]).find(x=>normKey(x.city||'')===cityKey)||null;
+  const out={
+    ok:true,
+    row:{
+      nf:row.nf||nf,ctrc:row.ctrc||'',cliente:row.cliente||'',cidade:row.cidade||'',uf:row.uf||'SP',
+      status_ssw:row.status||'',mercadoria:row.tipoMercadoria||row.especieMercadoria||'',
+      peso:Number(row.peso||0),volumes:Number(row.volumes||0),previsao_ssw:row.previsao||'',
+      dia_rota:cityRule?.weekday||'',amostras_rota:cityRule?.samples||[]
+    },
+    source:data.source||'SSW',generatedAt:data.generatedAt
+  };
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(out))
+}catch(e){
+  res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}
+if(u.pathname==='/api/agendamento-teste'&&req.method==='GET'){try{
+  if(!dashboardHasAny(authUser,['agendamentos','dashboard']))return dashboardDeny(res);
+  const q=new URLSearchParams();
+  if(u.searchParams.get('nf'))q.set('nf',u.searchParams.get('nf'));
+  q.set('limit',String(Math.max(1,Math.min(500,Number(u.searchParams.get('limit')||100)))));
+  const x=await portalAuth('/api/painel/agendamento-teste?'+q.toString(),{token:authUser.token,timeout:25000});
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+if(u.pathname==='/api/agendamento-teste'&&req.method==='POST'){try{
+  if(!dashboardHasAny(authUser,['agendamentos','dashboard']))return dashboardDeny(res);
+  const body=await readJsonLimited(req,64*1024);
+  const x=await portalAuth('/api/painel/agendamento-teste',{method:'POST',body,token:authUser.token,timeout:25000});
+  res.writeHead(201,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/programacao-entregas'&&req.method==='GET'){try{
   if(!dashboardHasAny(authUser,['programacao','roteirizador','dashboard','ssw_saidas']))return dashboardDeny(res);
   const x=await buildDeliveryProgram(u.searchParams.get('date')||'',u.searchParams.get('force')==='1');
