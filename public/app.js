@@ -3319,9 +3319,24 @@ async function refreshTracking(){
       const driverInfo=$('#trackingDriverDayInfo');
       if(driverInfo)driverInfo.textContent='Não foi possível carregar a relação de motoristas agora. Tentando novamente automaticamente.';
     }
-    const liveRows=Array.isArray(live.rows)?live.rows:[];
-    renderTracking(liveRows);
-    trackingRefreshLogicalAnalysis(liveRows,today).catch(()=>{});
+    const liveRows=normalizeDriverNames(Array.isArray(live.rows)?live.rows:[]);
+    const operationRows=Array.isArray(TRACKING_DRIVER_ROWS)?TRACKING_DRIVER_ROWS:[];
+    const todayKeys=new Set();
+    for(const x of operationRows){
+      const plate=trackingNorm(x.veiculo||x.vehicle_plate||'');
+      const driver=trackingNorm(x.motorista||x.driver_name||'');
+      if(plate)todayKeys.add('P|'+plate);
+      if(driver)todayKeys.add('D|'+driver);
+    }
+    const currentRows=liveRows.filter(r=>{
+      const plate=trackingNorm(r.vehicle_plate||''),driver=trackingNorm(r.driver_name||'');
+      const inOperation=(plate&&todayKeys.has('P|'+plate))||(driver&&todayKeys.has('D|'+driver));
+      const pointToday=r.captured_at&&new Date(r.captured_at).toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'})===today;
+      const heartbeatFresh=Number.isFinite(Number(r.device_age_seconds))&&Number(r.device_age_seconds)<=300;
+      return inOperation&&(pointToday||heartbeatFresh);
+    });
+    renderTracking(currentRows);
+    trackingRefreshLogicalAnalysis(currentRows,today).catch(()=>{});
 
     // A geometria das rotas é mais pesada. Ela é atualizada em separado para
     // nunca segurar a lista de Motorista + Placa.
