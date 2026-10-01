@@ -98,6 +98,7 @@ function applyPermissions(){
     if(b.dataset.adminOnly==='1')show=!!AUTH?.is_admin;
     else if(b.dataset.tab==='dashboards')show=tabAllowed('dashboards');
     else if(b.dataset.tab==='agendamentos')show=hasPerm('agendamentos')&&!hasPerm('dashboard');
+    else if(b.dataset.tab==='lotacao')show=tabAllowed('lotacao');
     else if(navMap[b.dataset.tab])show=hasPerm(navMap[b.dataset.tab]);
     b.style.display=show?'':'none';
   });
@@ -328,12 +329,29 @@ const pd=s=>{if(!s)return null;const p=String(s).trim().split('/');if(p.length!=
 const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 const num=v=>{if(v==null||v==='')return 0;let s=String(v).replace(/R\$/g,'').trim();if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');s=s.replace(/[^0-9.-]/g,'');return Number(s)||0};
 const brl=v=>v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}),nf=v=>Math.round(v).toLocaleString('pt-BR'),safe=s=>String(s??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+function driverDisplayName(v){
+  const raw=String(v||'').trim().toLocaleLowerCase('pt-BR');
+  if(!raw)return'';
+  const small=new Set(['da','das','de','do','dos','e']);
+  return raw.split(/\s+/).filter(Boolean).map((w,i)=>i>0&&small.has(w)?w:(w.charAt(0).toLocaleUpperCase('pt-BR')+w.slice(1))).join(' ')
+}
+function normalizeDriverNames(value){
+  if(Array.isArray(value))return value.map(normalizeDriverNames);
+  if(!value||typeof value!=='object')return value;
+  const out={};
+  for(const [k,v] of Object.entries(value)){
+    const nk=String(k).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
+    const isDriverName=nk==='motorista'||nk==='nomemotorista'||nk==='drivernam'||nk==='drivername';
+    out[k]=isDriverName&&typeof v==='string'?driverDisplayName(v):normalizeDriverNames(v)
+  }
+  return out
+}
 async function load(n){
   const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),18000);
   try{
     const r=await fetch('/api/sheet/'+n+'?t='+Date.now(),{cache:'no-store',headers:{'Cache-Control':'no-cache','Pragma':'no-cache'},signal:ctrl.signal}),j=await r.json();
     if(!r.ok||!j.ok)throw Error(j.error||'Falha ao carregar '+n);
-    return j.rows||[]
+    return normalizeDriverNames(j.rows||[])
   }finally{clearTimeout(timer)}
 }
 async function loadColetasStatus(){
@@ -1204,7 +1222,7 @@ async function refreshDriverProgress(){
     const r=await fetch('/api/evolucao-motoristas?date='+encodeURIComponent(today)+'&t='+Date.now(),{cache:'no-store'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar evolução dos motoristas.');
-    S.driverProgress=j;
+    S.driverProgress=normalizeDriverNames(j);
     renderDriverProgress();
     if(j.refreshing){
       clearTimeout(window.__driverProgressRetry);
@@ -1226,7 +1244,7 @@ async function refreshSswMotoristas(){
     const q=sswRangeQuery(),sep=q?'&':'?';
     const r=await fetch('/api/bi2/saidas-baixas'+q+sep+'t='+Date.now(),{cache:'no-store'}),j=await r.json();
     if(!r.ok||!j.ok)throw Error(j.error||'Falha ao carregar saídas e baixas do SSW');
-    S.sswMotoristas=j;renderSswMotoristas();loadingDriverOptions();
+    S.sswMotoristas=normalizeDriverNames(j);renderSswMotoristas();loadingDriverOptions();
     clearTimeout(window.__sswMotoristasRetry);
     if(j.refreshing)window.__sswMotoristasRetry=setTimeout(refreshSswMotoristas,8000);
   }catch(e){
@@ -1310,7 +1328,7 @@ async function refreshLotacao(){
     if(from)q.set('from',from);if(to)q.set('to',to);
     const r=await fetch('/api/lotacao?'+q.toString(),{cache:'no-store'});
     const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível carregar lotações.');
-    S.lotacao=Array.isArray(j.rows)?j.rows:[];
+    S.lotacao=normalizeDriverNames(Array.isArray(j.rows)?j.rows:[]);
     renderLotacao()
   }catch(e){
     const info=$('#lotacaoInfo');if(info)info.textContent='Lotação indisponível: '+e.message;
@@ -2305,12 +2323,7 @@ function trackingMapSelectDriver(){
 }
 const TRACKING_DEVIATION_KM=3;
 function trackingNorm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim()}
-function trackingDisplayName(v){
-  const raw=String(v||'').trim().toLocaleLowerCase('pt-BR');
-  if(!raw)return'Motorista';
-  const small=new Set(['da','das','de','do','dos','e']);
-  return raw.split(/\s+/).filter(Boolean).map((w,i)=>i>0&&small.has(w)?w:(w.charAt(0).toLocaleUpperCase('pt-BR')+w.slice(1))).join(' ')
-}
+function trackingDisplayName(v){return driverDisplayName(v)||'Motorista'}
 function trackingAgeLabel(sec){
   const s=Number(sec);if(!Number.isFinite(s))return'—';
   if(s<60)return Math.max(0,Math.round(s))+' s';
