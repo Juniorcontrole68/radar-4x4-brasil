@@ -3592,7 +3592,7 @@ if($('#cityBubbleApply'))$('#cityBubbleApply').onclick=()=>refreshCityBubbles(tr
 
 if($('#lotacaoRefresh'))$('#lotacaoRefresh').onclick=()=>refreshLotacao();
 if($('#lotacaoSearch'))$('#lotacaoSearch').oninput=()=>renderLotacao();
-$('.nav button').forEach(b=>b.onclick=()=>{
+$$('.nav button').forEach(b=>b.onclick=()=>{
   if(!tabAllowed(b.dataset.tab))return;
   $$('.nav button').forEach(x=>x.classList.remove('active'));
   b.classList.add('active');
