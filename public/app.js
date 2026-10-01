@@ -3318,12 +3318,11 @@ async function refreshTracking(){
   const info=$('#trackingInfo');if(info)info.textContent='Atualizando motoristas e posições GPS…';
   try{
     const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
-    const [liveRes,testRes,driverRes]=await Promise.all([
+    const [liveRes,driverRes]=await Promise.all([
       fetch('/api/tracking/live?light=1&t='+Date.now(),{cache:'no-store'}),
-      fetch('/api/tracking/test-live?t='+Date.now(),{cache:'no-store'}),
       fetch('/api/roteirizador/lista?date='+encodeURIComponent(today)+'&t='+Date.now(),{cache:'no-store'})
     ]);
-    const live=await liveRes.json().catch(()=>({})),testLive=await testRes.json().catch(()=>({})),drivers=await driverRes.json().catch(()=>({}));
+    const live=await liveRes.json().catch(()=>({})),drivers=await driverRes.json().catch(()=>({}));
     if(!liveRes.ok||!live.ok)throw new Error(live.error||'Falha ao consultar GPS.');
     if(driverRes.ok&&drivers.ok&&Array.isArray(drivers.rows)){
       TRACKING_DRIVER_ROWS=drivers.rows.filter(x=>{
@@ -3359,26 +3358,10 @@ async function refreshTracking(){
       const heartbeatFresh=Number.isFinite(Number(r.device_age_seconds))&&Number(r.device_age_seconds)<=300;
       return inOperation&&(pointToday||heartbeatFresh);
     }).map(r=>({...r,operation_active:true}));
-    const testRows=normalizeDriverNames(testRes.ok&&testLive.ok&&Array.isArray(testLive.rows)?testLive.rows:[]).map(r=>({...r,operation_active:true,test_only:true}));
-    const mergedRows=[...currentRows,...testRows];
-    for(const op of operationRows){
-      const opPlate=trackingNorm(op.veiculo||op.vehicle_plate||''),opDriver=trackingNorm(op.motorista||op.driver_name||'');
-      const found=mergedRows.some(r=>{
-        const rp=trackingNorm(r.vehicle_plate||''),rd=trackingNorm(r.driver_name||'');
-        return (opPlate&&rp===opPlate)||(opDriver&&rd===opDriver)
-      });
-      if(!found){
-        mergedRows.push({
-          driver_name:driverDisplayName(op.motorista||op.driver_name||''),
-          vehicle_plate:String(op.veiculo||op.vehicle_plate||'').trim(),
-          operation_active:true,
-          romaneio:op.romaneio||'',
-          romaneios:Array.isArray(op.romaneios)?op.romaneios:[op.romaneio].filter(Boolean),
-          session_id:null,map_active:false,latitude:null,longitude:null,
-          age_seconds:null,device_age_seconds:null,session_status:'active'
-        });
-      }
-    }
+    // Mapa ao vivo: somente aparelhos aprovados/ativos vindos do cadastro real.
+    // Motoristas apenas presentes no romaneio (sem aparelho aprovado) continuam
+    // disponíveis para planejamento, mas não aparecem no mapa.
+    const mergedRows=[...currentRows];
     renderTracking(mergedRows);
     trackingRefreshLogicalAnalysis(mergedRows,today).catch(()=>{});
 
