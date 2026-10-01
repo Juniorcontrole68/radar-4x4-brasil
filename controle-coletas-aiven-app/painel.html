@@ -32,7 +32,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
  html,body{height:100%;height:100dvh;overflow:hidden}
  .top{padding:9px 10px;display:flex;min-height:48px;flex-wrap:nowrap}
  .brand{min-width:0;flex:1}.brand strong{font-size:17px}.brand span{display:none}
- .tabs{position:fixed;left:0;right:0;bottom:0;z-index:40;width:100%;height:68px;padding:6px;gap:5px;background:var(--nav);display:grid;grid-template-columns:repeat(8,minmax(0,1fr));box-shadow:0 -3px 14px #0003}
+ .tabs{position:fixed;left:0;right:0;bottom:0;z-index:40;width:100%;height:68px;padding:6px;gap:5px;background:var(--nav);display:grid;grid-template-columns:repeat(6,minmax(0,1fr));box-shadow:0 -3px 14px #0003}
  .tab{min-width:0;padding:7px 3px;border-radius:8px;font-size:10px;line-height:1.15;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;white-space:normal}
  .tab:before{font-size:18px;line-height:1}
  .tab[data-module="coletas"]:before{content:"🚚"}
@@ -58,8 +58,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
   <div class="top">
     <div class="brand"><strong>CONSTRULOG</strong><span>Todos os módulos da transportadora em um único sistema</span></div>
     <div class="tabs">
-      <button class="tab active" data-module="coletas" data-src="/coletas?embed=1&v=20260924fmt1" data-name="Coletas">Coletas</button>
-      <button class="tab" data-module="financeiro" data-src="/coletas?embed=1&v=20260924fmt1" data-name="Financeiro">Financeiro</button>
+      <button class="tab active" data-module="lotacao" data-src="/lotacao?embed=1" data-name="Lotação">Lotação</button>
       <button class="tab" data-module="dashboard" data-src="https://construlog-dashboard.onrender.com/?embed=1&view=dashboard" data-name="Visão Geral">Visão Geral</button>
       <button class="tab" data-module="dashboards" data-src="https://construlog-dashboard.onrender.com/?embed=1&view=dashboards" data-name="Dashboards">Dashboards</button>
       <button class="tab" data-module="programacao" data-src="https://construlog-dashboard.onrender.com/?embed=1&view=programacao" data-name="Programação">Programação</button>
@@ -68,8 +67,8 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
     </div>
     <div class="session-actions"><span id="sessionUser" class="session-user"></span><button id="logoutBtn" class="logout-btn" type="button">Sair</button></div>
   </div>
-  <div class="bar"><span class="dot"></span><span id="module">Controle de Coletas</span><span>• Banco Aiven conectado</span><button id="duplicateColeta" class="duplicate-btn" type="button">⧉ Duplicar coleta</button><button id="deleteColeta" class="delete-btn" type="button">🗑 Excluir coleta</button></div>
-  <div class="body"><div id="moduleLoading" class="module-loading">Abrindo módulo…</div><iframe id="frame" src="/coletas?embed=1&v=20260924fmt1" title="Módulo CONSTRULOG"></iframe></div>
+  <div class="bar"><span class="dot"></span><span id="module">Lotação</span><span>• Banco Aiven conectado</span><button id="duplicateColeta" class="duplicate-btn" type="button">⧉ Duplicar coleta</button><button id="deleteColeta" class="delete-btn" type="button">🗑 Excluir coleta</button></div>
+  <div class="body"><div id="moduleLoading" class="module-loading">Abrindo módulo…</div><iframe id="frame" src="/lotacao?embed=1" data-module="lotacao" title="Módulo CONSTRULOG"></iframe></div>
 </div>
 
 <div id="duplicateModal" class="modal" aria-hidden="true">
@@ -165,7 +164,7 @@ async function abrirModulo(btn){
   try{
     let src=btn.dataset.src;
     const sep=src.includes('?')?'&':'?';
-    if(mod==='dashboard'||mod==='dashboards'||mod==='programacao'||mod==='tracking'||mod==='lotacao'){
+    if(mod==='dashboard'||mod==='dashboards'||mod==='programacao'||mod==='tracking'){
       DASH_FRAME_TOKEN='';
       const ticket=await dashboardTicket();
       src += sep+'ticket='+encodeURIComponent(ticket)+'&refresh='+Date.now();
