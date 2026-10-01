@@ -1479,6 +1479,44 @@ async function start() {
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao gerar código.'})}
       }
 
+      if (req.method === 'GET' && u.pathname === '/api/painel/tracking/test-live') {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const q=await pool.query(`
+            SELECT d.id::text AS device_id,d.driver_name,d.vehicle_plate,d.device_name,d.last_seen_at,
+                   p.latitude,p.longitude,p.accuracy_m,p.captured_at,
+                   EXTRACT(EPOCH FROM (NOW()-p.captured_at))::int AS age_seconds,
+                   EXTRACT(EPOCH FROM (NOW()-d.last_seen_at))::int AS device_age_seconds
+            FROM driver_tracking_test_devices d
+            LEFT JOIN LATERAL (
+              SELECT latitude,longitude,accuracy_m,captured_at
+              FROM driver_tracking_test_points
+              WHERE test_device_id=d.id
+                AND (captured_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+              ORDER BY captured_at DESC LIMIT 1
+            ) p ON TRUE
+            WHERE d.last_seen_at IS NOT NULL
+              AND (d.last_seen_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+            ORDER BY COALESCE(p.captured_at,d.last_seen_at) DESC
+            LIMIT 100
+          `);
+          const rows=q.rows.map(r=>({
+            ...r,
+            original_driver_name:r.driver_name,
+            original_vehicle_plate:r.vehicle_plate,
+            driver_name:'TESTE - '+r.driver_name,
+            vehicle_plate:(String(r.vehicle_plate||'').trim()+' T').trim(),
+            session_id:'TEST-'+r.device_id,
+            session_status:'active',
+            map_active:!!r.captured_at||Number(r.device_age_seconds)<=300,
+            test_only:true,
+            speed_mps:null,bearing_deg:null,battery_pct:null,trail:[]
+          }));
+          return sendJson(res,200,{ok:true,rows,test_only:true});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar GPS de teste.'})}
+      }
+
       if (req.method === 'GET' && u.pathname === '/api/painel/tracking/live') {
         try {
           const user=await dashboardSession(req,false);
