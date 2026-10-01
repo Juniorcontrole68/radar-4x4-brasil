@@ -26,6 +26,7 @@ const { handler } = require('../contas-a-pagar-v3/src/handler');
 const PORT = process.env.PORT || 10000;
 const PANEL = path.join(__dirname, 'painel.html');
 const DRIVER_TEST_PAGE = path.join(__dirname, 'motorista-teste.html');
+const DRIVER_INSTALL_PAGE = path.join(__dirname, 'motorista-instalar.html');
 const ACCOUNTS_INDEX = path.join(__dirname, '..', 'contas-a-pagar-v3', 'public', 'index.html');
 const DRIVER_DOWNLOADS = path.join(__dirname, 'downloads');
 const DRIVER_UPDATE_FILE = path.join(DRIVER_DOWNLOADS, 'update.json');
@@ -382,6 +383,20 @@ async function start() {
     captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
   await pool.query('CREATE INDEX IF NOT EXISTS idx_tracking_test_points_device_time ON driver_tracking_test_points(test_device_id,captured_at DESC)');
+  await pool.query(`CREATE TABLE IF NOT EXISTS driver_tracking_assignments (
+    id BIGSERIAL PRIMARY KEY,
+    invite_token_hash TEXT UNIQUE NOT NULL,
+    driver_name TEXT NOT NULL,
+    vehicle_plate TEXT,
+    romaneios JSONB NOT NULL DEFAULT '[]'::jsonb,
+    work_date DATE NOT NULL DEFAULT (NOW() AT TIME ZONE 'America/Sao_Paulo')::date,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_tracking_assignments_plate_date ON driver_tracking_assignments (upper(vehicle_plate),work_date DESC)');
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_tracking_assignments_driver_date ON driver_tracking_assignments (lower(driver_name),work_date DESC)');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS destinatario TEXT');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS motorista_cpf TEXT');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS motorista_rg TEXT');
@@ -577,6 +592,45 @@ async function start() {
 
       if (req.method === 'GET' && u.pathname === '/motorista-teste') {
         return sendHtml(res, DRIVER_TEST_PAGE);
+      }
+
+      if (req.method === 'GET' && u.pathname === '/motorista-instalar') {
+        return sendHtml(res, DRIVER_INSTALL_PAGE);
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/tracking/invite') {
+        try {
+          const token=String(u.searchParams.get('token')||'').trim();
+          if(token.length<20)return sendJson(res,400,{ok:false,error:'Convite inválido.'});
+          const q=await pool.query(
+            "SELECT driver_name,vehicle_plate,romaneios,work_date,active,created_at FROM driver_tracking_assignments WHERE invite_token_hash=$1 AND active=TRUE ORDER BY created_at DESC LIMIT 1",
+            [dashboardTokenHash(token)]
+          );
+          if(!q.rowCount)return sendJson(res,404,{ok:false,error:'Convite não encontrado ou expirado.'});
+          return sendJson(res,200,{ok:true,assignment:q.rows[0]});
+        } catch(e){return sendJson(res,500,{ok:false,error:e.message||'Falha ao consultar convite.'})}
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/tracking/assignment/current') {
+        try {
+          const device=await trackingDeviceFromReq(req);
+          const q=await pool.query(
+            `SELECT driver_name,vehicle_plate,romaneios,work_date,updated_at
+             FROM driver_tracking_assignments
+             WHERE active=TRUE
+               AND work_date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+               AND (
+                 (COALESCE(vehicle_plate,'')<>'' AND upper(trim(vehicle_plate))=upper(trim(COALESCE($1,''))))
+                 OR lower(trim(driver_name))=lower(trim($2))
+               )
+             ORDER BY
+               CASE WHEN COALESCE(vehicle_plate,'')<>'' AND upper(trim(vehicle_plate))=upper(trim(COALESCE($1,''))) THEN 0 ELSE 1 END,
+               updated_at DESC
+             LIMIT 1`,
+            [device.vehicle_plate||'',device.driver_name]
+          );
+          return sendJson(res,200,{ok:true,assignment:q.rows[0]||null});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao consultar romaneio do motorista.'})}
       }
 
       if (req.method === 'POST' && u.pathname === '/api/tracking/test/start') {
@@ -1317,6 +1371,39 @@ async function start() {
           await pool.query("UPDATE driver_tracking_requests SET status='rejected',decided_at=NOW(),decided_by=$1 WHERE id=$2 AND status='pending'",[user.id,id]);
           return sendJson(res,200,{ok:true,status:'rejected'});
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao rejeitar dispositivo.'})}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/painel/tracking/assignment') {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const body=await readJsonBodyLimited(req,64*1024);
+          const driver=String(body.driver_name||'').trim().replace(/\s+/g,' ').slice(0,120);
+          const plate=String(body.vehicle_plate||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,10);
+          const romaneios=[...new Set((Array.isArray(body.romaneios)?body.romaneios:[body.romaneio]).map(x=>String(x||'').trim()).filter(Boolean))].slice(0,20);
+          const workDate=/^\d{4}-\d{2}-\d{2}$/.test(String(body.work_date||''))?String(body.work_date):(new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}));
+          if(driver.length<2)return sendJson(res,400,{ok:false,error:'Motorista inválido.'});
+          if(plate.length<7)return sendJson(res,400,{ok:false,error:'Placa inválida.'});
+          if(!romaneios.length)return sendJson(res,400,{ok:false,error:'Romaneio não informado.'});
+          const invite=crypto.randomBytes(32).toString('hex');
+          const client=await pool.connect();
+          try{
+            await client.query('BEGIN');
+            await client.query(
+              `UPDATE driver_tracking_assignments SET active=FALSE,updated_at=NOW()
+               WHERE work_date=$1::date AND active=TRUE
+                 AND (upper(trim(COALESCE(vehicle_plate,'')))=upper(trim($2)) OR lower(trim(driver_name))=lower(trim($3)))`,
+              [workDate,plate,driver]
+            );
+            await client.query(
+              "INSERT INTO driver_tracking_assignments(invite_token_hash,driver_name,vehicle_plate,romaneios,work_date,active,created_by) VALUES($1,$2,$3,$4::jsonb,$5::date,TRUE,$6)",
+              [dashboardTokenHash(invite),driver,plate,JSON.stringify(romaneios),workDate,user.id]
+            );
+            await client.query('COMMIT');
+          }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+          const installUrl=DRIVER_PUBLIC_BASE+'/motorista-instalar?i='+encodeURIComponent(invite);
+          return sendJson(res,201,{ok:true,driver_name:driver,vehicle_plate:plate,romaneios,work_date:workDate,invite_token:invite,install_url:installUrl});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao associar romaneio ao motorista.'})}
       }
 
       if (req.method === 'POST' && u.pathname === '/api/painel/tracking/enrollments') {
