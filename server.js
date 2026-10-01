@@ -3936,6 +3936,12 @@ if(carregamentoFoto&&req.method==='GET'){try{if(!dashboardHas(authUser,'final_ca
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
 
+if(u.pathname==='/api/tracking/test-live'&&req.method==='GET'){try{
+  if(!dashboardHas(authUser,'tracking'))return dashboardDeny(res);
+  const x=await portalAuth('/api/painel/tracking/test-live',{token:authUser.token,timeout:25000});
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/tracking/live'&&req.method==='GET'){try{
   if(!dashboardHas(authUser,'tracking'))return dashboardDeny(res);
   const light=String(u.searchParams.get('light')||'').trim();
