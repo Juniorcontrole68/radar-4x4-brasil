@@ -1301,7 +1301,26 @@ async function start() {
             ORDER BY COALESCE(p.captured_at,d.last_seen_at) DESC NULLS LAST
             LIMIT 300
           `);
-          return sendJson(res,200,{ok:true,light,rows:q.rows,server_time:new Date().toISOString()})
+          const freshest=new Map();
+          for(const row of q.rows){
+            const plate=String(row.vehicle_plate||'').trim().toUpperCase();
+            const driver=String(row.driver_name||'').trim().toLocaleUpperCase('pt-BR');
+            const key=plate?('P|'+plate):('D|'+driver);
+            const at=Math.max(
+              row.captured_at?new Date(row.captured_at).getTime():0,
+              row.last_seen_at?new Date(row.last_seen_at).getTime():0,
+              row.started_at?new Date(row.started_at).getTime():0
+            );
+            const prev=freshest.get(key);
+            if(!prev||at>prev._freshAt)freshest.set(key,{...row,_freshAt:at});
+          }
+          const rows=[...freshest.values()].map(({_freshAt,...row})=>row)
+            .sort((a,b)=>{
+              const ta=Math.max(a.captured_at?new Date(a.captured_at).getTime():0,a.last_seen_at?new Date(a.last_seen_at).getTime():0);
+              const tb=Math.max(b.captured_at?new Date(b.captured_at).getTime():0,b.last_seen_at?new Date(b.last_seen_at).getTime():0);
+              return tb-ta
+            });
+          return sendJson(res,200,{ok:true,light,rows,server_time:new Date().toISOString()})
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao consultar rastreamento.'})}
       }
 
