@@ -337,6 +337,21 @@
       </div>
     </div>
   </div>
+  <div class="card tablecard" style="margin-top:14px">
+    <div class="thead" style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">
+      <div>
+        <b>📲 Romaneios do dia — enviar ao motorista</b>
+        <div class="muted">O nome, a placa e o romaneio vêm da opção 38. O botão gera o link já associado à placa para envio pelo WhatsApp.</div>
+      </div>
+      <button id="trackingAssignmentsRefresh" class="secondary" type="button">Atualizar romaneios</button>
+    </div>
+    <div id="trackingAssignmentsInfo" class="agcopy-info" style="margin-top:10px">Aguardando romaneios do dia…</div>
+    <div class="scroll" style="margin-top:8px">
+      <table id="trackingAssignmentsTable">
+        <tbody><tr><td class="muted">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
   <div class="card tracking-map-card">
     <div class="tracking-map-head"><b>Mapa ao vivo</b><div class="muted">Rota planejada da base de Americana até a última entrega × percurso real gravado pelo GPS.</div></div>
     <div class="tracking-map-controls">
