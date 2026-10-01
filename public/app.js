@@ -3481,13 +3481,16 @@ function renderTrackingAssignments(){
       '<td><b>'+safe(plate)+'</b></td>'+
       '<td>'+safe(roms.join(', '))+'</td>'+
       '<td>'+nf(Number(x.entregas||x.total||0))+'</td>'+
-      '<td><button class="primary tracking-send-assignment" type="button" data-index="'+i+'">💬 Enviar ao motorista</button></td>'+
+      '<td><button class="primary tracking-send-assignment" type="button" data-index="'+i+'">💬 Enviar ao motorista</button> <button class="secondary tracking-test-assignment" type="button" data-index="'+i+'">🧪 Testar no meu celular</button></td>'+
       '</tr>'
   }).join(''):'<tr><td colspan="5" class="muted">Nenhum romaneio disponível para envio.</td></tr>';
   tableEl.innerHTML='<thead><tr><th>Motorista</th><th>Placa</th><th>Romaneio(s)</th><th>Entregas</th><th>Ação</th></tr></thead><tbody>'+body+'</tbody>';
   const eligible=rows;
   tableEl.querySelectorAll('.tracking-send-assignment').forEach(btn=>{
     btn.onclick=()=>trackingSendAssignment(eligible[Number(btn.dataset.index)||0],btn)
+  })
+  tableEl.querySelectorAll('.tracking-test-assignment').forEach(btn=>{
+    btn.onclick=()=>trackingSendTestAssignment(eligible[Number(btn.dataset.index)||0],btn)
   })
 }
 
@@ -3518,6 +3521,34 @@ async function trackingSendAssignment(row,button=null){
   }
 }
 window.trackingSendAssignment=trackingSendAssignment;
+
+async function trackingSendTestAssignment(row,button=null){
+  if(!row)return;
+  const driver=driverDisplayName(row.motorista||''),plate=String(row.veiculo||'').trim().toUpperCase();
+  const roms=(Array.isArray(row.romaneios)?row.romaneios:[row.romaneio]).map(v=>String(v||'').trim()).filter(Boolean);
+  const info=$('#trackingAssignmentsInfo');
+  if(!driver||!plate||!roms.length){if(info)info.textContent='Motorista, placa ou romaneio incompletos para o teste.';return}
+  if(button){button.disabled=true;button.textContent='Gerando teste…'}
+  try{
+    const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+    const r=await fetch('/api/tracking/test-assignment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      driver_name:driver,vehicle_plate:plate,romaneios:roms,work_date:today
+    })});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao gerar ambiente de teste.');
+    const message='CONSTRULOG Motorista — TESTE\n\nMotorista: '+driver+'\nPlaca: '+plate+'\nRomaneio(s): '+roms.join(', ')+'\n\nAbra no seu celular:\n'+j.install_url+'\n\nAMBIENTE ISOLADO: não interfere no aplicativo nem no GPS real do motorista.';
+    if(info)info.textContent='Link de teste criado para '+driver+' • '+plate+'.';
+    if(navigator.share){
+      try{await navigator.share({title:'CONSTRULOG Motorista — Teste',text:message});return}catch(e){if(e?.name==='AbortError')return}
+    }
+    window.open('https://wa.me/?text='+encodeURIComponent(message),'_blank','noopener')
+  }catch(e){
+    if(info)info.textContent='Erro ao preparar teste: '+e.message
+  }finally{
+    if(button){button.disabled=false;button.textContent='🧪 Testar no meu celular'}
+  }
+}
+window.trackingSendTestAssignment=trackingSendTestAssignment;
 
 async function generateTrackingCode(){
   const driverEl=$('#trackingDriverName'),opt=driverEl?.selectedOptions?.[0];
