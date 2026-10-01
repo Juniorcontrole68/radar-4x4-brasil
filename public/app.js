@@ -49,6 +49,7 @@ window.fetch=function(input,init){
 const PERMISSION_OPTIONS=[
   ['coletas','Controle de Coletas'],
   ['lotacao','Lotação • Coletas e Financeiro'],
+  ['frota','Frota • Veículos, manutenção e combustível'],
   ['contas_pagar','Contas a Pagar'],
   ['dashboard','Dashboard principal'],
   ['ssw_saidas','SSW • Saídas x Baixas'],
@@ -78,7 +79,7 @@ function hasPerm(p){return !!(AUTH&&(AUTH.is_admin||AUTH.permissions?.includes('
 function hasAnyPerm(list){return list.some(hasPerm)}
 function tabAllowed(tab){
   const map={
-    dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',rastreamento:'tracking',lotacao:'lotacao',
+    dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',rastreamento:'tracking',lotacao:'lotacao',frota:'frota',
     agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes',
     'ssw-motoristas':'ssw_saidas','motoristas-evolucao':'evolucao',
     'ssw-atrasos':'ssw_atrasos','ssw-remetentes':'remetentes',
@@ -86,19 +87,21 @@ function tabAllowed(tab){
   };
   if(tab==='usuarios')return !!AUTH?.is_admin;
   if(tab==='lotacao')return hasAnyPerm(['lotacao','coletas','financeiro']);
+  if(tab==='frota')return hasPerm('frota');
   if(tab==='roteirizador')return hasPerm('roteirizador');
   if(tab==='agendamentos-copia')return hasAnyPerm(['dashboard','agendamentos','agendamentos_copia']);
   if(tab==='dashboards')return AUTH?.is_admin||PERMISSION_OPTIONS.some(([p])=>hasPerm(p)&&p!=='dashboard');
   return map[tab]?hasPerm(map[tab]):false
 }
 function applyPermissions(){
-  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',rastreamento:'tracking',lotacao:'lotacao',agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes'};
+  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',rastreamento:'tracking',lotacao:'lotacao',frota:'frota',agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes'};
   document.querySelectorAll('.nav button').forEach(b=>{
     let show=true;
     if(b.dataset.adminOnly==='1')show=!!AUTH?.is_admin;
     else if(b.dataset.tab==='dashboards')show=tabAllowed('dashboards');
     else if(b.dataset.tab==='agendamentos')show=hasPerm('agendamentos')&&!hasPerm('dashboard');
     else if(b.dataset.tab==='lotacao')show=tabAllowed('lotacao');
+    else if(b.dataset.tab==='frota')show=tabAllowed('frota');
     else if(navMap[b.dataset.tab])show=hasPerm(navMap[b.dataset.tab]);
     b.style.display=show?'':'none';
   });
@@ -3778,6 +3781,7 @@ function openTab(tab){
     'programacao':'Programação de Entregas',
     'rastreamento':'Rastreio de Carga',
     'lotacao':'Lotação',
+    'frota':'Frota',
     'roteirizador':'Roteirizador SSW',
     'agendamentos-copia':'Consulta de Agendamentos','agendamento-teste':'Agendamento Teste',
     'usuarios':'Usuários e Acessos',
