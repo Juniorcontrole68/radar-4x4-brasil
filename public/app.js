@@ -3323,9 +3323,11 @@ async function refreshTracking(){
         TRACKING_BASE_POSITION={lat:bl,lon:bo,address:drivers.baseAddress||TRACKING_BASE_POSITION.address}
       }
       trackingPopulateDriverList();
+      renderTrackingAssignments();
     }else{
       TRACKING_DRIVER_ROWS=[];
       trackingPopulateDriverList();
+      renderTrackingAssignments();
       const driverInfo=$('#trackingDriverDayInfo');
       if(driverInfo)driverInfo.textContent='Não foi possível carregar a relação de motoristas agora. Tentando novamente automaticamente.';
     }
@@ -3462,6 +3464,61 @@ async function trackingDecideRequest(id,action,button=null){
 }
 window.trackingDecideRequest=trackingDecideRequest;
 
+function renderTrackingAssignments(){
+  const tableEl=$('#trackingAssignmentsTable'),info=$('#trackingAssignmentsInfo');if(!tableEl)return;
+  const rows=(Array.isArray(TRACKING_DRIVER_ROWS)?TRACKING_DRIVER_ROWS:[]).filter(x=>{
+    const roms=Array.isArray(x.romaneios)?x.romaneios:[x.romaneio].filter(Boolean);
+    return String(x.motorista||'').trim()&&String(x.veiculo||'').trim()&&roms.some(v=>String(v||'').trim())
+  });
+  if(info)info.textContent=rows.length
+    ?nf(rows.length)+' motorista(s) com romaneio e placa identificados hoje. Clique em “Enviar ao motorista” para gerar o link já associado.'
+    :'Nenhum romaneio com motorista e placa identificado agora.';
+  const body=rows.length?rows.map((x,i)=>{
+    const driver=driverDisplayName(x.motorista||''),plate=String(x.veiculo||'').trim().toUpperCase();
+    const roms=(Array.isArray(x.romaneios)?x.romaneios:[x.romaneio]).map(v=>String(v||'').trim()).filter(Boolean);
+    return '<tr>'+
+      '<td><b>'+safe(driver)+'</b></td>'+
+      '<td><b>'+safe(plate)+'</b></td>'+
+      '<td>'+safe(roms.join(', '))+'</td>'+
+      '<td>'+nf(Number(x.entregas||x.total||0))+'</td>'+
+      '<td><button class="primary tracking-send-assignment" type="button" data-index="'+i+'">💬 Enviar ao motorista</button></td>'+
+      '</tr>'
+  }).join(''):'<tr><td colspan="5" class="muted">Nenhum romaneio disponível para envio.</td></tr>';
+  tableEl.innerHTML='<thead><tr><th>Motorista</th><th>Placa</th><th>Romaneio(s)</th><th>Entregas</th><th>Ação</th></tr></thead><tbody>'+body+'</tbody>';
+  const eligible=rows;
+  tableEl.querySelectorAll('.tracking-send-assignment').forEach(btn=>{
+    btn.onclick=()=>trackingSendAssignment(eligible[Number(btn.dataset.index)||0],btn)
+  })
+}
+
+async function trackingSendAssignment(row,button=null){
+  if(!row)return;
+  const driver=driverDisplayName(row.motorista||''),plate=String(row.veiculo||'').trim().toUpperCase();
+  const roms=(Array.isArray(row.romaneios)?row.romaneios:[row.romaneio]).map(v=>String(v||'').trim()).filter(Boolean);
+  const info=$('#trackingAssignmentsInfo');
+  if(!driver||!plate||!roms.length){if(info)info.textContent='Motorista, placa ou romaneio incompletos.';return}
+  if(button){button.disabled=true;button.textContent='Gerando link…'}
+  try{
+    const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+    const r=await fetch('/api/tracking/assignment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      driver_name:driver,vehicle_plate:plate,romaneios:roms,work_date:today
+    })});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao associar romaneio.');
+    const message='CONSTRULOG Motorista\n\nMotorista: '+driver+'\nPlaca: '+plate+'\nRomaneio(s): '+roms.join(', ')+'\n\nInstale ou abra o aplicativo por este link:\n'+j.install_url+'\n\nNo primeiro acesso, informe seu nome e a placa apenas uma vez. Depois, os próximos romaneios serão identificados automaticamente pela placa.';
+    if(info)info.textContent='Romaneio '+roms.join(', ')+' associado à placa '+plate+'. Link pronto para envio.';
+    if(navigator.share){
+      try{await navigator.share({title:'CONSTRULOG Motorista',text:message});return}catch(e){if(e?.name==='AbortError')return}
+    }
+    window.open('https://wa.me/?text='+encodeURIComponent(message),'_blank','noopener')
+  }catch(e){
+    if(info)info.textContent='Erro ao preparar envio: '+e.message
+  }finally{
+    if(button){button.disabled=false;button.textContent='💬 Enviar ao motorista'}
+  }
+}
+window.trackingSendAssignment=trackingSendAssignment;
+
 async function generateTrackingCode(){
   const driverEl=$('#trackingDriverName'),opt=driverEl?.selectedOptions?.[0];
   const driver=String(opt?.dataset?.driver||driverEl?.value||'').trim(),plate=String($('#trackingVehiclePlate')?.value||opt?.dataset?.plate||'').trim().toUpperCase(),msg=$('#trackingEnrollMsg'),codeBox=$('#trackingActivationCode'),btn=$('#trackingGenerateCode');
@@ -3485,6 +3542,7 @@ function setupTracking(){
   if($('#trackingRouteCompareDriver'))$('#trackingRouteCompareDriver').onchange=trackingRenderAnalysis;
   if($('#trackingGenerateCode'))$('#trackingGenerateCode').onclick=generateTrackingCode;
   if($('#trackingRequestsRefresh'))$('#trackingRequestsRefresh').onclick=refreshTrackingRequests;
+  if($('#trackingAssignmentsRefresh'))$('#trackingAssignmentsRefresh').onclick=()=>{TRACKING_NEXT_REFRESH=0;refreshTracking()};
   const reqTable=$('#trackingRequestsTable');
   if(reqTable)reqTable.onclick=e=>{
     const b=e.target?.closest?.('.tracking-request-action');if(!b)return;
