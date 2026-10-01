@@ -1328,6 +1328,25 @@ async function deliveryProgramFetchSsw101Detail(session,row,force=false){
     const fm=plain.match(/Valor\s+frete\s*\(R\$\)\s*:\s*([\d.,]+)/i);
     const tm=plain.match(/Tipo\s+de\s+mercadoria\s*:\s*(.*?)\s+Esp[eé]cie\s+de\s+mercadoria\s*:/i);
     const em=plain.match(/Esp[eé]cie\s+de\s+mercadoria\s*:\s*(.*?)\s+Ve[ií]culo\s+coleta\s*:/i);
+    const sswField=(label,stops=[])=>{
+      const up=plain.toUpperCase(),key=String(label).toUpperCase();
+      const i=up.indexOf(key);if(i<0)return'';
+      let start=i+key.length;
+      while(start<plain.length&&/[\s:=-]/.test(plain[start]))start++;
+      let end=plain.length;
+      for(const stop of stops){
+        const j=up.indexOf(String(stop).toUpperCase(),start);
+        if(j>=0&&j<end)end=j;
+      }
+      return plain.slice(start,end).replace(/\s+/g,' ').trim();
+    };
+    const cliente=sswField('Destinatário',['CNPJ','CPF','Endereço','Cidade','Município','Bairro','CEP','UF']);
+    const cidade=sswField('Cidade destino',['UF','CEP','Bairro','Previsão','Prazo','Rota'])||sswField('Município destino',['UF','CEP','Bairro','Previsão','Prazo','Rota']);
+    const uf=(sswField('UF destino',['CEP','Bairro','Previsão','Prazo','Rota']).match(/[A-Z]{2}/i)||[])[0]||'';
+    const pesoText=sswField('Peso (kg)',['Volumes','Qtde','Quantidade','Previsão','Valor'])||sswField('Peso',['Volumes','Qtde','Quantidade','Previsão','Valor']);
+    const volumesText=sswField('Volumes',['Peso','Previsão','Valor','Tipo'])||sswField('Quantidade de volumes',['Peso','Previsão','Valor','Tipo']);
+    const previsao=sswField('Previsão de entrega',['Status','Situação','Ocorrência','Filial','Rota']).match(/\d{2}\/\d{2}\/\d{4}/)?.[0]||'';
+    const status=sswField('Status',['Data','Previsão','Ocorrência','Entrega','Filial','Rota'])||sswField('Situação',['Data','Previsão','Ocorrência','Entrega','Filial','Rota']);
     let productText='',products=[];
     try{
       const prodParams=deliveryProgramFormParams(html);
@@ -1359,6 +1378,8 @@ async function deliveryProgramFetchSsw101Detail(session,row,force=false){
       frete:fm?bi2Number(fm[1]):Number(row.frete||0),
       tipoMercadoria:String(tm?.[1]||'').trim(),
       especieMercadoria:String(em?.[1]||'').trim(),
+      cliente,cidade,uf,
+      peso:bi2Number(pesoText),volumes:bi2Number(volumesText),previsao,status,
       specialClass:deliveryProgramSpecialClass(combined),
       specialProducts:products
     };
@@ -4119,7 +4140,14 @@ if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
       const session=await deliveryProgramCreateSsw101Session();
       const det=await deliveryProgramFetchSsw101Detail(session,{ctrc:row.ctrc,frete:0},true);
       if(det){
+        row.cliente=row.cliente||det.cliente||'';
+        row.cidade=row.cidade||det.cidade||'';
+        row.uf=det.uf||row.uf||'SP';
         row.mercadoria=row.mercadoria||det.tipoMercadoria||det.especieMercadoria||'';
+        row.peso=Number(row.peso||0)||Number(det.peso||0);
+        row.volumes=Number(row.volumes||0)||Number(det.volumes||0);
+        row.previsao=row.previsao||det.previsao||'';
+        row.status=row.status||det.status||'';
       }
     }catch(e){console.log('AGENDAMENTO NF detalhe 101: '+String(e.message||e))}
   }
