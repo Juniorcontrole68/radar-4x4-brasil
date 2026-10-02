@@ -731,7 +731,7 @@ function financeRender(){
   }));
   if($('#financeDriverTable')){
     const previous={};
-    $('#financeDriverTable [data-fin-pdf-col]').forEach(c=>previous[c.dataset.finPdfCol]=c.checked);
+    $$('#financeDriverTable [data-fin-pdf-col]').forEach(c=>previous[c.dataset.finPdfCol]=c.checked);
     const cols=[
       ['motorista','Motorista','motorista'],
       ['pago','Frete pago','pago'],
