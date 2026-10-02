@@ -611,6 +611,15 @@ async function start() {
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
   await pool.query(`INSERT INTO fleet_state(id,data) VALUES(1,'{"vehicles":[],"fuel":[],"maintenance":[],"tires":[],"people":[],"documents":[],"checklists":[]}'::jsonb) ON CONFLICT (id) DO NOTHING`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS fleet_maintenance_files (
+    maintenance_id TEXT PRIMARY KEY,
+    nome_arquivo TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    arquivo BYTEA NOT NULL,
+    bytes INTEGER NOT NULL DEFAULT 0,
+    criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
   await pool.query("CREATE TABLE IF NOT EXISTS dashboard_embed_tickets (ticket_hash TEXT PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES dashboard_users(id) ON DELETE CASCADE, expires_at TIMESTAMPTZ NOT NULL, used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())");
   await pool.query('CREATE INDEX IF NOT EXISTS idx_dashboard_embed_tickets_exp ON dashboard_embed_tickets (expires_at)');
   const adminUser=String(process.env.DASHBOARD_INITIAL_ADMIN_USER||'Junior').trim();
@@ -655,6 +664,55 @@ async function start() {
           const q=await pool.query('UPDATE fleet_state SET data=$1::jsonb,updated_at=NOW() WHERE id=1 RETURNING updated_at',[JSON.stringify(out)]);
           return sendJson(res,200,{ok:true,data:out,updated_at:q.rows[0]?.updated_at||null});
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao salvar Frota.'})}
+      }
+
+      if (u.pathname === '/api/painel/frota-maintenance-file' && req.method === 'POST') {
+        try {
+          await dashboardSession(req);
+          const body=await readJsonBodyLimited(req,12*1024*1024);
+          const maintenanceId=String(body.maintenance_id||'').trim().slice(0,120);
+          const name=String(body.name||'nota-fiscal').trim().slice(0,240);
+          const mime=String(body.mime||'application/octet-stream').trim().slice(0,120);
+          let raw=String(body.data||'');
+          const comma=raw.indexOf(',');
+          if(raw.startsWith('data:')&&comma>=0)raw=raw.slice(comma+1);
+          const buf=Buffer.from(raw,'base64');
+          if(!maintenanceId)return sendJson(res,400,{ok:false,error:'Manutenção não informada.'});
+          if(!buf.length)return sendJson(res,400,{ok:false,error:'Arquivo vazio.'});
+          if(buf.length>8*1024*1024)return sendJson(res,413,{ok:false,error:'Arquivo maior que 8 MB.'});
+          await pool.query(`INSERT INTO fleet_maintenance_files(maintenance_id,nome_arquivo,mime,arquivo,bytes)
+            VALUES($1,$2,$3,$4,$5)
+            ON CONFLICT (maintenance_id) DO UPDATE SET nome_arquivo=EXCLUDED.nome_arquivo,mime=EXCLUDED.mime,arquivo=EXCLUDED.arquivo,bytes=EXCLUDED.bytes,atualizado_em=NOW()`,
+            [maintenanceId,name,mime,buf,buf.length]);
+          return sendJson(res,200,{ok:true,maintenance_id:maintenanceId,name,mime,bytes:buf.length});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao salvar nota fiscal.'})}
+      }
+
+      const fleetFileMatch=u.pathname.match(/^\/api\/painel\/frota-maintenance-file\/([^/]+)$/);
+      if (fleetFileMatch && req.method === 'GET') {
+        try {
+          await dashboardSession(req);
+          const maintenanceId=decodeURIComponent(fleetFileMatch[1]);
+          const q=await pool.query('SELECT nome_arquivo,mime,arquivo,bytes FROM fleet_maintenance_files WHERE maintenance_id=$1 LIMIT 1',[maintenanceId]);
+          if(!q.rowCount)return sendJson(res,404,{ok:false,error:'Anexo não encontrado.'});
+          const row=q.rows[0],buf=row.arquivo;
+          res.writeHead(200,{
+            'Content-Type':row.mime||'application/octet-stream',
+            'Content-Length':buf.length,
+            'Content-Disposition':'inline; filename="'+String(row.nome_arquivo||'anexo').replace(/["\\]/g,'_')+'"',
+            'Cache-Control':'private, max-age=300'
+          });
+          return res.end(buf);
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao abrir nota fiscal.'})}
+      }
+
+      if (fleetFileMatch && req.method === 'DELETE') {
+        try {
+          await dashboardSession(req);
+          const maintenanceId=decodeURIComponent(fleetFileMatch[1]);
+          await pool.query('DELETE FROM fleet_maintenance_files WHERE maintenance_id=$1',[maintenanceId]);
+          return sendJson(res,200,{ok:true});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao excluir anexo.'})}
       }
 
       if (req.method === 'GET' && u.pathname === '/motorista-teste') {
