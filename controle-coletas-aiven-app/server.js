@@ -29,6 +29,7 @@ const DRIVER_TEST_PAGE = path.join(__dirname, 'motorista-teste.html');
 const DRIVER_INSTALL_PAGE = path.join(__dirname, 'motorista-instalar.html');
 const DRIVER_TEST_INSTALL_PAGE = path.join(__dirname, 'motorista-teste-instalar.html');
 const LOTACAO_PAGE = path.join(__dirname, 'lotacao.html');
+const FROTA_PAGE = path.join(__dirname, 'frota.html');
 const ACCOUNTS_INDEX = path.join(__dirname, '..', 'contas-a-pagar-v3', 'public', 'index.html');
 const DRIVER_DOWNLOADS = path.join(__dirname, 'downloads');
 const DRIVER_UPDATE_FILE = path.join(DRIVER_DOWNLOADS, 'update.json');
@@ -953,6 +954,16 @@ async function start() {
       }
       if (req.method === 'GET' && (u.pathname === '/' || u.pathname === '/painel')) {
         return sendHtml(res, PANEL);
+      }
+
+      if (req.method === 'GET' && (u.pathname === '/frota' || u.pathname === '/frota/')) {
+        try {
+          await dashboardSession(req,false);
+          return sendHtml(res,FROTA_PAGE);
+        } catch(e){
+          res.writeHead(302,{Location:'/?login=1#frota','Cache-Control':'no-store'});
+          return res.end();
+        }
       }
 
       if (req.method === 'GET' && (u.pathname === '/lotacao' || u.pathname === '/lotacao/')) {
