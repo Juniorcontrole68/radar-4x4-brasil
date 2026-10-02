@@ -579,10 +579,10 @@ function setDashboardToday(){
   if($('#to'))$('#to').value=d;
 }
 function inper(d){const f=$('#from').value?new Date($('#from').value+'T00:00:00'):null,t=$('#to').value?new Date($('#to').value+'T23:59:59'):null;return(!f||!d||d>=f)&&(!t||!d||d<=t)}
-function ops(){const d=$('#driver').value,b=$('#branch').value;return S.ops.filter(o=>inper(pd(gd(o)))&&(!d||g(o,'Motorista')===d)&&(!b||g(o,'Filial')===b))}
-function help(){return S.help.filter(o=>inper(pd(g(o,'Data'))))}
-function sch(){return S.sch.filter(o=>inper(pd(g(o,'DATA AGENDADA'))||pd(g(o,'DATA CONTATO'))))}
-function filters(){const curD=$('#driver').value,curB=$('#branch').value,ds=[...new Set(S.ops.map(o=>g(o,'Motorista')).filter(Boolean))].sort(),bs=[...new Set(S.ops.map(o=>g(o,'Filial')).filter(Boolean))].sort();$('#driver').innerHTML='<option value="">Todos motoristas</option>'+ds.map(x=>'<option>'+safe(x)+'</option>').join('');$('#branch').innerHTML='<option value="">Todas filiais</option>'+bs.map(x=>'<option>'+safe(x)+'</option>').join('');if(ds.includes(curD))$('#driver').value=curD;if(bs.includes(curB))$('#branch').value=curB}
+function ops(){const d=$('#driver')?.value||'',b=$('#branch')?.value||'',rows=Array.isArray(S.ops)?S.ops:[];return rows.filter(o=>inper(pd(gd(o)))&&(!d||g(o,'Motorista')===d)&&(!b||g(o,'Filial')===b))}
+function help(){const rows=Array.isArray(S.help)?S.help:[];return rows.filter(o=>inper(pd(g(o,'Data'))))}
+function sch(){const rows=Array.isArray(S.sch)?S.sch:[];return rows.filter(o=>inper(pd(g(o,'DATA AGENDADA'))||pd(g(o,'DATA CONTATO'))))}
+function filters(){const driver=$('#driver'),branch=$('#branch'),rows=Array.isArray(S.ops)?S.ops:[];if(!driver||!branch)return;const curD=driver.value,curB=branch.value,ds=[...new Set(rows.map(o=>g(o,'Motorista')).filter(Boolean))].sort(),bs=[...new Set(rows.map(o=>g(o,'Filial')).filter(Boolean))].sort();driver.innerHTML='<option value="">Todos motoristas</option>'+ds.map(x=>'<option>'+safe(x)+'</option>').join('');branch.innerHTML='<option value="">Todas filiais</option>'+bs.map(x=>'<option>'+safe(x)+'</option>').join('');if(ds.includes(curD))driver.value=curD;if(bs.includes(curB))branch.value=curB}
 function cv(id){const c=$(id),b=c.parentElement,w=Math.max(290,b.clientWidth),h=Math.max(220,b.clientHeight),d=devicePixelRatio||1;c.width=w*d;c.height=h*d;c.style.width=w+'px';c.style.height=h+'px';const x=c.getContext('2d');x.setTransform(d,0,0,d,0,0);x.clearRect(0,0,w,h);x.font='12px Segoe UI';return{x,w,h}}
 function empty(id){const{x,w,h}=cv(id);x.fillStyle='#94a3b8';x.textAlign='center';x.fillText('Sem dados no período',w/2,h/2)}
 function bars(id,L,D,labels=[],inside=false){if(!D.length)return empty(id);const{x,w,h}=cv(id),p={l:42,r:12,t:28,b:58},cw=w-p.l-p.r,ch=h-p.t-p.b,m=Math.max(...D,1),bw=Math.max(5,Math.min(38,cw/D.length*.65));x.strokeStyle='#e2e8f0';x.strokeRect(p.l,p.t,cw,ch);D.forEach((v,i)=>{const px=p.l+(i+.5)*cw/D.length,bh=v/m*ch;x.fillStyle='#0f766e';x.fillRect(px-bw/2,h-p.b-bh,bw,bh);if(labels[i]!==undefined&&labels[i]!==null&&String(labels[i])!==''){x.save();x.textAlign='center';x.font='700 11px Segoe UI';if(inside&&bh>=15){x.textBaseline='top';x.fillStyle='#fff';x.fillText(String(labels[i]),px,h-p.b-bh+4)}else{x.textBaseline='bottom';x.fillStyle='#172033';x.fillText(String(labels[i]),px,Math.max(14,h-p.b-bh-5))}x.restore()}x.save();x.translate(px,h-p.b+8);x.rotate(-Math.PI/4);x.textAlign='right';x.fillStyle='#64748b';x.font='12px Segoe UI';x.fillText(String(L[i]).slice(0,18),0,0);x.restore()})}
@@ -990,11 +990,18 @@ const hrm={};O.forEach(o=>{const k=g(o,'Rota')||'Sem rota';hrm[k]=(hrm[k]||0)+nu
 set('#hubIssue',nf(ret));set('#hubIssueRate',(del?ret/del*100:0).toFixed(1).replace('.',',')+'%');set('#hubIssueSla',sla.toFixed(1).replace('.',',')+'%');set('#hubIssuePend',nf(pending));$('#sswPlanned').textContent=nf(del);$('#sswRoute').textContent=nf(pending);$('#sswDone').textContent=nf(done);$('#sswIssue').textContent=nf(ret);$('#sswSla').textContent=sla.toFixed(1).replace('.',',')+'%';$('#sswSlaBar').style.width=Math.min(100,Math.max(0,sla))+'%';
 const active=$('.section.active')?.id||'dashboard';
 if(active==='dashboard'){
-  renderDriverPerformanceDashboard();
-  renderCheckerValueReport();
-  renderAgStatusCards('#agStatusCards',(S.agCopy||[]).filter(o=>!agCopyOldDelivered(o)));
-  financeRender();
-  const hdA={},hdC={};HA.forEach(o=>{const k=g(o,'Data')||'Sem data';hdA[k]??={valor:0,nomes:new Set()};hdA[k].valor+=num(g(o,'Valor'));const nome=String(g(o,'NOME')||'').trim();if(nome)hdA[k].nomes.add(nome)});HCf.forEach(o=>{const k=g(o,'Data')||'Sem data';hdC[k]??={valor:0,nomes:new Set()};hdC[k].valor+=num(g(o,'Valor'));const nome=String(g(o,'NOME')||'').trim();if(nome)hdC[k].nomes.add(nome)});const HK=[...new Set([...Object.keys(hdA),...Object.keys(hdC)])].sort((a,b)=>(pd(a)||0)-(pd(b)||0));groupedBars('#helpersChart',HK,HK.map(k=>hdA[k]?.valor||0),HK.map(k=>hdC[k]?.valor||0),HK.map(k=>nf(hdA[k]?.nomes.size||0)),HK.map(k=>nf(hdC[k]?.nomes.size||0)));
+  const safeWidget=(name,fn)=>{try{fn()}catch(e){console.error('Widget '+name+' falhou:',e)}};
+  safeWidget('performance motorista',()=>renderDriverPerformanceDashboard());
+  safeWidget('conferentes e ajudantes',()=>renderCheckerValueReport());
+  safeWidget('status agendamentos',()=>renderAgStatusCards('#agStatusCards',(Array.isArray(S.agCopy)?S.agCopy:[]).filter(o=>!agCopyOldDelivered(o))));
+  safeWidget('resultado financeiro motorista',()=>financeRender());
+  safeWidget('grafico ajudantes/conferentes',()=>{
+    const hdA={},hdC={};
+    (Array.isArray(HA)?HA:[]).forEach(o=>{const k=g(o,'Data')||'Sem data';hdA[k]??={valor:0,nomes:new Set()};hdA[k].valor+=num(g(o,'Valor'));const nome=String(g(o,'NOME')||'').trim();if(nome)hdA[k].nomes.add(nome)});
+    (Array.isArray(HCf)?HCf:[]).forEach(o=>{const k=g(o,'Data')||'Sem data';hdC[k]??={valor:0,nomes:new Set()};hdC[k].valor+=num(g(o,'Valor'));const nome=String(g(o,'NOME')||'').trim();if(nome)hdC[k].nomes.add(nome)});
+    const HK=[...new Set([...Object.keys(hdA),...Object.keys(hdC)])].sort((a,b)=>(pd(a)||0)-(pd(b)||0));
+    groupedBars('#helpersChart',HK,HK.map(k=>hdA[k]?.valor||0),HK.map(k=>hdC[k]?.valor||0),HK.map(k=>nf(hdA[k]?.nomes.size||0)),HK.map(k=>nf(hdC[k]?.nomes.size||0)))
+  });
 }
 $('#hc').textContent=brl(helperCost);$('#hcc').textContent=brl(checkerCost);$('#hn').textContent=nf(H.length);$('#hp').textContent=new Set(HA.map(o=>g(o,'NOME')).filter(Boolean)).size;$('#hcp').textContent=new Set(HCf.map(o=>g(o,'NOME')).filter(Boolean)).size;
 if(active==='operacoes')table('#ops',[['Data','ENTREGUE','Entregue','Data','  Data','DATA'],['Motorista','Motorista'],['Veículo','Veiculo'],['Filial','Filial'],['Entregas','Entregas'],['Realizadas','Realizadas'],['KM','KM'],['Frete Motorista','Frete Mot Liq',' Frete Mot Liq'],['Receita Líq.','Frete Vialog Liq',' Frete Vialog Liq'],['Rota','Rota']],O.slice().reverse().slice(0,500));
@@ -1431,13 +1438,13 @@ async function refreshData(first=false){
     ]);
     let updated=false,errors=[];
     if(needOps){
-      if(ro.status==='fulfilled'){S.ops=ro.value||[];S.opsUpdatedAt=Date.now();updated=true}else errors.push('Operações: '+(ro.reason?.message||ro.reason))
+      if(ro.status==='fulfilled'){S.ops=Array.isArray(ro.value)?ro.value:[];S.opsUpdatedAt=Date.now();updated=true}else errors.push('Operações: '+(ro.reason?.message||ro.reason))
     }else S.ops=[];
     if(needSch){
-      if(ra.status==='fulfilled'){S.sch=ra.value||[];S.agCopy=S.sch;window.__agCopyLoadedAt=Date.now();updated=true}else errors.push('Agendamentos: '+(ra.reason?.message||ra.reason))
+      if(ra.status==='fulfilled'){S.sch=Array.isArray(ra.value)?ra.value:[];S.agCopy=S.sch;window.__agCopyLoadedAt=Date.now();updated=true}else errors.push('Agendamentos: '+(ra.reason?.message||ra.reason))
     }else S.sch=[];
     if(needHelp){
-      if(rh.status==='fulfilled'){S.help=rh.value||[];updated=true}else errors.push('Ajudantes: '+(rh.reason?.message||rh.reason))
+      if(rh.status==='fulfilled'){S.help=Array.isArray(rh.value)?rh.value:[];updated=true}else errors.push('Ajudantes: '+(rh.reason?.message||rh.reason))
     }else S.help=[];
     filters();update();
     const er=$('#err');
