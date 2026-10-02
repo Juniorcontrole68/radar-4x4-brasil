@@ -729,7 +729,21 @@ function financeRender(){
     motorista:x.motorista,pago:brl(x.paid),receber:brl(x.receive),lucro:brl(x.profit),
     lucroPct:x.profitPct.toFixed(1).replace('.',',')+'%',custoPct:x.costPct.toFixed(1).replace('.',',')+'%'
   }));
-  if($('#financeDriverTable'))table('#financeDriverTable',[['Motorista','motorista'],['Frete pago','pago'],['Frete a receber','receber'],['Lucro','lucro'],['% lucro','lucroPct'],['% custo motorista','custoPct']],tableRows);
+  if($('#financeDriverTable')){
+    const previous={};
+    $('#financeDriverTable [data-fin-pdf-col]').forEach(c=>previous[c.dataset.finPdfCol]=c.checked);
+    const cols=[
+      ['motorista','Motorista','motorista'],
+      ['pago','Frete pago','pago'],
+      ['receber','Frete a receber','receber'],
+      ['lucro','Lucro','lucro'],
+      ['lucroPct','% lucro','lucroPct'],
+      ['custoPct','% custo motorista','custoPct']
+    ];
+    const head=cols.map(c=>'<th>'+safe(c[1])+' <input type="checkbox" data-fin-pdf-col="'+c[0]+'" '+(previous[c[0]]===false?'':'checked')+' title="Incluir esta coluna no PDF" aria-label="Incluir '+safe(c[1])+' no PDF"></th>').join('');
+    const body=tableRows.map(r=>'<tr>'+cols.map(c=>'<td>'+safe(r[c[2]])+'</td>').join('')+'</tr>').join('');
+    $('#financeDriverTable').innerHTML='<thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody>'
+  }
 
   const top=drivers.slice(0,12);
   financeDualBars('#financeDriverChart',top.map(x=>x.motorista),top.map(x=>x.receive),top.map(x=>x.paid),'A receber','Pago');
@@ -756,7 +770,19 @@ function financeExportPdf(){
   const rows=financeRowsBetween(from,to),agg=financeAgg(rows),drivers=financeDriverRows(rows);
   const fmtDate=v=>v?v.split('-').reverse().join('/'):'—';
   const pct=v=>Number(v||0).toFixed(1).replace('.',',')+'%';
-  const body=drivers.map(x=>'<tr><td>'+safe(x.motorista)+'</td><td>'+brl(x.paid)+'</td><td>'+brl(x.receive)+'</td><td>'+brl(x.profit)+'</td><td>'+pct(x.profitPct)+'</td><td>'+pct(x.costPct)+'</td></tr>').join('');
+  const defs=[
+    {key:'motorista',label:'Motorista',value:x=>safe(x.motorista)},
+    {key:'pago',label:'Frete pago',value:x=>brl(x.paid)},
+    {key:'receber',label:'Frete a receber',value:x=>brl(x.receive)},
+    {key:'lucro',label:'Lucro',value:x=>brl(x.profit)},
+    {key:'lucroPct',label:'% lucro',value:x=>pct(x.profitPct)},
+    {key:'custoPct',label:'% custo motorista',value:x=>pct(x.costPct)}
+  ];
+  const selected=new Set($$('#financeDriverTable [data-fin-pdf-col]:checked').map(x=>x.dataset.finPdfCol));
+  const cols=defs.filter(c=>selected.has(c.key));
+  if(!cols.length){alert('Marque pelo menos uma coluna para exportar no PDF.');return}
+  const head=cols.map(c=>'<th>'+safe(c.label)+'</th>').join('');
+  const body=drivers.map(x=>'<tr>'+cols.map(c=>'<td>'+c.value(x)+'</td>').join('')+'</tr>').join('');
   const w=window.open('','_blank','noopener,noreferrer');
   if(!w){alert('O navegador bloqueou a janela do PDF. Libere pop-ups para este site e tente novamente.');return}
   w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Resultado por Motorista</title><style>'+
@@ -771,7 +797,7 @@ function financeExportPdf(){
       '<div class="k"><span>% lucro</span><b>'+pct(agg.profitPct)+'</b></div>'+
       '<div class="k"><span>% custo motorista</span><b>'+pct(agg.costPct)+'</b></div>'+
     '</div>'+
-    '<table><thead><tr><th>Motorista</th><th>Frete pago</th><th>Frete a receber</th><th>Lucro</th><th>% lucro</th><th>% custo motorista</th></tr></thead><tbody>'+body+'</tbody></table>'+
+    '<table><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table>'+
     '<script>window.onload=()=>{setTimeout(()=>window.print(),200)}<\/script></body></html>');
   w.document.close()
 }
