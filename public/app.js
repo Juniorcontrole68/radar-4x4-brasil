@@ -785,7 +785,7 @@ function financeExportPdf(){
   const body=drivers.map(x=>'<tr>'+cols.map(c=>'<td>'+c.value(x)+'</td>').join('')+'</tr>').join('');
   const reportTitle='Relação de Pagamento de Motoristas';
   const reportPeriod='Período: '+fmtDate(from)+' a '+fmtDate(to);
-  const fileTitle=reportTitle+' - '+fmtDate(from).replaceAll('/','-')+' a '+fmtDate(to).replaceAll('/','-');
+  const fileTitle='Relatorio de Pagamento de Motoristas Periodo '+fmtDate(from).replaceAll('/','-')+' a '+fmtDate(to).replaceAll('/','-');
   const html='<!doctype html><html><head><meta charset="utf-8"><title>'+fileTitle+'</title><style>'+
     'body{font-family:Arial,sans-serif;color:#111827;margin:22px}.header{display:flex;align-items:center;gap:18px;border-bottom:2px solid #f97316;padding-bottom:10px;margin-bottom:12px}.logo{width:220px;max-height:74px;object-fit:contain}.titlewrap{flex:1}h1{font-size:21px;margin:0 0 5px}.period{font-size:13px;font-weight:700;color:#374151}.meta{font-size:11px;color:#6b7280;margin-top:4px}.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin:10px 0 14px}.k{border:1px solid #d1d5db;border-radius:7px;padding:8px}.k span{display:block;font-size:10px;color:#6b7280}.k b{font-size:14px}table{width:100%;border-collapse:collapse;font-size:10.5px}th,td{border:1px solid #d1d5db;padding:5px;text-align:left}th{background:#f3f4f6}@page{size:A4 landscape;margin:10mm}@media print{body{margin:0}.header{break-inside:avoid}}'+
     '</style></head><body>'+
@@ -807,11 +807,27 @@ function financeExportPdf(){
     document.body.appendChild(frame);
     const doc=frame.contentWindow.document;
     doc.open();doc.write(html);doc.close();
-    setTimeout(()=>{
-      try{frame.contentWindow.focus();frame.contentWindow.print()}
-      catch(e){alert('Não foi possível abrir a impressão. Tente novamente.')}
-      setTimeout(()=>frame.remove(),2500)
-    },450)
+    doc.title=fileTitle;
+    const doPrint=()=>{
+      try{
+        frame.contentWindow.document.title=fileTitle;
+        frame.contentWindow.focus();
+        frame.contentWindow.print()
+      }catch(e){alert('Não foi possível abrir a impressão. Tente novamente.')}
+      setTimeout(()=>frame.remove(),3500)
+    };
+    const imgs=[...doc.images];
+    if(!imgs.length||imgs.every(img=>img.complete&&img.naturalWidth>0))setTimeout(doPrint,250);
+    else{
+      let done=false;
+      const finish=()=>{if(done)return;done=true;setTimeout(doPrint,150)};
+      let pending=imgs.length;
+      imgs.forEach(img=>{
+        const one=()=>{pending--;if(pending<=0)finish()};
+        if(img.complete)one();else{img.addEventListener('load',one,{once:true});img.addEventListener('error',one,{once:true})}
+      });
+      setTimeout(finish,1800)
+    }
   }catch(e){
     alert('Não foi possível preparar o PDF: '+(e.message||e))
   }
