@@ -3900,6 +3900,44 @@ if(u.pathname==='/api/frota-state'&&req.method==='PUT'){try{
   res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
+if(u.pathname==='/api/frota-maintenance-file'&&req.method==='POST'){try{
+  const body=await readJsonLimited(req,12*1024*1024);
+  const x=await portalAuth('/api/painel/frota-maintenance-file',{method:'POST',body,token:authUser.token,timeout:30000});
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){
+  res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}
+const fleetFileMatch=u.pathname.match(/^\/api\/frota-maintenance-file\/([^/]+)$/);
+if(fleetFileMatch&&req.method==='GET'){try{
+  const maintenanceId=decodeURIComponent(fleetFileMatch[1]);
+  const ru=new URL('/api/painel/frota-maintenance-file/'+encodeURIComponent(maintenanceId),COLETAS_PORTAL_URL);
+  const rr=await fetch(ru,{headers:{'User-Agent':'CONSTRULOG-Dashboard/1.0','Authorization':'Bearer '+authUser.token},signal:AbortSignal.timeout(30000)});
+  if(!rr.ok){
+    const j=await rr.json().catch(()=>({}));throw Object.assign(new Error(j.error||('HTTP '+rr.status)),{status:rr.status})
+  }
+  const buf=Buffer.from(await rr.arrayBuffer());
+  res.writeHead(200,{
+    'Content-Type':rr.headers.get('content-type')||'application/octet-stream',
+    'Content-Length':buf.length,
+    'Content-Disposition':rr.headers.get('content-disposition')||'inline',
+    'Cache-Control':'private, max-age=300'
+  });
+  return res.end(buf)
+}catch(e){
+  res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}
+if(fleetFileMatch&&req.method==='DELETE'){try{
+  const maintenanceId=decodeURIComponent(fleetFileMatch[1]);
+  const x=await portalAuth('/api/painel/frota-maintenance-file/'+encodeURIComponent(maintenanceId),{method:'DELETE',token:authUser.token,timeout:30000});
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){
+  res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}
 if(u.pathname==='/api/lotacao'&&req.method==='GET'){try{
   if(!dashboardHasAny(authUser,['lotacao','coletas','financeiro']))return dashboardDeny(res);
   const q=new URLSearchParams();
