@@ -39,11 +39,11 @@ textarea{min-height:58px}.wide{grid-column:span 2}.btn{min-height:36px;border:0;
 </form></div><div class="card table"><table><thead><tr><th>Data</th><th>Placa</th><th>Motorista</th><th>KM</th><th>Litros</th><th>Total</th><th></th></tr></thead><tbody id="tbFuel"></tbody></table></div></section>
 
 <section id="manutencao" class="panel"><div class="card"><form id="fMaint" class="grid">
-<label>Data<input name="date" type="date" required></label><label>Veículo<select name="plate" class="vehSel" required></select></label><label>Serviço<input name="service" required></label><label>KM<input name="km" type="number"></label><label>Oficina / fornecedor<input name="workshop"></label><label>Peças R$<input name="parts" type="number" step="0.01"></label><label>Mão de obra R$<input name="labor" type="number" step="0.01"></label><label>Próxima em KM<input name="nextKm" type="number"></label><label>Próxima por data<input name="nextDate" type="date"></label><label class="wide">Observação<textarea name="note"></textarea></label>
+<label>Data<input name="date" type="date" required></label><label>Veículo<select name="plate" class="vehSel" required></select></label><label>Serviço<input name="service" required></label><label>KM<input name="km" type="number"></label><label>Oficina / fornecedor<input name="workshop"></label><label>Peças R$<input name="parts" type="number" step="0.01"></label><label>Mão de obra R$<input name="labor" type="number" step="0.01"></label><label>Próxima em KM<input name="nextKm" type="number"></label><label>Próxima por data<input name="nextDate" type="date"></label><label>Garantia<input name="warranty" placeholder="Ex.: 6 meses / 10.000 km"></label><label class="wide">Observação<textarea name="note"></textarea></label>
 <div class="wide filebox"><label>📎 Anexar NF / PDF<input id="maintFile" type="file" accept="image/*,application/pdf"></label><label>📷 Tirar foto da NF<input id="maintCam" type="file" accept="image/*" capture="environment"></label><span id="fileName" class="muted">Nenhum anexo.</span></div>
 <input id="maintQuickFile" type="file" accept="image/*,application/pdf" style="display:none">
 <div style="display:flex;gap:8px;align-items:end"><button id="maintSaveBtn" class="btn" type="submit">🔧 Salvar manutenção</button><button id="maintCancelEdit" class="btn sec" type="button" style="display:none">Cancelar edição</button></div>
-</form></div><div class="card table"><table><thead><tr><th>Data</th><th>Placa</th><th>Serviço</th><th>KM</th><th>Oficina</th><th>Total</th><th>Próxima</th><th>NF</th><th></th></tr></thead><tbody id="tbMaint"></tbody></table></div></section>
+</form></div><div class="card table"><table><thead><tr><th>Data</th><th>Placa</th><th>Serviço</th><th>KM</th><th>Oficina</th><th>Total</th><th>Próxima</th><th>Garantia</th><th>NF</th><th></th></tr></thead><tbody id="tbMaint"></tbody></table></div></section>
 
 <section id="pneus" class="panel"><div class="card"><form id="fTire" class="grid">
 <label>ID / Nº fogo<input name="code" required></label><label>Marca<input name="brand"></label><label>Medida<input name="size"></label><label>Veículo<select name="plate" class="vehSel"></select></label><label>Posição<input name="position"></label><label>KM instalação<input name="kmInstall" type="number"></label><label>Custo<input name="cost" type="number" step="0.01"></label><button class="btn" type="submit">🛞 Salvar pneu</button>
@@ -114,7 +114,7 @@ function editMaintenance(mid){
  const x=db.maintenance.find(m=>m.id===mid);if(!x)return;
  maintEditId=mid;tab('manutencao');
  const f=$('#fMaint');
- for(const n of ['date','plate','service','km','workshop','parts','labor','nextKm','nextDate','note']){
+ for(const n of ['date','plate','service','km','workshop','parts','labor','nextKm','nextDate','warranty','note']){
    const el=f.elements[n];if(el)el.value=x[n]??''
  }
  $('#fileName').textContent=x.attachmentName?'Comprovante atual: '+x.attachmentName:'Nenhum comprovante anexado.';
@@ -134,7 +134,7 @@ $('#maintQuickFile').onchange=async e=>{
 $('#fMaint').onsubmit=async e=>{
  e.preventDefault();
  const f=e.currentTarget,parts=Number(fv(f,'parts')||0),labor=Number(fv(f,'labor')||0),file=$('#maintCam').files[0]||$('#maintFile').files[0];
- const values={date:fv(f,'date'),plate:fv(f,'plate'),service:fv(f,'service'),km:Number(fv(f,'km')||0),workshop:fv(f,'workshop'),parts,labor,total:parts+labor,nextKm:fv(f,'nextKm'),nextDate:fv(f,'nextDate'),note:fv(f,'note')};
+ const values={date:fv(f,'date'),plate:fv(f,'plate'),service:fv(f,'service'),km:Number(fv(f,'km')||0),workshop:fv(f,'workshop'),parts,labor,total:parts+labor,nextKm:fv(f,'nextKm'),nextDate:fv(f,'nextDate'),warranty:fv(f,'warranty'),note:fv(f,'note')};
  let x;
  try{
    if(maintEditId){
