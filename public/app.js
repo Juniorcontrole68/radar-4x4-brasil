@@ -640,7 +640,7 @@ function financeDriverRows(rows){
   return[...map.values()].map(x=>{
     const profit=x.receive-x.paid;
     return{...x,profit,profitPct:x.receive?profit/x.receive*100:0,costPct:x.receive?x.paid/x.receive*100:0}
-  }).sort((x,y)=>y.receive-x.receive||x.motorista.localeCompare(y.motorista,'pt-BR'))
+  }).sort((x,y)=>x.motorista.localeCompare(y.motorista,'pt-BR',{sensitivity:'base'}))
 }
 function financeWeekIndex(d){return Math.min(5,Math.floor((d.getDate()-1)/7)+1)}
 function financeMonthLabel(d){return d.toLocaleDateString('pt-BR',{month:'short',year:'2-digit'}).replace('.','')}
