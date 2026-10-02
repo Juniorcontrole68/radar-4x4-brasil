@@ -605,6 +605,12 @@ async function start() {
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_dashboard_users_username_lower ON dashboard_users (lower(username))');
   await pool.query('CREATE TABLE IF NOT EXISTS dashboard_sessions (token_hash TEXT PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES dashboard_users(id) ON DELETE CASCADE, expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
   await pool.query('CREATE INDEX IF NOT EXISTS idx_dashboard_sessions_exp ON dashboard_sessions (expires_at)');
+  await pool.query(`CREATE TABLE IF NOT EXISTS fleet_state (
+    id INTEGER PRIMARY KEY,
+    data JSONB NOT NULL DEFAULT '{"vehicles":[],"fuel":[],"maintenance":[],"tires":[],"people":[],"documents":[],"checklists":[]}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await pool.query(`INSERT INTO fleet_state(id,data) VALUES(1,'{"vehicles":[],"fuel":[],"maintenance":[],"tires":[],"people":[],"documents":[],"checklists":[]}'::jsonb) ON CONFLICT (id) DO NOTHING`);
   await pool.query("CREATE TABLE IF NOT EXISTS dashboard_embed_tickets (ticket_hash TEXT PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES dashboard_users(id) ON DELETE CASCADE, expires_at TIMESTAMPTZ NOT NULL, used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())");
   await pool.query('CREATE INDEX IF NOT EXISTS idx_dashboard_embed_tickets_exp ON dashboard_embed_tickets (expires_at)');
   const adminUser=String(process.env.DASHBOARD_INITIAL_ADMIN_USER||'Junior').trim();
@@ -623,6 +629,33 @@ async function start() {
   http.createServer(async (req, res) => {
     try {
       const u = new URL(req.url, 'http://localhost');
+
+      if (u.pathname === '/api/painel/frota-state' && req.method === 'GET') {
+        try {
+          await dashboardSession(req);
+          const q=await pool.query('SELECT data,updated_at FROM fleet_state WHERE id=1 LIMIT 1');
+          return sendJson(res,200,{ok:true,data:q.rows[0]?.data||{},updated_at:q.rows[0]?.updated_at||null});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar Frota.'})}
+      }
+
+      if (u.pathname === '/api/painel/frota-state' && req.method === 'PUT') {
+        try {
+          await dashboardSession(req);
+          const body=await readJsonBodyLimited(req,2*1024*1024);
+          const data=body&&body.data&&typeof body.data==='object'?body.data:body;
+          const out={
+            vehicles:Array.isArray(data.vehicles)?data.vehicles:[],
+            fuel:Array.isArray(data.fuel)?data.fuel:[],
+            maintenance:Array.isArray(data.maintenance)?data.maintenance:[],
+            tires:Array.isArray(data.tires)?data.tires:[],
+            people:Array.isArray(data.people)?data.people:[],
+            documents:Array.isArray(data.documents)?data.documents:[],
+            checklists:Array.isArray(data.checklists)?data.checklists:[]
+          };
+          const q=await pool.query('UPDATE fleet_state SET data=$1::jsonb,updated_at=NOW() WHERE id=1 RETURNING updated_at',[JSON.stringify(out)]);
+          return sendJson(res,200,{ok:true,data:out,updated_at:q.rows[0]?.updated_at||null});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao salvar Frota.'})}
+      }
 
       if (req.method === 'GET' && u.pathname === '/motorista-teste') {
         return sendHtml(res, DRIVER_TEST_PAGE);
