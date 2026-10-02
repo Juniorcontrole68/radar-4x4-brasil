@@ -46,6 +46,31 @@ window.fetch=function(input,init){
 };
 
 
+function ensureFleetNav(){
+  try{
+    const nav=document.querySelector('.nav');
+    if(!nav)return;
+    let btn=nav.querySelector('button[data-tab="frota"]');
+    if(!btn){
+      btn=document.createElement('button');
+      btn.type='button';
+      btn.dataset.tab='frota';
+      btn.textContent='Frota';
+      const lot=nav.querySelector('button[data-tab="lotacao"]');
+      if(lot&&lot.nextSibling)nav.insertBefore(btn,lot.nextSibling);else nav.appendChild(btn);
+    }
+    btn.style.display='';
+    btn.onclick=()=>{
+      document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('active'));
+      document.querySelectorAll('.section').forEach(x=>x.classList.remove('active'));
+      btn.classList.add('active');
+      const sec=document.querySelector('#frota');
+      if(sec)sec.classList.add('active');
+      const t=document.querySelector('#pageTitle'); if(t)t.textContent='Frota';
+    };
+  }catch(e){console.error('Falha ao garantir menu Frota',e)}
+}
+
 const PERMISSION_OPTIONS=[
   ['coletas','Controle de Coletas'],
   ['lotacao','Lotação • Coletas e Financeiro'],
@@ -232,6 +257,7 @@ async function showAuthenticatedApp(user){
     authLoading.classList.add('hide');
   }
   applyPermissions();
+  ensureFleetNav();
   setupUserAdmin();
   setupLoadingForm();
   setupAgCopy();
