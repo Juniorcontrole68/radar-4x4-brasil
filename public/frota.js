@@ -2,16 +2,44 @@
 const q=(s,r=document)=>r.querySelector(s), qa=(s,r=document)=>Array.from(r.querySelectorAll(s));
 const KEY='construlog_frota_v1';
 const empty=()=>({vehicles:[],fuel:[],maintenance:[],tires:[],people:[],documents:[],checklists:[]});
-let db;
-try{db=Object.assign(empty(),JSON.parse(localStorage.getItem(KEY)||'{}'))}catch(e){db=empty()}
-const save=()=>{localStorage.setItem(KEY,JSON.stringify(db));render()};
+let db=empty();
+let saving=false;
+async function loadRemote(){
+  try{
+    const r=await fetch('/api/frota-state',{cache:'no-store'});
+    const j=await r.json();
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar Frota.');
+    db=Object.assign(empty(),j.data||{});
+  }catch(e){
+    console.error(e);
+    db=empty();
+    alert('Não foi possível carregar os dados da Frota: '+(e.message||e));
+  }
+}
+async function save(){
+  render();
+  if(saving)return;
+  saving=true;
+  try{
+    const r=await fetch('/api/frota-state',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({data:db})});
+    const j=await r.json();
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao salvar Frota.');
+    db=Object.assign(empty(),j.data||db);
+    render();
+  }catch(e){
+    console.error(e);
+    alert('Não foi possível salvar os dados da Frota: '+(e.message||e));
+    await loadRemote();
+    render();
+  }finally{saving=false}
+}
 const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const money=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const opts=(arr,key,label)=>'<option value="">Selecione...</option>'+arr.map(x=>'<option value="'+esc(x[key])+'">'+esc(label(x))+'</option>').join('');
 function val(f,n){return (new FormData(f).get(n)||'').toString().trim()}
-function add(kind,obj){db[kind].unshift(Object.assign({id:uid(),createdAt:new Date().toISOString()},obj));save()}
-function remove(kind,id){db[kind]=db[kind].filter(x=>x.id!==id);save()}
+async function add(kind,obj){db[kind].unshift(Object.assign({id:uid(),createdAt:new Date().toISOString()},obj));await save()}
+async function remove(kind,id){db[kind]=db[kind].filter(x=>x.id!==id);await save()}
 function rowDel(kind,id){return '<button class="fleet-del" data-kind="'+kind+'" data-id="'+id+'" type="button">Excluir</button>'}
 function bindDelete(){qa('.fleet-del').forEach(b=>b.onclick=()=>{if(confirm('Excluir este registro?'))remove(b.dataset.kind,b.dataset.id)})}
 function setSub(name){qa('.fleet-sub').forEach(b=>b.classList.toggle('active',b.dataset.fleet===name));qa('.fleet-panel').forEach(p=>p.classList.toggle('active',p.id==='fleet-'+name))}
@@ -35,16 +63,16 @@ function render(){
  q('#fleetCostBody').innerHTML=db.vehicles.map(v=>{const f=db.fuel.filter(x=>x.plate===v.plate).reduce((s,x)=>s+Number(x.total||0),0),m=db.maintenance.filter(x=>x.plate===v.plate).reduce((s,x)=>s+Number(x.total||0),0);return '<tr><td>'+esc(v.plate)+'</td><td>'+esc(v.model)+'</td><td>'+money(f)+'</td><td>'+money(m)+'</td><td><b>'+money(f+m)+'</b></td></tr>'}).join('')||'<tr><td colspan="5" class="muted">Sem dados.</td></tr>'; if(q('#fleetCostBody2'))q('#fleetCostBody2').innerHTML=q('#fleetCostBody').innerHTML;
  bindDelete()
 }
-function setup(){
+async function setup(){
  qa('.fleet-sub').forEach(b=>b.onclick=()=>setSub(b.dataset.fleet));
- q('#fleetVehicleForm').onsubmit=e=>{e.preventDefault();const f=e.currentTarget;add('vehicles',{plate:val(f,'plate').toUpperCase(),brand:val(f,'brand'),model:val(f,'model'),type:val(f,'type'),km:Number(val(f,'km')||0),driver:val(f,'driver'),status:val(f,'status')||'Ativo'});f.reset()};
- q('#fleetPeopleForm').onsubmit=e=>{e.preventDefault();const f=e.currentTarget;add('people',{name:val(f,'name'),role:val(f,'role'),cnh:val(f,'cnh'),cnhExpiry:val(f,'cnhExpiry'),phone:val(f,'phone'),status:val(f,'status')||'Ativo'});f.reset()};
- q('#fleetFuelForm').onsubmit=e=>{e.preventDefault();const f=e.currentTarget,lit=Number(val(f,'liters')||0),price=Number(val(f,'price')||0);add('fuel',{date:val(f,'date'),plate:val(f,'plate'),driver:val(f,'driver'),km:Number(val(f,'km')||0),liters:lit,price:price,total:Number(val(f,'total')||0)||lit*price});f.reset()};
- q('#fleetMaintForm').onsubmit=e=>{e.preventDefault();const f=e.currentTarget,parts=Number(val(f,'parts')||0),labor=Number(val(f,'labor')||0);add('maintenance',{date:val(f,'date'),plate:val(f,'plate'),service:val(f,'service'),km:Number(val(f,'km')||0),workshop:val(f,'workshop'),parts:parts,labor:labor,total:parts+labor,nextKm:val(f,'nextKm'),nextDate:val(f,'nextDate')});f.reset()};
- q('#fleetTireForm').onsubmit=e=>{e.preventDefault();const f=e.currentTarget;add('tires',{code:val(f,'code'),brand:val(f,'brand'),size:val(f,'size'),plate:val(f,'plate'),position:val(f,'position'),kmInstall:Number(val(f,'kmInstall')||0),cost:Number(val(f,'cost')||0)});f.reset()};
- q('#fleetDocForm').onsubmit=e=>{e.preventDefault();const f=e.currentTarget;add('documents',{plate:val(f,'plate'),type:val(f,'type'),expiry:val(f,'expiry'),note:val(f,'note')});f.reset()};
- q('#fleetCheckForm').onsubmit=e=>{e.preventDefault();const f=e.currentTarget;add('checklists',{date:val(f,'date'),plate:val(f,'plate'),driver:val(f,'driver'),status:val(f,'status'),note:val(f,'note')});f.reset()};
- render();setSub('resumo')
+ q('#fleetVehicleForm').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('vehicles',{plate:val(f,'plate').toUpperCase(),brand:val(f,'brand'),model:val(f,'model'),type:val(f,'type'),km:Number(val(f,'km')||0),driver:val(f,'driver'),status:val(f,'status')||'Ativo'});f.reset()};
+ q('#fleetPeopleForm').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('people',{name:val(f,'name'),role:val(f,'role'),cnh:val(f,'cnh'),cnhExpiry:val(f,'cnhExpiry'),phone:val(f,'phone'),status:val(f,'status')||'Ativo'});f.reset()};
+ q('#fleetFuelForm').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,lit=Number(val(f,'liters')||0),price=Number(val(f,'price')||0);await add('fuel',{date:val(f,'date'),plate:val(f,'plate'),driver:val(f,'driver'),km:Number(val(f,'km')||0),liters:lit,price:price,total:Number(val(f,'total')||0)||lit*price});f.reset()};
+ q('#fleetMaintForm').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,parts=Number(val(f,'parts')||0),labor=Number(val(f,'labor')||0);await add('maintenance',{date:val(f,'date'),plate:val(f,'plate'),service:val(f,'service'),km:Number(val(f,'km')||0),workshop:val(f,'workshop'),parts:parts,labor:labor,total:parts+labor,nextKm:val(f,'nextKm'),nextDate:val(f,'nextDate')});f.reset()};
+ q('#fleetTireForm').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('tires',{code:val(f,'code'),brand:val(f,'brand'),size:val(f,'size'),plate:val(f,'plate'),position:val(f,'position'),kmInstall:Number(val(f,'kmInstall')||0),cost:Number(val(f,'cost')||0)});f.reset()};
+ q('#fleetDocForm').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('documents',{plate:val(f,'plate'),type:val(f,'type'),expiry:val(f,'expiry'),note:val(f,'note')});f.reset()};
+ q('#fleetCheckForm').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('checklists',{date:val(f,'date'),plate:val(f,'plate'),driver:val(f,'driver'),status:val(f,'status'),note:val(f,'note')});f.reset()};
+ await loadRemote();render();setSub('resumo')
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',setup);else setup();
 })();
