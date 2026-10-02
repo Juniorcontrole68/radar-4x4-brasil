@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Frota • CONSTRULOG</title>
+<style>
+:root{--b:#0f766e;--bd:#dbe3ea;--bg:#f6f8fb;--tx:#0f172a;--mut:#64748b}
+*{box-sizing:border-box}body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--tx)}
+.wrap{padding:10px}.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.tabs button{border:1px solid var(--bd);background:#fff;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer}
+.tabs button.active{background:var(--b);color:#fff;border-color:var(--b)}
+.panel{display:none}.panel.active{display:block}.card{background:#fff;border:1px solid var(--bd);border-radius:10px;padding:10px;margin-bottom:10px}
+.grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}.grid label{font-size:10.5px;font-weight:700;color:#475569;display:grid;gap:4px}
+input,select,textarea{width:100%;min-height:34px;border:1px solid var(--bd);border-radius:7px;padding:6px 8px;font-size:12px;background:#fff}
+textarea{min-height:58px}.wide{grid-column:span 2}.btn{min-height:34px;border:0;border-radius:7px;padding:7px 10px;background:var(--b);color:#fff;font-size:12px;font-weight:800;cursor:pointer;align-self:end}
+.btn.sec{background:#334155}.btn.danger{background:#b91c1c}.muted{color:var(--mut);font-size:11px}
+.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}.kpi{background:#fff;border:1px solid var(--bd);border-radius:9px;padding:9px}.kpi span{display:block;color:var(--mut);font-size:10px}.kpi b{font-size:18px}
+.table{overflow:auto}.table table{width:100%;border-collapse:collapse;font-size:11px}.table th,.table td{padding:6px 7px;border-bottom:1px solid #edf1f5;text-align:left;white-space:nowrap}.table th{background:#f8fafc}
+.filebox{display:flex;gap:8px;align-items:end;flex-wrap:wrap}.filebox label{min-width:180px}.msg{padding:7px 9px;border-radius:7px;background:#ecfeff;color:#155e75;font-size:11px;margin-bottom:8px;display:none}
+@media(max-width:950px){.grid{grid-template-columns:repeat(3,1fr)}.kpis{grid-template-columns:repeat(3,1fr)}}@media(max-width:650px){.grid{grid-template-columns:repeat(2,1fr)}.wide{grid-column:span 2}.kpis{grid-template-columns:repeat(2,1fr)}}@media(max-width:430px){.grid{grid-template-columns:1fr}.wide{grid-column:auto}}
+</style>
+</head>
+<body><div class="wrap">
+<div id="msg" class="msg"></div>
+<div class="tabs">
+<button data-tab="resumo" class="active">Resumo</button><button data-tab="veiculos">Veículos</button><button data-tab="combustivel">Combustível</button><button data-tab="manutencao">Manutenção</button><button data-tab="pneus">Pneus</button><button data-tab="pessoal">Pessoal</button><button data-tab="documentos">Documentos</button><button data-tab="checklist">Checklist</button><button data-tab="custos">Custos</button>
+</div>
+
+<section id="resumo" class="panel active"><div class="kpis">
+<div class="kpi"><span>Veículos</span><b id="kVeh">0</b></div><div class="kpi"><span>Ativos</span><b id="kAct">0</b></div><div class="kpi"><span>Combustível</span><b id="kFuel">R$ 0</b></div><div class="kpi"><span>Manutenção</span><b id="kMaint">R$ 0</b></div><div class="kpi"><span>Docs vencidos</span><b id="kDocs">0</b></div>
+</div></section>
+
+<section id="veiculos" class="panel"><div class="card"><form id="fVeh" class="grid">
+<label>Placa<input name="plate" required placeholder="ABC1D23"></label><label>Marca<input name="brand"></label><label>Modelo<input name="model" required></label><label>Tipo<select name="type"><option>Fiorino</option><option>Van</option><option>Toco</option><option>Truck</option><option>Carreta</option><option>Utilitário</option><option>Outro</option></select></label><label>KM atual<input name="km" type="number" min="0"></label><label>Motorista habitual<input name="driver"></label><label>Status<select name="status"><option>Ativo</option><option>Manutenção</option><option>Parado</option><option>Vendido</option></select></label><button class="btn" type="submit">Salvar veículo</button>
+</form></div><div class="card table"><table><thead><tr><th>Placa</th><th>Marca</th><th>Modelo</th><th>Tipo</th><th>KM</th><th>Motorista</th><th>Status</th><th></th></tr></thead><tbody id="tbVeh"></tbody></table></div></section>
+
+<section id="combustivel" class="panel"><div class="card"><form id="fFuel" class="grid">
+<label>Data<input name="date" type="date" required></label><label>Veículo<select name="plate" class="vehSel" required></select></label><label>Motorista<input name="driver"></label><label>Hodômetro<input name="km" type="number"></label><label>Litros<input name="liters" type="number" step="0.001"></label><label>Valor/L<input name="price" type="number" step="0.001"></label><label>Total<input name="total" type="number" step="0.01"></label><button class="btn" type="submit">Salvar abastecimento</button>
+</form></div><div class="card table"><table><thead><tr><th>Data</th><th>Placa</th><th>Motorista</th><th>KM</th><th>Litros</th><th>Total</th><th></th></tr></thead><tbody id="tbFuel"></tbody></table></div></section>
+
+<section id="manutencao" class="panel"><div class="card"><form id="fMaint" class="grid">
+<label>Data<input name="date" type="date" required></label><label>Veículo<select name="plate" class="vehSel" required></select></label><label>Serviço<input name="service" required></label><label>KM<input name="km" type="number"></label><label>Oficina / fornecedor<input name="workshop"></label><label>Peças R$<input name="parts" type="number" step="0.01"></label><label>Mão de obra R$<input name="labor" type="number" step="0.01"></label><label>Próxima em KM<input name="nextKm" type="number"></label><label>Próxima por data<input name="nextDate" type="date"></label><label class="wide">Observação<textarea name="note"></textarea></label>
+<div class="wide filebox"><label>Anexar NF / PDF<input id="maintFile" type="file" accept="image/*,application/pdf"></label><label>Tirar foto da NF<input id="maintCam" type="file" accept="image/*" capture="environment"></label><span id="fileName" class="muted">Nenhum anexo.</span></div>
+<button class="btn" type="submit">Salvar manutenção</button>
+</form></div><div class="card table"><table><thead><tr><th>Data</th><th>Placa</th><th>Serviço</th><th>KM</th><th>Oficina</th><th>Total</th><th>Próxima</th><th>NF</th><th></th></tr></thead><tbody id="tbMaint"></tbody></table></div></section>
+
+<section id="pneus" class="panel"><div class="card"><form id="fTire" class="grid">
+<label>ID / Nº fogo<input name="code" required></label><label>Marca<input name="brand"></label><label>Medida<input name="size"></label><label>Veículo<select name="plate" class="vehSel"></select></label><label>Posição<input name="position"></label><label>KM instalação<input name="kmInstall" type="number"></label><label>Custo<input name="cost" type="number" step="0.01"></label><button class="btn" type="submit">Salvar pneu</button>
+</form></div><div class="card table"><table><thead><tr><th>ID</th><th>Marca</th><th>Medida</th><th>Placa</th><th>Posição</th><th>KM</th><th>Custo</th><th></th></tr></thead><tbody id="tbTire"></tbody></table></div></section>
+
+<section id="pessoal" class="panel"><div class="card"><form id="fPeople" class="grid">
+<label>Nome<input name="name" required></label><label>Função<select name="role"><option>Motorista</option><option>Ajudante</option><option>Conferente</option><option>Administrativo</option><option>Outro</option></select></label><label>CNH<input name="cnh"></label><label>Validade CNH<input name="cnhExpiry" type="date"></label><label>Telefone<input name="phone"></label><label>Status<select name="status"><option>Ativo</option><option>Inativo</option></select></label><button class="btn" type="submit">Salvar pessoa</button>
+</form></div><div class="card table"><table><thead><tr><th>Nome</th><th>Função</th><th>CNH</th><th>Validade</th><th>Telefone</th><th>Status</th><th></th></tr></thead><tbody id="tbPeople"></tbody></table></div></section>
+
+<section id="documentos" class="panel"><div class="card"><form id="fDoc" class="grid">
+<label>Veículo<select name="plate" class="vehSel" required></select></label><label>Documento<select name="type"><option>Licenciamento</option><option>IPVA</option><option>Seguro</option><option>ANTT</option><option>Cronotacógrafo</option><option>Extintor</option><option>Outro</option></select></label><label>Validade<input name="expiry" type="date"></label><label class="wide">Observação<input name="note"></label><button class="btn" type="submit">Salvar documento</button>
+</form></div><div class="card table"><table><thead><tr><th>Placa</th><th>Tipo</th><th>Validade</th><th>Observação</th><th></th></tr></thead><tbody id="tbDoc"></tbody></table></div></section>
+
+<section id="checklist" class="panel"><div class="card"><form id="fCheck" class="grid">
+<label>Data<input name="date" type="date"></label><label>Veículo<select name="plate" class="vehSel"></select></label><label>Motorista<input name="driver"></label><label>Status<select name="status"><option>OK</option><option>Atenção</option><option>Bloquear veículo</option></select></label><label class="wide">Observação<input name="note"></label><button class="btn" type="submit">Salvar checklist</button>
+</form></div><div class="card table"><table><thead><tr><th>Data</th><th>Placa</th><th>Motorista</th><th>Status</th><th>Observação</th><th></th></tr></thead><tbody id="tbCheck"></tbody></table></div></section>
+
+<section id="custos" class="panel"><div class="card table"><table><thead><tr><th>Placa</th><th>Modelo</th><th>Combustível</th><th>Manutenção</th><th>Total</th></tr></thead><tbody id="tbCost"></tbody></table></div></section>
+
+</div>
+<script>
+const E=()=>({vehicles:[],fuel:[],maintenance:[],tires:[],people:[],documents:[],checklists:[]});let db=E();
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)], esc=v=>String(v??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])), money=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}), id=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+function msg(t){const x=$('#msg');x.textContent=t;x.style.display='block';setTimeout(()=>x.style.display='none',2500)}
+function fv(f,n){return String(new FormData(f).get(n)||'').trim()}
+function tab(n){$$('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===n));$$('.panel').forEach(p=>p.classList.toggle('active',p.id===n))}
+$$('.tabs button').forEach(b=>b.onclick=()=>tab(b.dataset.tab));
+async function load(){const r=await fetch('/api/painel/frota-state',{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar Frota');db=Object.assign(E(),j.data||{});render()}
+async function save(){const r=await fetch('/api/painel/frota-state',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({data:db})}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao salvar');db=Object.assign(E(),j.data||db);render()}
+function delBtn(k,i){return '<button class="btn danger" type="button" data-del="'+k+'" data-id="'+i+'">Excluir</button>'}
+function render(){
+ $('#kVeh').textContent=db.vehicles.length;$('#kAct').textContent=db.vehicles.filter(x=>x.status==='Ativo').length;$('#kFuel').textContent=money(db.fuel.reduce((s,x)=>s+Number(x.total||0),0));$('#kMaint').textContent=money(db.maintenance.reduce((s,x)=>s+Number(x.total||0),0));$('#kDocs').textContent=db.documents.filter(x=>x.expiry&&x.expiry<new Date().toISOString().slice(0,10)).length;
+ const vo='<option value="">Selecione...</option>'+db.vehicles.map(v=>'<option value="'+esc(v.plate)+'">'+esc(v.plate+' • '+v.model)+'</option>').join('');$$('.vehSel').forEach(s=>s.innerHTML=vo);
+ $('#tbVeh').innerHTML=db.vehicles.map(x=>'<tr><td>'+esc(x.plate)+'</td><td>'+esc(x.brand)+'</td><td>'+esc(x.model)+'</td><td>'+esc(x.type)+'</td><td>'+esc(x.km)+'</td><td>'+esc(x.driver)+'</td><td>'+esc(x.status)+'</td><td>'+delBtn('vehicles',x.id)+'</td></tr>').join('');
+ $('#tbFuel').innerHTML=db.fuel.map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.driver)+'</td><td>'+esc(x.km)+'</td><td>'+esc(x.liters)+'</td><td>'+money(x.total)+'</td><td>'+delBtn('fuel',x.id)+'</td></tr>').join('');
+ $('#tbMaint').innerHTML=db.maintenance.map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.service)+'</td><td>'+esc(x.km)+'</td><td>'+esc(x.workshop)+'</td><td>'+money(x.total)+'</td><td>'+esc(x.nextKm||x.nextDate)+'</td><td>'+(x.attachmentName?'<button class="btn sec" type="button" data-file="'+esc(x.id)+'">Ver NF</button>':'—')+'</td><td>'+delBtn('maintenance',x.id)+'</td></tr>').join('');
+ $('#tbTire').innerHTML=db.tires.map(x=>'<tr><td>'+esc(x.code)+'</td><td>'+esc(x.brand)+'</td><td>'+esc(x.size)+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.position)+'</td><td>'+esc(x.kmInstall)+'</td><td>'+money(x.cost)+'</td><td>'+delBtn('tires',x.id)+'</td></tr>').join('');
+ $('#tbPeople').innerHTML=db.people.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+esc(x.role)+'</td><td>'+esc(x.cnh)+'</td><td>'+esc(x.cnhExpiry)+'</td><td>'+esc(x.phone)+'</td><td>'+esc(x.status)+'</td><td>'+delBtn('people',x.id)+'</td></tr>').join('');
+ $('#tbDoc').innerHTML=db.documents.map(x=>'<tr><td>'+esc(x.plate)+'</td><td>'+esc(x.type)+'</td><td>'+esc(x.expiry)+'</td><td>'+esc(x.note)+'</td><td>'+delBtn('documents',x.id)+'</td></tr>').join('');
+ $('#tbCheck').innerHTML=db.checklists.map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.driver)+'</td><td>'+esc(x.status)+'</td><td>'+esc(x.note)+'</td><td>'+delBtn('checklists',x.id)+'</td></tr>').join('');
+ $('#tbCost').innerHTML=db.vehicles.map(v=>{const f=db.fuel.filter(x=>x.plate===v.plate).reduce((s,x)=>s+Number(x.total||0),0),m=db.maintenance.filter(x=>x.plate===v.plate).reduce((s,x)=>s+Number(x.total||0),0);return '<tr><td>'+esc(v.plate)+'</td><td>'+esc(v.model)+'</td><td>'+money(f)+'</td><td>'+money(m)+'</td><td><b>'+money(f+m)+'</b></td></tr>'}).join('');
+ $$('[data-del]').forEach(b=>b.onclick=async()=>{if(!confirm('Excluir este registro?'))return;if(b.dataset.del==='maintenance')fetch('/api/painel/frota-maintenance-file/'+encodeURIComponent(b.dataset.id),{method:'DELETE'}).catch(()=>{});db[b.dataset.del]=db[b.dataset.del].filter(x=>x.id!==b.dataset.id);await save();msg('Registro excluído')});
+ $$('[data-file]').forEach(b=>b.onclick=()=>window.open('/api/painel/frota-maintenance-file/'+encodeURIComponent(b.dataset.file),'_blank'));
+}
+async function add(k,o){const x=Object.assign({id:id(),createdAt:new Date().toISOString()},o);db[k].unshift(x);await save();return x}
+$('#fVeh').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('vehicles',{plate:fv(f,'plate').toUpperCase(),brand:fv(f,'brand'),model:fv(f,'model'),type:fv(f,'type'),km:Number(fv(f,'km')||0),driver:fv(f,'driver'),status:fv(f,'status')||'Ativo'});f.reset();msg('Veículo salvo')};
+$('#fFuel').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,l=Number(fv(f,'liters')||0),p=Number(fv(f,'price')||0);await add('fuel',{date:fv(f,'date'),plate:fv(f,'plate'),driver:fv(f,'driver'),km:Number(fv(f,'km')||0),liters:l,price:p,total:Number(fv(f,'total')||0)||l*p});f.reset();msg('Abastecimento salvo')};
+function fileData(file){return new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(r.result);r.onerror=no;r.readAsDataURL(file)})}
+$('#maintFile').onchange=$('#maintCam').onchange=()=>{const f=$('#maintCam').files[0]||$('#maintFile').files[0];$('#fileName').textContent=f?f.name:'Nenhum anexo.'};
+$('#fMaint').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,parts=Number(fv(f,'parts')||0),labor=Number(fv(f,'labor')||0),file=$('#maintCam').files[0]||$('#maintFile').files[0];const x=await add('maintenance',{date:fv(f,'date'),plate:fv(f,'plate'),service:fv(f,'service'),km:Number(fv(f,'km')||0),workshop:fv(f,'workshop'),parts,labor,total:parts+labor,nextKm:fv(f,'nextKm'),nextDate:fv(f,'nextDate'),note:fv(f,'note')});if(file){if(file.size>8*1024*1024){alert('Arquivo maior que 8 MB.');return}const r=await fetch('/api/painel/frota-maintenance-file',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({maintenance_id:x.id,name:file.name,mime:file.type,data:await fileData(file)})}),j=await r.json();if(!r.ok||!j.ok){alert(j.error||'Falha no anexo');return}x.attachmentName=file.name;await save()}f.reset();$('#fileName').textContent='Nenhum anexo.';msg('Manutenção salva')};
+$('#fTire').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('tires',{code:fv(f,'code'),brand:fv(f,'brand'),size:fv(f,'size'),plate:fv(f,'plate'),position:fv(f,'position'),kmInstall:Number(fv(f,'kmInstall')||0),cost:Number(fv(f,'cost')||0)});f.reset();msg('Pneu salvo')};
+$('#fPeople').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('people',{name:fv(f,'name'),role:fv(f,'role'),cnh:fv(f,'cnh'),cnhExpiry:fv(f,'cnhExpiry'),phone:fv(f,'phone'),status:fv(f,'status')});f.reset();msg('Pessoa salva')};
+$('#fDoc').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('documents',{plate:fv(f,'plate'),type:fv(f,'type'),expiry:fv(f,'expiry'),note:fv(f,'note')});f.reset();msg('Documento salvo')};
+$('#fCheck').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('checklists',{date:fv(f,'date'),plate:fv(f,'plate'),driver:fv(f,'driver'),status:fv(f,'status'),note:fv(f,'note')});f.reset();msg('Checklist salvo')};
+load().catch(e=>alert(e.message||e));
+</script></body></html>
