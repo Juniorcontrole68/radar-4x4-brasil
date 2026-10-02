@@ -703,9 +703,14 @@ window.fleetOpen=function(name){
   <div id="fleet-manutencao" class="fleet-panel">
     <div class="card"><form id="fleetMaintForm" class="fleet-form">
       <label>Data<input name="date" type="date" required></label><label>Veículo<select id="fleetMaintVehicle" name="plate" required></select></label><label>Serviço<input name="service" required placeholder="Troca de óleo"></label><label>KM<input name="km" type="number" min="0"></label>
-      <label>Oficina / fornecedor<input name="workshop"></label><label>Peças R$<input name="parts" type="number" min="0" step="0.01"></label><label>Mão de obra R$<input name="labor" type="number" min="0" step="0.01"></label><label>Próxima em KM<input name="nextKm" type="number" min="0"></label><label>Próxima por data<input name="nextDate" type="date"></label><button type="submit">Salvar manutenção</button>
+      <label>Oficina / fornecedor<input name="workshop"></label><label>Peças R$<input name="parts" type="number" min="0" step="0.01"></label><label>Mão de obra R$<input name="labor" type="number" min="0" step="0.01"></label><label>Próxima em KM<input name="nextKm" type="number" min="0"></label><label>Próxima por data<input name="nextDate" type="date"></label>
+      <label class="wide">Observação<textarea name="note" rows="2" placeholder="Detalhes do serviço, peças trocadas, garantia..."></textarea></label>
+      <label class="fleet-file">Nota fiscal / comprovante<input id="fleetMaintFile" type="file" accept="image/*,application/pdf"></label>
+      <label class="fleet-file">Tirar foto da nota<input id="fleetMaintCamera" type="file" accept="image/*" capture="environment"></label>
+      <div id="fleetMaintFileName" class="fleet-file-name wide">Nenhum anexo selecionado.</div>
+      <button type="submit">Salvar manutenção</button>
     </form></div>
-    <div class="card tablecard fleet-table"><div class="thead">Histórico de manutenção</div><div class="scroll"><table><thead><tr><th>Data</th><th>Placa</th><th>Serviço</th><th>KM</th><th>Oficina</th><th>Total</th><th>Próxima</th><th>Ação</th></tr></thead><tbody id="fleetMaintBody"></tbody></table></div></div>
+    <div class="card tablecard fleet-table"><div class="thead">Histórico de manutenção</div><div class="scroll"><table><thead><tr><th>Data</th><th>Placa</th><th>Serviço</th><th>KM</th><th>Oficina</th><th>Total</th><th>Próxima</th><th>Nota fiscal</th><th>Ação</th></tr></thead><tbody id="fleetMaintBody"></tbody></table></div></div>
   </div>
   <div id="fleet-pneus" class="fleet-panel">
     <div class="card"><form id="fleetTireForm" class="fleet-form">
@@ -736,4 +741,4 @@ window.fleetOpen=function(name){
   <div id="fleet-custos" class="fleet-panel">
     <div class="card tablecard"><div class="thead">Custos por veículo</div><div class="scroll"><table><thead><tr><th>Placa</th><th>Veículo</th><th>Combustível</th><th>Manutenção</th><th>Total</th></tr></thead><tbody id="fleetCostBody2"></tbody></table></div></div>
   </div>
-</section></main></div><script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embedded');</script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script><script src="/app.js?v=20261001frota1"></script><script src="/frota.js?v=2"></script></body></html>
+</section></main></div><script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embedded');</script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script><script src="/app.js?v=20261001frota1"></script><script src="/frota.js?v=3"></script></body></html>
