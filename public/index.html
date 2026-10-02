@@ -653,16 +653,26 @@
 
 <section id="frota" class="section">
   <div class="dash-intro"><h2>🚚 Frota</h2><div class="muted">Controle completo de veículos, combustível, manutenção, pneus, pessoal, documentos, checklists e custos.</div></div>
-  <div class="fleet-tabs">
-    <button class="fleet-sub active" data-fleet="resumo" type="button">Visão Geral</button>
-    <button class="fleet-sub" data-fleet="veiculos" type="button">Veículos</button>
-    <button class="fleet-sub" data-fleet="combustivel" type="button">Combustível</button>
-    <button class="fleet-sub" data-fleet="manutencao" type="button">Manutenção</button>
-    <button class="fleet-sub" data-fleet="pneus" type="button">Pneus</button>
-    <button class="fleet-sub" data-fleet="pessoal" type="button">Pessoal / Motoristas</button>
-    <button class="fleet-sub" data-fleet="documentos" type="button">Documentos</button>
-    <button class="fleet-sub" data-fleet="checklist" type="button">Checklist</button>
-    <button class="fleet-sub" data-fleet="custos" type="button">Custos</button>
+  <script>
+window.fleetOpen=function(name){
+  document.querySelectorAll('.fleet-sub').forEach(function(b){
+    b.classList.toggle('active',b.dataset.fleet===name);
+  });
+  document.querySelectorAll('.fleet-panel').forEach(function(p){
+    p.classList.toggle('active',p.id==='fleet-'+name);
+  });
+};
+</script>
+<div class="fleet-tabs">
+    <button class="fleet-sub active" data-fleet="resumo" type="button" onclick="fleetOpen('resumo')">Visão Geral</button>
+    <button class="fleet-sub" data-fleet="veiculos" type="button" onclick="fleetOpen('veiculos')">Veículos</button>
+    <button class="fleet-sub" data-fleet="combustivel" type="button" onclick="fleetOpen('combustivel')">Combustível</button>
+    <button class="fleet-sub" data-fleet="manutencao" type="button" onclick="fleetOpen('manutencao')">Manutenção</button>
+    <button class="fleet-sub" data-fleet="pneus" type="button" onclick="fleetOpen('pneus')">Pneus</button>
+    <button class="fleet-sub" data-fleet="pessoal" type="button" onclick="fleetOpen('pessoal')">Pessoal / Motoristas</button>
+    <button class="fleet-sub" data-fleet="documentos" type="button" onclick="fleetOpen('documentos')">Documentos</button>
+    <button class="fleet-sub" data-fleet="checklist" type="button" onclick="fleetOpen('checklist')">Checklist</button>
+    <button class="fleet-sub" data-fleet="custos" type="button" onclick="fleetOpen('custos')">Custos</button>
   </div>
   <div id="fleet-resumo" class="fleet-panel active">
     <div class="grid fleet-kpis">
