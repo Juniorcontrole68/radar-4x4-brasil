@@ -751,6 +751,31 @@ function financeRender(){
   const ci=$('#financeCompareInfo');
   if(ci)ci.textContent='Comparação da margem de lucro semanal de '+financeMonthLabel(anchor)+' com os 3 meses anteriores. Cada ponto usa (frete a receber − frete pago) ÷ frete a receber.'
 }
+function financeExportPdf(){
+  const from=$('#financeFrom')?.value||'',to=$('#financeTo')?.value||'';
+  const rows=financeRowsBetween(from,to),agg=financeAgg(rows),drivers=financeDriverRows(rows);
+  const fmtDate=v=>v?v.split('-').reverse().join('/'):'—';
+  const pct=v=>Number(v||0).toFixed(1).replace('.',',')+'%';
+  const body=drivers.map(x=>'<tr><td>'+safe(x.motorista)+'</td><td>'+brl(x.paid)+'</td><td>'+brl(x.receive)+'</td><td>'+brl(x.profit)+'</td><td>'+pct(x.profitPct)+'</td><td>'+pct(x.costPct)+'</td></tr>').join('');
+  const w=window.open('','_blank','noopener,noreferrer');
+  if(!w){alert('O navegador bloqueou a janela do PDF. Libere pop-ups para este site e tente novamente.');return}
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Resultado por Motorista</title><style>'+
+    'body{font-family:Arial,sans-serif;color:#111827;margin:22px}h1{font-size:21px;margin:0 0 4px}.meta{font-size:12px;color:#4b5563;margin-bottom:12px}.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin:10px 0 14px}.k{border:1px solid #d1d5db;border-radius:7px;padding:8px}.k span{display:block;font-size:10px;color:#6b7280}.k b{font-size:14px}table{width:100%;border-collapse:collapse;font-size:10.5px}th,td{border:1px solid #d1d5db;padding:5px;text-align:left}th{background:#f3f4f6}@page{size:A4 landscape;margin:10mm}@media print{body{margin:0}}'+
+    '</style></head><body>'+
+    '<h1>Resultado por Motorista</h1>'+
+    '<div class="meta">Período: '+fmtDate(from)+' a '+fmtDate(to)+' • Motoristas: '+drivers.length+' • Lançamentos: '+rows.length+'</div>'+
+    '<div class="kpis">'+
+      '<div class="k"><span>Frete a receber</span><b>'+brl(agg.receive)+'</b></div>'+
+      '<div class="k"><span>Frete pago</span><b>'+brl(agg.paid)+'</b></div>'+
+      '<div class="k"><span>Lucro bruto</span><b>'+brl(agg.profit)+'</b></div>'+
+      '<div class="k"><span>% lucro</span><b>'+pct(agg.profitPct)+'</b></div>'+
+      '<div class="k"><span>% custo motorista</span><b>'+pct(agg.costPct)+'</b></div>'+
+    '</div>'+
+    '<table><thead><tr><th>Motorista</th><th>Frete pago</th><th>Frete a receber</th><th>Lucro</th><th>% lucro</th><th>% custo motorista</th></tr></thead><tbody>'+body+'</tbody></table>'+
+    '<script>window.onload=()=>{setTimeout(()=>window.print(),200)}<\/script></body></html>');
+  w.document.close()
+}
+
 function financeSetMonthCurrent(){
   const t=new Date(),f=new Date(t.getFullYear(),t.getMonth(),1);
   if($('#financeFrom'))$('#financeFrom').value=iso(f);if($('#financeTo'))$('#financeTo').value=iso(t);financeRender()
@@ -766,6 +791,7 @@ function setupFinanceDashboard(){
   if($('#financeApply'))$('#financeApply').onclick=financeRender;
   if($('#financeMonth'))$('#financeMonth').onclick=financeSetMonthCurrent;
   if($('#financeToday'))$('#financeToday').onclick=financeSetToday;
+  if($('#financeExportPdf'))$('#financeExportPdf').onclick=financeExportPdf;
   if($('#financeFrom'))$('#financeFrom').onchange=financeRender;
   if($('#financeTo'))$('#financeTo').onchange=financeRender
 }
