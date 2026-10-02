@@ -87,7 +87,7 @@ function tabAllowed(tab){
   };
   if(tab==='usuarios')return !!AUTH?.is_admin;
   if(tab==='lotacao')return hasAnyPerm(['lotacao','coletas','financeiro']);
-  if(tab==='frota')return hasPerm('frota');
+  if(tab==='frota')return !!AUTH;
   if(tab==='roteirizador')return hasPerm('roteirizador');
   if(tab==='agendamentos-copia')return hasAnyPerm(['dashboard','agendamentos','agendamentos_copia']);
   if(tab==='dashboards')return AUTH?.is_admin||PERMISSION_OPTIONS.some(([p])=>hasPerm(p)&&p!=='dashboard');
@@ -101,7 +101,7 @@ function applyPermissions(){
     else if(b.dataset.tab==='dashboards')show=tabAllowed('dashboards');
     else if(b.dataset.tab==='agendamentos')show=hasPerm('agendamentos')&&!hasPerm('dashboard');
     else if(b.dataset.tab==='lotacao')show=tabAllowed('lotacao');
-    else if(b.dataset.tab==='frota')show=tabAllowed('frota');
+    else if(b.dataset.tab==='frota')show=!!AUTH;
     else if(navMap[b.dataset.tab])show=hasPerm(navMap[b.dataset.tab]);
     b.style.display=show?'':'none';
   });
