@@ -783,9 +783,7 @@ function financeExportPdf(){
   if(!cols.length){alert('Marque pelo menos uma coluna para exportar no PDF.');return}
   const head=cols.map(c=>'<th>'+safe(c.label)+'</th>').join('');
   const body=drivers.map(x=>'<tr>'+cols.map(c=>'<td>'+c.value(x)+'</td>').join('')+'</tr>').join('');
-  const w=window.open('','_blank','noopener,noreferrer');
-  if(!w){alert('O navegador bloqueou a janela do PDF. Libere pop-ups para este site e tente novamente.');return}
-  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Resultado por Motorista</title><style>'+
+  const html='<!doctype html><html><head><meta charset="utf-8"><title>Resultado por Motorista</title><style>'+
     'body{font-family:Arial,sans-serif;color:#111827;margin:22px}h1{font-size:21px;margin:0 0 4px}.meta{font-size:12px;color:#4b5563;margin-bottom:12px}.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin:10px 0 14px}.k{border:1px solid #d1d5db;border-radius:7px;padding:8px}.k span{display:block;font-size:10px;color:#6b7280}.k b{font-size:14px}table{width:100%;border-collapse:collapse;font-size:10.5px}th,td{border:1px solid #d1d5db;padding:5px;text-align:left}th{background:#f3f4f6}@page{size:A4 landscape;margin:10mm}@media print{body{margin:0}}'+
     '</style></head><body>'+
     '<h1>Resultado por Motorista</h1>'+
@@ -798,8 +796,23 @@ function financeExportPdf(){
       '<div class="k"><span>% custo motorista</span><b>'+pct(agg.costPct)+'</b></div>'+
     '</div>'+
     '<table><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table>'+
-    '<script>window.onload=()=>{setTimeout(()=>window.print(),200)}<\/script></body></html>');
-  w.document.close()
+    '</body></html>';
+  try{
+    const old=document.getElementById('financePrintFrame');if(old)old.remove();
+    const frame=document.createElement('iframe');
+    frame.id='financePrintFrame';
+    frame.style.position='fixed';frame.style.right='0';frame.style.bottom='0';frame.style.width='0';frame.style.height='0';frame.style.border='0';frame.style.opacity='0';
+    document.body.appendChild(frame);
+    const doc=frame.contentWindow.document;
+    doc.open();doc.write(html);doc.close();
+    setTimeout(()=>{
+      try{frame.contentWindow.focus();frame.contentWindow.print()}
+      catch(e){alert('Não foi possível abrir a impressão. Tente novamente.')}
+      setTimeout(()=>frame.remove(),2000)
+    },250)
+  }catch(e){
+    alert('Não foi possível preparar o PDF: '+(e.message||e))
+  }
 }
 
 function financeSetMonthCurrent(){
