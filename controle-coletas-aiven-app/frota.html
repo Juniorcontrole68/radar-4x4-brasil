@@ -41,7 +41,8 @@ textarea{min-height:58px}.wide{grid-column:span 2}.btn{min-height:36px;border:0;
 <section id="manutencao" class="panel"><div class="card"><form id="fMaint" class="grid">
 <label>Data<input name="date" type="date" required></label><label>Veículo<select name="plate" class="vehSel" required></select></label><label>Serviço<input name="service" required></label><label>KM<input name="km" type="number"></label><label>Oficina / fornecedor<input name="workshop"></label><label>Peças R$<input name="parts" type="number" step="0.01"></label><label>Mão de obra R$<input name="labor" type="number" step="0.01"></label><label>Próxima em KM<input name="nextKm" type="number"></label><label>Próxima por data<input name="nextDate" type="date"></label><label class="wide">Observação<textarea name="note"></textarea></label>
 <div class="wide filebox"><label>📎 Anexar NF / PDF<input id="maintFile" type="file" accept="image/*,application/pdf"></label><label>📷 Tirar foto da NF<input id="maintCam" type="file" accept="image/*" capture="environment"></label><span id="fileName" class="muted">Nenhum anexo.</span></div>
-<button class="btn" type="submit">🔧 Salvar manutenção</button>
+<input id="maintQuickFile" type="file" accept="image/*,application/pdf" style="display:none">
+<div style="display:flex;gap:8px;align-items:end"><button id="maintSaveBtn" class="btn" type="submit">🔧 Salvar manutenção</button><button id="maintCancelEdit" class="btn sec" type="button" style="display:none">Cancelar edição</button></div>
 </form></div><div class="card table"><table><thead><tr><th>Data</th><th>Placa</th><th>Serviço</th><th>KM</th><th>Oficina</th><th>Total</th><th>Próxima</th><th>NF</th><th></th></tr></thead><tbody id="tbMaint"></tbody></table></div></section>
 
 <section id="pneus" class="panel"><div class="card"><form id="fTire" class="grid">
@@ -64,7 +65,7 @@ textarea{min-height:58px}.wide{grid-column:span 2}.btn{min-height:36px;border:0;
 
 </div>
 <script>
-const E=()=>({vehicles:[],fuel:[],maintenance:[],tires:[],people:[],documents:[],checklists:[]});let db=E();
+const E=()=>({vehicles:[],fuel:[],maintenance:[],tires:[],people:[],documents:[],checklists:[]});let db=E(),maintEditId=null,maintQuickId=null;
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)], esc=v=>String(v??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])), money=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}), id=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 function msg(t){const x=$('#msg');x.textContent=t;x.style.display='block';setTimeout(()=>x.style.display='none',2500)}
 function fv(f,n){return String(new FormData(f).get(n)||'').trim()}
@@ -78,21 +79,77 @@ function render(){
  const vo='<option value="">Selecione...</option>'+db.vehicles.map(v=>'<option value="'+esc(v.plate)+'">'+esc(v.plate+' • '+v.model)+'</option>').join('');$$('.vehSel').forEach(s=>s.innerHTML=vo);
  $('#tbVeh').innerHTML=db.vehicles.map(x=>'<tr><td>'+esc(x.plate)+'</td><td>'+esc(x.brand)+'</td><td>'+esc(x.model)+'</td><td>'+esc(x.type)+'</td><td>'+esc(x.km)+'</td><td>'+esc(x.driver)+'</td><td>'+esc(x.status)+'</td><td>'+delBtn('vehicles',x.id)+'</td></tr>').join('');
  $('#tbFuel').innerHTML=db.fuel.map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.driver)+'</td><td>'+esc(x.km)+'</td><td>'+esc(x.liters)+'</td><td>'+money(x.total)+'</td><td>'+delBtn('fuel',x.id)+'</td></tr>').join('');
- $('#tbMaint').innerHTML=db.maintenance.map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.service)+'</td><td>'+esc(x.km)+'</td><td>'+esc(x.workshop)+'</td><td>'+money(x.total)+'</td><td>'+esc(x.nextKm||x.nextDate)+'</td><td>'+(x.attachmentName?'<button class="btn sec" type="button" data-file="'+esc(x.id)+'" >🧾 Ver NF</button>':'—')+'</td><td>'+delBtn('maintenance',x.id)+'</td></tr>').join('');
+ $('#tbMaint').innerHTML=db.maintenance.map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.service)+'</td><td>'+esc(x.km)+'</td><td>'+esc(x.workshop)+'</td><td>'+money(x.total)+'</td><td>'+esc(x.nextKm||x.nextDate)+'</td><td>'+(x.attachmentName?'<button class="btn sec" type="button" data-file="'+esc(x.id)+'">🧾 Ver</button>':'<span class="muted">Sem comprovante</span>')+'</td><td style="display:flex;gap:5px"><button class="btn sec" type="button" data-maint-edit="'+esc(x.id)+'">✏️ Editar</button><button class="btn sec" type="button" data-maint-proof="'+esc(x.id)+'">📎 Comprovante</button>'+delBtn('maintenance',x.id)+'</td></tr>').join('');
  $('#tbTire').innerHTML=db.tires.map(x=>'<tr><td>'+esc(x.code)+'</td><td>'+esc(x.brand)+'</td><td>'+esc(x.size)+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.position)+'</td><td>'+esc(x.kmInstall)+'</td><td>'+money(x.cost)+'</td><td>'+delBtn('tires',x.id)+'</td></tr>').join('');
  $('#tbPeople').innerHTML=db.people.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+esc(x.role)+'</td><td>'+esc(x.cnh)+'</td><td>'+esc(x.cnhExpiry)+'</td><td>'+esc(x.phone)+'</td><td>'+esc(x.status)+'</td><td>'+delBtn('people',x.id)+'</td></tr>').join('');
  $('#tbDoc').innerHTML=db.documents.map(x=>'<tr><td>'+esc(x.plate)+'</td><td>'+esc(x.type)+'</td><td>'+esc(x.expiry)+'</td><td>'+esc(x.note)+'</td><td>'+delBtn('documents',x.id)+'</td></tr>').join('');
  $('#tbCheck').innerHTML=db.checklists.map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.driver)+'</td><td>'+esc(x.status)+'</td><td>'+esc(x.note)+'</td><td>'+delBtn('checklists',x.id)+'</td></tr>').join('');
  $('#tbCost').innerHTML=db.vehicles.map(v=>{const f=db.fuel.filter(x=>x.plate===v.plate).reduce((s,x)=>s+Number(x.total||0),0),m=db.maintenance.filter(x=>x.plate===v.plate).reduce((s,x)=>s+Number(x.total||0),0);return '<tr><td>'+esc(v.plate)+'</td><td>'+esc(v.model)+'</td><td>'+money(f)+'</td><td>'+money(m)+'</td><td><b>'+money(f+m)+'</b></td></tr>'}).join('');
  $$('[data-del]').forEach(b=>b.onclick=async()=>{if(!confirm('Excluir este registro?'))return;if(b.dataset.del==='maintenance')fetch('/api/painel/frota-maintenance-file/'+encodeURIComponent(b.dataset.id),{method:'DELETE'}).catch(()=>{});db[b.dataset.del]=db[b.dataset.del].filter(x=>x.id!==b.dataset.id);await save();msg('Registro excluído')});
- $$('[data-file]').forEach(b=>b.onclick=()=>window.open('/api/painel/frota-maintenance-file/'+encodeURIComponent(b.dataset.file),'_blank'));
+ $('[data-file]').forEach(b=>b.onclick=()=>window.open('/api/painel/frota-maintenance-file/'+encodeURIComponent(b.dataset.file),'_blank'));
+ $('[data-maint-edit]').forEach(b=>b.onclick=()=>editMaintenance(b.dataset.maintEdit));
+ $('[data-maint-proof]').forEach(b=>b.onclick=()=>{maintQuickId=b.dataset.maintProof;$('#maintQuickFile').value='';$('#maintQuickFile').click()});
 }
 async function add(k,o){const x=Object.assign({id:id(),createdAt:new Date().toISOString()},o);db[k].unshift(x);await save();return x}
 $('#fVeh').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('vehicles',{plate:fv(f,'plate').toUpperCase(),brand:fv(f,'brand'),model:fv(f,'model'),type:fv(f,'type'),km:Number(fv(f,'km')||0),driver:fv(f,'driver'),status:fv(f,'status')||'Ativo'});f.reset();msg('Veículo salvo')};
 $('#fFuel').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,l=Number(fv(f,'liters')||0),p=Number(fv(f,'price')||0);await add('fuel',{date:fv(f,'date'),plate:fv(f,'plate'),driver:fv(f,'driver'),km:Number(fv(f,'km')||0),liters:l,price:p,total:Number(fv(f,'total')||0)||l*p});f.reset();msg('Abastecimento salvo')};
 function fileData(file){return new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(r.result);r.onerror=no;r.readAsDataURL(file)})}
-$('#maintFile').onchange=$('#maintCam').onchange=()=>{const f=$('#maintCam').files[0]||$('#maintFile').files[0];$('#fileName').textContent=f?f.name:'Nenhum anexo.'};
-$('#fMaint').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,parts=Number(fv(f,'parts')||0),labor=Number(fv(f,'labor')||0),file=$('#maintCam').files[0]||$('#maintFile').files[0];const x=await add('maintenance',{date:fv(f,'date'),plate:fv(f,'plate'),service:fv(f,'service'),km:Number(fv(f,'km')||0),workshop:fv(f,'workshop'),parts,labor,total:parts+labor,nextKm:fv(f,'nextKm'),nextDate:fv(f,'nextDate'),note:fv(f,'note')});if(file){if(file.size>8*1024*1024){alert('Arquivo maior que 8 MB.');return}const r=await fetch('/api/painel/frota-maintenance-file',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({maintenance_id:x.id,name:file.name,mime:file.type,data:await fileData(file)})}),j=await r.json();if(!r.ok||!j.ok){alert(j.error||'Falha no anexo');return}x.attachmentName=file.name;await save()}f.reset();$('#fileName').textContent='Nenhum anexo.';msg('Manutenção salva')};
+async function uploadMaintenanceFile(target,file){
+ if(!file)return;
+ if(file.size>8*1024*1024)throw new Error('Arquivo maior que 8 MB.');
+ const r=await fetch('/api/painel/frota-maintenance-file',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({maintenance_id:target.id,name:file.name,mime:file.type,data:await fileData(file)})}),j=await r.json();
+ if(!r.ok||!j.ok)throw new Error(j.error||'Falha no anexo');
+ target.attachmentName=file.name;
+ target.attachmentUpdatedAt=new Date().toISOString()
+}
+function clearMaintenanceEdit(){
+ maintEditId=null;
+ const f=$('#fMaint');f.reset();
+ $('#maintFile').value='';$('#maintCam').value='';
+ $('#fileName').textContent='Nenhum anexo.';
+ $('#maintSaveBtn').textContent='🔧 Salvar manutenção';
+ $('#maintCancelEdit').style.display='none'
+}
+function editMaintenance(mid){
+ const x=db.maintenance.find(m=>m.id===mid);if(!x)return;
+ maintEditId=mid;tab('manutencao');
+ const f=$('#fMaint');
+ for(const n of ['date','plate','service','km','workshop','parts','labor','nextKm','nextDate','note']){
+   const el=f.elements[n];if(el)el.value=x[n]??''
+ }
+ $('#fileName').textContent=x.attachmentName?'Comprovante atual: '+x.attachmentName:'Nenhum comprovante anexado.';
+ $('#maintSaveBtn').textContent='💾 Salvar alterações';
+ $('#maintCancelEdit').style.display='inline-flex';
+ f.scrollIntoView({behavior:'smooth',block:'start'})
+}
+$('#maintCancelEdit').onclick=clearMaintenanceEdit;
+$('#maintFile').onchange=$('#maintCam').onchange=()=>{const f=$('#maintCam').files[0]||$('#maintFile').files[0];$('#fileName').textContent=f?f.name:(maintEditId?(db.maintenance.find(x=>x.id===maintEditId)?.attachmentName||'Nenhum anexo.'):'Nenhum anexo.')};
+$('#maintQuickFile').onchange=async e=>{
+ const file=e.target.files[0],x=db.maintenance.find(m=>m.id===maintQuickId);
+ if(!file||!x)return;
+ try{await uploadMaintenanceFile(x,file);await save();msg('Comprovante anexado / atualizado')}
+ catch(err){alert(err.message||err)}
+ finally{maintQuickId=null;e.target.value=''}
+};
+$('#fMaint').onsubmit=async e=>{
+ e.preventDefault();
+ const f=e.currentTarget,parts=Number(fv(f,'parts')||0),labor=Number(fv(f,'labor')||0),file=$('#maintCam').files[0]||$('#maintFile').files[0];
+ const values={date:fv(f,'date'),plate:fv(f,'plate'),service:fv(f,'service'),km:Number(fv(f,'km')||0),workshop:fv(f,'workshop'),parts,labor,total:parts+labor,nextKm:fv(f,'nextKm'),nextDate:fv(f,'nextDate'),note:fv(f,'note')};
+ let x;
+ try{
+   if(maintEditId){
+     x=db.maintenance.find(m=>m.id===maintEditId);if(!x)throw new Error('Manutenção não encontrada.');
+     Object.assign(x,values,{updatedAt:new Date().toISOString()});
+     if(file)await uploadMaintenanceFile(x,file);
+     await save();msg('Manutenção atualizada')
+   }else{
+     x=await add('maintenance',values);
+     if(file){await uploadMaintenanceFile(x,file);await save()}
+     msg('Manutenção salva')
+   }
+   clearMaintenanceEdit()
+ }catch(err){alert(err.message||err)}
+};
 $('#fTire').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('tires',{code:fv(f,'code'),brand:fv(f,'brand'),size:fv(f,'size'),plate:fv(f,'plate'),position:fv(f,'position'),kmInstall:Number(fv(f,'kmInstall')||0),cost:Number(fv(f,'cost')||0)});f.reset();msg('Pneu salvo')};
 $('#fPeople').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('people',{name:fv(f,'name'),role:fv(f,'role'),cnh:fv(f,'cnh'),cnhExpiry:fv(f,'cnhExpiry'),phone:fv(f,'phone'),status:fv(f,'status')});f.reset();msg('Pessoa salva')};
 $('#fDoc').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('documents',{plate:fv(f,'plate'),type:fv(f,'type'),expiry:fv(f,'expiry'),note:fv(f,'note')});f.reset();msg('Documento salvo')};
