@@ -1,9 +1,10 @@
 {
-  "name": "Radar 4x4 Brasil",
-  "short_name": "Radar 4x4",
+  "name": "Conversa de Bar",
+  "short_name": "Conversa de Bar",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#e7dcc1",
-  "theme_color": "#b85f1d",
-  "description": "Agenda de encontros, trilhas, expedições 4x4 e overland por região do Brasil."
+  "background_color": "#17110d",
+  "theme_color": "#17110d",
+  "description": "Companhia virtual para conversar por voz, de forma natural e acolhedora."
 }
