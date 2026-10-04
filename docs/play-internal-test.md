@@ -8,7 +8,7 @@ Data: 04/10/2026.
 Conversa por áudio em português brasileiro, escolha de nome, voz e perfil.
 Perfis: Amigo ou amiga; Conversa e companhia.
 Memória opcional: resumo neste aparelho, visualização/edição, exclusão e conversa privada.
-A memória foi salva no código mas sua publicação no Cloudflare ainda precisa ser confirmada.
+Publicação da memória confirmada em /health (memory-20261004-v1), /comercial/ e /memory.js em 04/10/2026. Os controles de privacidade passaram nos testes locais; conversa real por voz no Android físico ainda precisa ser testada.
 A base Android carrega /comercial/ e encerra a conversa ao ir ao segundo plano.
 Áudio com tela bloqueada ainda não está implementado.
 Sem assinatura mensal, compras de minutos, login ou carteira nesta versão.
@@ -16,7 +16,7 @@ O teste interno deve ficar restrito aos testadores definidos; não oferecer vend
 
 ## Pacotes
 
-O workflow Android compila APK debug, AAB release sem assinatura e executa lint das duas variantes.
+O workflow Android compilou APK debug, AAB release sem assinatura e executou lint das duas variantes com sucesso em 04/10/2026: https://github.com/Juniorcontrole68/radar-4x4-brasil/actions/runs/37224151289 .
 O AAB sem assinatura é apenas validação técnica: não enviar ao Play Console.
 O APK debug serve para teste direto no aparelho: não é versão para publicar na loja.
 Identificador atual ainda provisório: br.com.conversadebar.app.
