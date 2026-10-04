@@ -1,4 +1,6 @@
 const $ = s => document.querySelector(s);
+const currentProfile = () => typeof assistantProfile === 'undefined' ? { name: 'Carol' } : assistantProfile;
+const companionName = () => currentProfile().name;
 let pc = null;
 let micStream = null;
 let remoteAudio = null;
@@ -17,7 +19,7 @@ async function playRemoteAudio() {
     resumeAudio.hidden = true;
   } catch {
     resumeAudio.hidden = false;
-    $('#hint').textContent = 'Toque em Retomar áudio para voltar a ouvir Carol.';
+    $('#hint').textContent = 'Toque em Retomar áudio para voltar a ouvir ' + companionName() + '.';
   }
 }
 resumeAudio.addEventListener('click', () => {
@@ -30,7 +32,7 @@ function connectionChanged() {
   clearTimeout(connectionTimer);
   if (!conversationActive || !pc) return;
   if (pc.connectionState === 'connected') {
-    setStatus('Carol está ouvindo', true);
+    setStatus(companionName() + ' está ouvindo', true);
     updateConversationHint();
     playRemoteAudio();
   } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
@@ -117,7 +119,7 @@ async function startConversation() {
     if (currentAttempt !== attempt) { stream.getTracks().forEach(t => t.stop()); return; }
     micStream = stream;
 
-    const tokenResponse = await fetch('/api/realtime/session', { method: 'POST' });
+    const tokenResponse = await fetch('/api/realtime/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(currentProfile()) });
     const tokenData = await tokenResponse.json().catch(() => ({}));
     if (currentAttempt !== attempt) return;
     if (!tokenResponse.ok) {
@@ -142,17 +144,18 @@ async function startConversation() {
 
     const dc = pc.createDataChannel('oai-events');
     dc.onopen = () => {
-      setStatus('Carol está ouvindo', true);
+      setStatus(companionName() + ' está ouvindo', true);
       updateConversationHint();
       $('#start').hidden = true;
       $('#stop').hidden = false;
+      if ($('#profile-form')) dc.send(JSON.stringify({ type: 'response.create' }));
     };
     dc.onmessage = event => {
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === 'input_audio_buffer.speech_started') setStatus('Ouvindo…', true);
-        if (msg.type === 'output_audio_buffer.started') setStatus('Carol está falando', true);
-        if (msg.type === 'output_audio_buffer.stopped' || msg.type === 'output_audio_buffer.cleared') setStatus('Carol está ouvindo', true);
+        if (msg.type === 'output_audio_buffer.started') setStatus(companionName() + ' está falando', true);
+        if (msg.type === 'output_audio_buffer.stopped' || msg.type === 'output_audio_buffer.cleared') setStatus(companionName() + ' está ouvindo', true);
         if (msg.type === 'error') console.error('Realtime API:', msg.error);
       } catch {}
     };
@@ -201,7 +204,7 @@ function stopConversation() {
   $('#start').hidden = false;
   $('#start').disabled = false;
   $('#stop').hidden = true;
-  setStatus('Carol está pronta para conversar');
+  setStatus(companionName() + ' está pronto para conversar');
   $('#hint').textContent = 'Toque em iniciar uma vez. Depois, converse naturalmente.';
 }
 
