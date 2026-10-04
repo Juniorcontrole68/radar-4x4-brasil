@@ -6,7 +6,7 @@ Verificação em 2026-10-04. Situação: ainda não está pronto para envio à l
 
 - Protótipo web /comercial/ publicado com escolha de nome, voz e perfil.
 - Base Android Java/WebView salva no repositório, com targetSdk 36 e microfone limitado à origem HTTPS do app.
-- Pipeline Android demo build configurado para compilar APK de desenvolvimento e executar lint. O resultado da compilação e teste físico ainda precisam ser confirmados.
+- Pipeline Android demo build configurado para compilar APK de desenvolvimento e executar lint. Compilação assembleDebug e lintDebug confirmados com sucesso em 2026-10-04: https://github.com/Juniorcontrole68/radar-4x4-brasil/actions/runs/37222355268 . APK de desenvolvimento gerado. Teste físico ainda pendente.
 - Proprietário informou não ter conta de desenvolvedor Play Console.
 - Assinatura mensal e pacotes avulsos são escopo aprovado; faturamento, login e carteira persistente ainda não estão implementados.
 
