@@ -9,7 +9,7 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === '/health') {
-      return json({ ok: true, app: 'Conversa de Bar', version: 'choices-20261004-v1', openaiConfigured: Boolean(env.OPENAI_API_KEY) });
+      return json({ ok: true, app: 'Conversa de Bar', version: 'memory-20261004-v1', openaiConfigured: Boolean(env.OPENAI_API_KEY) });
     }
 
     if (url.pathname === '/api/realtime/session') {
@@ -19,7 +19,7 @@ export default {
       let session;
       try {
         const body = await request.text();
-        if (body.length > 2048) return json({ error: 'Escolhas muito extensas.' }, 400);
+        if (body.length > 12000) return json({ error: 'Escolhas muito extensas.' }, 400);
         session = buildSession(body ? JSON.parse(body) : {});
       } catch (error) {
         return json({ error: error instanceof SyntaxError ? 'Escolhas inválidas.' : error.message }, 400);

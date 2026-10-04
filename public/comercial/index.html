@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#17110d"><title>Conversa de Bar — Escolha sua companhia</title>
-<link rel="icon" href="/icon.svg" type="image/svg+xml"><link rel="stylesheet" href="/styles.css?v=choices-v1">
+<link rel="icon" href="/icon.svg" type="image/svg+xml"><link rel="stylesheet" href="/styles.css?v=memory-v1">
 </head>
 <body><main class="app">
 <header><div class="logo">🍺</div><div><h1>Conversa de Bar</h1><p id="companion-label">Uma conversa do seu jeito</p></div></header>
@@ -12,9 +12,9 @@
 <label for="assistant-name">Como você quer chamar seu assistente?</label>
 <input id="assistant-name" name="name" maxlength="30" required autocomplete="off" value="Carol">
 <label for="assistant-gender">Personagem e voz</label><select id="assistant-gender" name="gender"><option value="female">Feminino</option><option value="male">Masculino</option></select>
-<label for="assistant-mode">Que tipo de conversa você quer?</label><select id="assistant-mode" name="mode"><option value="friend">Amigo ou amiga — papo descontraído</option><option value="support">Conversa e reflexão — ideias e dia a dia</option></select>
+<label for="assistant-mode">Que tipo de conversa você quer?</label><select id="assistant-mode" name="mode"><option value="friend">Amigo ou amiga — papo descontraído</option><option value="support">Conversa e companhia — ideias e dia a dia</option></select>
 <label class="check"><input type="checkbox" name="flirt"> Permitir flerte leve quando eu pedir</label>
-<p class="small">No modo amigo, você define o ritmo. No modo reflexão, a conversa ajuda a organizar ideias.</p>
+<p class="small">No modo amigo, você define o ritmo. No modo companhia, a conversa ajuda a organizar ideias.</p>
 <label class="check"><input type="checkbox" name="adult" required> Tenho 18 anos ou mais</label>
 <button type="submit" class="primary">Continuar</button>
 <p class="small">Seu assistente é uma IA. A conversa não é atendimento psicológico e não oferece diagnósticos.</p>
@@ -24,5 +24,6 @@
 <h2 id="status">Pronto para conversar</h2><p id="hint">Toque em iniciar uma vez. Depois, converse naturalmente.</p>
 <button id="start" class="primary">Iniciar conversa</button><button id="stop" class="secondary" hidden>Encerrar</button><button id="edit-profile" class="secondary">Mudar companhia</button>
 </section>
-<footer>Versão de teste da proposta comercial.<br>Salvamos apenas suas escolhas neste aparelho, sem histórico de conversas. O áudio é processado pela OpenAI para gerar as respostas.</footer>
-</main><script src="/profile.js?v=choices-v1"></script><script src="/avatar.js?v=choices-v1"></script><script src="/app.js?v=choices-v1"></script></body></html>
+<section id="memory-panel" class="card"></section>
+<footer>Versão de teste da proposta comercial.<br>A memória é opcional e salva apenas um resumo neste aparelho. Não salvamos áudio nem transcrição completa. Em aparelho compartilhado, outras pessoas podem consultar o resumo. O áudio é processado pela OpenAI para gerar as respostas.</footer>
+</main><script src="/profile.js?v=memory-v1"></script><script src="/avatar.js?v=memory-v1"></script><script src="/memory.js?v=memory-v1"></script><script src="/app.js?v=memory-v1"></script></body></html>

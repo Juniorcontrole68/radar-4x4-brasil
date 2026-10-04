@@ -119,7 +119,7 @@ async function startConversation() {
     if (currentAttempt !== attempt) { stream.getTracks().forEach(t => t.stop()); return; }
     micStream = stream;
 
-    const tokenResponse = await fetch('/api/realtime/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(currentProfile()) });
+    const tokenResponse = await fetch('/api/realtime/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...currentProfile(), ...(window.conversationMemory?.sessionOptions() || {}) }) });
     const tokenData = await tokenResponse.json().catch(() => ({}));
     if (currentAttempt !== attempt) return;
     if (!tokenResponse.ok) {
@@ -142,6 +142,7 @@ async function startConversation() {
     };
     micStream.getTracks().forEach(track => pc.addTrack(track, micStream));
 
+    const memoryEpoch = window.conversationMemory?.epoch();
     const dc = pc.createDataChannel('oai-events');
     dc.onopen = () => {
       setStatus(companionName() + ' está ouvindo', true);
@@ -156,6 +157,17 @@ async function startConversation() {
         if (msg.type === 'input_audio_buffer.speech_started') setStatus('Ouvindo…', true);
         if (msg.type === 'output_audio_buffer.started') setStatus(companionName() + ' está falando', true);
         if (msg.type === 'output_audio_buffer.stopped' || msg.type === 'output_audio_buffer.cleared') setStatus(companionName() + ' está ouvindo', true);
+        if (msg.type === 'response.done' && msg.response?.status === 'completed') {
+          let called = false;
+          for (const item of msg.response.output || []) {
+            if (item.type !== 'function_call' || item.name !== 'save_memory') continue;
+            let saved = false;
+            try { saved = window.conversationMemory?.save(JSON.parse(item.arguments).summary, memoryEpoch) === true; } catch {}
+            dc.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: item.call_id, output: JSON.stringify({ saved }) } }));
+            called = true;
+          }
+          if (called && dc.readyState === 'open') dc.send(JSON.stringify({ type: 'response.create' }));
+        }
         if (msg.type === 'error') console.error('Realtime API:', msg.error);
       } catch {}
     };
