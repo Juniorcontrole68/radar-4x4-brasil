@@ -155,7 +155,10 @@ async function startConversation() {
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === 'input_audio_buffer.speech_started') setStatus('Ouvindo…', true);
-        if (msg.type === 'output_audio_buffer.started') setStatus(companionName() + ' está falando', true);
+        if (msg.type === 'output_audio_buffer.started') {
+          window.markCompanionIntroduced?.();
+          setStatus(companionName() + ' está falando', true);
+        }
         if (msg.type === 'output_audio_buffer.stopped' || msg.type === 'output_audio_buffer.cleared') setStatus(companionName() + ' está ouvindo', true);
         if (msg.type === 'response.done' && msg.response?.status === 'completed') {
           let called = false;
