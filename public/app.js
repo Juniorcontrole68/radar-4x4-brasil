@@ -118,6 +118,7 @@ async function startConversation() {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     if (currentAttempt !== attempt) { stream.getTracks().forEach(t => t.stop()); return; }
     micStream = stream;
+    console.info('CDB_AUDIO_START');
 
     const tokenResponse = await fetch('/api/realtime/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...currentProfile(), ...(window.conversationMemory?.sessionOptions() || {}) }) });
     const tokenData = await tokenResponse.json().catch(() => ({}));
@@ -204,6 +205,7 @@ async function startConversation() {
 
 function stopConversation() {
   conversationActive = false;
+  console.info('CDB_AUDIO_STOP');
   ++attempt;
   clearTimeout(connectionTimer);
   connectionTimer = null;

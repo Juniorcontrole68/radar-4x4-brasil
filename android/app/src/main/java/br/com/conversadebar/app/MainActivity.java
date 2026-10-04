@@ -6,6 +6,10 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Build;
+import android.media.AudioManager;
+import android.media.AudioDeviceInfo;
+import android.webkit.ConsoleMessage;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -21,6 +25,55 @@ public class MainActivity extends Activity {
     private static final int MIC_REQUEST = 42;
     private WebView web;
     private PermissionRequest pendingMic;
+    private AudioManager audioManager;
+    private boolean audioActive;
+    private int previousAudioMode;
+    private boolean previousSpeakerphone;
+    private AudioManager.OnCommunicationDeviceChangedListener routeListener;
+
+    private void selectSpeaker() {
+        if (!audioActive || audioManager == null || audioManager.getMode() == AudioManager.MODE_IN_CALL) return;
+        if (Build.VERSION.SDK_INT >= 31) {
+            for (AudioDeviceInfo device : audioManager.getAvailableCommunicationDevices()) {
+                if (device.getType() == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
+                    if (!audioManager.setCommunicationDevice(device))
+                        Toast.makeText(this, "Não foi possível ativar o alto-falante. Confira a saída de áudio.", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+            }
+            Toast.makeText(this, "Alto-falante indisponível neste aparelho.", Toast.LENGTH_SHORT).show();
+        } else {
+            audioManager.setSpeakerphoneOn(true);
+        }
+    }
+
+    private void startSpeakerAudio() {
+        if (audioActive || audioManager == null || audioManager.getMode() == AudioManager.MODE_IN_CALL) return;
+        previousAudioMode = audioManager.getMode();
+        previousSpeakerphone = audioManager.isSpeakerphoneOn();
+        audioActive = true;
+        audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+        if (Build.VERSION.SDK_INT >= 31) {
+            routeListener = device -> {
+                if (audioActive && (device == null || device.getType() != AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)) selectSpeaker();
+            };
+            audioManager.addOnCommunicationDeviceChangedListener(getMainExecutor(), routeListener);
+        }
+        selectSpeaker();
+    }
+
+    private void stopSpeakerAudio() {
+        if (!audioActive || audioManager == null) return;
+        audioActive = false;
+        if (Build.VERSION.SDK_INT >= 31) {
+            if (routeListener != null) audioManager.removeOnCommunicationDeviceChangedListener(routeListener);
+            routeListener = null;
+            audioManager.clearCommunicationDevice();
+        } else {
+            audioManager.setSpeakerphoneOn(previousSpeakerphone);
+        }
+        if (audioManager.getMode() == AudioManager.MODE_IN_COMMUNICATION) audioManager.setMode(previousAudioMode);
+    }
 
     private boolean trusted(Uri uri) {
         return "https".equals(uri.getScheme()) && HOST.equals(uri.getHost()) && (uri.getPort() == -1 || uri.getPort() == 443);
@@ -28,6 +81,7 @@ public class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        audioManager = getSystemService(AudioManager.class);
         web = new WebView(this);
         web.setBackgroundColor(0xff17110d);
         setContentView(web);
@@ -48,6 +102,18 @@ public class MainActivity extends Activity {
             }
         });
         web.setWebChromeClient(new WebChromeClient() {
+            @Override public boolean onConsoleMessage(ConsoleMessage message) {
+                // Only the trusted app document may request this restricted audio action.
+                if (web.getUrl() != null && message.sourceId() != null && trusted(Uri.parse(web.getUrl())) && trusted(Uri.parse(message.sourceId()))) {
+                    if ("CDB_AUDIO_START".equals(message.message())) {
+                        runOnUiThread(() -> startSpeakerAudio()); return true;
+                    }
+                    if ("CDB_AUDIO_STOP".equals(message.message())) {
+                        runOnUiThread(() -> stopSpeakerAudio()); return true;
+                    }
+                }
+                return super.onConsoleMessage(message);
+            }
             @Override public void onPermissionRequest(PermissionRequest request) {
                 runOnUiThread(() -> {
                     if (!trusted(request.getOrigin()) || !Arrays.asList(request.getResources()).contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {
@@ -84,10 +150,12 @@ public class MainActivity extends Activity {
     @Override protected void onStop() {
         // Release microphone/session when leaving this foreground-only prototype.
         web.evaluateJavascript("if(typeof stopConversation==='function')stopConversation();", null);
+        stopSpeakerAudio();
         super.onStop();
     }
     @Override protected void onDestroy() {
         if (pendingMic != null) { pendingMic.deny(); pendingMic = null; }
+        stopSpeakerAudio();
         web.destroy();
         super.onDestroy();
     }
