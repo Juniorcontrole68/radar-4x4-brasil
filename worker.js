@@ -9,7 +9,7 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === '/health') {
-      return json({ ok: true, app: 'Conversa de Bar', version: 'greeting-20261004-v1', openaiConfigured: Boolean(env.OPENAI_API_KEY) });
+      return json({ ok: true, app: 'Conversa de Bar', version: 'affectionate-greeting-20261004-v1', openaiConfigured: Boolean(env.OPENAI_API_KEY) });
     }
 
     if (url.pathname === '/api/realtime/session') {
