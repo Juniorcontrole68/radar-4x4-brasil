@@ -2,6 +2,52 @@ const $ = s => document.querySelector(s);
 let pc = null;
 let micStream = null;
 let remoteAudio = null;
+let connectionTimer = null;
+let attempt = 0;
+const resumeAudio = document.createElement('button');
+resumeAudio.className = 'secondary';
+resumeAudio.textContent = 'Retomar áudio';
+resumeAudio.hidden = true;
+$('#stop').after(resumeAudio);
+
+async function playRemoteAudio() {
+  if (!conversationActive || !remoteAudio?.srcObject) return;
+  try {
+    await remoteAudio.play();
+    resumeAudio.hidden = true;
+  } catch {
+    resumeAudio.hidden = false;
+    $('#hint').textContent = 'Toque em Retomar áudio para voltar a ouvir Carol.';
+  }
+}
+resumeAudio.addEventListener('click', () => {
+  voiceAvatar.prepareAudio();
+  updateConversationHint();
+  playRemoteAudio();
+});
+
+function connectionChanged() {
+  clearTimeout(connectionTimer);
+  if (!conversationActive || !pc) return;
+  if (pc.connectionState === 'connected') {
+    setStatus('Carol está ouvindo', true);
+    updateConversationHint();
+    playRemoteAudio();
+  } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+    connectionLost();
+  } else if (pc.connectionState === 'disconnected') {
+    setStatus('Conexão interrompida');
+    $('#hint').textContent = 'Tentando recuperar a conexão…';
+    connectionTimer = setTimeout(() => {
+      if (conversationActive && pc?.connectionState === 'disconnected') connectionLost();
+    }, 10000);
+  }
+}
+function connectionLost() {
+  stopConversation();
+  setStatus('A conversa foi desconectada');
+  $('#hint').textContent = 'Confira sua internet e toque em Iniciar conversa para reconectar.';
+}
 
 let conversationActive = false;
 let screenLock = null;
@@ -48,7 +94,8 @@ function releaseScreenLock() {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && conversationActive) {
     keepScreenAwake();
-    if (remoteAudio) remoteAudio.play().catch(() => {});
+    voiceAvatar.prepareAudio();
+    playRemoteAudio();
   }
 });
 
@@ -58,16 +105,21 @@ function setStatus(text, active = false) {
 }
 
 async function startConversation() {
+  if (conversationActive) return;
+  const currentAttempt = ++attempt;
   $('#start').disabled = true;
   conversationActive = true;
   voiceAvatar.prepareAudio();
   keepScreenAwake();
   setStatus('Conectando…', true);
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (currentAttempt !== attempt) { stream.getTracks().forEach(t => t.stop()); return; }
+    micStream = stream;
 
     const tokenResponse = await fetch('/api/realtime/session', { method: 'POST' });
     const tokenData = await tokenResponse.json().catch(() => ({}));
+    if (currentAttempt !== attempt) return;
     if (!tokenResponse.ok) {
       const detail = tokenData?.error?.message || tokenData?.error || `Erro ${tokenResponse.status}`;
       throw new Error(detail);
@@ -79,11 +131,12 @@ async function startConversation() {
     remoteAudio = document.createElement('audio');
     remoteAudio.autoplay = true;
     remoteAudio.playsInline = true;
-    pc.onconnectionstatechange = updateConversationHint;
+    pc.onconnectionstatechange = connectionChanged;
     pc.ontrack = e => {
       const stream = e.streams[0] || new MediaStream([e.track]);
       remoteAudio.srcObject = stream;
       voiceAvatar.attach(stream);
+      playRemoteAudio();
     };
     micStream.getTracks().forEach(track => pc.addTrack(track, micStream));
 
@@ -98,8 +151,8 @@ async function startConversation() {
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === 'input_audio_buffer.speech_started') setStatus('Ouvindo…', true);
-        if (msg.type === 'response.output_audio.delta') setStatus('Conversando…', true);
-        if (msg.type === 'response.done') setStatus('Estou ouvindo', true);
+        if (msg.type === 'output_audio_buffer.started') setStatus('Carol está falando', true);
+        if (msg.type === 'output_audio_buffer.stopped' || msg.type === 'output_audio_buffer.cleared') setStatus('Carol está ouvindo', true);
         if (msg.type === 'error') console.error('Realtime API:', msg.error);
       } catch {}
     };
@@ -115,9 +168,11 @@ async function startConversation() {
       }
     });
     const answerSdp = await sdpResponse.text();
+    if (currentAttempt !== attempt) return;
     if (!sdpResponse.ok) throw new Error(answerSdp || `Erro ${sdpResponse.status} ao conectar áudio.`);
     await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
   } catch (error) {
+    if (currentAttempt !== attempt) return;
     console.error(error);
     const message = String(error?.message || error || 'Erro desconhecido');
     stopConversation();
@@ -131,10 +186,15 @@ async function startConversation() {
 
 function stopConversation() {
   conversationActive = false;
+  ++attempt;
+  clearTimeout(connectionTimer);
+  connectionTimer = null;
+  resumeAudio.hidden = true;
   releaseScreenLock();
   voiceAvatar.stop();
   if (micStream) micStream.getTracks().forEach(t => t.stop());
-  if (pc) pc.close();
+  if (remoteAudio) { remoteAudio.pause(); remoteAudio.srcObject = null; }
+  if (pc) { pc.onconnectionstatechange = null; pc.close(); }
   pc = null;
   micStream = null;
   remoteAudio = null;
