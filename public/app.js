@@ -8,16 +8,6 @@ function setStatus(text, active = false) {
   $('#orb').classList.toggle('active', active);
 }
 
-function addTranscript(who, text) {
-  if (!text) return;
-  const p = document.createElement('p');
-  const strong = document.createElement('strong');
-  strong.textContent = `${who}: `;
-  p.append(strong, document.createTextNode(text));
-  $('#transcript').appendChild(p);
-  $('#transcript').scrollTop = $('#transcript').scrollHeight;
-}
-
 async function startConversation() {
   $('#start').disabled = true;
   setStatus('Conectando…', true);
@@ -49,8 +39,6 @@ async function startConversation() {
     dc.onmessage = event => {
       try {
         const msg = JSON.parse(event.data);
-        if (msg.type === 'conversation.item.input_audio_transcription.completed') addTranscript('Você', msg.transcript);
-        if (msg.type === 'response.output_audio_transcript.done') addTranscript('Conversa de Bar', msg.transcript);
         if (msg.type === 'input_audio_buffer.speech_started') setStatus('Ouvindo…', true);
         if (msg.type === 'response.output_audio.delta') setStatus('Conversando…', true);
         if (msg.type === 'response.done') setStatus('Estou ouvindo', true);
