@@ -20,7 +20,7 @@ O workflow Android compilou APK debug, AAB release sem assinatura e executou lin
 O AAB sem assinatura é apenas validação técnica: não enviar ao Play Console.
 O APK debug serve para teste direto no aparelho: não é versão para publicar na loja.
 Identificador atual ainda provisório: br.com.conversadebar.app.
-Confirmar titular, identificador e chave de upload antes do primeiro envio.
+Titular confirmado: Oswaldo Alves de Almeida Junior. Confirmar identificador e chave de upload antes do primeiro envio.
 
 Para produzir AAB assinado em ambiente seguro, configurar:
 - CDB_UPLOAD_STORE_FILE: caminho absoluto da chave de upload.
@@ -52,8 +52,8 @@ Não anunciar memória enquanto o servidor ainda servir a versão anterior.
 
 ## Privacidade — minuta, não publicar sem completar os campos
 
-Responsável: [confirmar nome civil ou razão social do titular]
-Contato de privacidade e suporte: [confirmar e-mail real]
+Responsável: Oswaldo Alves de Almeida Junior
+Contato de privacidade e suporte: Junior.controle68@gmail.com
 Vigência: [data de publicação]
 
 O Conversa de Bar solicita o microfone para permitir conversas por voz. O áudio é enviado à OpenAI para reconhecimento e geração de respostas. O tráfego web também passa pela infraestrutura Cloudflare.
@@ -67,7 +67,7 @@ O responsável deverá informar finalidades, bases legais, fornecedores, retenç
 ## Antes de enviar
 
 1. Criar/verificar conta Play Console e confirmar tipo de conta conforme função real do produto.
-2. Confirmar nome do titular, contato de suporte e applicationId definitivo.
+2. Titular e contato confirmados em 04/10/2026: Oswaldo Alves de Almeida Junior; Junior.controle68@gmail.com. Confirmar applicationId definitivo.
 3. Publicar a versão do servidor e verificar áudio/memória no Android físico.
 4. Implementar denúncia de respostas dentro do app, destino de recebimento e tratamento de relatos.
 5. Publicar política final, preencher Segurança dos dados e classificação indicativa conforme comportamento real.

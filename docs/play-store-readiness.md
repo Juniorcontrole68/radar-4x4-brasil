@@ -44,4 +44,12 @@ Nenhum envio ao Play Console foi realizado e nenhuma aprovação do Google foi o
 
 ## Atualização de nome — 2026-10-04
 
-A opção anteriormente chamada apoio emocional passa a se chamar **Conversa e reflexão — ideias e dia a dia**. A descrição é conversa cotidiana e organização de ideias, sem promessas de benefícios de saúde ou tratamento. Permanecem limites de não diagnosticar e não apresentar a IA como psicólogo. Essa alteração não comprova isenção de políticas de saúde; a classificação deverá refletir a funcionalidade real na revisão do produto.
+A opção anteriormente chamada apoio emocional passa a se chamar **Conversa e companhia — ideias e dia a dia**. A descrição é conversa cotidiana e organização de ideias, sem promessas de benefícios de saúde ou tratamento. Permanecem limites de não diagnosticar e não apresentar a IA como psicólogo. Essa alteração não comprova isenção de políticas de saúde; a classificação deverá refletir a funcionalidade real na revisão do produto.
+
+## Dados do responsável confirmados — 04/10/2026
+
+- Responsável: Oswaldo Alves de Almeida Junior.
+- Contato de privacidade e suporte: Junior.controle68@gmail.com.
+- Conta Play Console ainda não criada/verificada nesta sessão. O nome do responsável não determina automaticamente o tipo de conta aceito para o produto.
+- Compilação do APK debug e AAB sem assinatura, lintDebug e lintRelease concluídos: https://github.com/Juniorcontrole68/radar-4x4-brasil/actions/runs/37224151289 . Assinatura de upload e validação física ainda pendentes.
+- Memória opcional por resumo publicada no servidor. Minuta de privacidade ainda requer revisão do tratamento real pelos fornecedores antes de virar política final.
