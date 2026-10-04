@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: conversa-de-bar
+    runtime: node
+    plan: free
+    rootDir: conversa-de-bar
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-6-luna
