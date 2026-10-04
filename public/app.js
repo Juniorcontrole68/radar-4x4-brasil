@@ -89,7 +89,7 @@ async function startConversation() {
 
     const dc = pc.createDataChannel('oai-events');
     dc.onopen = () => {
-      setStatus('Estou ouvindo', true);
+      setStatus('Carol está ouvindo', true);
       updateConversationHint();
       $('#start').hidden = true;
       $('#stop').hidden = false;
@@ -141,7 +141,7 @@ function stopConversation() {
   $('#start').hidden = false;
   $('#start').disabled = false;
   $('#stop').hidden = true;
-  setStatus('Pronto para conversar');
+  setStatus('Carol está pronta para conversar');
   $('#hint').textContent = 'Toque em iniciar uma vez. Depois, converse naturalmente.';
 }
 
