@@ -60,6 +60,7 @@ function setStatus(text, active = false) {
 async function startConversation() {
   $('#start').disabled = true;
   conversationActive = true;
+  voiceAvatar.prepareAudio();
   keepScreenAwake();
   setStatus('Conectando…', true);
   try {
@@ -79,7 +80,11 @@ async function startConversation() {
     remoteAudio.autoplay = true;
     remoteAudio.playsInline = true;
     pc.onconnectionstatechange = updateConversationHint;
-    pc.ontrack = e => { remoteAudio.srcObject = e.streams[0]; };
+    pc.ontrack = e => {
+      const stream = e.streams[0] || new MediaStream([e.track]);
+      remoteAudio.srcObject = stream;
+      voiceAvatar.attach(stream);
+    };
     micStream.getTracks().forEach(track => pc.addTrack(track, micStream));
 
     const dc = pc.createDataChannel('oai-events');
@@ -127,6 +132,7 @@ async function startConversation() {
 function stopConversation() {
   conversationActive = false;
   releaseScreenLock();
+  voiceAvatar.stop();
   if (micStream) micStream.getTracks().forEach(t => t.stop());
   if (pc) pc.close();
   pc = null;
