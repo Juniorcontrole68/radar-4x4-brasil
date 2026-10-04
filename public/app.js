@@ -23,6 +23,16 @@ async function startConversation() {
   setStatus('Conectando…', true);
   try {
     micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    const tokenResponse = await fetch('/api/realtime/session', { method: 'POST' });
+    const tokenData = await tokenResponse.json().catch(() => ({}));
+    if (!tokenResponse.ok) {
+      const detail = tokenData?.error?.message || tokenData?.error || `Erro ${tokenResponse.status}`;
+      throw new Error(detail);
+    }
+    const ephemeralKey = tokenData.value;
+    if (!ephemeralKey) throw new Error('O servidor não retornou a credencial temporária.');
+
     pc = new RTCPeerConnection();
     remoteAudio = document.createElement('audio');
     remoteAudio.autoplay = true;
@@ -44,23 +54,31 @@ async function startConversation() {
         if (msg.type === 'input_audio_buffer.speech_started') setStatus('Ouvindo…', true);
         if (msg.type === 'response.output_audio.delta') setStatus('Conversando…', true);
         if (msg.type === 'response.done') setStatus('Estou ouvindo', true);
+        if (msg.type === 'error') console.error('Realtime API:', msg.error);
       } catch {}
     };
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    const response = await fetch('/session', {
+    const sdpResponse = await fetch('https://api.openai.com/v1/realtime/calls', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/sdp' },
-      body: offer.sdp
+      body: offer.sdp,
+      headers: {
+        Authorization: `Bearer ${ephemeralKey}`,
+        'Content-Type': 'application/sdp'
+      }
     });
-    if (!response.ok) throw new Error(await response.text());
-    await pc.setRemoteDescription({ type: 'answer', sdp: await response.text() });
+    const answerSdp = await sdpResponse.text();
+    if (!sdpResponse.ok) throw new Error(answerSdp || `Erro ${sdpResponse.status} ao conectar áudio.`);
+    await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
   } catch (error) {
     console.error(error);
+    const message = String(error?.message || error || 'Erro desconhecido');
     stopConversation();
     setStatus('Não foi possível iniciar');
-    $('#hint').textContent = 'Verifique a permissão do microfone e a configuração do servidor.';
+    $('#hint').textContent = message.includes('Permission') || message.includes('NotAllowed')
+      ? 'Permita o uso do microfone no navegador e tente novamente.'
+      : `Falha na conexão: ${message.slice(0, 160)}`;
     $('#start').disabled = false;
   }
 }
