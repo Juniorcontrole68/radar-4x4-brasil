@@ -3,6 +3,55 @@ let pc = null;
 let micStream = null;
 let remoteAudio = null;
 
+let conversationActive = false;
+let screenLock = null;
+let screenLockPending = false;
+
+function updateConversationHint() {
+  if (!conversationActive || !pc || pc.connectionState !== 'connected') return;
+  const screenHint = screenLock && !screenLock.released
+    ? 'A tela ficará ligada durante a conversa.'
+    : 'Mantenha a tela ligada para continuar ouvindo e falando.';
+  $('#hint').textContent = 'Pode falar normalmente e me interromper. ' + screenHint;
+}
+
+async function keepScreenAwake() {
+  if (!conversationActive || document.visibilityState !== 'visible' ||
+      !navigator.wakeLock || screenLockPending ||
+      (screenLock && !screenLock.released)) return;
+  screenLockPending = true;
+  try {
+    const lock = await navigator.wakeLock.request('screen');
+    if (!conversationActive || document.visibilityState !== 'visible') {
+      await lock.release();
+      return;
+    }
+    screenLock = lock;
+    lock.addEventListener('release', () => {
+      if (screenLock === lock) screenLock = null;
+      updateConversationHint();
+    });
+    updateConversationHint();
+  } catch {
+    updateConversationHint();
+  } finally {
+    screenLockPending = false;
+  }
+}
+
+function releaseScreenLock() {
+  const lock = screenLock;
+  screenLock = null;
+  if (lock) lock.release().catch(() => {});
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && conversationActive) {
+    keepScreenAwake();
+    if (remoteAudio) remoteAudio.play().catch(() => {});
+  }
+});
+
 function setStatus(text, active = false) {
   $('#status').textContent = text;
   $('#orb').classList.toggle('active', active);
@@ -10,6 +59,8 @@ function setStatus(text, active = false) {
 
 async function startConversation() {
   $('#start').disabled = true;
+  conversationActive = true;
+  keepScreenAwake();
   setStatus('Conectando…', true);
   try {
     micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -26,13 +77,15 @@ async function startConversation() {
     pc = new RTCPeerConnection();
     remoteAudio = document.createElement('audio');
     remoteAudio.autoplay = true;
+    remoteAudio.playsInline = true;
+    pc.onconnectionstatechange = updateConversationHint;
     pc.ontrack = e => { remoteAudio.srcObject = e.streams[0]; };
     micStream.getTracks().forEach(track => pc.addTrack(track, micStream));
 
     const dc = pc.createDataChannel('oai-events');
     dc.onopen = () => {
       setStatus('Estou ouvindo', true);
-      $('#hint').textContent = 'Pode falar normalmente. Você pode me interromper enquanto eu estiver falando.';
+      updateConversationHint();
       $('#start').hidden = true;
       $('#stop').hidden = false;
     };
@@ -72,6 +125,8 @@ async function startConversation() {
 }
 
 function stopConversation() {
+  conversationActive = false;
+  releaseScreenLock();
   if (micStream) micStream.getTracks().forEach(t => t.stop());
   if (pc) pc.close();
   pc = null;
