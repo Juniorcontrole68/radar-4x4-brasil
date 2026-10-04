@@ -41,3 +41,7 @@ Verificação em 2026-10-04. Situação: ainda não está pronto para envio à l
 - https://support.google.com/googleplay/android-developer/answer/9878810?hl=en
 
 Nenhum envio ao Play Console foi realizado e nenhuma aprovação do Google foi obtida.
+
+## Atualização de nome — 2026-10-04
+
+A opção anteriormente chamada apoio emocional passa a se chamar **Conversa e reflexão — ideias e dia a dia**. A descrição é conversa cotidiana e organização de ideias, sem promessas de benefícios de saúde ou tratamento. Permanecem limites de não diagnosticar e não apresentar a IA como psicólogo. Essa alteração não comprova isenção de políticas de saúde; a classificação deverá refletir a funcionalidade real na revisão do produto.
