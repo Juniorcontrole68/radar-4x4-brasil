@@ -1,0 +1,9 @@
+{
+  "name":"Conversa de Bar",
+  "short_name":"Conversa de Bar",
+  "start_url":"/",
+  "display":"standalone",
+  "background_color":"#120f0e",
+  "theme_color":"#201814",
+  "description":"Companhia virtual por voz para conversar e organizar pensamentos."
+}
