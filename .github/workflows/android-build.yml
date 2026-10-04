@@ -1,4 +1,4 @@
-name: Android demo build
+name: Android test and bundle build
 on:
   push:
     branches: [main]
@@ -28,7 +28,7 @@ jobs:
       - name: Install Android SDK platform
         run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
       - name: Build and lint demo
-        run: gradle -p android --no-daemon :app:assembleDebug :app:lintDebug
+        run: gradle -p android --no-daemon :app:assembleDebug :app:lintDebug :app:bundleRelease :app:lintRelease
       - uses: actions/upload-artifact@v4
         with:
           name: conversa-de-bar-debug-apk
@@ -40,5 +40,18 @@ jobs:
         with:
           name: android-lint-report
           path: android/app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: conversa-de-bar-unsigned-aab-NOT-FOR-PLAY-UPLOAD
+          path: android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-release-lint-report
+          path: android/app/build/reports/lint-results-release.html
           if-no-files-found: ignore
           retention-days: 14

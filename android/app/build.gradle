@@ -1,4 +1,10 @@
 plugins { id 'com.android.application' }
+def uploadEnv = ['CDB_UPLOAD_STORE_FILE', 'CDB_UPLOAD_STORE_PASSWORD', 'CDB_UPLOAD_KEY_ALIAS', 'CDB_UPLOAD_KEY_PASSWORD']
+def uploadValues = uploadEnv.collect { System.getenv(it) }
+def hasUploadSigning = uploadValues.every { it != null && !it.isBlank() }
+if (uploadValues.any { it != null && !it.isBlank() } && !hasUploadSigning) {
+    throw new GradleException('Configuração de assinatura incompleta. Informe as quatro variáveis CDB_UPLOAD_*.')
+}
 android {
     namespace 'br.com.conversadebar.app'
     compileSdk 36
@@ -9,8 +15,31 @@ android {
         versionCode 1
         versionName '0.1.0'
     }
+    signingConfigs {
+        if (hasUploadSigning) {
+            upload {
+                storeFile file(uploadValues[0])
+                storePassword uploadValues[1]
+                keyAlias uploadValues[2]
+                keyPassword uploadValues[3]
+            }
+        }
+    }
+    buildTypes {
+        release {
+            debuggable false
+            if (hasUploadSigning) signingConfig signingConfigs.upload
+        }
+    }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+tasks.register('verifyPlaySigning') {
+    doLast {
+        if (!hasUploadSigning) throw new GradleException('Sem chave de upload: o AAB não pode ser enviado ao Play Console.')
+        if (!file(uploadValues[0]).isFile()) throw new GradleException('Arquivo da chave de upload não encontrado.')
     }
 }
