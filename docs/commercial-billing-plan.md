@@ -48,3 +48,7 @@ Fontes consultadas em 2026-10-04:
 A página /comercial/ é um protótipo publicado de escolha do assistente. Não há compras, saldo de créditos, assinatura ou desconto de minutos operacionais. O endpoint atual de voz pertence ao teste pessoal; não deve ser tratado como sistema comercial com limite de gastos.
 
 Para ativar compras Android: confirmar disponibilidade da conta Play Console do proprietário, preparar aplicativo Android assinado e identificador definitivo, configurar produtos da loja, conectar validação de compras e persistência no servidor, testar faturamento e concluir privacidade, termos, denúncia de respostas e revisão da loja. Avatar 3D e funcionamento confiável com tela bloqueada continuam pendentes.
+
+## Atualização de nome — 2026-10-04
+
+A opção anteriormente chamada apoio emocional passa a se chamar **Conversa e reflexão — ideias e dia a dia**. A descrição é conversa cotidiana e organização de ideias, sem promessas de benefícios de saúde ou tratamento. Permanecem limites de não diagnosticar e não apresentar a IA como psicólogo. Essa alteração não comprova isenção de políticas de saúde; a classificação deverá refletir a funcionalidade real na revisão do produto.
