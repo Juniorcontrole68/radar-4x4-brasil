@@ -4,7 +4,7 @@ Projeto inicial de desenvolvimento, não APK/AAB pronto para distribuição.
 
 Abre a página HTTPS /comercial/ existente, com escolhas de nome, perfil e voz. Solicita microfone apenas após a página pedir áudio; libera somente captura de áudio para a origem do app. Não inclui chave de API, ponte JavaScript nativa, permissão de câmera ou tráfego HTTP.
 
-Requisitos para compilar: JDK 17, Gradle 8.13, Android SDK Platform 36, Build Tools 35.0.0 ou versão compatível com AGP 8.11.1. Abrir esta pasta no Android Studio ou executar `gradle :app:assembleDebug` com os requisitos instalados. Não foi compilado neste ambiente, que não possui SDK Android nem Gradle.
+Requisitos para compilar: JDK 17, Gradle 8.13, Android SDK Platform 36, Build Tools 35.0.0 ou versão compatível com AGP 8.11.1. Abrir esta pasta no Android Studio ou executar `gradle :app:assembleDebug` com os requisitos instalados. Compilação e lintDebug concluídos com sucesso no GitHub Actions em 2026-10-04: https://github.com/Juniorcontrole68/radar-4x4-brasil/actions/runs/37222355268 . APK de desenvolvimento gerado; teste físico e assinatura de lançamento ainda pendentes.
 
 Identificador provisório: br.com.conversadebar.app. Confirmar identificador definitivo antes de qualquer publicação: o applicationId da Play Store não pode ser trocado depois mantendo o mesmo aplicativo.
 
