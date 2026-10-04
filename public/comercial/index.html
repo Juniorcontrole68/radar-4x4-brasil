@@ -12,12 +12,12 @@
 <label for="assistant-name">Como você quer chamar seu assistente?</label>
 <input id="assistant-name" name="name" maxlength="30" required autocomplete="off" value="Carol">
 <label for="assistant-gender">Personagem e voz</label><select id="assistant-gender" name="gender"><option value="female">Feminino</option><option value="male">Masculino</option></select>
-<label for="assistant-mode">Que tipo de conversa você quer?</label><select id="assistant-mode" name="mode"><option value="friend">Amigo ou amiga — papo descontraído</option><option value="support">Apoio emocional — escuta e reflexão</option></select>
+<label for="assistant-mode">Que tipo de conversa você quer?</label><select id="assistant-mode" name="mode"><option value="friend">Amigo ou amiga — papo descontraído</option><option value="support">Conversa e reflexão — ideias e dia a dia</option></select>
 <label class="check"><input type="checkbox" name="flirt"> Permitir flerte leve quando eu pedir</label>
-<p class="small">No modo amigo, você define o ritmo. No apoio emocional, a conversa mantém o foco no acolhimento.</p>
+<p class="small">No modo amigo, você define o ritmo. No modo reflexão, a conversa ajuda a organizar ideias.</p>
 <label class="check"><input type="checkbox" name="adult" required> Tenho 18 anos ou mais</label>
 <button type="submit" class="primary">Continuar</button>
-<p class="small">Seu assistente é uma IA. O apoio emocional não é atendimento psicológico e não faz diagnósticos.</p>
+<p class="small">Seu assistente é uma IA. A conversa não é atendimento psicológico e não oferece diagnósticos.</p>
 </form>
 <section id="conversation" class="card" hidden>
 <div id="orb" class="orb avatar" role="img" aria-label="Seu assistente virtual"><img class="avatar-photo" src="/avatar-loira.jpg" alt="" width="640" height="640"><canvas id="avatar" width="480" height="480" aria-hidden="true"></canvas><span id="profile-initial" aria-hidden="true"></span></div>
