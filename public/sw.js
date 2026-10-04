@@ -1,4 +1,4 @@
-const CACHE='conversa-de-bar-avatar-v1';
+const CACHE='conversa-de-bar-carol-20261004-1718';
 const CORE=['/','/styles.css','/app.js','/manifest.json','/avatar.js','/avatar-loira.jpg'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(CORE)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
