@@ -7,7 +7,7 @@ const EMPTY = {
     time: '',
     venue: '',
     address: '',
-    message: 'Vai ser muito especial ter você comigo!'
+    message: 'Vai ser muito legal ter você conosco!'
   },
   guests: []
 };
@@ -106,7 +106,17 @@ export async function onRequest({ request, env, params }) {
 
       if (method === 'POST' && path.length === 3 && path[2] === 'respond') {
         const body = await request.json();
-        const going = !!body.going;
+        const response = body.response || (body.going === true ? 'yes' : body.going === false ? 'no' : '');
+
+        if (response === 'maybe') {
+          guest.status = 'enviado';
+          guest.confirmed = null;
+          guest.answeredAt = new Date().toISOString();
+          await save(env, data);
+          return json({ ok: true, guest });
+        }
+
+        const going = response === 'yes';
         guest.status = going ? 'confirmado' : 'nao-vai';
         guest.confirmed = going ? Math.min(guest.invited, Math.max(1, Number(body.confirmed || 1))) : 0;
         guest.answeredAt = new Date().toISOString();
