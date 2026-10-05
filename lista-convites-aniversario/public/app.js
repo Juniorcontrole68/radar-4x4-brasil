@@ -10,11 +10,47 @@ async function load(){DATA=await api('/api/data');render()}
 $('#search').oninput=render;$('#statusFilter').onchange=render;$('#addGuest').onclick=()=>openGuest();
 function syncInvitedChoice(){const choice=$('#invitedChoice');if(!choice)return;const manual=choice.value==='more';$('#invited').hidden=!manual;$('#invited').disabled=!manual;$('#invited').required=manual;if(!manual)$('#invited').value=choice.value;}
 if($('#invitedChoice'))$('#invitedChoice').onchange=()=>{syncInvitedChoice();if($('#invitedChoice').value==='more'){$('#invited').value='';$('#invited').focus();}};
-function openGuest(g=null){$('#guestTitle').textContent=g?'Editar convidado':'Novo convidado';$('#guestId').value=g?.id||'';$('#name').value=g?.name||'';$('#phone').value=g?.phone||'';$('#invited').value=g?.invited||1;if($('#invitedChoice')){$('#invitedChoice').value=Number(g?.invited||1)>5?'more':String(g?.invited||1);syncInvitedChoice();}$('#confirmed').value=g?.confirmed??'';$('#note').value=g?.note||'';$('#guestDlg').showModal()}
+function openGuest(g=null){resetContactPicker();$('#guestTitle').textContent=g?'Editar convidado':'Novo convidado';$('#guestId').value=g?.id||'';$('#name').value=g?.name||'';$('#phone').value=g?.phone||'';$('#invited').value=g?.invited||1;if($('#invitedChoice')){$('#invitedChoice').value=Number(g?.invited||1)>5?'more':String(g?.invited||1);syncInvitedChoice();}$('#confirmed').value=g?.confirmed??'';$('#note').value=g?.note||'';$('#guestDlg').showModal()}
+
+function normalizeContactPhone(value){let digits=String(value||'').replace(/\D/g,'');if(digits.startsWith('00'))digits=digits.slice(2);if(digits.startsWith('55')&&(digits.length===12||digits.length===13))digits=digits.slice(2);return digits;}
+function resetContactPicker(){const wrap=$('#contactNumberWrap');if(wrap)wrap.hidden=true;const hint=$('#contactHint');if(hint)hint.textContent='';}
+const contactButton=$('#selectContact');
+if(contactButton){
+  contactButton.onclick=async()=>{
+    const hint=$('#contactHint');
+    resetContactPicker();
+    if(!navigator.contacts||typeof navigator.contacts.select!=='function'){
+      hint.textContent='Para selecionar um contato, abra este app no Chrome do celular Android. Você também pode copiar o número da agenda e colar no campo WhatsApp.';
+      return;
+    }
+    contactButton.disabled=true;
+    try{
+      const contacts=await navigator.contacts.select(['name','tel'],{multiple:false});
+      const contact=contacts[0];if(!contact)return;
+      const numbers=[...new Set((contact.tel||[]).map(normalizeContactPhone).filter(n=>/^\d{10,11}$/.test(n)))];
+      if(!numbers.length){hint.textContent='O contato não tem um número brasileiro válido com DDD. Selecione outro ou preencha o WhatsApp manualmente.';return;}
+      if(contact.name?.[0])$('#name').value=contact.name[0];
+      if(numbers.length===1){$('#phone').value=numbers[0];hint.textContent='Contato preenchido. Confira os dados e toque em Salvar.';}
+      else{
+        $('#phone').value='';
+        const select=$('#contactNumber');select.replaceChildren();
+        const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Selecione o WhatsApp';select.append(placeholder);
+        numbers.forEach(number=>{const option=document.createElement('option');option.value=number;option.textContent=number;select.append(option)});
+        $('#contactNumberWrap').hidden=false;
+        hint.textContent='Este contato tem mais de um número. Escolha qual usa WhatsApp.';
+        select.onchange=()=>{$('#phone').value=select.value;};
+        select.focus();
+      }
+    }catch(error){
+      if(error.name!=='AbortError')hint.textContent='Não foi possível abrir a agenda. Tente novamente no Chrome do Android ou preencha o WhatsApp manualmente.';
+    }finally{contactButton.disabled=false;}
+  };
+}
+
 window.editGuest=id=>openGuest(DATA.guests.find(x=>x.id===id));
 $('#saveGuest').onclick=async()=>{const invited=Number($('#invited').value);const minimum=$('#invitedChoice')?.value==='more'?6:1;if(!Number.isInteger(invited)||invited<minimum){$('#invited').setCustomValidity('Informe um número inteiro de '+minimum+' pessoas ou mais.');$('#invited').reportValidity();$('#invited').setCustomValidity('');return;}const id=$('#guestId').value;const body={name:$('#name').value,phone:$('#phone').value,invited,note:$('#note').value};if($('#confirmed').value!==''){body.confirmed=Number($('#confirmed').value);body.status=body.confirmed>0?'confirmado':'nao-vai'};if(id)await api('/api/guests/'+id,{method:'PUT',body:JSON.stringify(body)});else await api('/api/guests',{method:'POST',body:JSON.stringify(body)});$('#guestDlg').close();await load()};
 window.removeGuest=async id=>{if(confirm('Excluir este convidado?')){await api('/api/guests/'+id,{method:'DELETE'});await load()}};
-window.sendWa=async id=>{const g=DATA.guests.find(x=>x.id===id);if(!g?.phone)return;const link=`${location.origin}/confirmar.html?id=${encodeURIComponent(g.id)}`;const e=DATA.event;const when=[e.date?fmtDate(e.date):'',e.time?`às ${e.time}`:''].filter(Boolean).join(' ');const canva=e.canvaUrl?`\n\n🎨 Convite:\n${e.canvaUrl}`:'';const image=e.hasInviteImage?`\n\n🖼️ Imagem do convite:\n${location.origin}/api/invite-image`:'';const text=`Olá, ${g.name}! 🎉\n\nVocê está convidado para ${e.title||'meu aniversário'}${when?` no dia ${when}`:''}.${e.venue?`\n📍 ${e.venue}`:''}${e.address?` - ${e.address}`:''}\n\n${e.message||''}${canva}${image}\n\nConfirme sua presença aqui:\n${link}`;await api('/api/guests/'+id+'/mark-sent',{method:'POST',body:'{}'});window.open(`https://wa.me/55${g.phone.replace(/^55/,'')}?text=${encodeURIComponent(text)}`,'_blank');await load()};
+window.sendWa=async id=>{const g=DATA.guests.find(x=>x.id===id);if(!g?.phone)return;const link=`${location.origin}/confirmar.html?id=${encodeURIComponent(g.id)}`;const e=DATA.event;const when=[e.date?fmtDate(e.date):'',e.time?`às ${e.time}`:''].filter(Boolean).join(' ');const canva=e.canvaUrl?`\n\n🎨 Convite:\n${e.canvaUrl}`:'';const image=e.hasInviteImage?`\n\n🖼️ Imagem do convite:\n${location.origin}/api/invite-image`:'';const text=`Olá, ${g.name}! 🎉\n\nVocê está convidado para ${e.title||'meu aniversário'}${when?` no dia ${when}`:''}.${e.venue?`\n📍 ${e.venue}`:''}${e.address?` - ${e.address}`:''}\n\n${e.message||''}${canva}${image}\n\nConfirme sua presença aqui:\n${link}`;await api('/api/guests/'+id+'/mark-sent',{method:'POST',body:'{}'});window.open(`https://wa.me/55${normalizeContactPhone(g.phone)}?text=${encodeURIComponent(text)}`,'_blank');await load()};
 $('#editEvent').onclick=()=>{const e=DATA.event;NEW_IMAGE_DATA=null;REMOVE_IMAGE=false;$('#evInviteImage').value='';$('#evTitle').value=e.title||'';$('#evDate').value=e.date||'';$('#evTime').value=e.time||'';$('#evVenue').value=e.venue||'';$('#evAddress').value=e.address||'';$('#evMessage').value=e.message||'';$('#evCanvaUrl').value=e.canvaUrl||'';if(e.hasInviteImage){$('#imagePreview').src='/api/invite-image?t='+Date.now();$('#imagePreviewWrap').classList.remove('hidden')}else{$('#imagePreviewWrap').classList.add('hidden')}$('#eventDlg').showModal()};
 $('#evInviteImage').onchange=()=>{const f=$('#evInviteImage').files[0];if(!f)return;if(!f.type.startsWith('image/'))return alert('Escolha uma imagem válida.');if(f.size>2*1024*1024)return alert('A imagem deve ter no máximo 2 MB.');const rd=new FileReader();rd.onload=()=>{NEW_IMAGE_DATA=rd.result;REMOVE_IMAGE=false;$('#imagePreview').src=rd.result;$('#imagePreviewWrap').classList.remove('hidden')};rd.readAsDataURL(f)};
 $('#removeInviteImage').onclick=()=>{NEW_IMAGE_DATA=null;REMOVE_IMAGE=true;$('#evInviteImage').value='';$('#imagePreviewWrap').classList.add('hidden')};
