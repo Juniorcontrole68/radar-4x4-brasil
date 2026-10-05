@@ -32,13 +32,13 @@ if(contactButton){
       if(contact.name?.[0])$('#name').value=contact.name[0];
       if(numbers.length===1){$('#phone').value=numbers[0];hint.textContent='Contato preenchido. Confira os dados e toque em Salvar.';}
       else{
-        $('#phone').value='';
+        $('#phone').value=numbers[0];
         const select=$('#contactNumber');select.replaceChildren();
-        const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Selecione o WhatsApp';select.append(placeholder);
         numbers.forEach(number=>{const option=document.createElement('option');option.value=number;option.textContent=number;select.append(option)});
         $('#contactNumberWrap').hidden=false;
-        hint.textContent='Este contato tem mais de um número. Escolha qual usa WhatsApp.';
-        select.onchange=()=>{$('#phone').value=select.value;};
+        select.value=numbers[0];
+        hint.textContent='O primeiro número foi preenchido. Se ele não usa WhatsApp, escolha outro na lista acima.';
+        const applyNumber=()=>{$('#phone').value=select.value;hint.textContent='Número preenchido. Confira os dados e toque em Salvar.';};select.onchange=applyNumber;select.oninput=applyNumber;
         select.focus();
       }
     }catch(error){
@@ -50,7 +50,7 @@ if(contactButton){
 window.editGuest=id=>openGuest(DATA.guests.find(x=>x.id===id));
 $('#saveGuest').onclick=async()=>{const invited=Number($('#invited').value);const minimum=$('#invitedChoice')?.value==='more'?6:1;if(!Number.isInteger(invited)||invited<minimum){$('#invited').setCustomValidity('Informe um número inteiro de '+minimum+' pessoas ou mais.');$('#invited').reportValidity();$('#invited').setCustomValidity('');return;}const id=$('#guestId').value;const body={name:$('#name').value,phone:$('#phone').value,invited,note:$('#note').value};if($('#confirmed').value!==''){body.confirmed=Number($('#confirmed').value);body.status=body.confirmed>0?'confirmado':'nao-vai'};if(id)await api('/api/guests/'+id,{method:'PUT',body:JSON.stringify(body)});else await api('/api/guests',{method:'POST',body:JSON.stringify(body)});$('#guestDlg').close();await load()};
 window.removeGuest=async id=>{if(confirm('Excluir este convidado?')){await api('/api/guests/'+id,{method:'DELETE'});await load()}};
-window.sendWa=async id=>{const g=DATA.guests.find(x=>x.id===id);if(!g?.phone)return;const link=`${location.origin}/confirmar.html?id=${encodeURIComponent(g.id)}`;const e=DATA.event;const when=[e.date?fmtDate(e.date):'',e.time?`às ${e.time}`:''].filter(Boolean).join(' ');const canva=e.canvaUrl?`\n\n🎨 Convite:\n${e.canvaUrl}`:'';const image=e.hasInviteImage?`\n\n🖼️ Imagem do convite:\n${location.origin}/api/invite-image`:'';const text=`Olá, ${g.name}! 🎉\n\nVocê está convidado para ${e.title||'meu aniversário'}${when?` no dia ${when}`:''}.${e.venue?`\n📍 ${e.venue}`:''}${e.address?` - ${e.address}`:''}\n\n${e.message||''}${canva}${image}\n\nConfirme sua presença aqui:\n${link}`;await api('/api/guests/'+id+'/mark-sent',{method:'POST',body:'{}'});window.open(`https://wa.me/55${normalizeContactPhone(g.phone)}?text=${encodeURIComponent(text)}`,'_blank');await load()};
+window.sendWa=async id=>{const g=DATA.guests.find(x=>x.id===id);if(!g?.phone)return;const link=`${location.origin}/confirmar.html?id=${encodeURIComponent(g.id)}`;const e=DATA.event;const when=[e.date?fmtDate(e.date):'',e.time?`às ${e.time}`:''].filter(Boolean).join(' ');const canva=e.canvaUrl?`\n\n🎨 Convite:\n${e.canvaUrl}`:'';const image=e.hasInviteImage?`\n\n🖼️ Imagem do convite:\n${location.origin}/api/invite-image`:'';const text=`Olá, ${g.name}! 🎉\n\nVocê está convidado para nosso aniversário, Junior e Carol${when?` no dia ${when}`:''}.${e.venue?`\n📍 ${e.venue}`:''}${e.address?` - ${e.address}`:''}\n\n${e.message||''}${canva}${image}\n\nConfirme sua presença aqui:\n${link}`;await api('/api/guests/'+id+'/mark-sent',{method:'POST',body:'{}'});window.open(`https://wa.me/55${normalizeContactPhone(g.phone)}?text=${encodeURIComponent(text)}`,'_blank');await load()};
 $('#editEvent').onclick=()=>{const e=DATA.event;NEW_IMAGE_DATA=null;REMOVE_IMAGE=false;$('#evInviteImage').value='';$('#evTitle').value=e.title||'';$('#evDate').value=e.date||'';$('#evTime').value=e.time||'';$('#evVenue').value=e.venue||'';$('#evAddress').value=e.address||'';$('#evMessage').value=e.message||'';$('#evCanvaUrl').value=e.canvaUrl||'';if(e.hasInviteImage){$('#imagePreview').src='/api/invite-image?t='+Date.now();$('#imagePreviewWrap').classList.remove('hidden')}else{$('#imagePreviewWrap').classList.add('hidden')}$('#eventDlg').showModal()};
 $('#evInviteImage').onchange=()=>{const f=$('#evInviteImage').files[0];if(!f)return;if(!f.type.startsWith('image/'))return alert('Escolha uma imagem válida.');if(f.size>2*1024*1024)return alert('A imagem deve ter no máximo 2 MB.');const rd=new FileReader();rd.onload=()=>{NEW_IMAGE_DATA=rd.result;REMOVE_IMAGE=false;$('#imagePreview').src=rd.result;$('#imagePreviewWrap').classList.remove('hidden')};rd.readAsDataURL(f)};
 $('#removeInviteImage').onclick=()=>{NEW_IMAGE_DATA=null;REMOVE_IMAGE=true;$('#evInviteImage').value='';$('#imagePreviewWrap').classList.add('hidden')};
