@@ -9,6 +9,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 10000;
 const KEY = 'lista-convites-aniversario:v1';
+const IMAGE_KEY = 'lista-convites-aniversario:image:v1';
 
 const EMPTY = {
   event: {
@@ -18,7 +19,8 @@ const EMPTY = {
     venue: '',
     address: '',
     message: 'Vai ser muito especial ter você comigo!',
-    canvaUrl: ''
+    canvaUrl: '',
+    hasInviteImage: false
   },
   guests: []
 };
@@ -46,7 +48,7 @@ function guestPublic(g) {
   return { id:g.id, name:g.name, invited:g.invited, status:g.status, confirmed:g.confirmed };
 }
 
-app.use(express.json());
+app.use(express.json({ limit: '4mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
@@ -58,9 +60,38 @@ app.get('/api/data', async (_req, res, next) => {
 app.put('/api/event', async (req, res, next) => {
   try {
     const data = await load();
-    data.event = { ...data.event, ...req.body };
+    const body = { ...(req.body || {}) };
+    const imageData = body.inviteImageData;
+    const removeImage = !!body.removeInviteImage;
+    delete body.inviteImageData;
+    delete body.removeInviteImage;
+
+    if (imageData) {
+      const m = String(imageData).match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+      if (!m) return res.status(400).json({ error: 'Imagem inválida' });
+      const buffer = Buffer.from(m[2], 'base64');
+      if (buffer.length > 2 * 1024 * 1024) return res.status(400).json({ error: 'A imagem deve ter no máximo 2 MB' });
+      await redis.hSet(IMAGE_KEY, { mime: m[1], data: m[2] });
+      body.hasInviteImage = true;
+    } else if (removeImage) {
+      await redis.del(IMAGE_KEY);
+      body.hasInviteImage = false;
+    }
+
+    data.event = { ...data.event, ...body };
     await save(data);
     res.json(data.event);
+  } catch (e) { next(e); }
+});
+
+app.get('/api/invite-image', async (_req, res, next) => {
+  try {
+    const img = await redis.hGetAll(IMAGE_KEY);
+    if (!img?.data) return res.status(404).send('Imagem não encontrada');
+    const buffer = Buffer.from(img.data, 'base64');
+    res.setHeader('Content-Type', img.mime || 'image/jpeg');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.send(buffer);
   } catch (e) { next(e); }
 });
 
