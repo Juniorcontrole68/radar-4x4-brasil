@@ -18,3 +18,44 @@ $('#evInviteImage').onchange=()=>{const f=$('#evInviteImage').files[0];if(!f)ret
 $('#removeInviteImage').onclick=()=>{NEW_IMAGE_DATA=null;REMOVE_IMAGE=true;$('#evInviteImage').value='';$('#imagePreviewWrap').classList.add('hidden')};
 $('#saveEvent').onclick=async()=>{const body={title:$('#evTitle').value,date:$('#evDate').value,time:$('#evTime').value,venue:$('#evVenue').value,address:$('#evAddress').value,message:$('#evMessage').value,canvaUrl:$('#evCanvaUrl').value.trim()};if(NEW_IMAGE_DATA)body.inviteImageData=NEW_IMAGE_DATA;if(REMOVE_IMAGE)body.removeInviteImage=true;await api('/api/event',{method:'PUT',body:JSON.stringify(body)});$('#eventDlg').close();await load()};
 load().catch(e=>alert(e.message));
+
+let deferredInstallPrompt=null;
+const installBtn=document.querySelector('#installApp');
+const shareBtn=document.querySelector('#shareApp');
+
+window.addEventListener('beforeinstallprompt',e=>{
+  e.preventDefault();
+  deferredInstallPrompt=e;
+  if(installBtn) installBtn.style.display='';
+});
+window.addEventListener('appinstalled',()=>{
+  deferredInstallPrompt=null;
+  if(installBtn) installBtn.textContent='✓ App instalado';
+});
+if(installBtn){
+  installBtn.onclick=async()=>{
+    if(deferredInstallPrompt){
+      deferredInstallPrompt.prompt();
+      await deferredInstallPrompt.userChoice;
+      deferredInstallPrompt=null;
+    }else{
+      alert('No Android: abra no Chrome e use “Adicionar à tela inicial” ou “Instalar app”. No iPhone: Safari → Compartilhar → Adicionar à Tela de Início.');
+    }
+  };
+}
+if(shareBtn){
+  shareBtn.onclick=async()=>{
+    const shareData={
+      title:'Lista de Convites',
+      text:'Abra este app para ajudar a organizar a lista de convidados.',
+      url:location.origin
+    };
+    try{
+      if(navigator.share) await navigator.share(shareData);
+      else window.open('https://wa.me/?text='+encodeURIComponent(shareData.text+'\n'+shareData.url),'_blank');
+    }catch(e){}
+  };
+}
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));
+}
