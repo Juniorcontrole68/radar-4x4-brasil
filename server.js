@@ -4313,8 +4313,9 @@ if(u.pathname==='/api/evolucao-motoristas'&&req.method==='GET'){try{
     const motorista=String(x.motorista||'').trim(),veiculo=String(x.veiculo||'').trim();
     if(!motorista)return;
     const key=nkey(motorista)+'|'+normPlate(veiculo);
-    if(!groups.has(key))groups.set(key,{motorista,veiculo,total:0,faltaOcorr:0,romaneios:[]});
+    if(!groups.has(key))groups.set(key,{motorista,veiculo,total:0,faltaOcorr:0,romaneios:[],quick:true});
     const g=groups.get(key);
+    g.quick=true;
     g.total+=Number(x.qtdeCtrcs||x.total||0);
     g.faltaOcorr+=Math.max(0,Number(x.faltaOcorr||0));
     const rom=String(x.romaneio||'').trim();if(rom&&!g.romaneios.includes(rom))g.romaneios.push(rom)
@@ -4345,12 +4346,18 @@ if(u.pathname==='/api/evolucao-motoristas'&&req.method==='GET'){try{
 
   const rows=[...groups.values()].map(g=>{
     const d=matchDetailed(g.motorista,g.veiculo);
-    const total=Number(d?.total||g.total||0);
+    const total=Math.max(Number(g.total||0),Number(d?.total||0));
     let ocorrencias=Number(d?.ocorrencias||0);
-    let pendentes=d?Number(d.pendentes||0):Math.max(0,Math.min(total,Number(g.faltaOcorr||0)));
-    let entregues=d?Number(d.entregues||0):Math.max(0,total-pendentes-ocorrencias);
+    // A opção 38 rápida é a leitura mais atual do dia. Quando ela existe,
+    // usa "Falta Ocorr." em tempo real em vez dos números do cache detalhado.
+    let pendentes=g.quick
+      ?Math.max(0,Math.min(total,Number(g.faltaOcorr||0)))
+      :(d?Number(d.pendentes||0):Math.max(0,Math.min(total,Number(g.faltaOcorr||0))));
+    let entregues=g.quick
+      ?Math.max(0,total-pendentes-ocorrencias)
+      :(d?Number(d.entregues||0):Math.max(0,total-pendentes-ocorrencias));
     if(entregues+pendentes+ocorrencias!==total){
-      pendentes=Math.max(0,total-entregues-ocorrencias)
+      entregues=Math.max(0,total-pendentes-ocorrencias)
     }
     return{
       motorista:g.motorista,veiculo:g.veiculo,total,entregues,pendentes,ocorrencias,vinculados:total,
