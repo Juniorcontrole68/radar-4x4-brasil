@@ -17,7 +17,8 @@ const EMPTY = {
     time: '',
     venue: '',
     address: '',
-    message: 'Vai ser muito especial ter você comigo!'
+    message: 'Vai ser muito especial ter você comigo!',
+    canvaUrl: ''
   },
   guests: []
 };
