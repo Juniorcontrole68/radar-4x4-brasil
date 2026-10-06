@@ -2995,6 +2995,39 @@ function routeStreetVariants(raw){
   }
   return out
 }
+async function routeViaCepFallback(raw,base,maxRadiusMeters){
+  try{
+    const clean=String(raw||'').trim().replace(/\s+/g,' ');
+    const parts=clean.split(',').map(x=>x.trim()).filter(Boolean);
+    let city='',street='';
+    if(parts.length>=2){
+      city=parts[parts.length-1].replace(/\bSP\b/ig,'').trim();
+      street=parts.slice(0,-1).join(' ').replace(/\b\d+[A-Za-z-]*\b/g,'').replace(/\s+/g,' ').trim()
+    }else{
+      const words=clean.split(/\s+/);
+      for(let cw=1;cw<=3;cw++){
+        if(words.length<=cw+1)break;
+        const ctry=words.slice(-cw).join(' ');
+        const stry=words.slice(0,-cw).join(' ').replace(/\b\d+[A-Za-z-]*\b/g,'').replace(/\s+/g,' ').trim();
+        const u='https://viacep.com.br/ws/SP/'+encodeURIComponent(ctry)+'/'+encodeURIComponent(stry)+'/json/';
+        const r=await fetch(u,{headers:{'User-Agent':'MOVIT/0.4'},signal:AbortSignal.timeout(10000)});
+        const j=await r.json().catch(()=>[]);
+        if(r.ok&&Array.isArray(j)&&j.length){city=ctry;street=stry;break}
+      }
+    }
+    if(!city||!street)return null;
+    const u='https://viacep.com.br/ws/SP/'+encodeURIComponent(city)+'/'+encodeURIComponent(street)+'/json/';
+    const r=await fetch(u,{headers:{'User-Agent':'MOVIT/0.4'},signal:AbortSignal.timeout(10000)});
+    const j=await r.json().catch(()=>[]);
+    if(!r.ok||!Array.isArray(j)||!j.length)return null;
+    const row=j.find(x=>String(x.logradouro||'').toLowerCase().includes(street.toLowerCase().replace(/^(rua|avenida|av\.?|rodovia|estrada)\s+/i,'')))||j[0];
+    const cep=String(row?.cep||'').replace(/\D/g,'');
+    if(cep.length!==8)return null;
+    const geo=await routeGeocodeCep(cep,base,maxRadiusMeters);
+    if(!geo)return null;
+    return {...geo,displayName:[row.logradouro,row.bairro,row.localidade,row.uf,row.cep].filter(Boolean).join(', '),city:row.localidade||geo.city||'',state:row.uf||geo.state||'SP',source:'ViaCEP + BrasilAPI'}
+  }catch{return null}
+}
 async function routeResolveManualAddress(address){
   const raw=String(address||'').trim().replace(/\s+/g,' ');
   if(raw.length<4)throw Object.assign(new Error('Informe ao menos o nome da rua e a cidade.'),{status:400});
@@ -3024,7 +3057,11 @@ async function routeResolveManualAddress(address){
     geo=await routeGeocode(q,base,ROUTE_MAX_RADIUS_METERS);
     if(geo){used=q;break}
   }
-  if(!geo)throw Object.assign(new Error('Não localizei essa via. Tente "Nome da rua, Cidade" — o número não é obrigatório.'),{status:422});
+  if(!geo){
+    geo=await routeViaCepFallback(raw,base,ROUTE_MAX_RADIUS_METERS);
+    if(geo)used='ViaCEP/CEP'
+  }
+  if(!geo)throw Object.assign(new Error('Não localizei essa via. Digite ao menos nome da rua e cidade; o número é opcional.'),{status:422});
   return{
     source:'manual',originalOrder:0,ctrc:'',nf:'',destinatario:'Endereço digitado',
     cidade:geo.city||'',uf:/São Paulo|Sao Paulo/i.test(geo.state||'')?'SP':'',
