@@ -59,7 +59,7 @@ export async function onRequest({request,env,params}){
       let response=body.response;
       if(!response&&typeof body.going==='boolean')response=body.going?'yes':'no';
       if(response==='yes'){
-        guest.status='confirmado';guest.confirmed=Math.min(guest.invited,Math.max(1,Number(body.confirmed||1)));
+        guest.status='confirmado';guest.confirmed=Math.max(1,Number(body.confirmed||1));guest.invited=guest.confirmed;
       }else if(response==='maybe'){
         guest.status='enviado';guest.confirmed=null;
       }else if(response==='no'){
