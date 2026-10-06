@@ -57,7 +57,7 @@ window.sendWa=async (id,sender='junior')=>{
   const e=DATA.event;
   const when=[e.date?fmtDate(e.date):'',e.time?`às ${e.time}`:''].filter(Boolean).join(' ');
   const cleanMessage=String(e.message||'').replace(/ter você comigo/gi,'ter você conosco').replace(/ter voce comigo/gi,'ter voce conosco');
-  const senderName=sender==='carol'?'Carol':'Junior';\n  const text=`Olá, ${g.name}! 🎉\n\nVenha comemorar com a gente! Junior e Carol${when?` — ${when}`:''}.${e.venue?`\n📍 ${e.venue}`:''}${e.address?` - ${e.address}`:''}\n\n${cleanMessage}\n\nConfirme sua presença aqui:\n${link}`;
+  const text=`Olá, ${g.name}! 🎉\n\nVenha comemorar com a gente! Junior e Carol${when?` — ${when}`:''}.${e.venue?`\n📍 ${e.venue}`:''}${e.address?` - ${e.address}`:''}\n\n${cleanMessage}\n\nConfirme sua presença aqui:\n${link}`;
   await api('/api/guests/'+id+'/mark-sent',{method:'POST',body:'{}'});
   window.open(`https://wa.me/55${normalizeContactPhone(g.phone)}?text=${encodeURIComponent(text)}`,'_blank');
   await load();
