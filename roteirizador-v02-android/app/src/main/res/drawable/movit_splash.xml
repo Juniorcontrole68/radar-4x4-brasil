@@ -1,0 +1,9 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/movit_white"/>
+    <item android:gravity="center" android:width="210dp" android:height="210dp">
+        <layer-list>
+            <item android:drawable="@drawable/movit_icon_bg"/>
+            <item android:insetLeft="26dp" android:insetTop="26dp" android:insetRight="26dp" android:insetBottom="26dp" android:drawable="@drawable/ic_movit"/>
+        </layer-list>
+    </item>
+</layer-list>
