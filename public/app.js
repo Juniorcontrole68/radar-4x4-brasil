@@ -2590,7 +2590,11 @@ function trackingFindRoute(driver,plate){
 }
 function trackingStatus(row){
   if(row.test_only&&!trackingHasPosition(row))return{key:'warn',label:'TESTE • aguardando GPS',distance:null};
-  if(row.operation_active&&!row.session_id&&!row.map_active&&!trackingHasPosition(row))return{key:'bad',label:'Sem sinal / sem GPS hoje',distance:null};
+  if(row.operation_active&&!row.session_id&&!row.map_active&&!trackingHasPosition(row)){
+    return row.device_approved
+      ?{key:'warn',label:'Aparelho aprovado • aguardando sinal/GPS',distance:null}
+      :{key:'bad',label:'Sem sinal / sem GPS hoje',distance:null}
+  }
   if(!row.session_id&&!row.map_active&&!trackingHasPosition(row))return{key:'off',label:'Inativo',distance:null};
   if(String(row.session_status||'').toLowerCase()==='ended')return{key:'off',label:'Rota finalizada • permanece no mapa até o fim do dia',distance:null};
   const age=Number(row.age_seconds),deviceAge=Number(row.device_age_seconds);
@@ -3444,11 +3448,12 @@ async function refreshTracking(){
   const info=$('#trackingInfo');if(info)info.textContent='Atualizando motoristas e posições GPS…';
   try{
     const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
-    const [liveRes,driverRes]=await Promise.all([
+    const [liveRes,driverRes,requestRes]=await Promise.all([
       fetch('/api/tracking/live?light=1&t='+Date.now(),{cache:'no-store'}),
-      fetch('/api/roteirizador/lista?date='+encodeURIComponent(today)+'&t='+Date.now(),{cache:'no-store'})
+      fetch('/api/roteirizador/lista?date='+encodeURIComponent(today)+'&t='+Date.now(),{cache:'no-store'}),
+      fetch('/api/tracking/requests?t='+Date.now(),{cache:'no-store'})
     ]);
-    const live=await liveRes.json().catch(()=>({})),drivers=await driverRes.json().catch(()=>({}));
+    const live=await liveRes.json().catch(()=>({})),drivers=await driverRes.json().catch(()=>({})),requests=await requestRes.json().catch(()=>({}));
     if(!liveRes.ok||!live.ok)throw new Error(live.error||'Falha ao consultar GPS.');
     if(driverRes.ok&&drivers.ok&&Array.isArray(drivers.rows)){
       TRACKING_DRIVER_ROWS=drivers.rows.filter(x=>{
@@ -3470,6 +3475,25 @@ async function refreshTracking(){
     }
     const liveRows=normalizeDriverNames(Array.isArray(live.rows)?live.rows:[]);
     const operationRows=Array.isArray(TRACKING_DRIVER_ROWS)?TRACKING_DRIVER_ROWS:[];
+    const approvedDevices=(requestRes.ok&&requests.ok&&Array.isArray(requests.rows)?requests.rows:[])
+      .filter(x=>String(x.status||'').toLowerCase()==='approved');
+    const findApprovedDevice=(driver,plate)=>{
+      const p=trackingNorm(plate||''),d=trackingNorm(driver||'');
+      if(p){
+        const byPlate=approvedDevices.find(x=>trackingNorm(x.vehicle_plate||x.veiculo||'')===p);
+        if(byPlate)return byPlate
+      }
+      if(d){
+        const exact=approvedDevices.find(x=>trackingNorm(x.driver_name||x.motorista||'')===d);
+        if(exact)return exact;
+        const near=approvedDevices.filter(x=>{
+          const xd=trackingNorm(x.driver_name||x.motorista||'');
+          return xd&&(xd.includes(d)||d.includes(xd))
+        });
+        if(near.length===1)return near[0]
+      }
+      return null
+    };
     const todayKeys=new Set();
     for(const x of operationRows){
       const plate=trackingNorm(x.veiculo||x.vehicle_plate||'');
@@ -3504,18 +3528,25 @@ async function refreshTracking(){
     const operationPlaceholders=operationRows.filter(x=>{
       const p=trackingNorm(x.veiculo||x.vehicle_plate||''),d=trackingNorm(x.motorista||x.driver_name||'');
       return !((p&&liveKeys.has('P|'+p))||(d&&liveKeys.has('D|'+d)))
-    }).map(x=>({
-      driver_name:driverDisplayName(x.motorista||x.driver_name||''),
-      vehicle_plate:String(x.veiculo||x.vehicle_plate||'').trim().toUpperCase(),
-      operation_active:true,
-      map_active:false,
-      session_id:null,
-      session_status:'',
-      latitude:null,
-      longitude:null,
-      age_seconds:null,
-      device_age_seconds:null
-    }));
+    }).map(x=>{
+      const driver=driverDisplayName(x.motorista||x.driver_name||''),plate=String(x.veiculo||x.vehicle_plate||'').trim().toUpperCase();
+      const approved=findApprovedDevice(driver,plate);
+      return{
+        driver_name:driver,
+        vehicle_plate:plate,
+        operation_active:true,
+        map_active:false,
+        session_id:null,
+        session_status:'',
+        latitude:null,
+        longitude:null,
+        age_seconds:null,
+        device_age_seconds:null,
+        device_approved:!!approved,
+        device_name:approved?.device_name||approved?.device||'',
+        approved_at:approved?.updated_at||approved?.approved_at||approved?.created_at||''
+      }
+    });
     const mergedRows=[...currentRows,...operationPlaceholders];
     renderTracking(mergedRows);
     trackingRefreshLogicalAnalysis(mergedRows,today).catch(()=>{});
