@@ -32,7 +32,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
  html,body{height:100%;height:100dvh;overflow:hidden}
  .top{padding:9px 10px;display:flex;min-height:48px;flex-wrap:nowrap}
  .brand{min-width:0;flex:1}.brand strong{font-size:17px}.brand span{display:none}
- .tabs{position:fixed;left:0;right:0;bottom:0;z-index:40;width:100%;height:68px;padding:6px;gap:5px;background:var(--nav);display:grid;grid-template-columns:repeat(9,minmax(0,1fr));box-shadow:0 -3px 14px #0003}
+ .tabs{position:fixed;left:0;right:0;bottom:0;z-index:40;width:100%;height:68px;padding:6px;gap:5px;background:var(--nav);display:grid;grid-template-columns:repeat(10,minmax(0,1fr));box-shadow:0 -3px 14px #0003}
  .tab{min-width:0;padding:7px 3px;border-radius:8px;font-size:10px;line-height:1.15;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;white-space:normal}
  .tab:before{font-size:18px;line-height:1}
  .tab[data-module="coletas"]:before{content:"🚚"}
@@ -41,6 +41,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
  .tab[data-module="dashboards"]:before{content:"▦"}
  .tab[data-module="programacao"]:before{content:"📋"}
  .tab[data-module="roteirizador-teste"]:before{content:"🧪"}
+ .tab[data-module="roteirizador-v02"]:before{content:"🧭"}
  .tab[data-module="tracking"]:before{content:"📍"}
  .tab[data-module="lotacao"]:before{content:"🚛"}
  .tab[data-module="agendamento-teste"]:before{content:"🧪"}
@@ -67,6 +68,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
       <button class="tab" data-module="dashboards" data-src="https://construlog-dashboard.onrender.com/?embed=1&view=dashboards" data-name="Dashboards">Dashboards</button>
       <button class="tab" data-module="programacao" data-src="https://construlog-dashboard.onrender.com/?embed=1&view=programacao" data-name="Programação">Programação</button>
       <button class="tab" data-module="roteirizador-teste" data-src="https://construlog-dashboard.onrender.com/?embed=1&view=roteirizador-teste" data-name="Roteirizador Teste">Roteirizador Teste</button>
+      <button class="tab" data-module="roteirizador-v02" data-src="https://construlog-dashboard.onrender.com/?embed=1&view=roteirizador-v02" data-name="Roteirizador V02">Roteirizador V02</button>
       <button class="tab" data-module="tracking" data-src="https://construlog-dashboard.onrender.com/?embed=1&view=rastreamento" data-name="Rastreio de Carga">Rastreio de Carga</button>
       <button class="tab" data-module="frota" data-src="/frota?embed=1" data-name="Frota">Frota</button>
       <button class="tab" data-module="contas" data-src="/contas?embed=1" data-name="Contas a Pagar">Contas a Pagar</button>
@@ -125,6 +127,7 @@ function moduleAllowed(mod){
   if(mod==='dashboards')return (AUTH?.permissions||[]).some(p=>!['coletas','contas_pagar','dashboard'].includes(p));
   if(mod==='programacao')return hasPerm('programacao');
   if(mod==='roteirizador-teste')return hasPerm('roteirizador')||AUTH?.is_admin;
+  if(mod==='roteirizador-v02')return hasPerm('roteirizador')||AUTH?.is_admin;
   if(mod==='tracking')return hasPerm('tracking');
   if(mod==='lotacao')return hasPerm('lotacao')||hasPerm('coletas')||hasPerm('financeiro');
   if(mod==='agendamento-teste')return hasPerm('agendamentos')||hasPerm('dashboard');
@@ -173,7 +176,7 @@ async function abrirModulo(btn){
   try{
     let src=btn.dataset.src;
     const sep=src.includes('?')?'&':'?';
-    if(mod==='dashboard'||mod==='dashboards'||mod==='programacao'||mod==='roteirizador-teste'||mod==='tracking'||mod==='agendamento-teste'){
+    if(mod==='dashboard'||mod==='dashboards'||mod==='programacao'||mod==='roteirizador-teste'||mod==='roteirizador-v02'||mod==='tracking'||mod==='agendamento-teste'){
       DASH_FRAME_TOKEN='';
       const ticket=await dashboardTicket();
       src += sep+'ticket='+encodeURIComponent(ticket)+'&refresh='+Date.now();
