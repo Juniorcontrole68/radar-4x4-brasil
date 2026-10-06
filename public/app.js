@@ -3279,7 +3279,7 @@ function renderTrackingMap(rows){
     bounds.push([baseLat,baseLon]);baseMarked=true
   }
   activeRows.forEach((row,i)=>{
-    const plannedColor=TRACKING_PLANNED_COLOR,actualColor=trackingActualColor(row);
+    const actualColor=trackingActualColor(row),plannedColor=actualColor;
     const route=trackingFindRoute(row.driver_name,row.vehicle_plate),status=trackingStatus(row);
     const coords=trackingPlannedCoords(route);
     if(!TRACKING_MAP_ONLY_DRIVERS&&coords.length>1){
