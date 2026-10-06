@@ -100,35 +100,64 @@ function routePublicStreetVariants(raw){
 async function routePublicViaCep(raw){
   try{
     const clean=String(raw||'').trim().replace(/\s+/g,' ');
-    const tryOne=async(city,street)=>{
-      city=String(city||'').trim().replace(/\bSP\b/ig,'');
-      street=String(street||'').trim().replace(/\b\d+[A-Za-z-]*\b/g,'').replace(/\s+/g,' ');
-      if(!city||!street)return null;
+    const number=(clean.match(/\b\d+[A-Za-z-]*\b/)||[])[0]||'';
+    const norm=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/^(rua|r\.?|avenida|av\.?|rodovia|estrada|travessa)\s+/,'').replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+
+    let bestRow=null;
+    for(const v of routePublicStreetVariants(clean)){
+      const parts=v.split(',').map(x=>x.trim()).filter(Boolean);
+      if(parts.length<2)continue;
+      const city=parts[parts.length-1].replace(/\bSP\b/ig,'').trim();
+      const street=parts.slice(0,-1).join(' ').replace(/\b\d+[A-Za-z-]*\b/g,'').replace(/\s+/g,' ').trim();
+      if(!city||!street)continue;
+
       const u='https://viacep.com.br/ws/SP/'+encodeURIComponent(city)+'/'+encodeURIComponent(street)+'/json/';
       const r=await fetch(u,{headers:{'User-Agent':'MOVIT/0.4'},signal:AbortSignal.timeout(10000)});
       const j=await r.json().catch(()=>[]);
-      if(!r.ok||!Array.isArray(j)||!j.length)return null;
-      return j[0]
-    };
-    const parts=clean.split(',').map(x=>x.trim()).filter(Boolean);
-    let row=null;
-    if(parts.length>=2){
-      row=await tryOne(parts[parts.length-1],parts.slice(0,-1).join(' '))
-    }else{
-      const words=clean.split(/\s+/);
-      for(let cw=1;cw<=3&&!row;cw++){
-        if(words.length<=cw+1)break;
-        row=await tryOne(words.slice(-cw).join(' '),words.slice(0,-cw).join(' '))
-      }
+      if(!r.ok||!Array.isArray(j)||!j.length)continue;
+
+      const target=norm(street);
+      const scored=j.map(row=>{
+        const n=norm(row.logradouro);
+        let score=0;
+        if(n===target)score=100;
+        else if(n.includes(target)||target.includes(n))score=70;
+        else{
+          const a=new Set(target.split(' ')),b=new Set(n.split(' '));
+          score=[...a].filter(x=>b.has(x)).length*10
+        }
+        if(norm(row.localidade)===norm(city))score+=30;
+        return{row,score}
+      }).sort((a,b)=>b.score-a.score);
+
+      if(scored[0]?.score>0){bestRow=scored[0].row;break}
     }
-    if(!row)return null;
-    const cep=String(row.cep||'').replace(/\D/g,'');
+    if(!bestRow)return null;
+
+    const cep=String(bestRow.cep||'').replace(/\D/g,'');
     if(cep.length!==8)return null;
+    const canonical=[bestRow.logradouro,number,bestRow.bairro,bestRow.localidade,bestRow.uf,cep,'Brasil'].filter(Boolean).join(', ');
+
+    // Primeiro tenta coordenada do número já com rua/CEP validados.
+    for(const query of [canonical,[bestRow.logradouro,number,bestRow.localidade,bestRow.uf,'Brasil'].filter(Boolean).join(', ')]){
+      try{
+        const u=new URL('https://nominatim.openstreetmap.org/search');
+        u.searchParams.set('q',query);u.searchParams.set('format','jsonv2');u.searchParams.set('limit','3');u.searchParams.set('countrycodes','br');u.searchParams.set('addressdetails','1');
+        const r=await fetch(u,{headers:{'User-Agent':'MOVIT-Rotas/0.4 (+https://controle-coletas-jr.onrender.com)','Accept-Language':'pt-BR,pt;q=0.9'},signal:AbortSignal.timeout(12000)});
+        const j=await r.json().catch(()=>[]);
+        if(r.ok&&Array.isArray(j)&&j.length){
+          const hit=j.map(x=>({lat:Number(x.lat),lon:Number(x.lon),label:x.display_name||query,city:x.address?.city||x.address?.town||x.address?.municipality||x.address?.village||'',state:x.address?.state||''})).find(x=>Number.isFinite(x.lat)&&Number.isFinite(x.lon));
+          if(hit)return {...hit,cep,source:'ViaCEP + Nominatim exato'}
+        }
+      }catch(e){}
+    }
+
+    // Sem número mapeado: usa coordenada postal do CEP/logradouro.
     const r=await fetch('https://brasilapi.com.br/api/cep/v2/'+cep,{headers:{'User-Agent':'MOVIT/0.4'},signal:AbortSignal.timeout(10000)});
     const j=await r.json().catch(()=>({}));
     const lat=Number(j?.location?.coordinates?.latitude),lon=Number(j?.location?.coordinates?.longitude);
     if(!r.ok||!Number.isFinite(lat)||!Number.isFinite(lon))return null;
-    return {lat,lon,label:[row.logradouro,row.bairro,row.localidade,row.uf,row.cep].filter(Boolean).join(', '),city:row.localidade||'',state:row.uf||'SP'}
+    return {lat,lon,label:[bestRow.logradouro,bestRow.bairro,bestRow.localidade,bestRow.uf,bestRow.cep].filter(Boolean).join(', '),city:bestRow.localidade||'',state:bestRow.uf||'SP',cep,source:'ViaCEP + BrasilAPI'}
   }catch{return null}
 }
 async function routePublicGeocode(q){
@@ -151,6 +180,9 @@ async function routePublicGeocode(q){
     }
   }
 
+  const cepHit=await routePublicViaCep(raw);
+  if(cepHit)return[cepHit];
+
   for(const query of candidates){
     const u=new URL('https://nominatim.openstreetmap.org/search');
     u.searchParams.set('q',query);u.searchParams.set('format','jsonv2');u.searchParams.set('limit','5');u.searchParams.set('countrycodes','br');u.searchParams.set('addressdetails','1');
@@ -163,8 +195,6 @@ async function routePublicGeocode(q){
       }
     }catch(e){}
   }
-  const cepHit=await routePublicViaCep(raw);
-  if(cepHit)return[cepHit];
   throw Object.assign(new Error('Não localizei essa via. Digite ao menos nome da rua e cidade; o número é opcional.'),{status:404})
 }
 async function routePublicTable(points){
