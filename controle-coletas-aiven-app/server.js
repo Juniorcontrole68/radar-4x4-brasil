@@ -1944,15 +1944,19 @@ async function start() {
             let lock=null;
             try{
               lock=await client.getMailboxLock(box,{description:'CONSTRULOG PDF Unificador'});
-              // O Titan pode não respeitar FROM da mesma forma em todas as caixas.
-              // Buscamos pelo período e filtramos o remetente após ler o cabeçalho,
-              // o que também funciona com nomes de exibição como "Administrador NF-e <nfe@navas.com.br>".
-              const query={since,before};
-              let uids=await client.search(query,{uid:true});
-              if(!Array.isArray(uids)||!uids.length)continue;
-              if(scanned+uids.length>250)uids=uids.slice(Math.max(0,uids.length-(250-scanned)));
-              scanned+=uids.length;
-              for await (const msg of client.fetch(uids,{uid:true,internalDate:true,source:true,envelope:true})){
+              // Para compatibilidade com o IMAP do Titan, não dependemos do SEARCH SINCE/BEFORE.
+              // Lemos as mensagens mais recentes da pasta e filtramos a data localmente.
+              const total=Number(client.mailbox?.exists||0);
+              if(!total)continue;
+              const remaining=Math.max(0,250-scanned);
+              if(!remaining)break;
+              const take=Math.min(total,remaining);
+              const seqStart=Math.max(1,total-take+1);
+              const seqRange=seqStart+':'+total;
+              scanned+=take;
+              for await (const msg of client.fetch(seqRange,{uid:true,internalDate:true,source:true,envelope:true})){
+                const msgDate=msg.internalDate?new Date(msg.internalDate):null;
+                if(!msgDate||msgDate<since||msgDate>=before)continue;
                 if(found.length>=60)break;
                 if(!msg.source)continue;
                 const parsed=await simpleParser(msg.source,{skipHtmlToText:true,skipTextToHtml:true});
@@ -1990,8 +1994,10 @@ async function start() {
 
           if(!found.length){
             let error='Nenhum anexo PDF foi encontrado com esses filtros.';
-            if(sender&&matchedMessages===0)error='Nenhum e-mail desse remetente foi encontrado no período. Confira o remetente ou tente deixar o campo Remetente em branco.';
-            else if(matchedMessages>0&&pdfAttachmentsSeen===0)error='Foram encontrados '+matchedMessages+' e-mail(s) desse remetente, mas nenhum anexo PDF. Os anexos podem estar em outro formato, como XML.';
+            if(scanned===0)error='A pasta foi aberta, mas não foi possível ler mensagens. Tente selecionar “Todas as pastas”.';
+            else if(sender&&matchedMessages===0)error='Nenhum e-mail desse remetente foi encontrado no período entre as '+scanned+' mensagens mais recentes verificadas. Confira o remetente ou deixe o campo em branco.';
+            else if(matchedMessages>0&&pdfAttachmentsSeen===0)error='Foram encontrados '+matchedMessages+' e-mail(s) no período, mas nenhum anexo PDF. Os anexos podem estar em XML ou outro formato.';
+            else if(matchedMessages===0)error='Nenhum e-mail do período foi encontrado entre as '+scanned+' mensagens mais recentes verificadas.';
             return sendJson(res,404,{ok:false,error,matchedMessages,pdfAttachmentsSeen,scanned});
           }
           found.sort((a,b)=>a.date-b.date||a.filename.localeCompare(b.filename,'pt-BR'));
