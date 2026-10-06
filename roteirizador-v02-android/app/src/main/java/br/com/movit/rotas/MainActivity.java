@@ -32,7 +32,7 @@ public class MainActivity extends Activity {
     private JSONObject start=null,lastPlan=null;
     private android.content.SharedPreferences prefs;
     private TextView account,routeTitle,startPointLabel;
-    private Button cloudSave,cloudRoutes,optimizeButton,testTrackingButton,truckRestrictionsButton,fuelButton;
+    private Button cloudSave,cloudRoutes,optimizeButton,testTrackingButton,truckRestrictionsButton,fuelButton,tollButton;
     private Switch returnStartHome;
     private LocationManager testLocationManager;
     private LocationListener testLocationListener;
@@ -175,6 +175,12 @@ public class MainActivity extends Activity {
         fuelButton.setOnClickListener(v->findFuelStations());
         LinearLayout.LayoutParams flp=new LinearLayout.LayoutParams(-1,dp(48));flp.setMargins(0,0,0,dp(8));
         info.addView(fuelButton,flp);
+
+        tollButton=pill("🛣 Pedágios da rota",Color.rgb(248,250,252),Color.rgb(51,65,85));
+        tollButton.setBackground(strokedBg(Color.rgb(248,250,252),Color.rgb(203,213,225),14));
+        tollButton.setOnClickListener(v->showTolls(true));
+        LinearLayout.LayoutParams tlp=new LinearLayout.LayoutParams(-1,dp(48));tlp.setMargins(0,0,0,dp(8));
+        info.addView(tollButton,tlp);
 
         testTrackingButton=pill("🧪 Testar no mapa CONSTRULOG",Color.rgb(255,247,237),Color.rgb(154,52,18));
         testTrackingButton.setBackground(strokedBg(Color.rgb(255,247,237),Color.rgb(253,186,116),14));
@@ -336,6 +342,11 @@ public class MainActivity extends Activity {
         addSetting(box,"Comprimento do veículo (m)",vehicleLength,MUTED,TEXT);
         addSetting(box,"Peso total (t)",vehicleWeight,MUTED,TEXT);
 
+        String[] axleOpts={"1","2","3","4","5","6","7","8","9"};
+        Spinner vehicleAxles=new Spinner(this);vehicleAxles.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,axleOpts));
+        vehicleAxles.setSelection(Math.max(0,Math.min(axleOpts.length-1,prefs.getInt("cfg_vehicle_axles",1)-1)));
+        addSetting(box,"Número de eixos",vehicleAxles,MUTED,TEXT);
+
         Switch toll=new Switch(this);toll.setText("Evitar pedágios");toll.setChecked(prefs.getBoolean("cfg_toll",false));box.addView(toll);
         Switch returnStart=new Switch(this);returnStart.setText("Retornar ao ponto de saída");returnStart.setChecked(prefs.getBoolean("current_return_start",false));box.addView(returnStart);
         addSetting(box,"ID de parada",idsSp,MUTED,TEXT);
@@ -352,6 +363,7 @@ public class MainActivity extends Activity {
                 .putString("cfg_vehicle_width",vehicleWidth.getText().toString().trim())
                 .putString("cfg_vehicle_length",vehicleLength.getText().toString().trim())
                 .putString("cfg_vehicle_weight",vehicleWeight.getText().toString().trim())
+                .putInt("cfg_vehicle_axles",vehicleAxles.getSelectedItemPosition()+1)
                 .putInt("cfg_ids",idsSp.getSelectedItemPosition())
                 .putBoolean("cfg_toll",toll.isChecked())
                 .putBoolean("current_return_start",returnStart.isChecked())
@@ -435,6 +447,71 @@ public class MainActivity extends Activity {
         status.setText(rows.length()+" posto(s) encontrado(s) próximo(s) da rota.");
     }
 
+    private void showTolls(boolean openDialog){
+        if(lastPlan==null||lastPlan.optJSONObject("geometry")==null){
+            status.setText("Primeiro termine de lançar as paradas e toque em Otimizar rota.");
+            if(openDialog)new AlertDialog.Builder(this)
+                .setTitle("Pedágios da rota")
+                .setMessage("Os pedágios são calculados sobre o caminho otimizado. Termine de lançar todas as entregas e toque em Otimizar rota.")
+                .setPositiveButton("OK",null).show();
+            return;
+        }
+        if(tollButton!=null){tollButton.setEnabled(false);tollButton.setText("🛣 Calculando pedágios…");}
+        exec.execute(()->{
+            try{
+                JSONObject body=new JSONObject();
+                body.put("geometry",lastPlan.optJSONObject("geometry"));
+                body.put("vehicle",vehicleProfile());
+                JSONObject j=Api.post("/api/public-router/tolls",body);
+                JSONArray rows=j.optJSONArray("rows");
+                runOnUiThread(()->{
+                    if(tollButton!=null){
+                        tollButton.setEnabled(true);
+                        if(j.optBoolean("totalComplete",false))tollButton.setText("🛣 Pedágios • "+brl(j.optDouble("total",0)));
+                        else tollButton.setText("🛣 Pedágios • "+j.optInt("count",0)+" praça(s)");
+                    }
+                    if(!openDialog)return;
+                    StringBuilder msg=new StringBuilder();
+                    msg.append("Veículo: ").append(j.optString("vehicleType",vehicleType()));
+                    msg.append(" • ").append(j.optInt("axles",prefs.getInt("cfg_vehicle_axles",1))).append(" eixo(s)\n\n");
+                    if(rows==null||rows.length()==0){
+                        msg.append("Nenhuma praça de pedágio cadastrada foi encontrada neste trajeto.");
+                    }else{
+                        for(int i=0;i<rows.length();i++){
+                            JSONObject p=rows.optJSONObject(i);if(p==null)continue;
+                            msg.append("• ").append(p.optString("name","Praça de pedágio"));
+                            double km=p.optDouble("kmFromStart",Double.NaN);
+                            if(Double.isFinite(km))msg.append(" • km ").append(String.format(Locale.forLanguageTag("pt-BR"),"%.1f",km));
+                            if(!p.isNull("amount")){
+                                msg.append("\n  ").append(brl(p.optDouble("amount",0)));
+                                if(p.optBoolean("estimated",false))msg.append(" (estimado pelos eixos)");
+                            }else{
+                                msg.append("\n  Tarifa não cadastrada na base");
+                            }
+                            String op=p.optString("operator","");if(!op.isEmpty())msg.append("\n  ").append(op);
+                            msg.append("\n\n");
+                        }
+                    }
+                    if(j.optInt("pricedCount",0)>0){
+                        msg.append("Total");
+                        if(!j.optBoolean("totalComplete",false))msg.append(" conhecido");
+                        msg.append(": ").append(brl(j.optDouble("total",0))).append("\n\n");
+                    }
+                    msg.append(j.optString("warning",""));
+                    new AlertDialog.Builder(this).setTitle("🛣 Pedágios da rota").setMessage(msg.toString()).setPositiveButton("OK",null).show();
+                    status.setText(j.optInt("count",0)+" praça(s) de pedágio encontrada(s) na rota.");
+                });
+            }catch(Exception e){runOnUiThread(()->{
+                if(tollButton!=null){tollButton.setEnabled(true);tollButton.setText("🛣 Pedágios da rota");}
+                if(openDialog)status.setText("Pedágios: "+e.getMessage());
+            });}
+        });
+    }
+
+    private String brl(double value){
+        return java.text.NumberFormat.getCurrencyInstance(new Locale("pt","BR")).format(value);
+    }
+
     private String vehicleType(){
         String saved=prefs.getString("cfg_vehicle_name","");
         if(!saved.isEmpty())return saved;
@@ -466,6 +543,7 @@ public class MainActivity extends Activity {
         v.put("widthM",prefs.getString("cfg_vehicle_width",""));
         v.put("lengthM",prefs.getString("cfg_vehicle_length",""));
         v.put("weightT",prefs.getString("cfg_vehicle_weight",""));
+        v.put("axles",prefs.getInt("cfg_vehicle_axles",isTruckVehicle()?2:1));
         return v;
     }
 
@@ -887,7 +965,7 @@ public class MainActivity extends Activity {
                     refreshStartPointUi();
                     renderList();
                     renderMap(null);
-                    status.setText("Entrega "+stops.size()+" adicionada. Fale a próxima.");
+                    status.setText("Entrega "+stops.size()+" adicionada. Fale a próxima. Quando terminar, toque em Otimizar rota.");
                     if(reopenVoice)new Handler(Looper.getMainLooper()).postDelayed(()->voice(),650);
                 }catch(Exception e){
                     status.setText("Não foi possível adicionar esse endereço.");
@@ -957,6 +1035,7 @@ public class MainActivity extends Activity {
                     status.setText("Rota otimizada com sucesso.");
                     renderList();renderMap(j);
                     if(isTruckVehicle())analyzeTruckRestrictions(false);
+                    showTolls(false);
                     if(optimizeButton!=null){optimizeButton.setEnabled(true);optimizeButton.setText("Otimizar rota");optimizeButton.setAlpha(1f);}
                 });
             }catch(Exception e){
