@@ -55,14 +55,144 @@ const recipes=[
 
 ];
 
+
+const catalogExpansion=[
+['feijoada-simples','Feijoada Simples','Carnes','1 h 40 min',8,'feijão preto'],
+['rabada','Rabada com Agrião','Carnes','2 h',6,'rabada'],
+['lagarto-panela','Lagarto de Panela','Carnes','1 h 30 min',6,'lagarto'],
+['costela-mandioca','Costela com Mandioca','Carnes','1 h 40 min',6,'costela bovina'],
+['carne-louca','Carne Louca','Carnes','1 h 20 min',8,'acém'],
+['rocambole-carne','Rocambole de Carne Moída','Carnes','1 h',6,'carne moída'],
+['kibe-forno','Quibe de Forno','Carnes','1 h',8,'trigo para quibe'],
+['estrogonofe-carne','Estrogonofe de Carne','Carnes','45 min',6,'carne bovina em tiras'],
+['carne-seca-abobora','Carne-Seca com Abóbora','Carnes','1 h',6,'carne-seca'],
+['virado-paulista','Virado à Paulista','Carnes','1 h 10 min',6,'bisteca suína'],
+['lombo-assado','Lombo Suíno Assado','Carnes','1 h 40 min',8,'lombo suíno'],
+['pernil-panela','Pernil de Panela','Carnes','1 h 30 min',8,'pernil suíno'],
+['linguica-acebolada','Linguiça Acebolada','Carnes','30 min',4,'linguiça'],
+['frango-quiabo','Frango com Quiabo','Aves','1 h',6,'frango'],
+['frango-molho','Frango ao Molho Caseiro','Aves','50 min',6,'frango'],
+['frango-creme-milho','Frango com Creme de Milho','Aves','50 min',6,'frango desfiado'],
+['fricasse-frango','Fricassê de Frango','Aves','50 min',8,'frango desfiado'],
+['coxa-assada','Coxa e Sobrecoxa Assadas','Aves','1 h 15 min',6,'coxa e sobrecoxa'],
+['frango-xadrez','Frango com Legumes','Aves','35 min',5,'peito de frango'],
+['canja','Canja de Galinha','Sopas','50 min',6,'frango'],
+['arroz-carreteiro','Arroz Carreteiro','Carnes','45 min',6,'carne-seca'],
+['arroz-grega','Arroz à Grega','Acompanhamentos','35 min',6,'arroz'],
+['arroz-forno','Arroz de Forno','Acompanhamentos','45 min',8,'arroz cozido'],
+['arroz-biro-biro','Arroz Biro-Biro','Acompanhamentos','30 min',6,'arroz cozido'],
+['baiao-dois','Baião de Dois','Acompanhamentos','50 min',6,'arroz e feijão-fradinho'],
+['feijao-tropeiro','Feijão Tropeiro','Acompanhamentos','45 min',6,'feijão carioca'],
+['tutu-feijao','Tutu de Feijão','Acompanhamentos','35 min',6,'feijão cozido'],
+['farofa-banana','Farofa de Banana','Acompanhamentos','25 min',6,'banana-da-terra'],
+['farofa-ovos','Farofa de Ovos','Acompanhamentos','25 min',6,'ovos'],
+['batata-corada','Batatas Coradas','Acompanhamentos','40 min',6,'batatas'],
+['batata-gratinada','Batata Gratinada','Acompanhamentos','55 min',6,'batatas'],
+['mandioca-frita','Mandioca Frita','Acompanhamentos','40 min',6,'mandioca'],
+['mandioca-cozida','Mandioca Cozida com Manteiga','Acompanhamentos','35 min',6,'mandioca'],
+['chuchu-refogado','Chuchu Refogado','Acompanhamentos','25 min',4,'chuchu'],
+['vagem-refogada','Vagem Refogada','Acompanhamentos','20 min',4,'vagem'],
+['cenoura-manteiga','Cenoura na Manteiga','Acompanhamentos','20 min',4,'cenoura'],
+['repolho-refogado','Repolho Refogado','Acompanhamentos','25 min',4,'repolho'],
+['berinjela-forno','Berinjela ao Forno','Acompanhamentos','45 min',6,'berinjela'],
+['abobrinha-refogada','Abobrinha Refogada','Acompanhamentos','20 min',4,'abobrinha'],
+['pirao','Pirão Simples','Acompanhamentos','20 min',4,'farinha de mandioca'],
+['salada-batata','Salada de Batata','Saladas','35 min',6,'batatas'],
+['salada-grao-bico','Salada de Grão-de-Bico','Saladas','35 min',6,'grão-de-bico'],
+['salada-feijao-fradinho','Salada de Feijão-Fradinho','Saladas','35 min',6,'feijão-fradinho'],
+['salada-repolho','Salada de Repolho','Saladas','20 min',6,'repolho'],
+['salada-beterraba','Salada de Beterraba','Saladas','35 min',5,'beterraba'],
+['salada-cenoura','Salada de Cenoura','Saladas','15 min',4,'cenoura'],
+['salada-tomate','Salada de Tomate e Cebola','Saladas','10 min',4,'tomate'],
+['salpicao','Salpicão de Frango','Saladas','35 min',8,'frango desfiado'],
+['maionese-legumes','Maionese de Legumes','Saladas','40 min',8,'batata e cenoura'],
+['tabule','Tabule Caseiro','Saladas','30 min',6,'trigo para quibe'],
+['omelete-frigideira','Omelete de Frigideira','Receitas básicas','15 min',2,'ovos'],
+['ovo-cozido','Ovo Cozido no Ponto','Receitas básicas','12 min',2,'ovos'],
+['ovo-poche','Ovo Pochê','Receitas básicas','15 min',2,'ovos'],
+['feijao-preto','Feijão Preto Temperado','Receitas básicas','55 min',6,'feijão preto'],
+['lentilha','Lentilha Temperada','Receitas básicas','40 min',6,'lentilha'],
+['grao-bico','Grão-de-Bico Temperado','Receitas básicas','50 min',6,'grão-de-bico'],
+['molho-madeira','Molho Madeira Caseiro','Receitas básicas','25 min',6,'caldo de carne'],
+['molho-mostarda','Molho de Mostarda','Receitas básicas','15 min',4,'mostarda'],
+['maionese-caseira','Maionese Caseira','Receitas básicas','10 min',8,'ovo e óleo'],
+['massa-pizza','Massa de Pizza Caseira','Massas e pães','1 h 30 min',8,'farinha de trigo'],
+['pizza-marguerita','Pizza Margherita Caseira','Massas e pães','1 h 40 min',8,'massa de pizza'],
+['empada-frango','Empada de Frango','Massas e pães','1 h 10 min',12,'farinha e frango'],
+['empada-palmito','Empada de Palmito','Massas e pães','1 h 10 min',12,'farinha e palmito'],
+['pastel-forno','Pastel de Forno','Massas e pães','50 min',10,'farinha de trigo'],
+['coxinha-caseira','Coxinha Caseira','Lanches','1 h 30 min',20,'frango desfiado'],
+['bolinha-queijo','Bolinha de Queijo','Lanches','50 min',20,'queijo'],
+['risoles','Risoles de Presunto e Queijo','Lanches','1 h',18,'presunto e queijo'],
+['croquete-carne','Croquete de Carne','Lanches','50 min',18,'carne moída'],
+['pao-queijo','Pão de Queijo','Massas e pães','45 min',20,'polvilho e queijo'],
+['pao-batata','Pão de Batata','Massas e pães','2 h',15,'batata e farinha'],
+['pao-leite','Pão de Leite','Massas e pães','2 h',15,'leite e farinha'],
+['biscoito-polvilho','Biscoito de Polvilho','Lanches','40 min',25,'polvilho azedo'],
+['bolacha-manteiga','Bolacha de Manteiga','Bolos e doces','35 min',24,'farinha e manteiga'],
+['sequilho','Sequilho de Maizena','Bolos e doces','30 min',25,'amido de milho'],
+['cueca-virada','Cueca Virada','Bolos e doces','45 min',20,'farinha de trigo'],
+['sonho-caseiro','Sonho Caseiro','Bolos e doces','1 h 40 min',15,'farinha e creme'],
+['bolo-milho','Bolo de Milho','Bolos e doces','55 min',10,'milho verde'],
+['bolo-coco','Bolo de Coco','Bolos e doces','50 min',10,'coco ralado'],
+['bolo-aipim','Bolo de Aipim','Bolos e doces','1 h',12,'mandioca ralada'],
+['bolo-banana','Bolo de Banana','Bolos e doces','50 min',10,'banana'],
+['bolo-maca','Bolo de Maçã e Canela','Bolos e doces','55 min',10,'maçã'],
+['cuca-banana','Cuca de Banana','Bolos e doces','1 h',12,'banana'],
+['pave-chocolate','Pavê de Chocolate','Bolos e doces','30 min + geladeira',10,'biscoito e chocolate'],
+['pave-bolacha','Pavê de Bolacha','Bolos e doces','30 min + geladeira',10,'biscoito maisena'],
+['manjar-coco','Manjar de Coco','Bolos e doces','25 min + geladeira',10,'leite de coco'],
+['quindim','Quindim','Bolos e doces','55 min',12,'gemas e coco'],
+['ambrosia','Ambrosia','Bolos e doces','50 min',8,'leite e ovos'],
+['doce-leite','Doce de Leite de Panela','Bolos e doces','1 h 20 min',10,'leite e açúcar'],
+['goiabada-caseira','Goiabada Caseira','Bolos e doces','1 h',12,'goiaba'],
+['compota-abacaxi','Compota de Abacaxi','Bolos e doces','40 min',8,'abacaxi'],
+['gelatina-colorida','Gelatina Colorida Cremosa','Bolos e doces','25 min + geladeira',12,'gelatina'],
+['mousse-limao','Mousse de Limão','Bolos e doces','15 min + geladeira',8,'limão'],
+['creme-papaya','Creme de Mamão','Bolos e doces','10 min',4,'mamão'],
+['peixe-frito','Peixe Frito Crocante','Peixes','35 min',4,'filé de peixe'],
+['sardinha-forno','Sardinha ao Forno','Peixes','40 min',5,'sardinha'],
+['bacalhau-batatas','Bacalhau com Batatas','Peixes','1 h 10 min',6,'bacalhau'],
+['camarao-alho','Camarão ao Alho e Óleo','Peixes','25 min',4,'camarão'],
+['camarao-molho','Camarão ao Molho','Peixes','35 min',5,'camarão'],
+['torta-sardinha','Torta de Sardinha','Massas e pães','1 h',10,'sardinha'],
+['sopa-feijao','Sopa de Feijão com Macarrão','Sopas','40 min',6,'feijão cozido'],
+['sopa-abobora','Sopa Cremosa de Abóbora','Sopas','40 min',6,'abóbora'],
+['sopa-mandioca-carne','Sopa de Mandioca com Carne','Sopas','1 h',6,'mandioca e carne'],
+['caldo-verde','Caldo Verde','Sopas','45 min',6,'batata e couve'],
+['creme-ervilha','Creme de Ervilha','Sopas','45 min',6,'ervilha seca']
+];
+const recipeTemplates={
+'Carnes':m=>({ingredients:[m,'1 cebola','2 dentes de alho','2 tomates','sal, pimenta e cheiro-verde'],steps:['Tempere o ingrediente principal.','Doure bem e junte cebola, alho e tomate.','Cozinhe até ficar macio e ajuste os temperos.'],tip:'Dourar bem antes de adicionar líquido concentra o sabor.'}),
+'Aves':m=>({ingredients:[m,'1 cebola','2 dentes de alho','1 tomate','sal, páprica e cheiro-verde'],steps:['Tempere a ave.','Doure e refogue com os temperos.','Cozinhe até ficar macia e finalize com cheiro-verde.'],tip:'Evite fogo muito alto depois de adicionar o molho.'}),
+'Peixes':m=>({ingredients:[m,'1 limão','1 cebola','2 tomates','azeite, sal e ervas'],steps:['Tempere com limão e sal.','Prepare uma base com cebola e tomate.','Cozinhe ou asse apenas até o peixe ficar macio.'],tip:'Peixe cozinha rápido; retire do fogo assim que estiver opaco e macio.'}),
+'Acompanhamentos':m=>({ingredients:[m,'1 cebola','1 dente de alho','1 colher de manteiga ou óleo','sal e cheiro-verde'],steps:['Prepare o ingrediente principal até ficar macio.','Refogue cebola e alho.','Junte tudo, ajuste o sal e finalize.'],tip:'Cozinhe apenas até o ponto para preservar textura e sabor.'}),
+'Saladas':m=>({ingredients:[m,'tomate ou cenoura a gosto','cebola a gosto','azeite','vinagre ou limão e sal'],steps:['Prepare e corte os ingredientes.','Misture em uma tigela.','Tempere pouco antes de servir.'],tip:'Ingredientes frios e bem secos deixam a salada mais agradável.'}),
+'Receitas básicas':m=>({ingredients:[m,'sal a gosto','água ou leite conforme necessário','1 colher de manteiga ou óleo'],steps:['Separe os ingredientes.','Cozinhe ou misture em fogo moderado.','Ajuste textura e temperos antes de servir.'],tip:'Dominar receitas básicas facilita dezenas de outras preparações.'}),
+'Massas e pães':m=>({ingredients:[m,'farinha de trigo conforme necessário','sal','água ou leite','manteiga ou óleo'],steps:['Misture os ingredientes até formar uma massa homogênea.','Modele ou monte conforme a receita.','Asse ou cozinhe até ficar dourado e no ponto.'],tip:'Adicione farinha aos poucos para não deixar a massa pesada.'}),
+'Lanches':m=>({ingredients:[m,'farinha ou massa base','sal e temperos','óleo para fritar ou assar'],steps:['Prepare o recheio ou ingrediente principal.','Modele os lanches.','Asse ou frite até dourar.'],tip:'Recheios frios facilitam a modelagem.'}),
+'Bolos e doces':m=>({ingredients:[m,'1 xícara de açúcar','2 ovos','1 xícara de leite ou creme','manteiga conforme necessário'],steps:['Misture os ingredientes até ficar homogêneo.','Cozinhe ou asse em temperatura moderada.','Deixe esfriar antes de servir ou desenformar.'],tip:'Meça os ingredientes com cuidado para manter a textura.'}),
+'Sopas':m=>({ingredients:[m,'1 cebola','1 dente de alho','1 litro de água ou caldo','sal e cheiro-verde'],steps:['Refogue cebola e alho.','Junte o ingrediente principal e o caldo.','Cozinhe até ficar macio e ajuste a textura.'],tip:'Bata apenas uma parte da sopa para engrossar sem perder textura.'})
+};
+recipes.push(...catalogExpansion.map(([id,title,category,time,yieldValue,main])=>{
+ const t=recipeTemplates[category](main);
+ return {id,title,category,summary:'Receita tradicional de cozinha caseira, em versão prática e original.',time,yield:yieldValue,ingredients:t.ingredients,steps:t.steps,tip:t.tip};
+}));
+
+
 let favorites=new Set(JSON.parse(localStorage.getItem('recipeFavorites')||'[]'));let shopping=JSON.parse(localStorage.getItem('shoppingList')||'[]');let favoriteMode=false;let pantryTerms=[];let current=null;let portions=1;
+
+const PHOTO_IDS=[34284708,28729037,1059905,434258,1555814,36936951,12116170,4519048,12959342,20430414,11558376,9275182,6063315,1332275,8960319,6647206,11766278,32296572,8876154,7966096,940842,8447291,1247671,12437582,1438672,19185775,27039905,16845596,8599861,34462828,234717,19141522];
+function hashId(s){let h=0;for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;return h}
+function recipeImage(r){const id=PHOTO_IDS[hashId(r.id)%PHOTO_IDS.length];return `https://images.pexels.com/photos/${id}/pexels-photo-${id}.jpeg?auto=compress&cs=tinysrgb&w=900&h=600&fit=crop`}
+
 const $=s=>document.querySelector(s);
 const category=$('#category');[...new Set(recipes.map(r=>r.category))].sort().forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;category.append(o)});
 function saveFav(){localStorage.setItem('recipeFavorites',JSON.stringify([...favorites]))}function saveShopping(){localStorage.setItem('shoppingList',JSON.stringify(shopping))}function renderShopping(){const el=$('#shoppingList');if(!el)return;el.innerHTML=shopping.length?shopping.map((x,i)=>`<li><label><input type="checkbox" ${x.done?'checked':''} onchange="toggleShopping(${i})"> ${x.text}</label></li>`).join(''):'<li>Nenhum item adicionado ainda.</li>'}window.toggleShopping=i=>{shopping[i].done=!shopping[i].done;saveShopping();renderShopping()}
 function timeMinutes(t){const h=Number((t.match(/(\d+)\s*h/)||[])[1]||0),m=Number((t.match(/(\d+)\s*min/)||[])[1]||0);return h*60+m}
 function pantryScore(r){if(!pantryTerms.length)return 0;const text=r.ingredients.join(' ').toLowerCase();return pantryTerms.reduce((n,t)=>n+(text.includes(t)?1:0),0)}
-function render(){const q=$('#search').value.trim().toLowerCase(),cat=category.value,maxTime=Number($('#timeFilter')?.value||0);let list=recipes.filter(r=>(!cat||r.category===cat)&&(!maxTime||timeMinutes(r.time)<=maxTime)&&(!favoriteMode||favorites.has(r.id))&&(!q||[r.title,r.category,r.summary,...r.ingredients].join(' ').toLowerCase().includes(q)));if(pantryTerms.length){list=list.filter(r=>pantryScore(r)>0).sort((a,b)=>pantryScore(b)-pantryScore(a));}$('#recipeCount').textContent=list.length;$('#favoriteCount').textContent=favorites.size;$('#empty').style.display=list.length?'none':'block';$('#grid').innerHTML=list.map(r=>`<article class="recipe"><div><span class="tag">${r.category}</span>${pantryTerms.length?` <span class="tag">Combina com ${pantryScore(r)} ingrediente(s)</span>`:''}</div><h2>${r.title}</h2><p>${r.summary}</p><div class="meta"><span>⏱ ${r.time}</span><span>🍽 ${r.yield} porções</span></div><div class="recipe-actions"><button class="open-btn" onclick="openRecipe('${r.id}')">Ver receita</button><button class="fav-btn ${favorites.has(r.id)?'favorite-on':''}" onclick="toggleFav('${r.id}')">${favorites.has(r.id)?'♥':'♡'}</button></div></article>`).join('')}
+function render(){const q=$('#search').value.trim().toLowerCase(),cat=category.value,maxTime=Number($('#timeFilter')?.value||0);let list=recipes.filter(r=>(!cat||r.category===cat)&&(!maxTime||timeMinutes(r.time)<=maxTime)&&(!favoriteMode||favorites.has(r.id))&&(!q||[r.title,r.category,r.summary,...r.ingredients].join(' ').toLowerCase().includes(q)));if(pantryTerms.length){list=list.filter(r=>pantryScore(r)>0).sort((a,b)=>pantryScore(b)-pantryScore(a));}$('#recipeCount').textContent=list.length;$('#favoriteCount').textContent=favorites.size;$('#empty').style.display=list.length?'none':'block';$('#grid').innerHTML=list.map(r=>`<article class="recipe"><img class="recipe-photo" loading="lazy" src="${recipeImage(r)}" alt="${r.title}"><div><span class="tag">${r.category}</span>${pantryTerms.length?` <span class="tag">Combina com ${pantryScore(r)} ingrediente(s)</span>`:''}</div><h2>${r.title}</h2><p>${r.summary}</p><div class="meta"><span>⏱ ${r.time}</span><span>🍽 ${r.yield} porções</span></div><div class="recipe-actions"><button class="open-btn" onclick="openRecipe('${r.id}')">Ver receita</button><button class="fav-btn ${favorites.has(r.id)?'favorite-on':''}" onclick="toggleFav('${r.id}')">${favorites.has(r.id)?'♥':'♡'}</button></div></article>`).join('')}
 window.toggleFav=id=>{favorites.has(id)?favorites.delete(id):favorites.add(id);saveFav();render()};
-window.openRecipe=id=>{current=recipes.find(r=>r.id===id);portions=current.yield;$('#dialogCategory').textContent=current.category;$('#dialogTitle').textContent=current.title;$('#dialogSummary').textContent=current.summary;$('#dialogTime').textContent='⏱ '+current.time;$('#dialogYield').textContent='🍽 '+current.yield+' porções';renderRecipe();$('#recipeDialog').showModal()};
+window.openRecipe=id=>{current=recipes.find(r=>r.id===id);portions=current.yield;$('#dialogImage').src=recipeImage(current);$('#dialogImage').alt=current.title;$('#dialogCategory').textContent=current.category;$('#dialogTitle').textContent=current.title;$('#dialogSummary').textContent=current.summary;$('#dialogTime').textContent='⏱ '+current.time;$('#dialogYield').textContent='🍽 '+current.yield+' porções';renderRecipe();$('#recipeDialog').showModal()};
 function renderRecipe(){const factor=portions/current.yield;$('#portionValue').textContent=portions;$('#ingredients').innerHTML=current.ingredients.map(i=>`<li>${i}${factor!==1?' <small>(ajuste proporcional para '+portions+' porções)</small>':''}</li>`).join('');$('#steps').innerHTML=current.steps.map(s=>`<li>${s}</li>`).join('');$('#dialogTip').textContent=current.tip}
 $('#addShopping').onclick=()=>{if(!current)return;current.ingredients.forEach(text=>{if(!shopping.some(x=>x.text===text))shopping.push({text,done:false})});saveShopping();renderShopping();alert('Ingredientes adicionados à lista de compras.');};$('#shoppingOpen').onclick=()=>{renderShopping();$('#shoppingDialog').showModal()};$('#closeShopping').onclick=()=>$('#shoppingDialog').close();$('#clearShopping').onclick=()=>{if(confirm('Limpar toda a lista de compras?')){shopping=[];saveShopping();renderShopping()}};$('#copyShopping').onclick=async()=>{const txt=shopping.map(x=>(x.done?'✓ ':'• ')+x.text).join('\n');try{await navigator.clipboard.writeText(txt);alert('Lista copiada.')}catch{alert(txt)}};$('#minusPortion').onclick=()=>{if(portions>1){portions--;renderRecipe()}};$('#plusPortion').onclick=()=>{portions++;renderRecipe()};$('#closeDialog').onclick=()=>$('#recipeDialog').close();$('#search').oninput=render;category.onchange=render;$('#timeFilter').onchange=render;$('#pantrySearch').onclick=()=>{pantryTerms=$('#pantryInput').value.toLowerCase().split(',').map(x=>x.trim()).filter(Boolean);$('#pantryHint').textContent=pantryTerms.length?'Mostrando receitas que usam pelo menos um dos ingredientes informados.':'';render()};$('#pantryClear').onclick=()=>{pantryTerms=[];$('#pantryInput').value='';$('#pantryHint').textContent='';render()};$('#favoritesOnly').onclick=()=>{favoriteMode=!favoriteMode;$('#favoritesOnly').classList.toggle('favorite-on',favoriteMode);render()};render();
