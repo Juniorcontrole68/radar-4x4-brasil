@@ -17,7 +17,7 @@ android {
 
     flavorDimensions 'channel'
     productFlavors {
-        teste {
+        internal {
             dimension 'channel'
             applicationId 'br.com.movit.rotas.teste'
             versionNameSuffix '-teste'
