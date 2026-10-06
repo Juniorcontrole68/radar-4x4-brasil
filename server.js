@@ -4503,6 +4503,30 @@ if(u.pathname==='/api/roteirizador/cte'){try{
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:true,stop,radiusLimitKm:300}))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+if(req.method==='POST'&&u.pathname==='/api/roteirizador/geometria-order'){try{
+  if(!dashboardHasAny(authUser,['dashboard','roteirizador','tracking']))return dashboardDeny(res);
+  const body=await routeReadJson(req);
+  const points=Array.isArray(body.points)?body.points.slice(0,81):[];
+  const order=Array.isArray(body.order)?body.order.map(Number):[];
+  if(points.length<2)throw Object.assign(new Error('Pontos insuficientes para desenhar a rota.'),{status:400});
+  const validPoints=points.map((p,i)=>{
+    const lat=Number(p?.lat),lon=Number(p?.lon);
+    if(!Number.isFinite(lat)||!Number.isFinite(lon)||lat<-90||lat>90||lon<-180||lon>180)throw Object.assign(new Error('Coordenada inválida na posição '+i+'.'),{status:400});
+    return{lat,lon}
+  });
+  const max=validPoints.length-1,seen=new Set();
+  for(const idx of order){
+    if(!Number.isInteger(idx)||idx<1||idx>max||seen.has(idx))throw Object.assign(new Error('Ordem da rota inválida.'),{status:400});
+    seen.add(idx)
+  }
+  if(order.length!==max)throw Object.assign(new Error('A ordem deve conter todas as paradas.'),{status:400});
+  const g=await routeGeometry(validPoints,order);
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:true,geometry:g.geometry,distanceMeters:g.distanceMeters,durationSeconds:g.durationSeconds}))
+}catch(e){
+  res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}
 if(req.method==='POST'&&u.pathname==='/api/roteirizador/recalcular'){try{
   if(!dashboardHasAny(authUser,['dashboard','roteirizador','tracking']))return dashboardDeny(res);
   const body=await routeReadJson(req);
