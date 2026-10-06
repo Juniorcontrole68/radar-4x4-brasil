@@ -2349,18 +2349,44 @@ async function start() {
             ORDER BY COALESCE(p.captured_at,d.last_seen_at) DESC
             LIMIT 100
           `);
-          const rows=q.rows.map(r=>({
-            ...r,
-            original_driver_name:r.driver_name,
-            original_vehicle_plate:r.vehicle_plate,
-            driver_name:'TESTE - '+r.driver_name,
-            vehicle_plate:(String(r.vehicle_plate||'').trim()+' T').trim(),
-            session_id:'TEST-'+r.device_id,
-            session_status:'active',
-            map_active:!!r.captured_at||Number(r.device_age_seconds)<=300,
-            test_only:true,
-            speed_mps:null,bearing_deg:null,battery_pct:null,trail:[]
-          }));
+          const rows=[];
+          for(const r of q.rows){
+            const a=await pool.query(
+              `SELECT romaneios FROM driver_tracking_test_assignments
+               WHERE active=TRUE
+                 AND work_date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+                 AND lower(trim(driver_name))=lower(trim($1))
+               ORDER BY created_at DESC,id DESC LIMIT 1`,
+              [r.driver_name]
+            );
+            const romaneios=a.rowCount&&Array.isArray(a.rows[0].romaneios)?a.rows[0].romaneios:[];
+            let movitRoute=null;
+            if(romaneios.length){
+              const mr=await pool.query(
+                `SELECT romaneio,title,route_data,updated_at
+                 FROM movit_romaneio_routes
+                 WHERE event_date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+                   AND romaneio=ANY($1::text[])
+                 ORDER BY updated_at DESC LIMIT 1`,
+                [romaneios.map(String)]
+              );
+              if(mr.rowCount)movitRoute=mr.rows[0];
+            }
+            rows.push({
+              ...r,
+              original_driver_name:r.driver_name,
+              original_vehicle_plate:r.vehicle_plate,
+              driver_name:'TESTE - '+r.driver_name,
+              vehicle_plate:(String(r.vehicle_plate||'').trim()+' T').trim(),
+              session_id:'TEST-'+r.device_id,
+              session_status:'active',
+              map_active:!!r.captured_at||Number(r.device_age_seconds)<=300,
+              test_only:true,
+              romaneios,
+              movit_route:movitRoute,
+              speed_mps:null,bearing_deg:null,battery_pct:null,trail:[]
+            });
+          }
           return sendJson(res,200,{ok:true,rows,test_only:true});
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar GPS de teste.'})}
       }
