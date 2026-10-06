@@ -166,7 +166,9 @@ public class MainActivity extends Activity {
         testTrackingButton=pill("🧪 Testar no mapa CONSTRULOG",Color.rgb(255,247,237),Color.rgb(154,52,18));
         testTrackingButton.setBackground(strokedBg(Color.rgb(255,247,237),Color.rgb(253,186,116),14));
         testTrackingButton.setOnClickListener(v->{if(testTrackingActive)stopConstrulogTest();else startConstrulogTest();});
-        LinearLayout.LayoutParams testLp=new LinearLayout.LayoutParams(-1,dp(48));testLp.setMargins(0,0,0,dp(8));info.addView(testTrackingButton,testLp);
+        LinearLayout.LayoutParams testLp=new LinearLayout.LayoutParams(-1,dp(48));testLp.setMargins(0,0,0,dp(8));
+        if(BuildConfig.PLAY_STORE_BUILD)testTrackingButton.setVisibility(View.GONE);
+        else info.addView(testTrackingButton,testLp);
 
         LinearLayout shareRow=new LinearLayout(this);shareRow.setOrientation(LinearLayout.HORIZONTAL);
         Button share=pill("↗  Compartilhar rota",Color.WHITE,BLUE);share.setBackground(strokedBg(Color.WHITE,LINE,14));share.setOnClickListener(v->shareRoute());
@@ -208,7 +210,7 @@ public class MainActivity extends Activity {
         final int NAVY=Color.rgb(22,20,47),BLUE=Color.rgb(47,115,232),TEXT=Color.rgb(22,27,45),MUTED=Color.rgb(91,105,135),LINE=Color.rgb(225,231,241);
         LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(18),dp(10),dp(18),dp(14));
         TextView title=label("MOVIT",24,NAVY,true);box.addView(title);
-        TextView test=label("Modo de teste • sem cadastro",12,MUTED,false);test.setPadding(0,0,0,dp(14));box.addView(test);
+        TextView test=label(BuildConfig.PLAY_STORE_BUILD?"Roteirizador MOVIT":"Modo de teste • sem cadastro",12,MUTED,false);test.setPadding(0,0,0,dp(14));box.addView(test);
 
         try{
             JSONArray rows=new JSONArray(prefs.getString("local_routes","[]"));
@@ -838,7 +840,7 @@ public class MainActivity extends Activity {
     private String userPlan(){return prefs.getString("plan","free");}
 
     private void refreshAccount(){
-        if(account!=null)account.setText("Modo teste");
+        if(account!=null)account.setText(BuildConfig.PLAY_STORE_BUILD?"MOVIT":"Modo teste");
         if(cloudSave!=null)cloudSave.setEnabled(true);
         if(cloudRoutes!=null)cloudRoutes.setEnabled(true);
     }
