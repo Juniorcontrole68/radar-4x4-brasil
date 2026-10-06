@@ -1,11 +1,105 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Lista de Convites</title><link rel="stylesheet" href="styles.css"></head>
-<body><div class="wrap">
-<header><div><span class="eyebrow">🎉 ORGANIZAÇÃO DO EVENTO</span><h1 id="pageTitle">Lista de Convites</h1><p>Controle convidados, confirmações e envie convites pelo WhatsApp.</p></div><button class="ghost" id="editEvent">⚙️ Dados do aniversário</button></header>
-<section class="cards"><div class="card"><span>Convites</span><strong id="cConvites">0</strong></div><div class="card"><span>Pessoas convidadas</span><strong id="cPessoas">0</strong></div><div class="card ok"><span>Confirmadas</span><strong id="cConfirmadas">0</strong></div><div class="card wait"><span>Aguardando</span><strong id="cAguardando">0</strong></div><div class="card no"><span>Não vão</span><strong id="cNao">0</strong></div></section>
-<section class="panel"><div class="panelTop"><div><h2>Convidados</h2><small id="eventInfo"></small></div><button class="primary" id="addGuest">＋ Adicionar convidado</button></div>
-<div class="filters"><input id="search" placeholder="🔎 Buscar convidado"><select id="statusFilter"><option value="">Todos os status</option><option value="pendente">Não enviado</option><option value="enviado">Aguardando</option><option value="confirmado">Confirmado</option><option value="nao-vai">Não vai</option></select></div>
-<div class="tableWrap"><table><thead><tr><th>Convidado</th><th>Pessoas</th><th>Status</th><th>Confirmados</th><th>Ações</th></tr></thead><tbody id="tbody"></tbody></table></div><div id="empty" class="empty">Nenhum convidado cadastrado ainda.</div></section>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Lista de Convites</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css?v=20261005-2">
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div>
+    <span class="eyebrow">🎉 ORGANIZAÇÃO DO EVENTO</span>
+    <h1 id="pageTitle">Lista de Convites</h1>
+    <p>Controle convidados, confirmações e envie convites pelo WhatsApp.</p>
+  </div>
+  <div class="headerActions">
+    <button class="ghost" id="installApp">📲 Instalar app</button>
+    <button class="ghost" id="shareApp">📤 Compartilhar app</button>
+    <button class="ghost" id="editEvent">⚙️ Dados do aniversário</button>
+  </div>
+</header>
+
+<section class="cards">
+  <div class="card"><span>Convites</span><strong id="cConvites">0</strong></div>
+  <div class="card"><span>Pessoas convidadas</span><strong id="cPessoas">0</strong></div>
+  <div class="card ok"><span>Confirmadas</span><strong id="cConfirmadas">0</strong></div>
+  <div class="card wait"><span>Aguardando</span><strong id="cAguardando">0</strong></div>
+  <div class="card no"><span>Não vão</span><strong id="cNao">0</strong></div>
+</section>
+
+<section class="panel">
+  <div class="panelTop">
+    <div><h2>Convidados</h2><small id="eventInfo"></small></div>
+    <button class="primary" id="addGuest">＋ Adicionar convidado</button>
+  </div>
+  <div class="filters">
+    <input id="search" placeholder="🔎 Buscar convidado">
+    <select id="statusFilter">
+      <option value="">Todos os status</option>
+      <option value="pendente">Não enviado</option>
+      <option value="enviado">Aguardando</option>
+      <option value="confirmado">Confirmado</option>
+      <option value="nao-vai">Não vai</option>
+    </select>
+  </div>
+  <div class="tableWrap">
+    <table>
+      <thead><tr><th>Convidado</th><th>Pessoas</th><th>Status</th><th>Confirmados</th><th>Ações</th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div id="empty" class="empty">Nenhum convidado cadastrado ainda.</div>
+</section>
 </div>
-<dialog id="guestDlg"><form method="dialog" id="guestForm"><h3 id="guestTitle">Novo convidado</h3><input type="hidden" id="guestId"><label>Nome do convidado ou família<input id="name" required placeholder="Ex.: João e família"></label><label>WhatsApp<input id="phone" inputmode="numeric" placeholder="Ex.: 19999999999"></label><div class="two"><label>Quantidade de pessoas<input id="invited" type="number" min="1" value="1"></label><label>Confirmados<input id="confirmed" type="number" min="0" placeholder="Ainda não respondeu"></label></div><label>Observação<input id="note" placeholder="Ex.: mesa da família"></label><div class="dlgActions"><button value="cancel" class="ghost">Cancelar</button><button type="button" class="primary" id="saveGuest">Salvar</button></div></form></dialog>
-<dialog id="eventDlg"><form method="dialog" id="eventForm"><h3>Dados do aniversário</h3><label>Nome do evento<input id="evTitle" placeholder="Ex.: Aniversário do João"></label><div class="two"><label>Data<input id="evDate" type="date"></label><label>Horário<input id="evTime" type="time"></label></div><label>Local<input id="evVenue" placeholder="Ex.: Salão de festas"></label><label>Endereço<input id="evAddress" placeholder="Rua, número, bairro, cidade"></label><label>Mensagem do convite<textarea id="evMessage" rows="3"></textarea></label><div class="dlgActions"><button value="cancel" class="ghost">Cancelar</button><button type="button" class="primary" id="saveEvent">Salvar</button></div></form></dialog>
-<script src="app.js"></script></body></html>
+
+<dialog id="guestDlg">
+<form method="dialog" id="guestForm">
+  <h3 id="guestTitle">Novo convidado</h3>
+  <input type="hidden" id="guestId">
+  <label>Nome do convidado ou família<input id="name" required placeholder="Ex.: João e família"></label>
+  <label>WhatsApp<input id="phone" inputmode="numeric" placeholder="Ex.: 19999999999"></label>
+  <button type="button" class="ghost full" id="selectContact">📒 Selecionar contato</button>
+  <div id="contactNumberWrap" hidden>
+    <label>Escolha o número do contato<select id="contactNumber"></select></label>
+  </div>
+  <small id="contactHint"></small>
+  <div class="two">
+    <label>Quantidade de pessoas
+      <select id="invitedChoice">
+        <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+        <option value="4">4</option><option value="5">5</option><option value="more">Mais de 5</option>
+      </select>
+      <input id="invited" type="number" min="1" value="1" hidden>
+    </label>
+    <label>Confirmados<input id="confirmed" type="number" min="0" placeholder="Ainda não respondeu"></label>
+  </div>
+  <label>Observação<input id="note" placeholder="Ex.: mesa da família"></label>
+  <div class="dlgActions"><button value="cancel" class="ghost">Cancelar</button><button type="button" class="primary" id="saveGuest">Salvar</button></div>
+</form>
+</dialog>
+
+<dialog id="eventDlg">
+<form method="dialog" id="eventForm">
+  <h3>Dados do aniversário</h3>
+  <label>Nome do evento<input id="evTitle"></label>
+  <div class="two"><label>Data<input id="evDate" type="date"></label><label>Horário<input id="evTime" type="time"></label></div>
+  <label>Local<input id="evVenue"></label>
+  <label>Endereço<input id="evAddress"></label>
+  <label>Mensagem do convite<textarea id="evMessage" rows="3"></textarea></label>
+  <label>Link do convite feito no Canva<input id="evCanvaUrl" type="url" placeholder="Opcional"></label>
+  <label>Imagem do convite<input id="evInviteImage" type="file" accept="image/*"></label>
+  <div id="imagePreviewWrap" class="hidden imagePreviewWrap">
+    <img id="imagePreview" alt="Prévia do convite">
+    <button type="button" class="ghost" id="removeInviteImage">Remover imagem</button>
+  </div>
+  <small>A imagem será enviada como foto pelo compartilhamento do celular. O link da imagem não será colocado no WhatsApp.</small>
+  <div class="dlgActions"><button value="cancel" class="ghost">Cancelar</button><button type="button" class="primary" id="saveEvent">Salvar</button></div>
+</form>
+</dialog>
+
+<script src="app.js?v=20261005-2"></script>
+</body>
+</html>
