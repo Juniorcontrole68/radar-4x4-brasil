@@ -32,7 +32,7 @@ public class MainActivity extends Activity {
     private JSONObject start=null,lastPlan=null;
     private android.content.SharedPreferences prefs;
     private TextView account,routeTitle,startPointLabel;
-    private Button cloudSave,cloudRoutes,optimizeButton,testTrackingButton;
+    private Button cloudSave,cloudRoutes,optimizeButton,testTrackingButton,truckRestrictionsButton;
     private Switch returnStartHome;
     private LocationManager testLocationManager;
     private LocationListener testLocationListener;
@@ -162,6 +162,13 @@ public class MainActivity extends Activity {
             renderMap(null);
         });
         info.addView(returnStartHome);
+
+        truckRestrictionsButton=pill("🚛 Ver restrições do caminhão",Color.rgb(255,248,235),Color.rgb(146,64,14));
+        truckRestrictionsButton.setBackground(strokedBg(Color.rgb(255,248,235),Color.rgb(251,191,36),14));
+        truckRestrictionsButton.setOnClickListener(v->analyzeTruckRestrictions(true));
+        LinearLayout.LayoutParams trp=new LinearLayout.LayoutParams(-1,dp(48));trp.setMargins(0,0,0,dp(8));
+        info.addView(truckRestrictionsButton,trp);
+        refreshTruckButton();
 
         testTrackingButton=pill("🧪 Testar no mapa CONSTRULOG",Color.rgb(255,247,237),Color.rgb(154,52,18));
         testTrackingButton.setBackground(strokedBg(Color.rgb(255,247,237),Color.rgb(253,186,116),14));
@@ -301,7 +308,7 @@ public class MainActivity extends Activity {
         String[] navs={"Google Maps","Waze","Navegação do sistema"};
         String[] sides={"Qualquer lado do veículo","Lado direito","Lado esquerdo"};
         String[] times={"10 min","15 min","20 min","30 min","45 min","60 min"};
-        String[] vehicles={"Carro","Caminhão pequeno","Van","Moto"};
+        String[] vehicles={"Carro","Van / Furgão","VUC","3/4","Toco","Truck","Carreta"};
         String[] ids={"Clássico e por ordem de rota","Somente número","Nome do cliente"};
 
         Spinner nav=new Spinner(this);nav.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,navs));nav.setSelection(prefs.getInt("cfg_nav",0));
@@ -314,20 +321,132 @@ public class MainActivity extends Activity {
         addSetting(box,"Tempo médio na parada",tm,MUTED,TEXT);
         addSetting(box,"Tipo de veículo",veh,MUTED,TEXT);
 
+        EditText vehicleHeight=new EditText(this);vehicleHeight.setHint("Ex.: 3,20");vehicleHeight.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);vehicleHeight.setText(prefs.getString("cfg_vehicle_height",""));
+        EditText vehicleWidth=new EditText(this);vehicleWidth.setHint("Ex.: 2,60");vehicleWidth.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);vehicleWidth.setText(prefs.getString("cfg_vehicle_width",""));
+        EditText vehicleLength=new EditText(this);vehicleLength.setHint("Ex.: 14,00");vehicleLength.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);vehicleLength.setText(prefs.getString("cfg_vehicle_length",""));
+        EditText vehicleWeight=new EditText(this);vehicleWeight.setHint("Ex.: 23,0");vehicleWeight.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);vehicleWeight.setText(prefs.getString("cfg_vehicle_weight",""));
+        addSetting(box,"Altura do veículo (m)",vehicleHeight,MUTED,TEXT);
+        addSetting(box,"Largura do veículo (m)",vehicleWidth,MUTED,TEXT);
+        addSetting(box,"Comprimento do veículo (m)",vehicleLength,MUTED,TEXT);
+        addSetting(box,"Peso total (t)",vehicleWeight,MUTED,TEXT);
+
         Switch toll=new Switch(this);toll.setText("Evitar pedágios");toll.setChecked(prefs.getBoolean("cfg_toll",false));box.addView(toll);
         Switch returnStart=new Switch(this);returnStart.setText("Retornar ao ponto de saída");returnStart.setChecked(prefs.getBoolean("current_return_start",false));box.addView(returnStart);
         addSetting(box,"ID de parada",idsSp,MUTED,TEXT);
         Switch bubble=new Switch(this);bubble.setText("Balão do modo de navegação");bubble.setChecked(prefs.getBoolean("cfg_bubble",true));box.addView(bubble);
 
         new AlertDialog.Builder(this).setView(box).setNegativeButton("Cancelar",null).setPositiveButton("Salvar",(d,w)->{
-            prefs.edit().putInt("cfg_nav",nav.getSelectedItemPosition()).putInt("cfg_side",side.getSelectedItemPosition()).putInt("cfg_time",tm.getSelectedItemPosition()).putInt("cfg_vehicle",veh.getSelectedItemPosition()).putInt("cfg_ids",idsSp.getSelectedItemPosition()).putBoolean("cfg_toll",toll.isChecked()).putBoolean("current_return_start",returnStart.isChecked()).putBoolean("cfg_bubble",bubble.isChecked()).apply();
+            prefs.edit()
+                .putInt("cfg_nav",nav.getSelectedItemPosition())
+                .putInt("cfg_side",side.getSelectedItemPosition())
+                .putInt("cfg_time",tm.getSelectedItemPosition())
+                .putInt("cfg_vehicle",veh.getSelectedItemPosition())
+                .putString("cfg_vehicle_name",String.valueOf(veh.getSelectedItem()))
+                .putString("cfg_vehicle_height",vehicleHeight.getText().toString().trim())
+                .putString("cfg_vehicle_width",vehicleWidth.getText().toString().trim())
+                .putString("cfg_vehicle_length",vehicleLength.getText().toString().trim())
+                .putString("cfg_vehicle_weight",vehicleWeight.getText().toString().trim())
+                .putInt("cfg_ids",idsSp.getSelectedItemPosition())
+                .putBoolean("cfg_toll",toll.isChecked())
+                .putBoolean("current_return_start",returnStart.isChecked())
+                .putBoolean("cfg_bubble",bubble.isChecked()).apply();
             if(returnStartHome!=null)returnStartHome.setChecked(returnStart.isChecked());
+            refreshTruckButton();
             status.setText("Configurações salvas.");
         }).show();
     }
 
     private void addSetting(LinearLayout box,String title,View control,int muted,int text){
         TextView t=label(title,14,text,true);t.setPadding(0,dp(14),0,0);box.addView(t);box.addView(control);
+    }
+
+    private String vehicleType(){
+        String saved=prefs.getString("cfg_vehicle_name","");
+        if(!saved.isEmpty())return saved;
+        String[] vehicles={"Carro","Van / Furgão","VUC","3/4","Toco","Truck","Carreta"};
+        int idx=Math.max(0,Math.min(vehicles.length-1,prefs.getInt("cfg_vehicle",0)));
+        return vehicles[idx];
+    }
+
+    private boolean isTruckVehicle(){
+        String v=vehicleType().toLowerCase(Locale.ROOT);
+        return v.contains("vuc")||v.contains("3/4")||v.contains("toco")||v.contains("truck")||v.contains("carreta")||v.contains("caminh");
+    }
+
+    private void refreshTruckButton(){
+        if(truckRestrictionsButton==null)return;
+        if(isTruckVehicle()){
+            truckRestrictionsButton.setText("🚛 Ver restrições • "+vehicleType());
+            truckRestrictionsButton.setVisibility(View.VISIBLE);
+        }else{
+            truckRestrictionsButton.setText("🚛 Configurar caminhão / restrições");
+            truckRestrictionsButton.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private JSONObject vehicleProfile()throws Exception{
+        JSONObject v=new JSONObject();
+        v.put("type",vehicleType());
+        v.put("heightM",prefs.getString("cfg_vehicle_height",""));
+        v.put("widthM",prefs.getString("cfg_vehicle_width",""));
+        v.put("lengthM",prefs.getString("cfg_vehicle_length",""));
+        v.put("weightT",prefs.getString("cfg_vehicle_weight",""));
+        return v;
+    }
+
+    private void analyzeTruckRestrictions(boolean showDialog){
+        if(!isTruckVehicle()){
+            if(showDialog)new AlertDialog.Builder(this)
+                .setTitle("Perfil do veículo")
+                .setMessage("Selecione VUC, 3/4, Toco, Truck ou Carreta em Configurações para analisar restrições de caminhão.")
+                .setNegativeButton("Cancelar",null)
+                .setPositiveButton("Configurar",(d,w)->showSettings()).show();
+            return;
+        }
+        if(stops.isEmpty()){
+            if(showDialog)status.setText("Adicione os endereços da rota antes de verificar restrições.");
+            return;
+        }
+        if(showDialog)status.setText("Verificando restrições para "+vehicleType()+"…");
+        exec.execute(()->{
+            try{
+                JSONObject body=new JSONObject();
+                body.put("vehicle",vehicleProfile());
+                JSONArray pts=new JSONArray();
+                if(start!=null)pts.put(new JSONObject(start.toString()));
+                for(JSONObject s:stops)pts.put(new JSONObject(s.toString()));
+                body.put("points",pts);
+                if(lastPlan!=null&&lastPlan.optJSONObject("geometry")!=null)body.put("geometry",lastPlan.optJSONObject("geometry"));
+                JSONObject j=Api.post("/api/public-router/truck-restrictions",body);
+                JSONArray alerts=j.optJSONArray("alerts");
+                int count=j.optInt("count",alerts==null?0:alerts.length());
+                runOnUiThread(()->{
+                    if(truckRestrictionsButton!=null){
+                        truckRestrictionsButton.setText(count>0?"⚠ "+count+" alerta"+(count==1?"":"s")+" de caminhão":"✓ Sem alerta cadastrado • "+vehicleType());
+                    }
+                    if(!showDialog)return;
+                    StringBuilder msg=new StringBuilder();
+                    msg.append("Veículo: ").append(vehicleType()).append("\n\n");
+                    if(alerts==null||alerts.length()==0){
+                        msg.append("Nenhuma restrição cadastrada foi encontrada nos endereços desta rota.\n\n");
+                    }else{
+                        for(int i=0;i<alerts.length();i++){
+                            JSONObject a=alerts.optJSONObject(i);if(a==null)continue;
+                            msg.append("⚠ ").append(a.optString("title","Restrição")).append("\n");
+                            String street=a.optString("street","");if(!street.isEmpty())msg.append(street).append("\n");
+                            String schedule=a.optString("schedule","");if(!schedule.isEmpty())msg.append("Horário: ").append(schedule).append("\n");
+                            String detail=a.optString("detail","");if(!detail.isEmpty())msg.append(detail).append("\n");
+                            msg.append("\n");
+                        }
+                    }
+                    msg.append(j.optString("coverage","")).append("\n\n").append(j.optString("warning",""));
+                    new AlertDialog.Builder(this).setTitle("Restrições para caminhão").setMessage(msg.toString()).setPositiveButton("OK",null).show();
+                    status.setText(count>0?count+" alerta(s) encontrado(s) para o veículo.":"Nenhuma restrição cadastrada encontrada nesta rota.");
+                });
+            }catch(Exception e){runOnUiThread(()->{
+                if(showDialog)status.setText("Restrições: "+e.getMessage());
+            });}
+        });
     }
 
     private void shareRoute(){
@@ -699,6 +818,7 @@ public class MainActivity extends Activity {
                     summary.setText(fmtTime(totalSec)+" • "+stops.size()+" pontos • "+fmtKm(j.optDouble("distanceMeters",0))+(prefs.getBoolean("current_return_start",false)?" • retorna ao início":" • só ida"));
                     status.setText("Rota otimizada com sucesso.");
                     renderList();renderMap(j);
+                    if(isTruckVehicle())analyzeTruckRestrictions(false);
                     if(optimizeButton!=null){optimizeButton.setEnabled(true);optimizeButton.setText("Otimizar rota");optimizeButton.setAlpha(1f);}
                 });
             }catch(Exception e){
@@ -892,6 +1012,7 @@ public class MainActivity extends Activity {
         data.put("driverName",prefs.getString("current_driver_name",""));
         data.put("romaneio",prefs.getString("current_romaneio",""));
         data.put("eventDate",prefs.getString("current_event_date",""));
+        data.put("vehicle",vehicleProfile());
         if(lastPlan!=null){
             data.put("distanceMeters",lastPlan.optDouble("distanceMeters",0));
             data.put("durationSeconds",lastPlan.optDouble("durationSeconds",0));
