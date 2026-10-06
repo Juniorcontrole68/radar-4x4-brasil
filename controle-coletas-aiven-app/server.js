@@ -3,6 +3,9 @@ const path = require('path');
 const http = require('http');
 const Module = require('module');
 const crypto = require('crypto');
+const { ImapFlow } = require('imapflow');
+const { simpleParser } = require('mailparser');
+const { PDFDocument } = require('pdf-lib');
 
 if (process.env.DATABASE_URL) {
   try {
@@ -30,6 +33,7 @@ const DRIVER_INSTALL_PAGE = path.join(__dirname, 'motorista-instalar.html');
 const DRIVER_TEST_INSTALL_PAGE = path.join(__dirname, 'motorista-teste-instalar.html');
 const LOTACAO_PAGE = path.join(__dirname, 'lotacao.html');
 const FROTA_PAGE = path.join(__dirname, 'frota.html');
+const PDF_UNIFIER_PAGE = path.join(__dirname, 'pdf-unificador.html');
 const ACCOUNTS_INDEX = path.join(__dirname, '..', 'contas-a-pagar-v3', 'public', 'index.html');
 const DRIVER_DOWNLOADS = path.join(__dirname, 'downloads');
 const DRIVER_UPDATE_FILE = path.join(DRIVER_DOWNLOADS, 'update.json');
@@ -1644,6 +1648,132 @@ async function start() {
       }
       if (req.method === 'GET' && (u.pathname === '/' || u.pathname === '/painel')) {
         return sendHtml(res, PANEL);
+      }
+
+      if (req.method === 'GET' && (u.pathname === '/pdf-unificador' || u.pathname === '/pdf-unificador/')) {
+        try {
+          await dashboardSession(req,false);
+          return sendHtml(res,PDF_UNIFIER_PAGE);
+        } catch(e){
+          res.writeHead(302,{Location:'/?login=1#pdf-unificador','Cache-Control':'no-store'});
+          return res.end();
+        }
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/painel/pdf-unificador') {
+        let client=null;
+        try{
+          await dashboardSession(req,false);
+          const body=await readJsonBodyLimited(req,64*1024);
+          const email=String(body.email||'').trim().slice(0,180);
+          const password=String(body.password||'');
+          const sender=String(body.sender||'').trim().slice(0,220);
+          const scope=body.scope==='all'?'all':'inbox';
+          const host=['imap.titan.email','imap0101.titan.email'].includes(String(body.host||''))?String(body.host):'imap.titan.email';
+          const from=String(body.from||''),to=String(body.to||'');
+          if(!email||!password)return sendJson(res,400,{ok:false,error:'Informe o e-mail e a senha do Titan.'});
+          if(!/^\d{4}-\d{2}-\d{2}$/.test(from)||!/^\d{4}-\d{2}-\d{2}$/.test(to))return sendJson(res,400,{ok:false,error:'Informe um período válido.'});
+          const since=new Date(from+'T00:00:00-03:00');
+          const before=new Date(to+'T00:00:00-03:00');before.setDate(before.getDate()+1);
+          if(!Number.isFinite(since.getTime())||!Number.isFinite(before.getTime())||before<=since)return sendJson(res,400,{ok:false,error:'Período inválido.'});
+          const days=(before-since)/86400000;
+          if(days>93)return sendJson(res,400,{ok:false,error:'Para segurança, consulte no máximo 90 dias por vez.'});
+
+          client=new ImapFlow({
+            host,port:993,secure:true,
+            auth:{user:email,pass:password},
+            logger:false,
+            tls:{rejectUnauthorized:true},
+            socketTimeout:45000,
+            greetingTimeout:20000
+          });
+          await client.connect();
+
+          let mailboxes=['INBOX'];
+          if(scope==='all'){
+            const boxes=await client.list();
+            mailboxes=boxes
+              .filter(b=>!(b.flags&&typeof b.flags.has==='function'&&b.flags.has('\\Noselect')))
+              .map(b=>b.path)
+              .filter(Boolean)
+              .slice(0,80);
+            if(!mailboxes.includes('INBOX'))mailboxes.unshift('INBOX');
+            mailboxes=[...new Set(mailboxes)];
+          }
+
+          const found=[];
+          let scanned=0;
+          for(const box of mailboxes){
+            if(found.length>=60||scanned>=250)break;
+            let lock=null;
+            try{
+              lock=await client.getMailboxLock(box,{description:'CONSTRULOG PDF Unificador'});
+              const query={since,before};
+              if(sender)query.from=sender;
+              let uids=await client.search(query,{uid:true});
+              if(!Array.isArray(uids)||!uids.length)continue;
+              if(scanned+uids.length>250)uids=uids.slice(Math.max(0,uids.length-(250-scanned)));
+              scanned+=uids.length;
+              for await (const msg of client.fetch(uids,{uid:true,internalDate:true,source:true,envelope:true})){
+                if(found.length>=60)break;
+                if(!msg.source)continue;
+                const parsed=await simpleParser(msg.source,{skipHtmlToText:true,skipTextToHtml:true});
+                for(const a of parsed.attachments||[]){
+                  if(found.length>=60)break;
+                  const filename=String(a.filename||'anexo.pdf');
+                  const isPdf=String(a.contentType||'').toLowerCase()==='application/pdf'||/\.pdf$/i.test(filename);
+                  if(!isPdf||!a.content||!a.content.length)continue;
+                  found.push({
+                    date:msg.internalDate?new Date(msg.internalDate).getTime():0,
+                    filename,
+                    content:Buffer.from(a.content)
+                  });
+                }
+              }
+            }catch(e){
+              console.warn('PDF Unificador: pasta ignorada',box,e.message);
+            }finally{
+              try{if(lock)lock.release()}catch(e){}
+            }
+          }
+
+          if(!found.length)return sendJson(res,404,{ok:false,error:'Nenhum anexo PDF foi encontrado com esses filtros.'});
+          found.sort((a,b)=>a.date-b.date||a.filename.localeCompare(b.filename,'pt-BR'));
+
+          const merged=await PDFDocument.create();
+          let mergedCount=0,skipped=0;
+          for(const item of found){
+            try{
+              const src=await PDFDocument.load(item.content,{ignoreEncryption:true,updateMetadata:false});
+              const indices=src.getPageIndices();
+              if(!indices.length){skipped++;continue}
+              const pages=await merged.copyPages(src,indices);
+              pages.forEach(p=>merged.addPage(p));
+              mergedCount++;
+            }catch(e){
+              skipped++;
+              console.warn('PDF Unificador: PDF ignorado',item.filename,e.message);
+            }
+          }
+          if(!mergedCount||merged.getPageCount()===0)return sendJson(res,422,{ok:false,error:'Os anexos encontrados não puderam ser unidos. Verifique se os PDFs não estão protegidos por senha.'});
+          const bytes=await merged.save({useObjectStreams:false});
+          const safeFrom=from.replace(/-/g,''),safeTo=to.replace(/-/g,'');
+          const filename='PDFs-unificados-'+safeFrom+'-a-'+safeTo+'.pdf';
+          res.writeHead(200,{
+            'Content-Type':'application/pdf',
+            'Content-Length':bytes.length,
+            'Content-Disposition':'attachment; filename="'+filename+'"',
+            'Cache-Control':'no-store',
+            'X-PDF-Count':String(mergedCount),
+            'X-PDF-Skipped':String(skipped)
+          });
+          return res.end(Buffer.from(bytes));
+        }catch(e){
+          const msg=String(e?.authenticationFailed?'Falha no login do Titan. Confira e-mail, senha de aplicativo e acesso IMAP.':(e.message||'Falha ao unificar PDFs.'));
+          return sendJson(res,e.status||500,{ok:false,error:msg});
+        }finally{
+          try{if(client)await client.logout()}catch(e){try{client?.close()}catch(_){}}
+        }
       }
 
       if (req.method === 'GET' && (u.pathname === '/frota' || u.pathname === '/frota/')) {
