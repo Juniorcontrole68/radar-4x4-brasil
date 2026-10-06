@@ -118,7 +118,7 @@ async function routePublicViaCep(raw){
       if(!city||!street)continue;
 
       const u='https://viacep.com.br/ws/SP/'+encodeURIComponent(city)+'/'+encodeURIComponent(street)+'/json/';
-      const r=await fetch(u,{headers:{'User-Agent':'MOVIT/0.8'},signal:AbortSignal.timeout(10000)});
+      const r=await fetch(u,{headers:{'User-Agent':'MOVIT/0.8'},signal:AbortSignal.timeout(4500)});
       const j=await r.json().catch(()=>[]);
       if(!r.ok||!Array.isArray(j)||!j.length)continue;
 
@@ -155,7 +155,7 @@ async function routePublicViaCep(raw){
         u.searchParams.set('limit','8');
         u.searchParams.set('countrycodes','br');
         u.searchParams.set('addressdetails','1');
-        const r=await fetch(u,{headers:{'User-Agent':'MOVIT-Rotas/0.8 (+https://controle-coletas-jr.onrender.com)','Accept-Language':'pt-BR,pt;q=0.9'},signal:AbortSignal.timeout(12000)});
+        const r=await fetch(u,{headers:{'User-Agent':'MOVIT-Rotas/0.8 (+https://controle-coletas-jr.onrender.com)','Accept-Language':'pt-BR,pt;q=0.9'},signal:AbortSignal.timeout(5000)});
         const j=await r.json().catch(()=>[]);
         if(!r.ok||!Array.isArray(j))return null;
 
@@ -215,7 +215,7 @@ async function routePublicViaCep(raw){
     }
 
     // 3) último recurso: CEP, marcado como aproximado
-    const r=await fetch('https://brasilapi.com.br/api/cep/v2/'+cep,{headers:{'User-Agent':'MOVIT/0.8'},signal:AbortSignal.timeout(10000)});
+    const r=await fetch('https://brasilapi.com.br/api/cep/v2/'+cep,{headers:{'User-Agent':'MOVIT/0.8'},signal:AbortSignal.timeout(4500)});
     const j=await r.json().catch(()=>({}));
     const lat=Number(j?.location?.coordinates?.latitude),lon=Number(j?.location?.coordinates?.longitude);
     if(!r.ok||!Number.isFinite(lat)||!Number.isFinite(lon))return null;
@@ -235,39 +235,77 @@ async function routePublicViaCep(raw){
 async function routePublicGeocode(q){
   const raw=String(q||'').trim().replace(/\s+/g,' ');
   if(raw.length<4)throw Object.assign(new Error('Informe ao menos rua e cidade.'),{status:400});
+
+  // Mantém a consulta dentro do tempo de resposta do app. Primeiro tenta
+  // Nominatim diretamente; ViaCEP entra apenas como refinamento/fallback.
   const candidates=[];
   const push=x=>{x=String(x||'').trim().replace(/\s+/g,' ');if(x&&!candidates.includes(x))candidates.push(x)};
-  for(const baseQuery of routePublicStreetVariants(raw)){
-    push(baseQuery);
-    if(!/\bSP\b|SÃO PAULO|SAO PAULO/i.test(baseQuery))push(baseQuery+', SP, Brasil');
-    push(baseQuery+', Brasil');
-  }
 
+  // Consulta exatamente como digitado.
+  push(raw);
+
+  // Se o usuário indicou São Paulo, reforça cidade/UF. Se não indicou estado,
+  // tenta SP como fallback depois da consulta original (sem assumir SP primeiro).
+  const mentionsSaoPaulo=/\b(s[aã]o paulo)\b/i.test(raw);
+  const mentionsUf=/\b[A-Z]{2}\b/i.test(raw)||/\b(sp|sao paulo|são paulo)\b/i.test(raw);
+  if(mentionsSaoPaulo)push(raw+', SP, Brasil');
+  else if(!mentionsUf)push(raw+', SP, Brasil');
+  push(raw+', Brasil');
+
+  // Remove número para localizar ao menos a rua quando o número não está
+  // mapeado no OpenStreetMap.
   const withoutNumber=raw.replace(/(^|,|\s)\d+[A-Za-z-]*(?=,|\s|$)/g,' ').replace(/\s+/g,' ').replace(/\s+,/g,',').trim();
   if(withoutNumber&&withoutNumber!==raw){
-    for(const baseQuery of routePublicStreetVariants(withoutNumber)){
-      push(baseQuery);
-      if(!/\bSP\b|SÃO PAULO|SAO PAULO/i.test(baseQuery))push(baseQuery+', SP, Brasil');
-      push(baseQuery+', Brasil');
+    push(withoutNumber);
+    if(mentionsSaoPaulo||!mentionsUf)push(withoutNumber+', SP, Brasil');
+  }
+
+  async function nominatim(query,timeoutMs=5500){
+    try{
+      const u=new URL('https://nominatim.openstreetmap.org/search');
+      u.searchParams.set('q',query);
+      u.searchParams.set('format','jsonv2');
+      u.searchParams.set('limit','5');
+      u.searchParams.set('countrycodes','br');
+      u.searchParams.set('addressdetails','1');
+      const r=await fetch(u,{
+        headers:{'User-Agent':'MOVIT-Rotas/1.0 (+https://controle-coletas-jr.onrender.com)','Accept-Language':'pt-BR,pt;q=0.9'},
+        signal:AbortSignal.timeout(timeoutMs)
+      });
+      const j=await r.json().catch(()=>[]);
+      if(!r.ok||!Array.isArray(j)||!j.length)return[];
+      return j.map(x=>({
+        lat:Number(x.lat),lon:Number(x.lon),
+        label:x.display_name||query,
+        city:x.address?.city||x.address?.town||x.address?.municipality||x.address?.village||'',
+        state:x.address?.state||'',
+        precision:x.address?.house_number?'number':'street',
+        source:'Nominatim',
+        approximate:!x.address?.house_number && /\d/.test(raw)
+      })).filter(x=>Number.isFinite(x.lat)&&Number.isFinite(x.lon));
+    }catch(e){
+      console.warn('MOVIT Nominatim falhou',query,String(e?.message||e));
+      return[];
     }
   }
 
-  const cepHit=await routePublicViaCep(raw);
-  if(cepHit)return[cepHit];
-
-  for(const query of candidates){
-    const u=new URL('https://nominatim.openstreetmap.org/search');
-    u.searchParams.set('q',query);u.searchParams.set('format','jsonv2');u.searchParams.set('limit','5');u.searchParams.set('countrycodes','br');u.searchParams.set('addressdetails','1');
-    try{
-      const r=await fetch(u,{headers:{'User-Agent':'MOVIT-Rotas/0.4 (+https://controle-coletas-jr.onrender.com)','Accept-Language':'pt-BR,pt;q=0.9'},signal:AbortSignal.timeout(15000)});
-      const j=await r.json();
-      if(r.ok&&Array.isArray(j)&&j.length){
-        const rows=j.map(x=>({lat:Number(x.lat),lon:Number(x.lon),label:x.display_name||query,city:x.address?.city||x.address?.town||x.address?.municipality||x.address?.village||'',state:x.address?.state||''})).filter(x=>Number.isFinite(x.lat)&&Number.isFinite(x.lon));
-        if(rows.length)return rows
-      }
-    }catch(e){}
+  // No máximo três tentativas rápidas para evitar "Erro: timeout" no Android.
+  for(const query of candidates.slice(0,3)){
+    const rows=await nominatim(query);
+    if(rows.length)return rows;
   }
-  throw Object.assign(new Error('Não localizei essa via. Digite ao menos nome da rua e cidade; o número é opcional.'),{status:404})
+
+  // ViaCEP como fallback, mas com orçamento curto.
+  try{
+    const viaCepPromise=routePublicViaCep(raw);
+    const cepHit=await Promise.race([
+      viaCepPromise,
+      new Promise(resolve=>setTimeout(()=>resolve(null),6500))
+    ]);
+    if(cepHit)return[cepHit];
+  }catch(e){}
+
+  throw Object.assign(new Error('Não localizei essa via. Informe rua, número e cidade. Ex.: Avenida Paulista, 1000, São Paulo.'),{status:404})
 }
 async function routePublicTable(points){
   const coords=points.map(p=>p.lon+','+p.lat).join(';');
