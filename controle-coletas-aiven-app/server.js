@@ -888,22 +888,34 @@ async function start() {
         try{
           const body=await readJsonBodyLimited(req,64*1024);
           const email=String(body.email||'').trim().toLowerCase().slice(0,180);
-          const name=String(body.name||'').trim().slice(0,120);
+          let name=String(body.name||'').trim().slice(0,120);
           const password=String(body.password||'');
+          console.log('MOVIT REGISTER tentativa',email);
           if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return sendJson(res,400,{ok:false,error:'Informe um e-mail válido.'});
-          if(name.length<2)return sendJson(res,400,{ok:false,error:'Informe seu nome.'});
           if(password.length<6)return sendJson(res,400,{ok:false,error:'A senha deve ter pelo menos 6 caracteres.'});
-          const ph=dashboardHashPassword(password);
-          let q;
-          try{
-            q=await pool.query("INSERT INTO router_app_users(email,name,password_salt,password_hash) VALUES($1,$2,$3,$4) RETURNING id::text,email,name,plan",[email,name,ph.salt,ph.hash]);
-          }catch(e){
-            if(String(e.code)==='23505')return sendJson(res,409,{ok:false,error:'Este e-mail já está cadastrado.'});
-            throw e
+          if(name.length<2)name=email.split('@')[0].replace(/[._-]+/g,' ').trim()||'Usuário MOVIT';
+
+          const existing=await pool.query("SELECT id::text,email,name,plan,active,password_salt,password_hash FROM router_app_users WHERE email=$1 LIMIT 1",[email]);
+          if(existing.rowCount){
+            const user=existing.rows[0];
+            if(!user.active)return sendJson(res,403,{ok:false,error:'Esta conta está desativada.'});
+            if(!dashboardVerifyPassword(password,user.password_salt,user.password_hash)){
+              return sendJson(res,409,{ok:false,error:'Este e-mail já está cadastrado. Use a mesma senha para entrar ou toque em Entrar.'})
+            }
+            const token=await routerCreateSession(user.id),limits=routerPlanLimits(user.plan),usage=await routerMonthlyUsage(user.id);
+            console.log('MOVIT REGISTER existente autenticado',email);
+            return sendJson(res,200,{ok:true,token,existing:true,user:{id:user.id,email:user.email,name:user.name,plan:user.plan,limits,usage}})
           }
+
+          const ph=dashboardHashPassword(password);
+          const q=await pool.query("INSERT INTO router_app_users(email,name,password_salt,password_hash) VALUES($1,$2,$3,$4) RETURNING id::text,email,name,plan",[email,name,ph.salt,ph.hash]);
           const user=q.rows[0],token=await routerCreateSession(user.id),limits=routerPlanLimits(user.plan);
-          return sendJson(res,201,{ok:true,token,user:{...user,limits}})
-        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao criar conta.'})}
+          console.log('MOVIT REGISTER criada',email);
+          return sendJson(res,201,{ok:true,token,user:{...user,limits,usage:0}})
+        }catch(e){
+          console.error('MOVIT REGISTER erro',String(e?.message||e));
+          return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao criar conta.'})
+        }
       }
 
       if (u.pathname === '/api/router-app/login' && req.method === 'POST') {
