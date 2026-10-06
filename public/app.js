@@ -2369,6 +2369,13 @@ const TRACKING_PLANNED_COLOR='#2563eb';
 const TRACKING_ACTUAL_COLORS=['#f97316','#06b6d4','#eab308','#22c55e','#ec4899','#8b5cf6','#14b8a6','#ef4444','#84cc16','#6366f1'];
 function trackingActualColor(row){
   const key=trackingDriverKey(row?.driver_name,row?.vehicle_plate)||'MOTORISTA';
+  const rows=Array.isArray(TRACKING_DRIVER_ROWS)?TRACKING_DRIVER_ROWS:[];
+  const driver=trackingNorm(row?.driver_name),plate=trackingNorm(row?.vehicle_plate);
+  const idx=rows.findIndex(x=>{
+    const xd=trackingNorm(x?.motorista||x?.driver_name),xp=trackingNorm(x?.veiculo||x?.vehicle_plate);
+    return (plate&&xp===plate)||(driver&&xd===driver)
+  });
+  if(idx>=0)return TRACKING_ACTUAL_COLORS[idx%TRACKING_ACTUAL_COLORS.length];
   let h=0;for(let i=0;i<key.length;i++)h=((h<<5)-h+key.charCodeAt(i))|0;
   return TRACKING_ACTUAL_COLORS[Math.abs(h)%TRACKING_ACTUAL_COLORS.length]
 }
@@ -3168,7 +3175,7 @@ function trackingRenderAnalysis(){
 }
 async function trackingRefreshLogicalAnalysis(liveRows,date,force=false){
   if(window.__trackingAnalysisBusy)return;
-  const active=(liveRows||[]).filter(r=>r&&(r.session_id||r.map_active||trackingHasPosition(r)));
+  const active=(liveRows||[]).filter(r=>r&&(r.operation_active||r.session_id||r.map_active||trackingHasPosition(r)));
   if(!active.length){TRACKING_ANALYSIS_ROWS=[];trackingRenderAnalysis();return}
   if(!force&&TRACKING_ANALYSIS_ROWS.length&&Date.now()-TRACKING_ANALYSIS_AT<90000)return;
   window.__trackingAnalysisBusy=true;
@@ -3247,7 +3254,7 @@ function renderTrackingMap(rows){
   TRACKING_LAYER=L.layerGroup().addTo(TRACKING_MAP);
   TRACKING_MARKERS.clear();
   const bounds=[];
-  const activeRows=(rows||[]).filter(row=>row&&(row.session_id||row.map_active||Number.isFinite(Number(row.latitude))&&Number.isFinite(Number(row.longitude)))).filter(row=>{
+  const activeRows=(rows||[]).filter(row=>row&&(row.operation_active||row.session_id||row.map_active||Number.isFinite(Number(row.latitude))&&Number.isFinite(Number(row.longitude)))).filter(row=>{
     if(!TRACKING_MAP_DRIVER_FILTER)return true;
     return trackingDriverKey(row.driver_name,row.vehicle_plate)===TRACKING_MAP_DRIVER_FILTER
   });
@@ -3257,7 +3264,7 @@ function renderTrackingMap(rows){
       const actual=trackingActualColor(row);
       return '<span><i class="tracking-history-dot" style="background:'+actual+'"></i>'+safe(trackingFirstName(row.driver_name))+(TRACKING_MAP_ONLY_DRIVERS?' • motorista':' • percurso real')+'</span>'
     }).join('<span class="dotSep">•</span>');
-    legend.innerHTML=(TRACKING_MAP_ONLY_DRIVERS?'':('<span><i class="tracking-history-dot" style="background:'+TRACKING_PLANNED_COLOR+'"></i><b>Rota planejada</b> • azul tracejado</span>'))+
+    legend.innerHTML=(TRACKING_MAP_ONLY_DRIVERS?'':('<span><b>Rota planejada</b> • tracejada na cor de cada motorista</span>'))+
       ((!TRACKING_MAP_ONLY_DRIVERS&&actualLegend)?'<span class="dotSep">•</span>':'')+
       actualLegend
   }
@@ -3277,7 +3284,7 @@ function renderTrackingMap(rows){
     const coords=trackingPlannedCoords(route);
     if(!TRACKING_MAP_ONLY_DRIVERS&&coords.length>1){
       L.polyline(coords,{pane:'tracking-planned',color:'#ffffff',weight:8,opacity:.88,dashArray:'14 7'}).addTo(TRACKING_LAYER);
-      L.polyline(coords,{pane:'tracking-planned',color:TRACKING_PLANNED_COLOR,weight:5,opacity:1,dashArray:'14 7'})
+      L.polyline(coords,{pane:'tracking-planned',color:plannedColor,weight:5,opacity:1,dashArray:'14 7'})
         .addTo(TRACKING_LAYER)
         .bindTooltip('Rota programada • '+safe(trackingDisplayName(row.driver_name))+' • '+nf(route?.stops?.length||0)+' no mapa de '+nf(route?.expectedDeliveries||route?.stops?.length||0)+' entrega(s)');
       coords.forEach(x=>bounds.push(x));
@@ -3456,10 +3463,31 @@ async function refreshTracking(){
       const heartbeatFresh=Number.isFinite(Number(r.device_age_seconds))&&Number(r.device_age_seconds)<=300;
       return inOperation&&(pointToday||heartbeatFresh);
     }).map(r=>({...r,operation_active:true}));
-    // Mapa ao vivo: somente aparelhos aprovados/ativos vindos do cadastro real.
-    // Motoristas apenas presentes no romaneio (sem aparelho aprovado) continuam
-    // disponíveis para planejamento, mas não aparecem no mapa.
-    const mergedRows=[...currentRows];
+    // Mantém todos os motoristas da operação do dia no mapa. Quem ainda não tiver
+    // GPS/aparelho ativo aparece com a rota planejada e status "Sem sinal", sem
+    // criar posição fictícia no mapa.
+    const liveKeys=new Set();
+    currentRows.forEach(r=>{
+      const p=trackingNorm(r.vehicle_plate||''),d=trackingNorm(r.driver_name||'');
+      if(p)liveKeys.add('P|'+p);
+      if(d)liveKeys.add('D|'+d);
+    });
+    const operationPlaceholders=operationRows.filter(x=>{
+      const p=trackingNorm(x.veiculo||x.vehicle_plate||''),d=trackingNorm(x.motorista||x.driver_name||'');
+      return !((p&&liveKeys.has('P|'+p))||(d&&liveKeys.has('D|'+d)))
+    }).map(x=>({
+      driver_name:driverDisplayName(x.motorista||x.driver_name||''),
+      vehicle_plate:String(x.veiculo||x.vehicle_plate||'').trim().toUpperCase(),
+      operation_active:true,
+      map_active:false,
+      session_id:null,
+      session_status:'',
+      latitude:null,
+      longitude:null,
+      age_seconds:null,
+      device_age_seconds:null
+    }));
+    const mergedRows=[...currentRows,...operationPlaceholders];
     renderTracking(mergedRows);
     trackingRefreshLogicalAnalysis(mergedRows,today).catch(()=>{});
 
