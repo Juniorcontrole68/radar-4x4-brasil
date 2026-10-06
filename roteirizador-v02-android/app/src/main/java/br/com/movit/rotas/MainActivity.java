@@ -201,14 +201,15 @@ public class MainActivity extends Activity {
         rg.addView(today);rg.addView(tomorrow);rg.addView(choose);box.addView(rg);
 
         CheckBox reuse=new CheckBox(this);reuse.setText("Reutilizar paradas anteriores");reuse.setPadding(0,dp(10),0,0);box.addView(reuse);
+        CheckBox returnStart=new CheckBox(this);returnStart.setText("Retornar ao mesmo ponto de saída");returnStart.setChecked(prefs.getBoolean("current_return_start",false));box.addView(returnStart);
 
         AlertDialog d=new AlertDialog.Builder(this).setView(box).setNegativeButton("Cancelar",null).setPositiveButton("Confirmar",null).create();
         d.setOnShowListener(x->d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             String nm=name.getText().toString().trim();
             if(nm.isEmpty())nm="Rota "+new java.text.SimpleDateFormat("dd/MM/yyyy",Locale.getDefault()).format(new Date());
-            prefs.edit().putString("current_route_name",nm).apply();routeTitle.setText(nm);
+            prefs.edit().putString("current_route_name",nm).putBoolean("current_return_start",returnStart.isChecked()).apply();routeTitle.setText(nm);
             if(!reuse.isChecked()){stops.clear();start=null;lastPlan=null;renderList();renderMap(null);}
-            status.setText("Rota criada. Adicione as paradas.");d.dismiss();
+            status.setText(returnStart.isChecked()?"Rota criada com retorno ao ponto de saída.":"Rota criada sem retorno ao ponto de saída.");d.dismiss();
         }));
         d.show();
     }
@@ -235,11 +236,12 @@ public class MainActivity extends Activity {
         addSetting(box,"Tipo de veículo",veh,MUTED,TEXT);
 
         Switch toll=new Switch(this);toll.setText("Evitar pedágios");toll.setChecked(prefs.getBoolean("cfg_toll",false));box.addView(toll);
+        Switch returnStart=new Switch(this);returnStart.setText("Retornar ao ponto de saída");returnStart.setChecked(prefs.getBoolean("current_return_start",false));box.addView(returnStart);
         addSetting(box,"ID de parada",idsSp,MUTED,TEXT);
         Switch bubble=new Switch(this);bubble.setText("Balão do modo de navegação");bubble.setChecked(prefs.getBoolean("cfg_bubble",true));box.addView(bubble);
 
         new AlertDialog.Builder(this).setView(box).setNegativeButton("Cancelar",null).setPositiveButton("Salvar",(d,w)->{
-            prefs.edit().putInt("cfg_nav",nav.getSelectedItemPosition()).putInt("cfg_side",side.getSelectedItemPosition()).putInt("cfg_time",tm.getSelectedItemPosition()).putInt("cfg_vehicle",veh.getSelectedItemPosition()).putInt("cfg_ids",idsSp.getSelectedItemPosition()).putBoolean("cfg_toll",toll.isChecked()).putBoolean("cfg_bubble",bubble.isChecked()).apply();
+            prefs.edit().putInt("cfg_nav",nav.getSelectedItemPosition()).putInt("cfg_side",side.getSelectedItemPosition()).putInt("cfg_time",tm.getSelectedItemPosition()).putInt("cfg_vehicle",veh.getSelectedItemPosition()).putInt("cfg_ids",idsSp.getSelectedItemPosition()).putBoolean("cfg_toll",toll.isChecked()).putBoolean("current_return_start",returnStart.isChecked()).putBoolean("cfg_bubble",bubble.isChecked()).apply();
             status.setText("Configurações salvas.");
         }).show();
     }
@@ -323,12 +325,13 @@ public class MainActivity extends Activity {
                 JSONObject body=new JSONObject();JSONArray arr=new JSONArray();
                 for(JSONObject s:stops)arr.put(new JSONObject(s.toString()));
                 body.put("stops",arr);if(start!=null)body.put("start",start);
+                body.put("returnToStart",prefs.getBoolean("current_return_start",false));
                 JSONObject j=Api.post("/api/public-router/optimize",body);lastPlan=j;
                 JSONArray order=j.getJSONArray("order");ArrayList<JSONObject> ordered=new ArrayList<>();
                 JSONArray points=j.getJSONArray("points");
                 for(int i=0;i<order.length();i++)ordered.add(points.getJSONObject(order.getInt(i)));
                 stops.clear();stops.addAll(ordered);
-                runOnUiThread(()->{status.setText("Rota otimizada.");int[] mins={10,15,20,30,45,60};int stopMin=mins[Math.min(mins.length-1,Math.max(0,prefs.getInt("cfg_time",2)))];double totalSec=j.optDouble("durationSeconds",0)+(stops.size()*stopMin*60d);summary.setText(fmtTime(totalSec)+" • "+stops.size()+" paradas • "+fmtKm(j.optDouble("distanceMeters",0)));renderList();renderMap(j);});
+                runOnUiThread(()->{status.setText("Rota otimizada.");int[] mins={10,15,20,30,45,60};int stopMin=mins[Math.min(mins.length-1,Math.max(0,prefs.getInt("cfg_time",2)))];double totalSec=j.optDouble("durationSeconds",0)+(stops.size()*stopMin*60d);summary.setText(fmtTime(totalSec)+" • "+stops.size()+" paradas • "+fmtKm(j.optDouble("distanceMeters",0))+(prefs.getBoolean("current_return_start",false)?" • ida e volta":" • só ida"));renderList();renderMap(j);});
             }catch(Exception e){runOnUiThread(()->status.setText("Erro: "+e.getMessage()));}
         });
     }
