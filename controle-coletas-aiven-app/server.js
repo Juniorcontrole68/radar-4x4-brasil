@@ -1182,6 +1182,64 @@ async function start() {
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao enviar rota para a CONSTRULOG.'})}
       }
 
+      if (u.pathname === '/api/public-router/test-tracking/start' && req.method === 'POST') {
+        try{
+          if(!publicRouteAllowed(req))return sendJson(res,429,{ok:false,error:'Muitas consultas. Aguarde um minuto.'});
+          const body=await readJsonBodyLimited(req,1024*1024);
+          const driver=String(body.driver_name||'').trim().replace(/\s+/g,' ').slice(0,120);
+          const romaneio=String(body.romaneio||'').trim().replace(/\s+/g,' ').slice(0,80);
+          const eventDate=/^\d{4}-\d{2}-\d{2}$/.test(String(body.event_date||''))?String(body.event_date):(new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}));
+          const routeData=body.route_data&&typeof body.route_data==='object'?body.route_data:{};
+          if(driver.length<2)return sendJson(res,400,{ok:false,error:'Informe o motorista do teste.'});
+          if(!romaneio)return sendJson(res,400,{ok:false,error:'Informe o romaneio do teste.'});
+
+          let plate='TESTE001';
+          const real=await pool.query(
+            `SELECT vehicle_plate,romaneios FROM driver_tracking_assignments
+             WHERE work_date=$1::date
+               AND active=TRUE
+               AND (
+                 lower(trim(driver_name))=lower(trim($2))
+                 OR romaneios ? $3
+               )
+             ORDER BY updated_at DESC,id DESC LIMIT 1`,
+            [eventDate,driver,romaneio]
+          );
+          if(real.rowCount&&String(real.rows[0].vehicle_plate||'').trim())plate=String(real.rows[0].vehicle_plate).trim().toUpperCase();
+
+          const token=crypto.randomBytes(32).toString('hex');
+          const dev=await pool.query(
+            "INSERT INTO driver_tracking_test_devices(token_hash,driver_name,vehicle_plate,device_name,last_seen_at) VALUES($1,$2,$3,$4,NOW()) RETURNING id::text AS id",
+            [dashboardTokenHash(token),driver,plate,'MOVIT Teste - celular do administrador']
+          );
+
+          await pool.query(
+            `UPDATE driver_tracking_test_assignments
+             SET active=FALSE
+             WHERE work_date=$1::date
+               AND lower(trim(driver_name))=lower(trim($2))`,
+            [eventDate,driver]
+          );
+          await pool.query(
+            "INSERT INTO driver_tracking_test_assignments(invite_token_hash,driver_name,vehicle_plate,romaneios,work_date,active) VALUES($1,$2,$3,$4::jsonb,$5::date,TRUE)",
+            [dashboardTokenHash(token),driver,plate,JSON.stringify([romaneio]),eventDate]
+          );
+
+          if(Array.isArray(routeData.stops)&&routeData.stops.length){
+            const title=String(body.title||driver+' '+eventDate).slice(0,180);
+            await pool.query(
+              `INSERT INTO movit_romaneio_routes(romaneio,driver_name,event_date,title,route_data,updated_at)
+               VALUES($1,$2,$3::date,$4,$5::jsonb,NOW())
+               ON CONFLICT (romaneio,event_date) DO UPDATE SET
+                 driver_name=EXCLUDED.driver_name,title=EXCLUDED.title,route_data=EXCLUDED.route_data,updated_at=NOW()`,
+              [romaneio,driver,eventDate,title,JSON.stringify(routeData)]
+            );
+          }
+
+          return sendJson(res,201,{ok:true,test_only:true,token,test_device_id:dev.rows[0].id,driver_name:driver,vehicle_plate:plate,romaneio,event_date:eventDate});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao iniciar teste MOVIT/CONSTRULOG.'})}
+      }
+
       if (u.pathname === '/api/public-router/geocode' && req.method === 'GET') {
         try{
           if(!publicRouteAllowed(req))return sendJson(res,429,{ok:false,error:'Muitas consultas. Aguarde um minuto.'});
