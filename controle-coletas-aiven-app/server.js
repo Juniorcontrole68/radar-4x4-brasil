@@ -66,20 +66,33 @@ function routePublicHaversine(a,b){
 }
 function routePublicStreetVariants(raw){
   const out=[],push=x=>{x=String(x||'').trim().replace(/\s+/g,' ');if(x&&!out.includes(x))out.push(x)};
-  push(raw);
-  const parts=String(raw||'').split(',').map(x=>x.trim()).filter(Boolean);
-  if(parts.length>=2){
-    const street=parts[0].replace(/\b\d+[A-Za-z-]*\b/g,'').replace(/\s+/g,' ').trim();
-    const city=parts[parts.length-1].replace(/\bSP\b/ig,'').trim();
-    if(street&&city){
-      push(street+', '+city);
-      const words=street.split(/\s+/),last=words[words.length-1]||'';
-      if(last.length>=4&&/[aeiou]$/i.test(last)){
-        const prev=last[last.length-2];
-        if(prev&&/[bcdfghjklmnpqrstvwxyz]/i.test(prev)){
-          push([...words.slice(0,-1),last.slice(0,-1)+prev+last.slice(-1)].join(' ')+', '+city)
-        }
+  const clean=String(raw||'').trim().replace(/\s+/g,' ');
+  push(clean);
+
+  const addStreetCity=(street,city)=>{
+    street=String(street||'').trim().replace(/\s+/g,' ');
+    city=String(city||'').trim().replace(/\bSP\b/ig,'').replace(/\s+/g,' ');
+    if(!street||!city)return;
+    push(street+', '+city);
+    const noNum=street.replace(/\b\d+[A-Za-z-]*\b/g,'').replace(/\s+/g,' ').trim();
+    if(noNum&&noNum!==street)push(noNum+', '+city);
+    const words=noNum.split(/\s+/),last=words[words.length-1]||'';
+    if(last.length>=4&&/[aeiou]$/i.test(last)){
+      const prev=last[last.length-2];
+      if(prev&&/[bcdfghjklmnpqrstvwxyz]/i.test(prev)){
+        push([...words.slice(0,-1),last.slice(0,-1)+prev+last.slice(-1)].join(' ')+', '+city)
       }
+    }
+  };
+
+  const parts=clean.split(',').map(x=>x.trim()).filter(Boolean);
+  if(parts.length>=2)addStreetCity(parts.slice(0,-1).join(', '),parts[parts.length-1]);
+
+  if(parts.length===1){
+    const words=clean.split(/\s+/).filter(Boolean);
+    for(let cityWords=1;cityWords<=3;cityWords++){
+      if(words.length<=cityWords+1)break;
+      addStreetCity(words.slice(0,-cityWords).join(' '),words.slice(-cityWords).join(' '))
     }
   }
   return out
