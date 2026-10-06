@@ -1,0 +1,40 @@
+MOVIT — Roteirizador
+
+Pacote Android:
+br.com.movit.rotas
+
+Versão inicial:
+1.0.0
+versionCode: 1
+
+Descrição curta:
+Planeje, otimize e compartilhe rotas de entrega com rapidez.
+
+Descrição completa:
+O MOVIT ajuda motoristas e equipes de operação a montar rotas de entrega de forma simples e prática.
+
+Com o aplicativo você pode:
+• adicionar endereços digitando ou usando voz;
+• usar a localização atual como ponto de partida;
+• manter o primeiro ponto fixo como saída;
+• escolher se a rota termina no ponto inicial;
+• otimizar a sequência das paradas;
+• visualizar paradas numeradas no mapa;
+• abrir cada destino no Google Maps ou Waze;
+• compartilhar uma rota por link para outro celular;
+• salvar rotas para reutilização;
+• associar rotas a romaneios em operações compatíveis.
+
+O MOVIT utiliza serviços de geocodificação e roteamento para transformar endereços em coordenadas e calcular trajetos. Distâncias e tempos são estimativas e devem ser conferidos antes do deslocamento.
+
+Categoria sugerida:
+Mapas e navegação
+
+E-mail de suporte:
+junior.controle68@gmail.com
+
+Política de privacidade:
+https://controle-coletas-jr.onrender.com/movit/privacidade
+
+Termos de uso:
+https://controle-coletas-jr.onrender.com/movit/termos
