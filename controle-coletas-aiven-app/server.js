@@ -232,80 +232,115 @@ async function routePublicViaCep(raw){
     return null
   }
 }
-async function routePublicGeocode(q){
+async function routePublicGeocode(q,nearLat=null,nearLon=null){
   const raw=String(q||'').trim().replace(/\s+/g,' ');
-  if(raw.length<4)throw Object.assign(new Error('Informe ao menos rua e cidade.'),{status:400});
+  if(raw.length<4)throw Object.assign(new Error('Informe ao menos o nome da rua.'),{status:400});
 
-  // Mantém a consulta dentro do tempo de resposta do app. Primeiro tenta
-  // Nominatim diretamente; ViaCEP entra apenas como refinamento/fallback.
+  const nlat=Number(nearLat),nlon=Number(nearLon);
+  const hasNear=Number.isFinite(nlat)&&Number.isFinite(nlon)&&nlat>=-90&&nlat<=90&&nlon>=-180&&nlon<=180;
+
+  let nearCity='',nearState='';
+  if(hasNear){
+    try{
+      const u=new URL('https://nominatim.openstreetmap.org/reverse');
+      u.searchParams.set('lat',String(nlat));u.searchParams.set('lon',String(nlon));
+      u.searchParams.set('format','jsonv2');u.searchParams.set('zoom','10');u.searchParams.set('addressdetails','1');
+      const r=await fetch(u,{headers:{'User-Agent':'MOVIT-Rotas/1.1 (+https://controle-coletas-jr.onrender.com)','Accept-Language':'pt-BR,pt;q=0.9'},signal:AbortSignal.timeout(4500)});
+      const j=await r.json().catch(()=>({}));
+      if(r.ok){
+        const a=j.address||{};
+        nearCity=String(a.city||a.town||a.municipality||a.village||'').trim();
+        nearState=String(a.state_code||a['ISO3166-2-lvl4']||a.state||'').replace(/^BR-/i,'').trim();
+        if(nearState.length>2&&/s[aã]o paulo/i.test(nearState))nearState='SP';
+      }
+    }catch(e){}
+  }
+
   const candidates=[];
   const push=x=>{x=String(x||'').trim().replace(/\s+/g,' ');if(x&&!candidates.includes(x))candidates.push(x)};
-
-  // Consulta exatamente como digitado.
   push(raw);
 
-  // Se o usuário indicou São Paulo, reforça cidade/UF. Se não indicou estado,
-  // tenta SP como fallback depois da consulta original (sem assumir SP primeiro).
-  const mentionsSaoPaulo=/\b(s[aã]o paulo)\b/i.test(raw);
-  const mentionsUf=/\b[A-Z]{2}\b/i.test(raw)||/\b(sp|sao paulo|são paulo)\b/i.test(raw);
-  if(mentionsSaoPaulo)push(raw+', SP, Brasil');
-  else if(!mentionsUf)push(raw+', SP, Brasil');
+  const hasCityHint=/,/.test(raw)||/\b(s[aã]o paulo|campinas|indaiatuba|americana|sumar[eé]|hortol[aâ]ndia|valinhos|vinhedo|jundia[ií]|paul[ií]nia)\b/i.test(raw);
+  if(!hasCityHint&&nearCity){
+    push(raw+', '+nearCity+(nearState?', '+nearState:'')+', Brasil');
+  }
   push(raw+', Brasil');
 
-  // Remove número para localizar ao menos a rua quando o número não está
-  // mapeado no OpenStreetMap.
   const withoutNumber=raw.replace(/(^|,|\s)\d+[A-Za-z-]*(?=,|\s|$)/g,' ').replace(/\s+/g,' ').replace(/\s+,/g,',').trim();
   if(withoutNumber&&withoutNumber!==raw){
     push(withoutNumber);
-    if(mentionsSaoPaulo||!mentionsUf)push(withoutNumber+', SP, Brasil');
+    if(!hasCityHint&&nearCity)push(withoutNumber+', '+nearCity+(nearState?', '+nearState:'')+', Brasil');
   }
 
-  async function nominatim(query,timeoutMs=5500){
+  async function nominatim(query,timeoutMs=6000){
     try{
       const u=new URL('https://nominatim.openstreetmap.org/search');
       u.searchParams.set('q',query);
       u.searchParams.set('format','jsonv2');
-      u.searchParams.set('limit','5');
+      u.searchParams.set('limit','8');
       u.searchParams.set('countrycodes','br');
       u.searchParams.set('addressdetails','1');
+      if(hasNear){
+        const d=0.35;
+        u.searchParams.set('viewbox',(nlon-d)+','+(nlat+d)+','+(nlon+d)+','+(nlat-d));
+        u.searchParams.set('bounded','0');
+      }
       const r=await fetch(u,{
-        headers:{'User-Agent':'MOVIT-Rotas/1.0 (+https://controle-coletas-jr.onrender.com)','Accept-Language':'pt-BR,pt;q=0.9'},
+        headers:{'User-Agent':'MOVIT-Rotas/1.1 (+https://controle-coletas-jr.onrender.com)','Accept-Language':'pt-BR,pt;q=0.9'},
         signal:AbortSignal.timeout(timeoutMs)
       });
       const j=await r.json().catch(()=>[]);
       if(!r.ok||!Array.isArray(j)||!j.length)return[];
-      return j.map(x=>({
-        lat:Number(x.lat),lon:Number(x.lon),
-        label:x.display_name||query,
-        city:x.address?.city||x.address?.town||x.address?.municipality||x.address?.village||'',
-        state:x.address?.state||'',
-        precision:x.address?.house_number?'number':'street',
-        source:'Nominatim',
-        approximate:!x.address?.house_number && /\d/.test(raw)
-      })).filter(x=>Number.isFinite(x.lat)&&Number.isFinite(x.lon));
+      const rows=j.map(x=>{
+        const lat=Number(x.lat),lon=Number(x.lon);
+        const distance=hasNear&&Number.isFinite(lat)&&Number.isFinite(lon)?routePublicHaversine({lat:nlat,lon:nlon},{lat,lon}):0;
+        return {
+          lat,lon,
+          label:x.display_name||query,
+          city:x.address?.city||x.address?.town||x.address?.municipality||x.address?.village||'',
+          state:x.address?.state||'',
+          precision:x.address?.house_number?'number':'street',
+          source:'Nominatim',
+          approximate:!x.address?.house_number && /\d/.test(raw),
+          _distance:distance
+        };
+      }).filter(x=>Number.isFinite(x.lat)&&Number.isFinite(x.lon))
+        .sort((a,b)=>(a._distance||0)-(b._distance||0));
+      rows.forEach(x=>delete x._distance);
+      return rows;
     }catch(e){
       console.warn('MOVIT Nominatim falhou',query,String(e?.message||e));
       return[];
     }
   }
 
-  // No máximo três tentativas rápidas para evitar "Erro: timeout" no Android.
-  for(const query of candidates.slice(0,3)){
+  for(const query of candidates.slice(0,4)){
     const rows=await nominatim(query);
     if(rows.length)return rows;
   }
 
-  // ViaCEP como fallback, mas com orçamento curto.
+  // Se a localização atual permitiu inferir a cidade, tenta ViaCEP com rua + cidade.
+  if(nearCity&&!hasCityHint){
+    try{
+      const cepHit=await Promise.race([
+        routePublicViaCep(raw+', '+nearCity+(nearState?', '+nearState:'')),
+        new Promise(resolve=>setTimeout(()=>resolve(null),6500))
+      ]);
+      if(cepHit)return[cepHit];
+    }catch(e){}
+  }
+
   try{
-    const viaCepPromise=routePublicViaCep(raw);
     const cepHit=await Promise.race([
-      viaCepPromise,
+      routePublicViaCep(raw),
       new Promise(resolve=>setTimeout(()=>resolve(null),6500))
     ]);
     if(cepHit)return[cepHit];
   }catch(e){}
 
-  throw Object.assign(new Error('Não localizei essa via. Informe rua, número e cidade. Ex.: Avenida Paulista, 1000, São Paulo.'),{status:404})
+  throw Object.assign(new Error(nearCity
+    ?('Não localizei essa via perto de '+nearCity+'. Tente incluir número ou bairro.')
+    :'Não localizei essa via. Informe rua, número e cidade.'),{status:404})
 }
 async function routePublicTable(points){
   const coords=points.map(p=>p.lon+','+p.lat).join(';');
@@ -1321,8 +1356,9 @@ async function start() {
         try{
           if(!publicRouteAllowed(req))return sendJson(res,429,{ok:false,error:'Muitas consultas. Aguarde um minuto.'});
           const q=String(u.searchParams.get('q')||'').trim().slice(0,250);
-          if(q.length<5)return sendJson(res,400,{ok:false,error:'Informe um endereço mais completo.'});
-          const rows=await routePublicGeocode(q);
+          if(q.length<4)return sendJson(res,400,{ok:false,error:'Informe ao menos o nome da rua.'});
+          const lat=Number(u.searchParams.get('lat')),lon=Number(u.searchParams.get('lon'));
+          const rows=await routePublicGeocode(q,lat,lon);
           return sendJson(res,200,{ok:true,rows});
         }catch(e){return sendJson(res,e.status||502,{ok:false,error:e.message||'Falha ao localizar endereço.'})}
       }
