@@ -65,12 +65,43 @@ function routePublicHaversine(a,b){
   return 2*R*Math.asin(Math.min(1,Math.sqrt(x)))
 }
 async function routePublicGeocode(q){
-  const u=new URL('https://nominatim.openstreetmap.org/search');
-  u.searchParams.set('q',q);u.searchParams.set('format','jsonv2');u.searchParams.set('limit','5');u.searchParams.set('countrycodes','br');u.searchParams.set('addressdetails','1');
-  const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Rotas/0.2 (+https://controle-coletas-jr.onrender.com)','Accept-Language':'pt-BR,pt;q=0.9'},signal:AbortSignal.timeout(15000)});
-  const j=await r.json();
-  if(!r.ok||!Array.isArray(j)||!j.length)throw Object.assign(new Error('Endereço não encontrado.'),{status:404});
-  return j.map(x=>({lat:Number(x.lat),lon:Number(x.lon),label:x.display_name||q,city:x.address?.city||x.address?.town||x.address?.village||'',state:x.address?.state||''})).filter(x=>Number.isFinite(x.lat)&&Number.isFinite(x.lon))
+  const raw=String(q||'').trim().replace(/\s+/g,' ');
+  if(raw.length<4)throw Object.assign(new Error('Informe ao menos rua e cidade.'),{status:400});
+  const candidates=[];
+  const push=x=>{x=String(x||'').trim().replace(/\s+/g,' ');if(x&&!candidates.includes(x))candidates.push(x)};
+  push(raw);
+  if(!/\bSP\b|SÃO PAULO|SAO PAULO/i.test(raw))push(raw+', SP, Brasil');
+  push(raw+', Brasil');
+
+  const parts=raw.split(',').map(x=>x.trim()).filter(Boolean);
+  if(parts.length>=2){
+    const street=parts[0].replace(/\b\d+[A-Za-z-]*\b/g,'').replace(/\s{2,}/g,' ').trim();
+    const city=parts[parts.length-1];
+    if(street&&city){
+      push(street+', '+city+', SP, Brasil');
+      push(street+', '+city+', Brasil');
+    }
+  }
+
+  const withoutNumber=raw.replace(/(^|,|\s)\d+[A-Za-z-]*(?=,|\s|$)/g,' ').replace(/\s+/g,' ').replace(/\s+,/g,',').trim();
+  if(withoutNumber&&withoutNumber!==raw){
+    push(withoutNumber);
+    if(!/\bSP\b|SÃO PAULO|SAO PAULO/i.test(withoutNumber))push(withoutNumber+', SP, Brasil');
+  }
+
+  for(const query of candidates){
+    const u=new URL('https://nominatim.openstreetmap.org/search');
+    u.searchParams.set('q',query);u.searchParams.set('format','jsonv2');u.searchParams.set('limit','5');u.searchParams.set('countrycodes','br');u.searchParams.set('addressdetails','1');
+    try{
+      const r=await fetch(u,{headers:{'User-Agent':'MOVIT-Rotas/0.4 (+https://controle-coletas-jr.onrender.com)','Accept-Language':'pt-BR,pt;q=0.9'},signal:AbortSignal.timeout(15000)});
+      const j=await r.json();
+      if(r.ok&&Array.isArray(j)&&j.length){
+        const rows=j.map(x=>({lat:Number(x.lat),lon:Number(x.lon),label:x.display_name||query,city:x.address?.city||x.address?.town||x.address?.municipality||x.address?.village||'',state:x.address?.state||''})).filter(x=>Number.isFinite(x.lat)&&Number.isFinite(x.lon));
+        if(rows.length)return rows
+      }
+    }catch(e){}
+  }
+  throw Object.assign(new Error('Não localizei essa via. Tente "Nome da rua, Cidade". O número não é obrigatório.'),{status:404})
 }
 async function routePublicTable(points){
   const coords=points.map(p=>p.lon+','+p.lat).join(';');
