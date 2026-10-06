@@ -190,26 +190,51 @@ public class MainActivity extends Activity {
         final int TEXT=Color.rgb(22,27,45),MUTED=Color.rgb(91,105,135);
         LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(20),dp(6),dp(20),0);
         TextView t=label("Criar rota",22,TEXT,true);box.addView(t);
-        TextView nlab=label("Nome da rota (opcional)",13,MUTED,false);nlab.setPadding(0,dp(16),0,dp(4));box.addView(nlab);
-        EditText name=new EditText(this);name.setHint(new java.text.SimpleDateFormat("EEEE",new Locale("pt","BR")).format(new Date()));box.addView(name);
 
-        TextView dlab=label("Selecione a data",13,MUTED,false);dlab.setPadding(0,dp(14),0,dp(4));box.addView(dlab);
+        TextView nlab=label("Nome do motorista",13,MUTED,false);nlab.setPadding(0,dp(16),0,dp(4));box.addView(nlab);
+        EditText driver=new EditText(this);driver.setHint("Ex.: Júlio");driver.setText(prefs.getString("current_driver_name",""));box.addView(driver);
+
+        TextView dlab=label("Data do evento",13,MUTED,false);dlab.setPadding(0,dp(14),0,dp(4));box.addView(dlab);
         RadioGroup rg=new RadioGroup(this);rg.setOrientation(RadioGroup.VERTICAL);
-        RadioButton today=new RadioButton(this);today.setText("Hoje  •  "+new java.text.SimpleDateFormat("dd/MM",Locale.getDefault()).format(new Date()));today.setChecked(true);
-        RadioButton tomorrow=new RadioButton(this);Calendar cal=Calendar.getInstance();cal.add(Calendar.DAY_OF_MONTH,1);tomorrow.setText("Amanhã  •  "+new java.text.SimpleDateFormat("dd/MM",Locale.getDefault()).format(cal.getTime()));
+        Calendar now=Calendar.getInstance(),tom=Calendar.getInstance();tom.add(Calendar.DAY_OF_MONTH,1);
+        RadioButton today=new RadioButton(this);today.setText("Hoje  •  "+new java.text.SimpleDateFormat("dd/MM/yyyy",Locale.getDefault()).format(now.getTime()));today.setChecked(true);
+        RadioButton tomorrow=new RadioButton(this);tomorrow.setText("Amanhã  •  "+new java.text.SimpleDateFormat("dd/MM/yyyy",Locale.getDefault()).format(tom.getTime()));
         RadioButton choose=new RadioButton(this);choose.setText("Escolher data");
         rg.addView(today);rg.addView(tomorrow);rg.addView(choose);box.addView(rg);
+
+        final Calendar selected=Calendar.getInstance();
+        TextView chosenDate=label(new java.text.SimpleDateFormat("dd/MM/yyyy",Locale.getDefault()).format(selected.getTime()),13,TEXT,true);chosenDate.setPadding(0,dp(6),0,0);box.addView(chosenDate);
+
+        choose.setOnClickListener(v->{
+            DatePickerDialog p=new DatePickerDialog(this,(view,year,month,day)->{
+                selected.set(year,month,day);
+                chosenDate.setText(new java.text.SimpleDateFormat("dd/MM/yyyy",Locale.getDefault()).format(selected.getTime()));
+            },selected.get(Calendar.YEAR),selected.get(Calendar.MONTH),selected.get(Calendar.DAY_OF_MONTH));
+            p.show();
+        });
+        today.setOnClickListener(v->{selected.setTime(new Date());chosenDate.setText(new java.text.SimpleDateFormat("dd/MM/yyyy",Locale.getDefault()).format(selected.getTime()));});
+        tomorrow.setOnClickListener(v->{Calendar x=Calendar.getInstance();x.add(Calendar.DAY_OF_MONTH,1);selected.setTime(x.getTime());chosenDate.setText(new java.text.SimpleDateFormat("dd/MM/yyyy",Locale.getDefault()).format(selected.getTime()));});
 
         CheckBox reuse=new CheckBox(this);reuse.setText("Reutilizar paradas anteriores");reuse.setPadding(0,dp(10),0,0);box.addView(reuse);
         CheckBox returnStart=new CheckBox(this);returnStart.setText("Retornar ao mesmo ponto de saída");returnStart.setChecked(prefs.getBoolean("current_return_start",false));box.addView(returnStart);
 
         AlertDialog d=new AlertDialog.Builder(this).setView(box).setNegativeButton("Cancelar",null).setPositiveButton("Confirmar",null).create();
         d.setOnShowListener(x->d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
-            String nm=name.getText().toString().trim();
-            if(nm.isEmpty())nm="Rota "+new java.text.SimpleDateFormat("dd/MM/yyyy",Locale.getDefault()).format(new Date());
-            prefs.edit().putString("current_route_name",nm).putBoolean("current_return_start",returnStart.isChecked()).apply();routeTitle.setText(nm);
+            String driverName=driver.getText().toString().trim();
+            if(driverName.isEmpty()){status.setText("Informe o nome do motorista.");return;}
+            String eventDate=new java.text.SimpleDateFormat("yyyy-MM-dd",Locale.getDefault()).format(selected.getTime());
+            String eventDateBr=new java.text.SimpleDateFormat("dd/MM/yyyy",Locale.getDefault()).format(selected.getTime());
+            String routeName=driverName+" "+eventDateBr;
+            prefs.edit()
+                .putString("current_driver_name",driverName)
+                .putString("current_event_date",eventDate)
+                .putString("current_route_name",routeName)
+                .putBoolean("current_return_start",returnStart.isChecked())
+                .apply();
+            routeTitle.setText(routeName);
             if(!reuse.isChecked()){stops.clear();start=null;lastPlan=null;renderList();renderMap(null);}
-            status.setText(returnStart.isChecked()?"Rota criada com retorno ao ponto de saída.":"Rota criada sem retorno ao ponto de saída.");d.dismiss();
+            status.setText(returnStart.isChecked()?"Rota criada com retorno ao ponto de saída.":"Rota criada sem retorno ao ponto de saída.");
+            d.dismiss();
         }));
         d.show();
     }
