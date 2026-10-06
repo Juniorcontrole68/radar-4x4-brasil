@@ -232,12 +232,12 @@ async function routePublicViaCep(raw){
     return null
   }
 }
-async function routePublicGeocode(q,nearLat=null,nearLon=null){
+async function routePublicGeocode(q,nearLat=null,nearLon=null,allMatches=false){
   const raw=String(q||'').trim().replace(/\s+/g,' ');
   if(raw.length<4)throw Object.assign(new Error('Informe ao menos o nome da rua.'),{status:400});
 
   const nlat=Number(nearLat),nlon=Number(nearLon);
-  const hasNear=Number.isFinite(nlat)&&Number.isFinite(nlon)&&nlat>=-90&&nlat<=90&&nlon>=-180&&nlon<=180;
+  const hasNear=!allMatches&&Number.isFinite(nlat)&&Number.isFinite(nlon)&&nlat>=-90&&nlat<=90&&nlon>=-180&&nlon<=180;
 
   let nearCity='',nearState='';
   if(hasNear){
@@ -245,7 +245,7 @@ async function routePublicGeocode(q,nearLat=null,nearLon=null){
       const u=new URL('https://nominatim.openstreetmap.org/reverse');
       u.searchParams.set('lat',String(nlat));u.searchParams.set('lon',String(nlon));
       u.searchParams.set('format','jsonv2');u.searchParams.set('zoom','10');u.searchParams.set('addressdetails','1');
-      const r=await fetch(u,{headers:{'User-Agent':'MOVIT-Rotas/1.1 (+https://controle-coletas-jr.onrender.com)','Accept-Language':'pt-BR,pt;q=0.9'},signal:AbortSignal.timeout(4500)});
+      const r=await fetch(u,{headers:{'User-Agent':'MOVIT-Rotas/1.2 (+https://controle-coletas-jr.onrender.com)','Accept-Language':'pt-BR,pt;q=0.9'},signal:AbortSignal.timeout(4500)});
       const j=await r.json().catch(()=>({}));
       if(r.ok){
         const a=j.address||{};
@@ -261,51 +261,54 @@ async function routePublicGeocode(q,nearLat=null,nearLon=null){
   push(raw);
 
   const hasCityHint=/,/.test(raw)||/\b(s[aã]o paulo|campinas|indaiatuba|americana|sumar[eé]|hortol[aâ]ndia|valinhos|vinhedo|jundia[ií]|paul[ií]nia)\b/i.test(raw);
-  if(!hasCityHint&&nearCity){
-    push(raw+', '+nearCity+(nearState?', '+nearState:'')+', Brasil');
-  }
+  if(!allMatches&&!hasCityHint&&nearCity)push(raw+', '+nearCity+(nearState?', '+nearState:'')+', Brasil');
   push(raw+', Brasil');
 
   const withoutNumber=raw.replace(/(^|,|\s)\d+[A-Za-z-]*(?=,|\s|$)/g,' ').replace(/\s+/g,' ').replace(/\s+,/g,',').trim();
   if(withoutNumber&&withoutNumber!==raw){
     push(withoutNumber);
-    if(!hasCityHint&&nearCity)push(withoutNumber+', '+nearCity+(nearState?', '+nearState:'')+', Brasil');
+    if(!allMatches&&!hasCityHint&&nearCity)push(withoutNumber+', '+nearCity+(nearState?', '+nearState:'')+', Brasil');
+    push(withoutNumber+', Brasil');
   }
 
-  async function nominatim(query,timeoutMs=6000){
+  async function nominatim(query,timeoutMs=6500,limit=allMatches?20:8){
     try{
       const u=new URL('https://nominatim.openstreetmap.org/search');
       u.searchParams.set('q',query);
       u.searchParams.set('format','jsonv2');
-      u.searchParams.set('limit','8');
+      u.searchParams.set('limit',String(limit));
       u.searchParams.set('countrycodes','br');
       u.searchParams.set('addressdetails','1');
+      u.searchParams.set('dedupe','1');
       if(hasNear){
         const d=0.35;
         u.searchParams.set('viewbox',(nlon-d)+','+(nlat+d)+','+(nlon+d)+','+(nlat-d));
         u.searchParams.set('bounded','0');
       }
       const r=await fetch(u,{
-        headers:{'User-Agent':'MOVIT-Rotas/1.1 (+https://controle-coletas-jr.onrender.com)','Accept-Language':'pt-BR,pt;q=0.9'},
+        headers:{'User-Agent':'MOVIT-Rotas/1.2 (+https://controle-coletas-jr.onrender.com)','Accept-Language':'pt-BR,pt;q=0.9'},
         signal:AbortSignal.timeout(timeoutMs)
       });
       const j=await r.json().catch(()=>[]);
       if(!r.ok||!Array.isArray(j)||!j.length)return[];
       const rows=j.map(x=>{
         const lat=Number(x.lat),lon=Number(x.lon);
+        const a=x.address||{};
+        const city=String(a.city||a.town||a.municipality||a.village||a.county||'');
+        const state=String(a.state||'');
+        const road=String(a.road||a.pedestrian||a.residential||a.path||a.neighbourhood||'');
         const distance=hasNear&&Number.isFinite(lat)&&Number.isFinite(lon)?routePublicHaversine({lat:nlat,lon:nlon},{lat,lon}):0;
         return {
           lat,lon,
           label:x.display_name||query,
-          city:x.address?.city||x.address?.town||x.address?.municipality||x.address?.village||'',
-          state:x.address?.state||'',
-          precision:x.address?.house_number?'number':'street',
+          road,city,state,
+          precision:a.house_number?'number':'street',
           source:'Nominatim',
-          approximate:!x.address?.house_number && /\d/.test(raw),
+          approximate:!a.house_number && /\d/.test(raw),
           _distance:distance
         };
-      }).filter(x=>Number.isFinite(x.lat)&&Number.isFinite(x.lon))
-        .sort((a,b)=>(a._distance||0)-(b._distance||0));
+      }).filter(x=>Number.isFinite(x.lat)&&Number.isFinite(x.lon));
+      if(hasNear)rows.sort((a,b)=>(a._distance||0)-(b._distance||0));
       rows.forEach(x=>delete x._distance);
       return rows;
     }catch(e){
@@ -314,13 +317,28 @@ async function routePublicGeocode(q,nearLat=null,nearLon=null){
     }
   }
 
-  for(const query of candidates.slice(0,4)){
-    const rows=await nominatim(query);
-    if(rows.length)return rows;
+  if(allMatches){
+    const merged=[],seen=new Set();
+    // Busca nacional: consulta com e sem número para encontrar ruas homônimas em cidades diferentes.
+    for(const query of candidates.slice(0,4)){
+      const rows=await nominatim(query,7000,20);
+      for(const row of rows){
+        const key=(row.city+'|'+row.state+'|'+row.road+'|'+row.lat.toFixed(5)+'|'+row.lon.toFixed(5)).toLowerCase();
+        if(seen.has(key))continue;
+        seen.add(key);merged.push(row);
+        if(merged.length>=25)break;
+      }
+      if(merged.length>=25)break;
+    }
+    if(merged.length)return merged;
+  }else{
+    for(const query of candidates.slice(0,4)){
+      const rows=await nominatim(query);
+      if(rows.length)return rows;
+    }
   }
 
-  // Se a localização atual permitiu inferir a cidade, tenta ViaCEP com rua + cidade.
-  if(nearCity&&!hasCityHint){
+  if(nearCity&&!hasCityHint&&!allMatches){
     try{
       const cepHit=await Promise.race([
         routePublicViaCep(raw+', '+nearCity+(nearState?', '+nearState:'')),
@@ -338,9 +356,7 @@ async function routePublicGeocode(q,nearLat=null,nearLon=null){
     if(cepHit)return[cepHit];
   }catch(e){}
 
-  throw Object.assign(new Error(nearCity
-    ?('Não localizei essa via perto de '+nearCity+'. Tente incluir número ou bairro.')
-    :'Não localizei essa via. Informe rua, número e cidade.'),{status:404})
+  throw Object.assign(new Error('Não localizei essa via no Brasil. Tente falar ou digitar novamente.'),{status:404})
 }
 async function routePublicTable(points){
   const coords=points.map(p=>p.lon+','+p.lat).join(';');
@@ -1358,7 +1374,8 @@ async function start() {
           const q=String(u.searchParams.get('q')||'').trim().slice(0,250);
           if(q.length<4)return sendJson(res,400,{ok:false,error:'Informe ao menos o nome da rua.'});
           const lat=Number(u.searchParams.get('lat')),lon=Number(u.searchParams.get('lon'));
-          const rows=await routePublicGeocode(q,lat,lon);
+          const allMatches=u.searchParams.get('all')==='1';
+          const rows=await routePublicGeocode(q,lat,lon,allMatches);
           return sendJson(res,200,{ok:true,rows});
         }catch(e){return sendJson(res,e.status||502,{ok:false,error:e.message||'Falha ao localizar endereço.'})}
       }
