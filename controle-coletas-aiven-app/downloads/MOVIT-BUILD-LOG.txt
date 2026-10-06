@@ -1,20 +1,18 @@
 === assembleTesteDebug ===
 To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.13/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
 Daemon will be stopped at the end of the build 
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/movit_build-1791300563544.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/movit_build-1791300680076.json
 
 [Incubating] Problems report is available at: file:///home/runner/work/radar-4x4-brasil/radar-4x4-brasil/roteirizador-v02-android/build/reports/problems/problems-report.html
 
 FAILURE: Build failed with an exception.
 
-* Where:
-Build file '/home/runner/work/radar-4x4-brasil/radar-4x4-brasil/roteirizador-v02-android/app/build.gradle' line: 20
-
 * What went wrong:
-A problem occurred evaluating project ':app'.
-> ProductFlavor names cannot start with 'test'
+Cannot locate tasks that match ':app:assembleTesteDebug' as task 'assembleTesteDebug' not found in project ':app'.
 
 * Try:
+> Run gradle tasks to get a list of available tasks.
+> For more on name expansion, please refer to https://docs.gradle.org/8.13/userguide/command_line_interface.html#sec:name_abbreviation in the Gradle documentation.
 > Run with --stacktrace option to get the stack trace.
 > Run with --info or --debug option to get more log output.
 > Run with --scan to get full insights.
@@ -26,29 +24,75 @@ You can use '--warning-mode all' to show the individual deprecation warnings and
 
 For more on this, please refer to https://docs.gradle.org/8.13/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
 
-BUILD FAILED in 19s
+BUILD FAILED in 15s
 assembleTesteDebug exit=1
 === bundlePlayRelease ===
 To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.13/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
 Daemon will be stopped at the end of the build 
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/movit_build-1791300582329.json
+> Task :app:preBuild UP-TO-DATE
+> Task :app:prePlayReleaseBuild UP-TO-DATE
+> Task :app:processPlayReleaseNavigationResources
+> Task :app:generatePlayReleaseResValues
+> Task :app:compilePlayReleaseNavigationResources
+> Task :app:mapPlayReleaseSourceSetPaths
+> Task :app:generatePlayReleaseResources
+> Task :app:createPlayReleaseCompatibleScreenManifests
+> Task :app:extractDeepLinksPlayRelease
+> Task :app:mergePlayReleaseResources
+> Task :app:processPlayReleaseMainManifest
+> Task :app:processPlayReleaseManifest
+> Task :app:processApplicationManifestPlayReleaseForBundle
+> Task :app:checkPlayReleaseAarMetadata
+> Task :app:packagePlayReleaseResources
+> Task :app:parsePlayReleaseLocalResources
+> Task :app:extractPlayReleaseVersionControlInfo
+> Task :app:checkPlayReleaseDuplicateClasses
+> Task :app:generatePlayReleaseBuildConfig
+> Task :app:processPlayReleaseManifestForPackage
+> Task :app:javaPreCompilePlayRelease
+> Task :app:desugarPlayReleaseFileDependencies
+> Task :app:mergePlayReleaseStartupProfile
+> Task :app:mergeExtDexPlayRelease
+> Task :app:mergePlayReleaseShaders
+> Task :app:compilePlayReleaseShaders NO-SOURCE
+> Task :app:generatePlayReleaseAssets UP-TO-DATE
+> Task :app:mergePlayReleaseAssets
+> Task :app:processPlayReleaseJavaRes NO-SOURCE
+> Task :app:mergePlayReleaseJniLibFolders
+> Task :app:mergePlayReleaseNativeLibs NO-SOURCE
+> Task :app:stripPlayReleaseDebugSymbols NO-SOURCE
+> Task :app:writePlayReleaseAppMetadata
+> Task :app:mergePlayReleaseArtProfile
+> Task :app:collectPlayReleaseDependencies
+> Task :app:mergePlayReleaseJavaResource
+> Task :app:configurePlayReleaseDependencies
+> Task :app:extractPlayReleaseNativeSymbolTables NO-SOURCE
+> Task :app:extractProguardFiles
+> Task :app:processPlayReleaseResources
+> Task :app:parsePlayReleaseIntegrityConfig
+> Task :app:bundlePlayReleaseResources
+
+> Task :app:compilePlayReleaseJavaWithJavac
+Note: /home/runner/work/radar-4x4-brasil/radar-4x4-brasil/roteirizador-v02-android/app/src/main/java/br/com/movit/rotas/MainActivity.java uses or overrides a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+
+> Task :app:dexBuilderPlayRelease
+> Task :app:mergePlayReleaseGlobalSynthetics
+> Task :app:mergeDexPlayRelease
+> Task :app:generatePlayReleaseLintVitalReportModel
+> Task :app:buildPlayReleasePreBundle
+> Task :app:compilePlayReleaseArtProfile
+> Task :app:lintVitalAnalyzePlayRelease
+> Task :app:lintVitalReportPlayRelease
+> Task :app:lintVitalPlayRelease
+> Task :app:packagePlayReleaseBundle
+> Task :app:signPlayReleaseBundle
+> Task :app:producePlayReleaseBundleIdeListingFile
+> Task :app:createPlayReleaseBundleListingFileRedirect
+> Task :app:bundlePlayRelease
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/movit_build-1791300694454.json
 
 [Incubating] Problems report is available at: file:///home/runner/work/radar-4x4-brasil/radar-4x4-brasil/roteirizador-v02-android/build/reports/problems/problems-report.html
-
-FAILURE: Build failed with an exception.
-
-* Where:
-Build file '/home/runner/work/radar-4x4-brasil/radar-4x4-brasil/roteirizador-v02-android/app/build.gradle' line: 20
-
-* What went wrong:
-A problem occurred evaluating project ':app'.
-> ProductFlavor names cannot start with 'test'
-
-* Try:
-> Run with --stacktrace option to get the stack trace.
-> Run with --info or --debug option to get more log output.
-> Run with --scan to get full insights.
-> Get more help at https://help.gradle.org.
 
 Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
 
@@ -56,5 +100,6 @@ You can use '--warning-mode all' to show the individual deprecation warnings and
 
 For more on this, please refer to https://docs.gradle.org/8.13/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
 
-BUILD FAILED in 7s
-bundlePlayRelease exit=1
+BUILD SUCCESSFUL in 20s
+48 actionable tasks: 48 executed
+bundlePlayRelease exit=0
