@@ -104,7 +104,7 @@ function hasPerm(p){return !!(AUTH&&(AUTH.is_admin||AUTH.permissions?.includes('
 function hasAnyPerm(list){return list.some(hasPerm)}
 function tabAllowed(tab){
   const map={
-    dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',rastreamento:'tracking',lotacao:'lotacao',frota:'frota',
+    dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao','roteirizador-teste':'roteirizador',rastreamento:'tracking',lotacao:'lotacao',frota:'frota',
     agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes',
     'ssw-motoristas':'ssw_saidas','motoristas-evolucao':'evolucao',
     'ssw-atrasos':'ssw_atrasos','ssw-remetentes':'remetentes',
@@ -119,7 +119,7 @@ function tabAllowed(tab){
   return map[tab]?hasPerm(map[tab]):false
 }
 function applyPermissions(){
-  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',rastreamento:'tracking',lotacao:'lotacao',frota:'frota',agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes'};
+  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao','roteirizador-teste':'roteirizador',rastreamento:'tracking',lotacao:'lotacao',frota:'frota',agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes'};
   document.querySelectorAll('.nav button').forEach(b=>{
     let show=true;
     if(b.dataset.adminOnly==='1')show=!!AUTH?.is_admin;
@@ -264,6 +264,7 @@ async function showAuthenticatedApp(user){
   setupDeliveryProgram();
   setupTracking();
   setupRoteirizador();
+  setupRoteirizadorTeste();
   if(AUTH.is_admin)loadDashboardUsers();
   if(!window.__appStarted){
     window.__appStarted=true;
@@ -3779,6 +3780,129 @@ function setupTracking(){
   TRACKING_NEXT_REFRESH=Date.now()+TRACKING_AUTO_SECONDS*1000;
 }
 
+
+let RT_MANIFESTS=[],RT_PLAN=null,RT_ORDER=[],RT_MAP=null,RT_LAYER=null;
+function rtPopulateManifest(){
+  const driver=$('#rtDriver')?.value||'',sel=$('#rtManifest');if(!sel)return;
+  const rows=RT_MANIFESTS.filter(x=>!driver||x.motorista===driver);
+  sel.innerHTML='<option value="">Selecione o romaneio</option>'+rows.map(x=>'<option value="'+safe(x.romaneio)+'">'+safe(x.romaneio)+' • '+nf(x.entregas)+' entrega(s)'+(x.veiculo?' • '+safe(x.veiculo):'')+'</option>').join('')
+}
+function rtPopulateDrivers(){
+  const sel=$('#rtDriver');if(!sel)return;
+  const cur=sel.value,drivers=[...new Set(RT_MANIFESTS.map(x=>x.motorista).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+  sel.innerHTML='<option value="">Selecione o motorista</option>'+drivers.map(x=>'<option>'+safe(x)+'</option>').join('');
+  if(drivers.includes(cur))sel.value=cur;
+  rtPopulateManifest()
+}
+async function rtLoadManifests(force=true){
+  const date=$('#rtDate')?.value||iso(new Date()),status=$('#rtStatus');
+  if(status)status.textContent='Carregando romaneios do SSW no ambiente de teste…';
+  try{
+    const r=await fetch('/api/roteirizador/lista?date='+encodeURIComponent(date)+(force?'&t='+Date.now():''),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível carregar os romaneios.');
+    RT_MANIFESTS=j.rows||[];
+    rtPopulateDrivers();
+    if(status)status.textContent=RT_MANIFESTS.length?nf(RT_MANIFESTS.length)+' romaneio(s) carregado(s). Escolha motorista e romaneio para comparar.':'Nenhum romaneio encontrado para esta data.'
+  }catch(e){if(status)status.textContent='Erro no teste: '+e.message}
+}
+function rtLegs(order){
+  if(!RT_PLAN)return[];
+  const seq=[0,...order,0],out=[];
+  for(let i=1;i<seq.length;i++){
+    const a=seq[i-1],b=seq[i],p=RT_PLAN.points?.[b]||{};
+    out.push({fromIndex:a,toIndex:b,meters:Number(RT_PLAN.matrix?.[a]?.[b]||0),point:p})
+  }
+  return out
+}
+function rtMove(pos,dir){
+  const n=pos+dir;if(n<0||n>=RT_ORDER.length)return;
+  [RT_ORDER[pos],RT_ORDER[n]]=[RT_ORDER[n],RT_ORDER[pos]];
+  rtRender()
+}
+function rtUrgent(pos){
+  if(pos<=0||pos>=RT_ORDER.length)return;
+  const [idx]=RT_ORDER.splice(pos,1);RT_ORDER.unshift(idx);rtRender()
+}
+function rtRenderMap(){
+  const box=$('#rtMap');if(!box||!RT_PLAN)return;
+  if(typeof L==='undefined'){box.innerHTML='<div class="muted" style="padding:24px">Mapa indisponível.</div>';return}
+  if(!RT_MAP){
+    RT_MAP=L.map(box,{zoomControl:true});
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(RT_MAP)
+  }
+  if(RT_LAYER)RT_LAYER.remove();
+  RT_LAYER=L.layerGroup().addTo(RT_MAP);
+  const points=RT_PLAN.points||[],base=points[0],order=RT_ORDER;
+  if(!base)return;
+  L.marker([base.lat,base.lon]).addTo(RT_LAYER).bindTooltip('BASE • Americana');
+  order.forEach((idx,pos)=>{
+    const p=points[idx];if(!p)return;
+    const icon=L.divIcon({className:'',html:'<div style="background:#0f766e;color:#fff;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-weight:800;border:2px solid #fff;box-shadow:0 1px 5px #0005">'+(pos+1)+'</div>',iconSize:[28,28],iconAnchor:[14,14]});
+    L.marker([p.lat,p.lon],{icon}).addTo(RT_LAYER).bindPopup('<b>'+safe(p.destinatario||p.label||'Parada')+'</b><br>'+safe((p.cidade||'')+(p.uf?' / '+p.uf:'')))
+  });
+  const coords=[base,...order.map(i=>points[i]).filter(Boolean),base].map(p=>[p.lat,p.lon]);
+  if(coords.length>2)L.polyline(coords,{weight:5,opacity:.82,dashArray:'10 5'}).addTo(RT_LAYER);
+  const bounds=L.latLngBounds(coords);if(bounds.isValid())RT_MAP.fitBounds(bounds.pad(.12));
+  setTimeout(()=>RT_MAP.invalidateSize(),80)
+}
+function rtRender(){
+  if(!RT_PLAN)return;
+  const points=RT_PLAN.points||[],matrix=RT_PLAN.matrix||[],best=Number(RT_PLAN.optimizedDistanceMeters||0);
+  const original=routeDistance(RT_PLAN.originalOrder||[],matrix),current=routeDistance(RT_ORDER,matrix),saving=Math.max(0,original-current);
+  if($('#rtStops'))$('#rtStops').textContent=nf(RT_PLAN.deliveries||RT_ORDER.length);
+  if($('#rtBestKm'))$('#rtBestKm').textContent=routeFmtKm(current);
+  if($('#rtOriginalKm'))$('#rtOriginalKm').textContent=routeFmtKm(original);
+  if($('#rtSavingKm'))$('#rtSavingKm').textContent=routeFmtKm(saving);
+  if($('#rtApprox'))$('#rtApprox').textContent=nf(RT_PLAN.approximateStops||0);
+  if($('#rtMethod'))$('#rtMethod').textContent=(RT_PLAN.method||'otimizada').toUpperCase()+' • TESTE';
+  const list=$('#rtList');
+  if(list){
+    const legs=rtLegs(RT_ORDER);
+    list.innerHTML=RT_ORDER.map((idx,pos)=>{
+      const p=points[idx]||{},leg=legs[pos]||{};
+      return '<div class="route-stop"><div class="seq">'+(pos+1)+'</div><div><b>'+safe(p.destinatario||p.label||'')+'</b><div class="meta">'+safe((p.cidade||'')+(p.uf?' / '+p.uf:''))+'</div><div class="meta">CT-e '+safe(p.ctrc||'—')+' • NF '+safe(p.nf||'—')+'</div></div><div><div class="km">'+routeFmtKm(leg.meters)+'</div><div class="move"><button type="button" data-rt-urgent="'+pos+'" title="Tornar próxima parada">⚡</button><button type="button" data-rt-up="'+pos+'" '+(pos===0?'disabled':'')+'>↑</button><button type="button" data-rt-down="'+pos+'" '+(pos===RT_ORDER.length-1?'disabled':'')+'>↓</button></div></div></div>'
+    }).join('');
+    list.querySelectorAll('[data-rt-urgent]').forEach(b=>b.onclick=()=>rtUrgent(Number(b.dataset.rtUrgent)));
+    list.querySelectorAll('[data-rt-up]').forEach(b=>b.onclick=()=>rtMove(Number(b.dataset.rtUp),-1));
+    list.querySelectorAll('[data-rt-down]').forEach(b=>b.onclick=()=>rtMove(Number(b.dataset.rtDown),1))
+  }
+  const table=$('#rtTable');
+  if(table){
+    const originalOrder=RT_PLAN.originalOrder||[],bestOrder=RT_PLAN.optimizedOrder||[];
+    const max=Math.max(originalOrder.length,bestOrder.length);
+    let body='';
+    for(let i=0;i<max;i++){
+      const a=points[originalOrder[i]]||{},b=points[bestOrder[i]]||{};
+      body+='<tr><td>'+(i+1)+'</td><td>'+safe(a.destinatario||a.label||'—')+'<div class="muted">'+safe(a.cidade||'')+'</div></td><td>'+safe(b.destinatario||b.label||'—')+'<div class="muted">'+safe(b.cidade||'')+'</div></td></tr>'
+    }
+    table.innerHTML='<thead><tr><th>#</th><th>Ordem original</th><th>Ordem otimizada</th></tr></thead><tbody>'+body+'</tbody>'
+  }
+  rtRenderMap()
+}
+async function rtOptimize(){
+  const date=$('#rtDate')?.value||'',rom=$('#rtManifest')?.value||'',status=$('#rtStatus'),btn=$('#rtOptimize');
+  if(!rom){if(status)status.textContent='Escolha um romaneio para o teste.';return}
+  if(btn){btn.disabled=true;btn.textContent='Otimizando…'}
+  if(status)status.textContent='Calculando sequência de teste com a mesma base de dados do SSW…';
+  try{
+    const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(date)+'&romaneio='+encodeURIComponent(rom)+'&test=1&t='+Date.now(),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível calcular a rota.');
+    RT_PLAN=j;RT_ORDER=(j.optimizedOrder||[]).slice();
+    if(status)status.textContent='TESTE • '+(j.motorista||'Motorista')+' • '+(j.romaneio||rom)+' • '+nf(j.deliveries||0)+' parada(s). Nada foi alterado na Programação.';
+    rtRender()
+  }catch(e){if(status)status.textContent='Erro no roteirizador de teste: '+e.message}
+  finally{if(btn){btn.disabled=false;btn.textContent='Otimizar como Spoke'}}
+}
+function setupRoteirizadorTeste(){
+  const d=$('#rtDate');if(d&&!d.value)d.value=iso(new Date());
+  if(d)d.onchange=()=>{RT_PLAN=null;RT_ORDER=[];rtLoadManifests(true)};
+  if($('#rtDriver'))$('#rtDriver').onchange=rtPopulateManifest;
+  if($('#rtLoad'))$('#rtLoad').onclick=()=>rtLoadManifests(true);
+  if($('#rtOptimize'))$('#rtOptimize').onclick=rtOptimize
+}
+
 function setupRoteirizador(){
   const d=$('#routeDate');if(d&&!d.value)d.value=iso(new Date());
   if(d)d.onchange=()=>{ROUTE_PLAN=null;ROUTE_MANUAL_ORDER=[];ROUTE_EXTRA_STOPS=[];loadRouteManifests(true)};
@@ -3825,6 +3949,8 @@ function loadHeavyForTab(tab){
   }else if(tab==='agendamentos-copia'&&hasAnyPerm(['dashboard','agendamentos','agendamentos_copia'])){
     renderAgCopy();
     setTimeout(()=>refreshAgCopy(true),50);
+  }else if(tab==='roteirizador-teste'&&hasPerm('roteirizador')){
+    setTimeout(()=>rtLoadManifests(false),50);
   }else if(tab==='roteirizador'&&hasPerm('roteirizador')){
     setTimeout(()=>loadRouteManifests(false),50);
   }else if(tab==='motoristas-evolucao'&&tabAllowed(tab)){
