@@ -37,8 +37,9 @@ public class MainActivity extends Activity {
 
     private void buildUi(){
         LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(18,20,18,18);
-        TextView title=new TextView(this);title.setText("MOVIT");title.setTextSize(24);title.setTypeface(null,1);
-        TextView sub=new TextView(this);sub.setText("Crie sua rota digitando ou falando os endereços.");sub.setTextSize(14);sub.setPadding(0,4,0,12);
+        TextView title=new TextView(this);title.setText("MOVIT");title.setTextSize(26);title.setTextColor(Color.rgb(22,20,47));title.setTypeface(null,1);
+        TextView sub=new TextView(this);sub.setText("Autonomia, Renda e Movimento");sub.setTextSize(14);sub.setTextColor(Color.rgb(90,205,61));sub.setTypeface(null,1);sub.setPadding(0,2,0,4);
+        TextView sub2=new TextView(this);sub2.setText("Crie sua rota digitando ou falando os endereços.");sub2.setTextSize(13);sub2.setPadding(0,0,0,12);
 
         LinearLayout accountRow=new LinearLayout(this);accountRow.setOrientation(LinearLayout.HORIZONTAL);
         account=new TextView(this);account.setText("Modo visitante");account.setTextSize(13);account.setPadding(0,8,8,8);
@@ -59,7 +60,7 @@ public class MainActivity extends Activity {
         summary=new TextView(this);summary.setText("0 paradas");summary.setTypeface(null,1);summary.setPadding(0,0,0,8);
 
         map=new WebView(this);map.getSettings().setJavaScriptEnabled(true);map.setBackgroundColor(Color.WHITE);
-        root.addView(title);root.addView(sub);root.addView(accountRow);root.addView(address);root.addView(addRow);root.addView(status);root.addView(summary);
+        root.addView(title);root.addView(sub);root.addView(sub2);root.addView(accountRow);root.addView(address);root.addView(addRow);root.addView(status);root.addView(summary);
         root.addView(map,new LinearLayout.LayoutParams(-1,360));
 
         LinearLayout actions=new LinearLayout(this);actions.setOrientation(LinearLayout.HORIZONTAL);
