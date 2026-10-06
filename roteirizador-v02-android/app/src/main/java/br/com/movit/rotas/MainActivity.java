@@ -5,6 +5,8 @@ import android.app.*;
 import android.content.*;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.location.Location;
 import android.location.LocationManager;
 import android.net.Uri;
@@ -35,43 +37,130 @@ public class MainActivity extends Activity {
         super.onCreate(b);prefs=getSharedPreferences("rv2_account",MODE_PRIVATE);buildUi();renderList();renderMap(null);refreshAccount();
     }
 
+    private int dp(int v){return Math.round(v*getResources().getDisplayMetrics().density);}
+    private GradientDrawable bg(int color,float radius){
+        GradientDrawable g=new GradientDrawable();g.setColor(color);g.setCornerRadius(dp((int)radius));return g;
+    }
+    private GradientDrawable strokedBg(int fill,int stroke,float radius){
+        GradientDrawable g=bg(fill,radius);g.setStroke(dp(1),stroke);return g;
+    }
+    private TextView label(String text,int size,int color,boolean bold){
+        TextView t=new TextView(this);t.setText(text);t.setTextSize(size);t.setTextColor(color);
+        if(bold)t.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        return t;
+    }
+    private Button pill(String text,int fill,int textColor){
+        Button b=new Button(this);b.setText(text);b.setTextColor(textColor);b.setTextSize(14);b.setAllCaps(false);
+        b.setTypeface(Typeface.DEFAULT,Typeface.BOLD);b.setBackground(bg(fill,14));
+        b.setPadding(dp(14),dp(8),dp(14),dp(8));b.setMinHeight(dp(44));b.setStateListAnimator(null);
+        return b;
+    }
+    private LinearLayout card(int padding){
+        LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);l.setPadding(dp(padding),dp(padding),dp(padding),dp(padding));
+        l.setBackground(bg(Color.WHITE,20));l.setElevation(dp(2));return l;
+    }
+    private void gap(ViewGroup parent,int h){
+        Space s=new Space(this);parent.addView(s,new LinearLayout.LayoutParams(1,dp(h)));
+    }
+
     private void buildUi(){
-        LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(18,20,18,18);
-        TextView title=new TextView(this);title.setText("MOVIT");title.setTextSize(26);title.setTextColor(Color.rgb(22,20,47));title.setTypeface(null,1);
-        TextView sub=new TextView(this);sub.setText("Autonomia, Renda e Movimento");sub.setTextSize(14);sub.setTextColor(Color.rgb(90,205,61));sub.setTypeface(null,1);sub.setPadding(0,2,0,4);
-        TextView sub2=new TextView(this);sub2.setText("Crie sua rota digitando ou falando os endereços.");sub2.setTextSize(13);sub2.setPadding(0,0,0,12);
+        final int NAVY=Color.rgb(22,20,47),GREEN=Color.rgb(99,202,67),BG=Color.rgb(246,248,251),TEXT=Color.rgb(30,41,59),MUTED=Color.rgb(100,116,139),LINE=Color.rgb(226,232,240);
 
-        LinearLayout accountRow=new LinearLayout(this);accountRow.setOrientation(LinearLayout.HORIZONTAL);
-        account=new TextView(this);account.setText("Modo teste • sem cadastro");account.setTextSize(13);account.setPadding(0,8,8,8);
-        cloudSave=new Button(this);cloudSave.setText("💾 Salvar rota");cloudSave.setOnClickListener(v->saveCloud());
-        cloudRoutes=new Button(this);cloudRoutes.setText("Rotas salvas");cloudRoutes.setOnClickListener(v->loadCloudRoutes());
-        accountRow.addView(account,new LinearLayout.LayoutParams(0,-2,1));accountRow.addView(cloudSave);accountRow.addView(cloudRoutes);
+        getWindow().setStatusBarColor(NAVY);getWindow().setNavigationBarColor(NAVY);
 
-        address=new EditText(this);address.setHint("Rua, número, bairro, cidade ou CEP");address.setSingleLine(true);address.setTextSize(16);
+        LinearLayout page=new LinearLayout(this);page.setOrientation(LinearLayout.VERTICAL);page.setBackgroundColor(BG);
 
-        LinearLayout addRow=new LinearLayout(this);addRow.setOrientation(LinearLayout.HORIZONTAL);
-        Button voice=new Button(this);voice.setText("🎙️ Falar");voice.setOnClickListener(v->voice());
-        Button loc=new Button(this);loc.setText("📍 Início");loc.setOnClickListener(v->useLocation());
-        Button add=new Button(this);add.setText("+ Parada");add.setOnClickListener(v->addAddress(address.getText().toString()));
-        addRow.addView(voice,new LinearLayout.LayoutParams(0,-2,1));addRow.addView(loc,new LinearLayout.LayoutParams(0,-2,1));addRow.addView(add,new LinearLayout.LayoutParams(0,-2,1));
+        ScrollView outer=new ScrollView(this);outer.setFillViewport(true);
+        LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(dp(16),dp(14),dp(16),dp(22));
+        outer.addView(root,new ScrollView.LayoutParams(-1,-2));page.addView(outer,new LinearLayout.LayoutParams(-1,0,1));
 
-        status=new TextView(this);status.setText("Adicione pelo menos duas paradas.");status.setTextSize(14);status.setPadding(0,10,0,8);
-        summary=new TextView(this);summary.setText("0 paradas");summary.setTypeface(null,1);summary.setPadding(0,0,0,8);
+        // Cabeçalho MOVIT
+        LinearLayout hero=card(16);hero.setBackground(bg(NAVY,22));
+        LinearLayout heroRow=new LinearLayout(this);heroRow.setOrientation(LinearLayout.HORIZONTAL);heroRow.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView logo=new ImageView(this);logo.setImageResource(br.com.movit.rotas.R.drawable.ic_movit);logo.setBackground(bg(Color.WHITE,16));logo.setPadding(dp(8),dp(8),dp(8),dp(8));
+        heroRow.addView(logo,new LinearLayout.LayoutParams(dp(62),dp(62)));
+        LinearLayout heroText=new LinearLayout(this);heroText.setOrientation(LinearLayout.VERTICAL);heroText.setPadding(dp(14),0,0,0);
+        TextView title=label("MOVIT",28,Color.WHITE,true);
+        TextView sub=label("Autonomia, Renda e Movimento",13,GREEN,true);
+        TextView sub2=label("Roteirização simples, rápida e inteligente",12,Color.rgb(203,213,225),false);
+        heroText.addView(title);heroText.addView(sub);heroText.addView(sub2);
+        heroRow.addView(heroText,new LinearLayout.LayoutParams(0,-2,1));
+        hero.addView(heroRow);
 
+        LinearLayout quick=new LinearLayout(this);quick.setOrientation(LinearLayout.HORIZONTAL);quick.setPadding(0,dp(12),0,0);
+        account=label("MODO TESTE",11,Color.WHITE,true);account.setBackground(bg(Color.argb(40,255,255,255),10));account.setGravity(Gravity.CENTER);account.setPadding(dp(10),dp(6),dp(10),dp(6));
+        cloudSave=pill("Salvar rota",Color.WHITE,NAVY);cloudSave.setOnClickListener(v->saveCloud());
+        cloudRoutes=pill("Rotas salvas",Color.rgb(44,42,73),Color.WHITE);cloudRoutes.setOnClickListener(v->loadCloudRoutes());
+        quick.addView(account,new LinearLayout.LayoutParams(0,dp(40),1));
+        LinearLayout.LayoutParams qp=new LinearLayout.LayoutParams(0,dp(44),1);qp.setMargins(dp(8),0,0,0);
+        quick.addView(cloudSave,qp);LinearLayout.LayoutParams qp2=new LinearLayout.LayoutParams(0,dp(44),1);qp2.setMargins(dp(8),0,0,0);quick.addView(cloudRoutes,qp2);
+        hero.addView(quick);root.addView(hero);
+
+        gap(root,12);
+
+        // Card de endereço
+        LinearLayout addCard=card(15);
+        TextView addTitle=label("Adicionar parada",17,TEXT,true);addCard.addView(addTitle);
+        TextView addHelp=label("Digite ou fale a rua e a cidade. O número é opcional.",12,MUTED,false);addHelp.setPadding(0,dp(3),0,dp(10));addCard.addView(addHelp);
+
+        address=new EditText(this);address.setHint("Ex.: Rua Domingos Carotti, Indaiatuba");address.setSingleLine(true);address.setTextSize(16);address.setTextColor(TEXT);address.setHintTextColor(Color.rgb(148,163,184));address.setBackground(strokedBg(Color.rgb(250,252,254),LINE,14));address.setPadding(dp(14),0,dp(14),0);
+        addCard.addView(address,new LinearLayout.LayoutParams(-1,dp(54)));
+
+        LinearLayout addRow=new LinearLayout(this);addRow.setOrientation(LinearLayout.HORIZONTAL);addRow.setPadding(0,dp(10),0,0);
+        Button voice=pill("🎙  Falar",Color.rgb(238,242,247),NAVY);voice.setOnClickListener(v->voice());
+        Button loc=pill("📍  Minha localização",Color.rgb(238,242,247),NAVY);loc.setOnClickListener(v->useLocation());
+        Button add=pill("+  Adicionar",GREEN,NAVY);add.setOnClickListener(v->addAddress(address.getText().toString()));
+        LinearLayout.LayoutParams ap1=new LinearLayout.LayoutParams(0,dp(48),1);
+        LinearLayout.LayoutParams ap2=new LinearLayout.LayoutParams(0,dp(48),1.35f);ap2.setMargins(dp(8),0,0,0);
+        LinearLayout.LayoutParams ap3=new LinearLayout.LayoutParams(0,dp(48),1.2f);ap3.setMargins(dp(8),0,0,0);
+        addRow.addView(voice,ap1);addRow.addView(loc,ap2);addRow.addView(add,ap3);
+        addCard.addView(addRow);
+
+        status=label("Adicione pelo menos duas paradas para começar.",12,MUTED,false);status.setPadding(0,dp(10),0,0);addCard.addView(status);
+        root.addView(addCard);
+
+        gap(root,12);
+
+        // Resumo
+        LinearLayout summaryCard=card(14);summaryCard.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout left=new LinearLayout(this);left.setOrientation(LinearLayout.VERTICAL);
+        TextView sm=label("RESUMO DA ROTA",11,MUTED,true);summary=label("0 paradas",20,NAVY,true);summary.setPadding(0,dp(3),0,0);left.addView(sm);left.addView(summary);
+        summaryCard.addView(left,new LinearLayout.LayoutParams(0,-2,1));
+        TextView tip=label("As paradas serão reorganizadas automaticamente.",11,MUTED,false);tip.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);summaryCard.addView(tip,new LinearLayout.LayoutParams(0,-1,1));
+        root.addView(summaryCard);
+
+        gap(root,12);
+
+        // Mapa
+        LinearLayout mapCard=card(0);mapCard.setClipToOutline(true);
+        TextView mapTitle=label("Mapa da rota",16,TEXT,true);mapTitle.setPadding(dp(15),dp(14),dp(15),dp(8));mapCard.addView(mapTitle);
         map=new WebView(this);map.getSettings().setJavaScriptEnabled(true);map.setBackgroundColor(Color.WHITE);
-        root.addView(title);root.addView(sub);root.addView(sub2);root.addView(accountRow);root.addView(address);root.addView(addRow);root.addView(status);root.addView(summary);
-        root.addView(map,new LinearLayout.LayoutParams(-1,360));
+        mapCard.addView(map,new LinearLayout.LayoutParams(-1,dp(320)));
+        root.addView(mapCard);
 
-        LinearLayout actions=new LinearLayout(this);actions.setOrientation(LinearLayout.HORIZONTAL);
-        Button optimize=new Button(this);optimize.setText("Otimizar");optimize.setOnClickListener(v->optimize());
-        Button navigate=new Button(this);navigate.setText("Navegar");navigate.setOnClickListener(v->navigateFirst());
-        Button clear=new Button(this);clear.setText("Limpar");clear.setOnClickListener(v->{stops.clear();lastPlan=null;renderList();renderMap(null);});
-        actions.addView(optimize,new LinearLayout.LayoutParams(0,-2,1));actions.addView(navigate,new LinearLayout.LayoutParams(0,-2,1));actions.addView(clear,new LinearLayout.LayoutParams(0,-2,1));
+        gap(root,12);
+
+        // Ações principais
+        LinearLayout actions=card(12);actions.setOrientation(LinearLayout.HORIZONTAL);
+        Button optimize=pill("⚡ Otimizar",GREEN,NAVY);optimize.setOnClickListener(v->optimize());
+        Button navigate=pill("▶ Navegar",NAVY,Color.WHITE);navigate.setOnClickListener(v->navigateFirst());
+        Button clear=pill("Limpar",Color.rgb(241,245,249),Color.rgb(71,85,105));clear.setOnClickListener(v->{stops.clear();lastPlan=null;summary.setText("0 paradas");renderList();renderMap(null);status.setText("Rota limpa.");});
+        LinearLayout.LayoutParams ac1=new LinearLayout.LayoutParams(0,dp(50),1.15f);
+        LinearLayout.LayoutParams ac2=new LinearLayout.LayoutParams(0,dp(50),1.15f);ac2.setMargins(dp(8),0,0,0);
+        LinearLayout.LayoutParams ac3=new LinearLayout.LayoutParams(0,dp(50),.75f);ac3.setMargins(dp(8),0,0,0);
+        actions.addView(optimize,ac1);actions.addView(navigate,ac2);actions.addView(clear,ac3);
         root.addView(actions);
 
-        ScrollView sv=new ScrollView(this);list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);sv.addView(list);
-        root.addView(sv,new LinearLayout.LayoutParams(-1,0,1));
-        setContentView(root);
+        gap(root,12);
+
+        // Lista de paradas
+        LinearLayout stopsCard=card(14);
+        TextView stopsTitle=label("Paradas",17,TEXT,true);stopsCard.addView(stopsTitle);
+        TextView stopsHelp=label("A primeira parada será a próxima após a otimização.",12,MUTED,false);stopsHelp.setPadding(0,dp(2),0,dp(8));stopsCard.addView(stopsHelp);
+        list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);stopsCard.addView(list,new LinearLayout.LayoutParams(-1,-2));
+        root.addView(stopsCard);
+
+        setContentView(page);
     }
 
     private void voice(){
@@ -146,14 +235,32 @@ public class MainActivity extends Activity {
     private String fmtTime(double sec){long min=Math.round(sec/60d);return min>=60?(min/60+"h "+min%60+"min"):(min+" min");}
 
     private void renderList(){
-        list.removeAllViews();summary.setText(stops.size()+" paradas");
+        final int NAVY=Color.rgb(22,20,47),GREEN=Color.rgb(99,202,67),TEXT=Color.rgb(30,41,59),MUTED=Color.rgb(100,116,139),LINE=Color.rgb(226,232,240);
+        list.removeAllViews();
+        if(lastPlan==null)summary.setText(stops.size()+" parada"+(stops.size()==1?"":"s"));
+        if(stops.isEmpty()){
+            TextView empty=label("Nenhuma parada adicionada ainda.",13,MUTED,false);empty.setGravity(Gravity.CENTER);empty.setPadding(dp(8),dp(18),dp(8),dp(18));list.addView(empty);return;
+        }
         for(int i=0;i<stops.size();i++){
             final int idx=i;JSONObject s=stops.get(i);
-            LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setPadding(4,10,4,10);
-            TextView t=new TextView(this);t.setText((i+1)+". "+s.optString("label","Parada"));t.setTextSize(15);
-            Button up=new Button(this);up.setText("↑");up.setOnClickListener(v->{if(idx>0){Collections.swap(stops,idx,idx-1);lastPlan=null;renderList();}});
-            Button del=new Button(this);del.setText("✕");del.setOnClickListener(v->{stops.remove(idx);lastPlan=null;renderList();renderMap(null);});
-            row.addView(t,new LinearLayout.LayoutParams(0,-2,1));row.addView(up);row.addView(del);list.addView(row);
+            LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(10),dp(10),dp(8),dp(10));row.setBackground(strokedBg(Color.rgb(250,252,254),LINE,14));
+            if(i>0){LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(-1,-2);rp.setMargins(0,dp(8),0,0);row.setLayoutParams(rp);}
+
+            TextView num=label(String.valueOf(i+1),14,NAVY,true);num.setGravity(Gravity.CENTER);num.setBackground(bg(GREEN,50));row.addView(num,new LinearLayout.LayoutParams(dp(36),dp(36)));
+
+            LinearLayout info=new LinearLayout(this);info.setOrientation(LinearLayout.VERTICAL);info.setPadding(dp(10),0,dp(6),0);
+            TextView t=label(s.optString("label","Parada"),14,TEXT,true);t.setMaxLines(2);
+            String resolved=s.optString("resolved","");
+            TextView r=label(resolved.isEmpty()?"Endereço confirmado":resolved,11,MUTED,false);r.setMaxLines(2);r.setPadding(0,dp(2),0,0);
+            info.addView(t);info.addView(r);row.addView(info,new LinearLayout.LayoutParams(0,-2,1));
+
+            Button up=pill("↑",Color.rgb(238,242,247),NAVY);up.setTextSize(17);up.setPadding(0,0,0,0);up.setEnabled(idx>0);up.setAlpha(idx>0?1f:.35f);
+            up.setOnClickListener(v->{if(idx>0){Collections.swap(stops,idx,idx-1);lastPlan=null;renderList();renderMap(null);}});
+            Button del=pill("×",Color.rgb(255,241,242),Color.rgb(190,24,93));del.setTextSize(20);del.setPadding(0,0,0,0);
+            del.setOnClickListener(v->{stops.remove(idx);lastPlan=null;renderList();renderMap(null);status.setText("Parada removida.");});
+            LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(dp(42),dp(42));bp.setMargins(dp(4),0,0,0);
+            row.addView(up,bp);LinearLayout.LayoutParams bp2=new LinearLayout.LayoutParams(dp(42),dp(42));bp2.setMargins(dp(4),0,0,0);row.addView(del,bp2);
+            list.addView(row);
         }
     }
 
@@ -176,7 +283,7 @@ public class MainActivity extends Activity {
         String html="<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"+
         "<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'><style>html,body,#m{height:100%;margin:0}</style></head><body><div id='m'></div>"+
         "<script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script><script>var m=L.map('m').setView([-22.8,-47.2],9);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(m);"+
-        "var pts="+points+";pts.forEach((p,i)=>L.marker(p).addTo(m).bindTooltip(String(i+1)));var g="+geometry+";if(g&&g.coordinates){var ll=g.coordinates.map(x=>[x[1],x[0]]);L.polyline(ll,{weight:5}).addTo(m);if(ll.length)m.fitBounds(ll,{padding:[20,20]});}else if(pts.length)m.fitBounds(pts,{padding:[30,30]});</script></body></html>";
+        "var pts="+points+";pts.forEach((p,i)=>L.marker(p).addTo(m).bindTooltip(String(i+1)));var g="+geometry+";if(g&&g.coordinates){var ll=g.coordinates.map(x=>[x[1],x[0]]);L.polyline(ll,{weight:6,color:'#5fca43',opacity:.92,lineCap:'round',lineJoin:'round'}).addTo(m);if(ll.length)m.fitBounds(ll,{padding:[20,20]});}else if(pts.length)m.fitBounds(pts,{padding:[30,30]});</script></body></html>";
         map.loadDataWithBaseURL("https://app.local/",html,"text/html","UTF-8",null);
     }
 
