@@ -216,6 +216,9 @@ public class MainActivity extends Activity {
         TextView nlab=label("Nome do motorista",13,MUTED,false);nlab.setPadding(0,dp(16),0,dp(4));box.addView(nlab);
         EditText driver=new EditText(this);driver.setHint("Ex.: Júlio");driver.setText(prefs.getString("current_driver_name",""));box.addView(driver);
 
+        TextView rlab=label("Número do romaneio CONSTRULOG",13,MUTED,false);rlab.setPadding(0,dp(12),0,dp(4));box.addView(rlab);
+        EditText romaneio=new EditText(this);romaneio.setHint("Ex.: TBT12345");romaneio.setText(prefs.getString("current_romaneio",""));romaneio.setSingleLine(true);box.addView(romaneio);
+
         TextView dlab=label("Data do evento",13,MUTED,false);dlab.setPadding(0,dp(14),0,dp(4));box.addView(dlab);
         RadioGroup rg=new RadioGroup(this);rg.setOrientation(RadioGroup.VERTICAL);
         Calendar now=Calendar.getInstance(),tom=Calendar.getInstance();tom.add(Calendar.DAY_OF_MONTH,1);
@@ -243,12 +246,15 @@ public class MainActivity extends Activity {
         AlertDialog d=new AlertDialog.Builder(this).setView(box).setNegativeButton("Cancelar",null).setPositiveButton("Confirmar",null).create();
         d.setOnShowListener(x->d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             String driverName=driver.getText().toString().trim();
+            String romaneioNumber=romaneio.getText().toString().trim();
             if(driverName.isEmpty()){status.setText("Informe o nome do motorista.");return;}
+            if(romaneioNumber.isEmpty()){status.setText("Informe o número do romaneio CONSTRULOG.");return;}
             String eventDate=new java.text.SimpleDateFormat("yyyy-MM-dd",Locale.getDefault()).format(selected.getTime());
             String eventDateBr=new java.text.SimpleDateFormat("dd/MM/yyyy",Locale.getDefault()).format(selected.getTime());
             String routeName=driverName+" "+eventDateBr;
             prefs.edit()
                 .putString("current_driver_name",driverName)
+                .putString("current_romaneio",romaneioNumber)
                 .putString("current_event_date",eventDate)
                 .putString("current_route_name",routeName)
                 .putBoolean("current_return_start",returnStart.isChecked())
@@ -302,7 +308,9 @@ public class MainActivity extends Activity {
     private void shareRoute(){
         if(stops.isEmpty()){status.setText("Adicione paradas antes de compartilhar.");return;}
         final String driver=prefs.getString("current_driver_name","Motorista");
+        final String romaneio=prefs.getString("current_romaneio","");
         final String eventDateIso=prefs.getString("current_event_date",new java.text.SimpleDateFormat("yyyy-MM-dd",Locale.getDefault()).format(new Date()));
+        if(romaneio.trim().isEmpty()){status.setText("Associe um romaneio CONSTRULOG antes de exportar.");return;}
         String dateBr=eventDateIso;
         try{
             Date parsed=new java.text.SimpleDateFormat("yyyy-MM-dd",Locale.getDefault()).parse(eventDateIso);
@@ -310,9 +318,18 @@ public class MainActivity extends Activity {
         }catch(Exception ignored){}
         final String eventDateBr=dateBr;
         final String title=driver+" "+eventDateBr;
-        status.setText("Gerando link da rota…");
+        status.setText("Exportando rota para a CONSTRULOG…");
         exec.execute(()->{
             try{
+                JSONObject exportBody=new JSONObject();
+                exportBody.put("romaneio",romaneio);
+                exportBody.put("driver_name",driver);
+                exportBody.put("event_date",eventDateIso);
+                exportBody.put("title",title);
+                exportBody.put("route_data",currentRouteData());
+                JSONObject exported=Api.post("/api/public-router/export-construlog",exportBody);
+                if(!exported.optBoolean("ok",false))throw new Exception(exported.optString("error","Falha ao enviar rota à CONSTRULOG."));
+
                 JSONObject body=new JSONObject();
                 body.put("driver_name",driver);
                 body.put("event_date",eventDateIso);
@@ -320,9 +337,13 @@ public class MainActivity extends Activity {
                 body.put("route_data",currentRouteData());
                 JSONObject j=Api.post("/api/public-router/share",body);
                 final String link=j.getString("shareUrl");
-                final String msg="Rota MOVIT - "+driver+" - "+eventDateBr+"\n"+link;
-                runOnUiThread(()->showShareOptions(title,msg,link));
-            }catch(Exception e){runOnUiThread(()->status.setText("Compartilhar: "+e.getMessage()));}
+                final String msg="Rota MOVIT - "+driver+" - "+eventDateBr+" - Romaneio "+romaneio+"\n"+link;
+                final boolean linked=exported.optBoolean("linked_to_tracking",false);
+                runOnUiThread(()->{
+                    showShareOptions(title,msg,link);
+                    status.setText(linked?"Rota exportada e associada ao rastreamento CONSTRULOG.":"Rota exportada para a CONSTRULOG e pronta para compartilhar.");
+                });
+            }catch(Exception e){runOnUiThread(()->status.setText("Exportar: "+e.getMessage()));}
         });
     }
 
@@ -381,6 +402,7 @@ public class MainActivity extends Activity {
                 prefs.edit()
                     .putString("current_route_name",title)
                     .putString("current_driver_name",driver)
+                    .putString("current_romaneio",route.optString("romaneio",""))
                     .putString("current_event_date",eventDate)
                     .apply();
                 runOnUiThread(()->{
@@ -662,6 +684,7 @@ public class MainActivity extends Activity {
         data.put("stops",arr);if(start!=null)data.put("start",new JSONObject(start.toString()));
         data.put("returnToStart",prefs.getBoolean("current_return_start",false));
         data.put("driverName",prefs.getString("current_driver_name",""));
+        data.put("romaneio",prefs.getString("current_romaneio",""));
         data.put("eventDate",prefs.getString("current_event_date",""));
         if(lastPlan!=null){
             data.put("distanceMeters",lastPlan.optDouble("distanceMeters",0));
