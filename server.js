@@ -27,6 +27,8 @@ let SSW_PENDING_CACHE={at:0,value:null};
 let SSW_PENDING_INFLIGHT=null;
 let DELIVERY_PROGRAM_CACHE=new Map();
 let ROMANEIO_SIM_CACHE={at:0,value:null};
+const TRACKING_AUTO_ASSIGN_CACHE=new Map();
+
 let SSW101_NF_CACHE=new Map();
 let SSW101_CTRC_CACHE=new Map();
 const SSW101_DETAIL_CACHE=new Map();
@@ -4460,8 +4462,34 @@ if(u.pathname==='/api/roteirizador/lista'){try{
       manifesto:x.origens.has('manifesto')
     }
   }).sort((a,b)=>String(a.motorista).localeCompare(String(b.motorista),'pt-BR')||String(a.veiculo).localeCompare(String(b.veiculo),'pt-BR'));
+  // Vincula automaticamente cada romaneio ao celular/placa já cadastrado.
+  // O motorista só precisa autorizar o aparelho uma vez; novos romaneios do dia
+  // são associados sem clique no dashboard e sem envio manual de WhatsApp.
+  const now=Date.now(),autoAssigned=[];
+  for(const x of clean){
+    const roms=(Array.isArray(x.romaneios)?x.romaneios:[]).map(v=>String(v||'').trim()).filter(Boolean);
+    const driver=String(x.motorista||'').trim(),plate=String(x.veiculo||'').trim().toUpperCase();
+    if(!driver||!plate||!roms.length)continue;
+    const assignKey=date+'|'+plate+'|'+roms.slice().sort().join(',');
+    const last=TRACKING_AUTO_ASSIGN_CACHE.get(assignKey)||0;
+    if(now-last<6*60*60*1000){autoAssigned.push({motorista:driver,veiculo:plate,romaneios:roms,status:'already_synced'});continue}
+    try{
+      const a=await portalAuth('/api/painel/tracking/assignment',{
+        method:'POST',
+        body:{driver_name:driver,vehicle_plate:plate,romaneios:roms,work_date:date,auto_start:true,source:'ssw_romaneio'},
+        token:authUser.token,timeout:15000
+      });
+      TRACKING_AUTO_ASSIGN_CACHE.set(assignKey,Date.now());
+      autoAssigned.push({motorista:driver,veiculo:plate,romaneios:roms,status:'synced',install_url:a?.install_url||''})
+    }catch(e){
+      console.log('TRACKING AUTO ASSIGN '+plate+' '+roms.join(',')+': '+String(e.message||e));
+      autoAssigned.push({motorista:driver,veiculo:plate,romaneios:roms,status:'error',error:String(e.message||e)})
+    }
+  }
+  // limpa chaves antigas para o cache não crescer indefinidamente
+  for(const [k,t] of TRACKING_AUTO_ASSIGN_CACHE)if(now-t>36*60*60*1000)TRACKING_AUTO_ASSIGN_CACHE.delete(k);
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
-  return res.end(JSON.stringify({ok:true,date,baseAddress:ROUTE_BASE_ADDRESS,baseLat:ROUTE_BASE_FALLBACK.lat,baseLon:ROUTE_BASE_FALLBACK.lon,rows:clean,romaneios:clean.filter(x=>x.romaneios.length).length,manifestos:clean.filter(x=>x.manifesto).length}))
+  return res.end(JSON.stringify({ok:true,date,baseAddress:ROUTE_BASE_ADDRESS,baseLat:ROUTE_BASE_FALLBACK.lat,baseLon:ROUTE_BASE_FALLBACK.lon,rows:clean,romaneios:clean.filter(x=>x.romaneios.length).length,manifestos:clean.filter(x=>x.manifesto).length,trackingAuto:true,trackingAssignments:autoAssigned}))
 }catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/roteirizador/endereco'){try{
   if(!dashboardHasAny(authUser,['dashboard','roteirizador']))return dashboardDeny(res);
