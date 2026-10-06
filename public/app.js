@@ -3920,13 +3920,28 @@ async function rtOptimize(){
   finally{if(btn){btn.disabled=false;btn.textContent='Otimizar como Spoke'}}
 }
 
-let RV2_STOPS=[],RV2_PLAN=null,RV2_ORDER=[],RV2_MAP=null,RV2_LAYER=null,RV2_START=null,RV2_RUNNING=false,RV2_DONE=[],RV2_SKIPPED=[];
+let RV2_STOPS=[],RV2_PLAN=null,RV2_ORDER=[],RV2_MAP=null,RV2_LAYER=null,RV2_START=null,RV2_ROUTE_START_KEY='',RV2_ROUTE_END_KEY='',RV2_RUNNING=false,RV2_DONE=[],RV2_SKIPPED=[];
 function rv2FmtTime(sec){
   const s=Number(sec);if(!Number.isFinite(s)||s<=0)return'—';
   const m=Math.round(s/60),h=Math.floor(m/60),mm=m%60;
   return h?((h+'h '+(mm?mm+'min':'' )).trim()):(m+' min')
 }
 function rv2StopKey(s){return [s?.lat,s?.lon,s?.label||s?.endereco||''].join('|')}
+function rv2SetRouteStart(pos){
+  const s=RV2_STOPS[pos];if(!s)return;
+  RV2_START=null;RV2_ROUTE_START_KEY=rv2StopKey(s);
+  if(RV2_ROUTE_END_KEY===RV2_ROUTE_START_KEY)RV2_ROUTE_END_KEY='';
+  RV2_PLAN=null;rv2RenderList();rv2RenderMap();
+  const st=$('#rv2Status');if(st)st.textContent='Ponto inicial definido: '+(s.label||s.endereco||'Parada')+'.'
+}
+function rv2SetRouteEnd(pos){
+  const s=RV2_STOPS[pos];if(!s)return;
+  RV2_ROUTE_END_KEY=rv2StopKey(s);
+  if(RV2_ROUTE_START_KEY===RV2_ROUTE_END_KEY)RV2_ROUTE_START_KEY='';
+  RV2_PLAN=null;rv2RenderList();rv2RenderMap();
+  const st=$('#rv2Status');if(st)st.textContent='Destino final definido: '+(s.label||s.endereco||'Parada')+'.'
+}
+
 function rv2StatusBadge(s){
   const k=rv2StopKey(s);
   if(RV2_DONE.includes(k))return '<span class="tracking-status ok">Concluída</span>';
@@ -3950,8 +3965,12 @@ function rv2RenderList(){
     const tripActions=RV2_RUNNING&&!done&&!skipped
       ?'<button type="button" data-rv2-nav="'+pos+'" title="Navegar">🧭</button><button type="button" data-rv2-done="'+pos+'" title="Concluir">✓</button><button type="button" data-rv2-skip="'+pos+'" title="Pular">↷</button>'
       :'';
-    return '<div class="route-stop" style="'+((done||skipped)?'opacity:.62':'')+'"><div class="seq">'+(pos+1)+'</div><div><b>'+safe(s.label||s.endereco||'Parada')+'</b><div class="meta">'+safe((s.cidade||'')+(s.uf?' / '+s.uf:''))+'</div><div class="meta">'+rv2StatusBadge(s)+'</div></div><div class="move">'+tripActions+'<button type="button" data-rv2-urgent="'+pos+'" title="Tornar próxima parada">⚡</button><button type="button" data-rv2-up="'+pos+'" '+(pos===0?'disabled':'')+'>↑</button><button type="button" data-rv2-down="'+pos+'" '+(pos===RV2_STOPS.length-1?'disabled':'')+'>↓</button><button type="button" data-rv2-del="'+pos+'" title="Excluir">✕</button></div></div>'
+    const key=rv2StopKey(s),isStart=key===RV2_ROUTE_START_KEY,isEnd=key===RV2_ROUTE_END_KEY;
+    const routeRole=(isStart?'<span class="tracking-status ok">INÍCIO</span> ':'')+(isEnd?'<span class="tracking-status warn">FIM</span> ':'');
+    return '<div class="route-stop" style="'+((done||skipped)?'opacity:.62':'')+'"><div class="seq">'+(pos+1)+'</div><div><b>'+safe(s.label||s.endereco||'Parada')+'</b><div class="meta">'+safe((s.cidade||'')+(s.uf?' / '+s.uf:''))+'</div><div class="meta">'+routeRole+rv2StatusBadge(s)+'</div></div><div class="move">'+tripActions+'<button type="button" data-rv2-start="'+pos+'" title="Definir como início">🟢</button><button type="button" data-rv2-end="'+pos+'" title="Definir como destino final">🏁</button><button type="button" data-rv2-urgent="'+pos+'" title="Tornar próxima parada">⚡</button><button type="button" data-rv2-up="'+pos+'" '+(pos===0?'disabled':'')+'>↑</button><button type="button" data-rv2-down="'+pos+'" '+(pos===RV2_STOPS.length-1?'disabled':'')+'>↓</button><button type="button" data-rv2-del="'+pos+'" title="Excluir">✕</button></div></div>'
   }).join('');
+  box.querySelectorAll('[data-rv2-start]').forEach(b=>b.onclick=()=>rv2SetRouteStart(Number(b.dataset.rv2Start)));
+  box.querySelectorAll('[data-rv2-end]').forEach(b=>b.onclick=()=>rv2SetRouteEnd(Number(b.dataset.rv2End)));
   box.querySelectorAll('[data-rv2-up]').forEach(b=>b.onclick=()=>rv2Move(Number(b.dataset.rv2Up),-1));
   box.querySelectorAll('[data-rv2-down]').forEach(b=>b.onclick=()=>rv2Move(Number(b.dataset.rv2Down),1));
   box.querySelectorAll('[data-rv2-urgent]').forEach(b=>b.onclick=()=>rv2Urgent(Number(b.dataset.rv2Urgent)));
@@ -3963,8 +3982,8 @@ function rv2RenderList(){
 }
 function rv2Move(pos,dir){const n=pos+dir;if(n<0||n>=RV2_STOPS.length)return;[RV2_STOPS[pos],RV2_STOPS[n]]=[RV2_STOPS[n],RV2_STOPS[pos]];RV2_PLAN=null;rv2RenderList();rv2RenderMap()}
 function rv2Urgent(pos){if(pos<=0)return;const [x]=RV2_STOPS.splice(pos,1);RV2_STOPS.unshift(x);RV2_PLAN=null;rv2RenderList();rv2RenderMap()}
-function rv2Delete(pos){const s=RV2_STOPS[pos],k=rv2StopKey(s);RV2_STOPS.splice(pos,1);RV2_DONE=RV2_DONE.filter(x=>x!==k);RV2_SKIPPED=RV2_SKIPPED.filter(x=>x!==k);RV2_PLAN=null;rv2RenderList();rv2RenderMap();const st=$('#rv2Status');if(st)st.textContent=RV2_STOPS.length?'Parada removida. Otimize novamente quando quiser.':'Adicione duas ou mais paradas para começar.'}
-function rv2Clear(){RV2_STOPS=[];RV2_PLAN=null;RV2_ORDER=[];RV2_START=null;RV2_RUNNING=false;RV2_DONE=[];RV2_SKIPPED=[];if(RV2_LAYER){RV2_LAYER.remove();RV2_LAYER=null}rv2RenderList();['#rv2Km','#rv2Time','#rv2Method'].forEach(x=>{const el=$(x);if(el)el.textContent='—'});const s=$('#rv2Status');if(s)s.textContent='Adicione duas ou mais paradas para começar.'}
+function rv2Delete(pos){const s=RV2_STOPS[pos],k=rv2StopKey(s);RV2_STOPS.splice(pos,1);if(RV2_ROUTE_START_KEY===k)RV2_ROUTE_START_KEY='';if(RV2_ROUTE_END_KEY===k)RV2_ROUTE_END_KEY='';RV2_DONE=RV2_DONE.filter(x=>x!==k);RV2_SKIPPED=RV2_SKIPPED.filter(x=>x!==k);RV2_PLAN=null;rv2RenderList();rv2RenderMap();const st=$('#rv2Status');if(st)st.textContent=RV2_STOPS.length?'Parada removida. Otimize novamente quando quiser.':'Adicione duas ou mais paradas para começar.'}
+function rv2Clear(){RV2_STOPS=[];RV2_PLAN=null;RV2_ORDER=[];RV2_START=null;RV2_ROUTE_START_KEY='';RV2_ROUTE_END_KEY='';RV2_RUNNING=false;RV2_DONE=[];RV2_SKIPPED=[];if(RV2_LAYER){RV2_LAYER.remove();RV2_LAYER=null}rv2RenderList();['#rv2Km','#rv2Time','#rv2Method'].forEach(x=>{const el=$(x);if(el)el.textContent='—'});const s=$('#rv2Status');if(s)s.textContent='Adicione duas ou mais paradas para começar.'}
 async function rv2RenderMap(){
   const box=$('#rv2Map');if(!box||typeof L==='undefined')return;
   if(!RV2_MAP){RV2_MAP=L.map(box,{zoomControl:true});L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(RV2_MAP)}
@@ -3972,8 +3991,11 @@ async function rv2RenderMap(){
   const pts=RV2_PLAN?.points||[];
   if(RV2_PLAN&&pts.length>1){
     const base=pts[0],order=RV2_PLAN.optimizedOrder||[];
-    L.marker([base.lat,base.lon]).addTo(RV2_LAYER).bindTooltip(RV2_START?'Minha localização':'Base');
+    L.marker([base.lat,base.lon]).addTo(RV2_LAYER).bindTooltip(RV2_PLAN.fixedEnd?'INÍCIO':(RV2_START?'Minha localização':'Base'));
     order.forEach((idx,pos)=>{const p=pts[idx];if(!p)return;const icon=L.divIcon({className:'',html:'<div style="background:#111827;color:white;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:800;border:2px solid #fff;box-shadow:0 2px 6px #0005">'+(pos+1)+'</div>',iconSize:[30,30],iconAnchor:[15,15]});L.marker([p.lat,p.lon],{icon}).addTo(RV2_LAYER).bindPopup('<b>'+safe(p.destinatario||p.label||'Parada')+'</b><br>'+safe(p.endereco||p.cidade||''))});
+    if(RV2_PLAN.fixedEnd&&Number.isInteger(RV2_PLAN.endIndex)){
+      const p=pts[RV2_PLAN.endIndex];if(p)L.marker([p.lat,p.lon]).addTo(RV2_LAYER).bindTooltip('FIM • '+safe(p.label||'Destino final'));
+    }
     const coords=(RV2_PLAN.geometry?.coordinates||[]).map(x=>[Number(x[1]),Number(x[0])]).filter(x=>Number.isFinite(x[0])&&Number.isFinite(x[1]));
     if(coords.length>1)L.polyline(coords,{weight:6,opacity:.9,lineCap:'round',lineJoin:'round'}).addTo(RV2_LAYER);
     const bounds=L.latLngBounds(coords.length?coords:[[base.lat,base.lon]]);if(bounds.isValid())RV2_MAP.fitBounds(bounds.pad(.12));
@@ -4006,7 +4028,7 @@ function rv2UseMyLocation(){
   if(btn){btn.disabled=true;btn.textContent='📍 Localizando…'}
   if(status)status.textContent='Obtendo sua localização atual…';
   navigator.geolocation.getCurrentPosition(async p=>{
-    RV2_START={lat:Number(p.coords.latitude),lon:Number(p.coords.longitude),label:'Minha localização atual'};
+    RV2_START={lat:Number(p.coords.latitude),lon:Number(p.coords.longitude),label:'Minha localização atual'};RV2_ROUTE_START_KEY='';
     if(status)status.textContent='Origem definida pela sua localização atual.';
     if(btn){btn.disabled=false;btn.textContent='📍 Minha localização'}
     RV2_PLAN=null;await rv2RenderMap()
@@ -4016,24 +4038,56 @@ function rv2UseMyLocation(){
   },{enableHighAccuracy:true,timeout:15000,maximumAge:30000})
 }
 async function rv2Optimize(stopsOverride=null){
-  const status=$('#rv2Status'),btn=$('#rv2Optimize'),stops=Array.isArray(stopsOverride)?stopsOverride:RV2_STOPS;
-  if(stops.length<2){if(status)status.textContent='Adicione pelo menos duas paradas para otimizar.';return}
+  const status=$('#rv2Status'),btn=$('#rv2Optimize'),sourceStops=Array.isArray(stopsOverride)?stopsOverride:RV2_STOPS;
+  if(sourceStops.length<2){if(status)status.textContent='Adicione pelo menos duas paradas para otimizar.';return}
+
+  let startStop=null,endStop=null,middle=sourceStops.slice();
+  if(!stopsOverride){
+    startStop=RV2_ROUTE_START_KEY?sourceStops.find(s=>rv2StopKey(s)===RV2_ROUTE_START_KEY):null;
+    endStop=RV2_ROUTE_END_KEY?sourceStops.find(s=>rv2StopKey(s)===RV2_ROUTE_END_KEY):null;
+
+    // Sem GPS e sem marcação manual, a primeira parada vira início e a última vira fim.
+    if(!RV2_START&&!startStop&&sourceStops.length>=2){
+      startStop=sourceStops[0];RV2_ROUTE_START_KEY=rv2StopKey(startStop)
+    }
+    if(!endStop&&sourceStops.length>=2){
+      endStop=sourceStops[sourceStops.length-1];
+      if(startStop&&rv2StopKey(endStop)===rv2StopKey(startStop)&&sourceStops.length>1)endStop=sourceStops[sourceStops.length-2];
+      RV2_ROUTE_END_KEY=rv2StopKey(endStop)
+    }
+
+    middle=sourceStops.filter(s=>(!startStop||rv2StopKey(s)!==rv2StopKey(startStop))&&(!endStop||rv2StopKey(s)!==rv2StopKey(endStop)))
+  }
+
+  const requestStart=RV2_START||(startStop?{...startStop,label:startStop.label||startStop.endereco||'Início'}:null);
+  const requestEnd=endStop?{...endStop,label:endStop.label||endStop.endereco||'Fim'}:null;
+
   if(btn&&!stopsOverride){btn.disabled=true;btn.textContent='Otimizando…'}
-  if(status)status.textContent='Calculando a melhor sequência pelas vias reais…';
+  if(status)status.textContent=requestEnd?'Calculando rota do início ao destino final, sem retorno…':'Calculando a melhor sequência pelas vias reais…';
+
   try{
-    const r=await fetch('/api/roteirizador/recalcular',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stops,motorista:'Roteirizador V02',romaneio:'V02',start:RV2_START})});
+    const r=await fetch('/api/roteirizador/recalcular',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stops:middle,motorista:'Roteirizador V02',romaneio:'V02',start:requestStart,end:requestEnd})});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível otimizar a rota.');
     RV2_PLAN=j;RV2_ORDER=(j.optimizedOrder||[]).slice();
-    const optimizedStops=RV2_ORDER.map(i=>j.points?.[i]).filter(Boolean).map(p=>({...p,source:p.source||'manual'}));
+
+    const optimizedMiddle=RV2_ORDER.map(i=>j.points?.[i]).filter(Boolean).map(p=>({...p,source:p.source||'manual'}));
+    let optimizedStops=[];
+    if(j.fixedEnd){
+      const startObj=startStop||requestStart;
+      const endObj=endStop||j.points?.[j.endIndex];
+      optimizedStops=[...(startObj?[startObj]:[]),...optimizedMiddle,...(endObj?[endObj]:[])]
+    }else optimizedStops=optimizedMiddle;
+
     if(stopsOverride){
       const completed=RV2_STOPS.filter(s=>RV2_DONE.includes(rv2StopKey(s))||RV2_SKIPPED.includes(rv2StopKey(s)));
       RV2_STOPS=[...completed,...optimizedStops]
     }else RV2_STOPS=optimizedStops;
+
     if($('#rv2Km'))$('#rv2Km').textContent=routeFmtKm(j.geometryDistanceMeters||j.optimizedDistanceMeters||0);
     if($('#rv2Time'))$('#rv2Time').textContent=rv2FmtTime(j.durationSeconds||0);
-    if($('#rv2Method'))$('#rv2Method').textContent='OTIMIZADA';
-    if(status)status.textContent='Rota otimizada. O traçado acompanha ruas e rodovias.';
+    if($('#rv2Method'))$('#rv2Method').textContent=j.fixedEnd?'PONTO A → B':'OTIMIZADA';
+    if(status)status.textContent=j.fixedEnd?'Rota otimizada do ponto inicial ao destino final, sem voltar ao início.':'Rota otimizada. O traçado acompanha ruas e rodovias.';
     rv2RenderList();await rv2RenderMap()
   }catch(e){if(status)status.textContent='Erro: '+e.message}
   finally{if(btn&&!stopsOverride){btn.disabled=false;btn.textContent='Otimizar rota'}}
@@ -4111,6 +4165,7 @@ function rv2CurrentSnapshot(){
     name:rv2RouteName(),
     savedAt:new Date().toISOString(),
     start:RV2_START?{...RV2_START}:null,
+    routeStartKey:RV2_ROUTE_START_KEY,routeEndKey:RV2_ROUTE_END_KEY,
     stops:RV2_STOPS.map(s=>({...s})),
     running:RV2_RUNNING,
     done:[...RV2_DONE],
@@ -4126,7 +4181,7 @@ function rv2SaveRoute(){
 }
 function rv2OpenSaved(i){
   const r=rv2SavedRead()[i],status=$('#rv2Status');if(!r)return;
-  RV2_START=r.start||null;RV2_STOPS=(r.stops||[]).map(x=>({...x}));RV2_PLAN=null;RV2_ORDER=[];RV2_RUNNING=!!r.running;RV2_DONE=Array.isArray(r.done)?r.done.slice():[];RV2_SKIPPED=Array.isArray(r.skipped)?r.skipped.slice():[];
+  RV2_START=r.start||null;RV2_ROUTE_START_KEY=r.routeStartKey||'';RV2_ROUTE_END_KEY=r.routeEndKey||'';RV2_STOPS=(r.stops||[]).map(x=>({...x}));RV2_PLAN=null;RV2_ORDER=[];RV2_RUNNING=!!r.running;RV2_DONE=Array.isArray(r.done)?r.done.slice():[];RV2_SKIPPED=Array.isArray(r.skipped)?r.skipped.slice():[];
   const name=$('#rv2RouteName');if(name)name.value=r.name||'';
   rv2RenderList();rv2RenderMap();
   if(status)status.textContent='Rota salva carregada. Toque em Otimizar rota para recalcular pelas vias atuais.'
