@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#8f4b2b">
+<title>Caderno de Receitas Tradicionais</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="hero">
+  <div class="hero-inner">
+    <span class="eyebrow">🍲 COZINHA BRASILEIRA</span>
+    <h1>Caderno de Receitas Tradicionais</h1>
+    <p>Receitas de cozinha caseira inspiradas na tradição dos grandes livros culinários brasileiros.</p>
+    <div class="search-row">
+      <input id="search" placeholder="Buscar receita ou ingrediente...">
+      <select id="category"><option value="">Todas as categorias</option></select>
+      <button id="favoritesOnly">♡ Favoritos</button>
+    </div>
+  </div>
+</header>
+<main>
+  <section class="stats">
+    <div><strong id="recipeCount">0</strong><span>receitas</span></div>
+    <div><strong id="favoriteCount">0</strong><span>favoritas</span></div>
+  </section>
+  <section id="grid" class="grid"></section>
+  <div id="empty" class="empty">Nenhuma receita encontrada.</div>
+</main>
+<dialog id="recipeDialog">
+  <article>
+    <button class="close" id="closeDialog">✕</button>
+    <div class="dialog-head">
+      <span id="dialogCategory" class="tag"></span>
+      <h2 id="dialogTitle"></h2>
+      <p id="dialogSummary"></p>
+      <div class="meta"><span id="dialogTime"></span><span id="dialogYield"></span></div>
+    </div>
+    <div class="portion-box">
+      <label>Porções
+        <div class="portion-controls">
+          <button id="minusPortion" type="button">−</button>
+          <strong id="portionValue">1</strong>
+          <button id="plusPortion" type="button">+</button>
+        </div>
+      </label>
+    </div>
+    <h3>Ingredientes</h3>
+    <ul id="ingredients"></ul>
+    <h3>Modo de preparo</h3>
+    <ol id="steps"></ol>
+    <div class="tip"><strong>Dica:</strong> <span id="dialogTip"></span></div>
+  </article>
+</dialog>
+<script src="app.js"></script>
+</body>
+</html>
