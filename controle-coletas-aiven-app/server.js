@@ -102,6 +102,35 @@ async function routePublicGeometry(points,order){
   return j.routes[0]
 }
 
+
+function routerBearer(req){
+  const m=String(req.headers.authorization||'').match(/^Bearer\s+(.+)$/i);
+  return m?m[1].trim():'';
+}
+async function routerUserFromReq(req){
+  const token=routerBearer(req);
+  if(!token){const e=new Error('Faça login para continuar.');e.status=401;throw e}
+  const q=await pool.query("SELECT u.id::text,u.email,u.name,u.plan,u.active FROM router_app_sessions s JOIN router_app_users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>NOW() AND u.active=TRUE LIMIT 1",[dashboardTokenHash(token)]);
+  if(!q.rowCount){const e=new Error('Sessão expirada. Entre novamente.');e.status=401;throw e}
+  return q.rows[0]
+}
+async function routerCreateSession(userId){
+  const token=crypto.randomBytes(32).toString('hex');
+  await pool.query('DELETE FROM router_app_sessions WHERE expires_at<=NOW()');
+  await pool.query("INSERT INTO router_app_sessions(token_hash,user_id,expires_at) VALUES($1,$2,NOW()+INTERVAL '30 days')",[dashboardTokenHash(token),userId]);
+  return token
+}
+function routerPlanLimits(plan){
+  const p=String(plan||'free').toLowerCase();
+  if(p==='pro')return{routesPerMonth:500,maxStops:100};
+  if(p==='business')return{routesPerMonth:5000,maxStops:200};
+  return{routesPerMonth:15,maxStops:30}
+}
+async function routerMonthlyUsage(userId){
+  const q=await pool.query("SELECT COUNT(*)::int AS n FROM router_app_routes WHERE user_id=$1 AND created_at>=date_trunc('month',NOW())",[userId]);
+  return Number(q.rows[0]?.n||0)
+}
+
 async function readJsonBody(req) {
   let raw = '';
   for await (const chunk of req) raw += chunk;
@@ -427,6 +456,34 @@ async function migrateLegacyBillsIfNeeded() {
 async function start() {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL nao configurada');
   await Promise.all([initDb(), initColetasDb()]);
+  await pool.query(`CREATE TABLE IF NOT EXISTS router_app_users (
+    id BIGSERIAL PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    password_salt TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    plan TEXT NOT NULL DEFAULT 'free',
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS router_app_sessions (
+    id BIGSERIAL PRIMARY KEY,
+    token_hash TEXT UNIQUE NOT NULL,
+    user_id BIGINT NOT NULL REFERENCES router_app_users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL
+  )`);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_router_app_sessions_user ON router_app_sessions(user_id,expires_at DESC)');
+  await pool.query(`CREATE TABLE IF NOT EXISTS router_app_routes (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES router_app_users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    route_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_router_app_routes_user ON router_app_routes(user_id,updated_at DESC)');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS recebido BOOLEAN NOT NULL DEFAULT FALSE');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS data_recebimento DATE');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS previsao_pagamento_fatura DATE');
@@ -701,6 +758,77 @@ async function start() {
   http.createServer(async (req, res) => {
     try {
       const u = new URL(req.url, 'http://localhost');
+
+      if (u.pathname === '/api/router-app/register' && req.method === 'POST') {
+        try{
+          const body=await readJsonBodyLimited(req,64*1024);
+          const email=String(body.email||'').trim().toLowerCase().slice(0,180);
+          const name=String(body.name||'').trim().slice(0,120);
+          const password=String(body.password||'');
+          if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return sendJson(res,400,{ok:false,error:'Informe um e-mail válido.'});
+          if(name.length<2)return sendJson(res,400,{ok:false,error:'Informe seu nome.'});
+          if(password.length<6)return sendJson(res,400,{ok:false,error:'A senha deve ter pelo menos 6 caracteres.'});
+          const ph=dashboardHashPassword(password);
+          let q;
+          try{
+            q=await pool.query("INSERT INTO router_app_users(email,name,password_salt,password_hash) VALUES($1,$2,$3,$4) RETURNING id::text,email,name,plan",[email,name,ph.salt,ph.hash]);
+          }catch(e){
+            if(String(e.code)==='23505')return sendJson(res,409,{ok:false,error:'Este e-mail já está cadastrado.'});
+            throw e
+          }
+          const user=q.rows[0],token=await routerCreateSession(user.id),limits=routerPlanLimits(user.plan);
+          return sendJson(res,201,{ok:true,token,user:{...user,limits}})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao criar conta.'})}
+      }
+
+      if (u.pathname === '/api/router-app/login' && req.method === 'POST') {
+        try{
+          const body=await readJsonBodyLimited(req,64*1024);
+          const email=String(body.email||'').trim().toLowerCase(),password=String(body.password||'');
+          const q=await pool.query("SELECT id::text,email,name,plan,active,password_salt,password_hash FROM router_app_users WHERE email=$1 LIMIT 1",[email]);
+          if(!q.rowCount||!q.rows[0].active||!dashboardVerifyPassword(password,q.rows[0].password_salt,q.rows[0].password_hash))return sendJson(res,401,{ok:false,error:'E-mail ou senha inválidos.'});
+          const user=q.rows[0],token=await routerCreateSession(user.id),limits=routerPlanLimits(user.plan),usage=await routerMonthlyUsage(user.id);
+          return sendJson(res,200,{ok:true,token,user:{id:user.id,email:user.email,name:user.name,plan:user.plan,limits,usage}})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao entrar.'})}
+      }
+
+      if (u.pathname === '/api/router-app/me' && req.method === 'GET') {
+        try{
+          const user=await routerUserFromReq(req),limits=routerPlanLimits(user.plan),usage=await routerMonthlyUsage(user.id);
+          return sendJson(res,200,{ok:true,user:{...user,limits,usage}})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar conta.'})}
+      }
+
+      if (u.pathname === '/api/router-app/routes' && req.method === 'GET') {
+        try{
+          const user=await routerUserFromReq(req);
+          const q=await pool.query("SELECT id::text,name,route_data,created_at,updated_at FROM router_app_routes WHERE user_id=$1 ORDER BY updated_at DESC LIMIT 100",[user.id]);
+          return sendJson(res,200,{ok:true,rows:q.rows})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar rotas.'})}
+      }
+
+      if (u.pathname === '/api/router-app/routes' && req.method === 'POST') {
+        try{
+          const user=await routerUserFromReq(req),limits=routerPlanLimits(user.plan),usage=await routerMonthlyUsage(user.id);
+          if(usage>=limits.routesPerMonth)return sendJson(res,402,{ok:false,error:'Limite mensal do plano atingido.',upgrade_required:true,limits,usage});
+          const body=await readJsonBodyLimited(req,1024*1024);
+          const name=String(body.name||'Minha rota').trim().slice(0,160)||'Minha rota';
+          const data=body.route_data&&typeof body.route_data==='object'?body.route_data:{};
+          const stops=Array.isArray(data.stops)?data.stops:[];
+          if(stops.length>limits.maxStops)return sendJson(res,400,{ok:false,error:'Seu plano permite até '+limits.maxStops+' paradas por rota.'});
+          const q=await pool.query("INSERT INTO router_app_routes(user_id,name,route_data) VALUES($1,$2,$3::jsonb) RETURNING id::text,name,route_data,created_at,updated_at",[user.id,name,JSON.stringify(data)]);
+          return sendJson(res,201,{ok:true,row:q.rows[0],usage:usage+1,limits})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao salvar rota.'})}
+      }
+
+      if (u.pathname.match(/^\/api\/router-app\/routes\/\d+$/) && req.method === 'DELETE') {
+        try{
+          const user=await routerUserFromReq(req),id=u.pathname.split('/').pop();
+          const q=await pool.query("DELETE FROM router_app_routes WHERE id=$1 AND user_id=$2 RETURNING id",[id,user.id]);
+          if(!q.rowCount)return sendJson(res,404,{ok:false,error:'Rota não encontrada.'});
+          return sendJson(res,200,{ok:true})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao excluir rota.'})}
+      }
 
       if (u.pathname === '/api/public-router/geocode' && req.method === 'GET') {
         try{
