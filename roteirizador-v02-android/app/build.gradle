@@ -2,15 +2,58 @@ plugins { id 'com.android.application' }
 
 android {
     namespace 'br.com.movit.rotas'
-    compileSdk 35
+    compileSdk 36
+
     defaultConfig {
-        applicationId 'br.com.movit.rotas.teste'
         minSdk 26
-        targetSdk 35
-        versionCode 22
-        versionName '0.8.3-teste'
+        targetSdk 36
+        versionCode 1
+        versionName '1.0.0'
     }
-    buildTypes { release { minifyEnabled false } }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    flavorDimensions 'channel'
+    productFlavors {
+        teste {
+            dimension 'channel'
+            applicationId 'br.com.movit.rotas.teste'
+            versionNameSuffix '-teste'
+            buildConfigField 'boolean', 'PLAY_STORE_BUILD', 'false'
+        }
+        play {
+            dimension 'channel'
+            applicationId 'br.com.movit.rotas'
+            buildConfigField 'boolean', 'PLAY_STORE_BUILD', 'true'
+        }
+    }
+
+    signingConfigs {
+        playRelease {
+            def ksPath = System.getenv('MOVIT_KEYSTORE_PATH')
+            if (ksPath) {
+                storeFile file(ksPath)
+                storePassword System.getenv('MOVIT_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('MOVIT_KEY_ALIAS')
+                keyPassword System.getenv('MOVIT_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            shrinkResources false
+            if (System.getenv('MOVIT_KEYSTORE_PATH')) {
+                signingConfig signingConfigs.playRelease
+            }
+        }
+        debug {
+            applicationIdSuffix ''
+        }
+    }
 }
 
 dependencies {
