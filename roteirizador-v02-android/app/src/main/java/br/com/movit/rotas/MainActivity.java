@@ -34,7 +34,13 @@ public class MainActivity extends Activity {
     private Button cloudSave,cloudRoutes;
 
     @Override public void onCreate(Bundle b){
-        super.onCreate(b);prefs=getSharedPreferences("rv2_account",MODE_PRIVATE);buildUi();renderList();renderMap(null);refreshAccount();
+        super.onCreate(b);prefs=getSharedPreferences("rv2_account",MODE_PRIVATE);buildUi();renderList();renderMap(null);refreshAccount();handleSharedRouteIntent(getIntent());
+    }
+
+    @Override protected void onNewIntent(Intent intent){
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleSharedRouteIntent(intent);
     }
 
     private int dp(int v){return Math.round(v*getResources().getDisplayMetrics().density);}
@@ -318,6 +324,7 @@ public class MainActivity extends Activity {
                 stops.clear();
                 if(arr!=null)for(int i=0;i<arr.length();i++)stops.add(arr.getJSONObject(i));
                 start=route.optJSONObject("start");
+                prefs.edit().putBoolean("current_return_start",route.optBoolean("returnToStart",false)).apply();
                 lastPlan=null;
                 String title=j.optString("title","Rota compartilhada");
                 String driver=j.optString("driver_name","");
@@ -531,6 +538,9 @@ public class MainActivity extends Activity {
         JSONObject data=new JSONObject();JSONArray arr=new JSONArray();
         for(JSONObject s:stops)arr.put(new JSONObject(s.toString()));
         data.put("stops",arr);if(start!=null)data.put("start",new JSONObject(start.toString()));
+        data.put("returnToStart",prefs.getBoolean("current_return_start",false));
+        data.put("driverName",prefs.getString("current_driver_name",""));
+        data.put("eventDate",prefs.getString("current_event_date",""));
         if(lastPlan!=null){
             data.put("distanceMeters",lastPlan.optDouble("distanceMeters",0));
             data.put("durationSeconds",lastPlan.optDouble("durationSeconds",0));
