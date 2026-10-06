@@ -104,7 +104,7 @@ function hasPerm(p){return !!(AUTH&&(AUTH.is_admin||AUTH.permissions?.includes('
 function hasAnyPerm(list){return list.some(hasPerm)}
 function tabAllowed(tab){
   const map={
-    dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao','roteirizador-teste':'roteirizador',rastreamento:'tracking',lotacao:'lotacao',frota:'frota',
+    dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao','roteirizador-teste':'roteirizador','roteirizador-v02':'roteirizador',rastreamento:'tracking',lotacao:'lotacao',frota:'frota',
     agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes',
     'ssw-motoristas':'ssw_saidas','motoristas-evolucao':'evolucao',
     'ssw-atrasos':'ssw_atrasos','ssw-remetentes':'remetentes',
@@ -119,7 +119,7 @@ function tabAllowed(tab){
   return map[tab]?hasPerm(map[tab]):false
 }
 function applyPermissions(){
-  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao','roteirizador-teste':'roteirizador',rastreamento:'tracking',lotacao:'lotacao',frota:'frota',agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes'};
+  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao','roteirizador-teste':'roteirizador','roteirizador-v02':'roteirizador',rastreamento:'tracking',lotacao:'lotacao',frota:'frota',agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes'};
   document.querySelectorAll('.nav button').forEach(b=>{
     let show=true;
     if(b.dataset.adminOnly==='1')show=!!AUTH?.is_admin;
@@ -265,6 +265,7 @@ async function showAuthenticatedApp(user){
   setupTracking();
   setupRoteirizador();
   setupRoteirizadorTeste();
+  setupRoteirizadorV02();
   if(AUTH.is_admin)loadDashboardUsers();
   if(!window.__appStarted){
     window.__appStarted=true;
@@ -3918,6 +3919,97 @@ async function rtOptimize(){
   }catch(e){if(status)status.textContent='Erro no roteirizador de teste: '+e.message}
   finally{if(btn){btn.disabled=false;btn.textContent='Otimizar como Spoke'}}
 }
+
+let RV2_STOPS=[],RV2_PLAN=null,RV2_ORDER=[],RV2_MAP=null,RV2_LAYER=null;
+function rv2FmtTime(sec){
+  const s=Number(sec);if(!Number.isFinite(s)||s<=0)return'—';
+  const m=Math.round(s/60),h=Math.floor(m/60),mm=m%60;
+  return h?((h+'h '+(mm?mm+'min':'' )).trim()):(m+' min')
+}
+function rv2RenderList(){
+  const box=$('#rv2List'),k=$('#rv2StopsKpi');if(k)k.textContent=nf(RV2_STOPS.length);if(!box)return;
+  if(!RV2_STOPS.length){box.innerHTML='<div class="muted">Nenhuma parada adicionada.</div>';return}
+  box.innerHTML=RV2_STOPS.map((s,pos)=>'<div class="route-stop"><div class="seq">'+(pos+1)+'</div><div><b>'+safe(s.label||s.endereco||'Parada')+'</b><div class="meta">'+safe((s.cidade||'')+(s.uf?' / '+s.uf:''))+'</div></div><div class="move"><button type="button" data-rv2-urgent="'+pos+'" title="Tornar próxima parada">⚡</button><button type="button" data-rv2-up="'+pos+'" '+(pos===0?'disabled':'')+'>↑</button><button type="button" data-rv2-down="'+pos+'" '+(pos===RV2_STOPS.length-1?'disabled':'')+'>↓</button><button type="button" data-rv2-del="'+pos+'" title="Excluir">✕</button></div></div>').join('');
+  box.querySelectorAll('[data-rv2-up]').forEach(b=>b.onclick=()=>rv2Move(Number(b.dataset.rv2Up),-1));
+  box.querySelectorAll('[data-rv2-down]').forEach(b=>b.onclick=()=>rv2Move(Number(b.dataset.rv2Down),1));
+  box.querySelectorAll('[data-rv2-urgent]').forEach(b=>b.onclick=()=>rv2Urgent(Number(b.dataset.rv2Urgent)));
+  box.querySelectorAll('[data-rv2-del]').forEach(b=>b.onclick=()=>rv2Delete(Number(b.dataset.rv2Del)))
+}
+function rv2Move(pos,dir){const n=pos+dir;if(n<0||n>=RV2_STOPS.length)return;[RV2_STOPS[pos],RV2_STOPS[n]]=[RV2_STOPS[n],RV2_STOPS[pos]];RV2_PLAN=null;rv2RenderList();rv2RenderMap()}
+function rv2Urgent(pos){if(pos<=0)return;const [x]=RV2_STOPS.splice(pos,1);RV2_STOPS.unshift(x);RV2_PLAN=null;rv2RenderList();rv2RenderMap()}
+function rv2Delete(pos){RV2_STOPS.splice(pos,1);RV2_PLAN=null;rv2RenderList();rv2RenderMap();const s=$('#rv2Status');if(s)s.textContent=RV2_STOPS.length?'Parada removida. Otimize novamente quando quiser.':'Adicione duas ou mais paradas para começar.'}
+function rv2Clear(){RV2_STOPS=[];RV2_PLAN=null;RV2_ORDER=[];if(RV2_LAYER){RV2_LAYER.remove();RV2_LAYER=null}rv2RenderList();['#rv2Km','#rv2Time','#rv2Method'].forEach(x=>{const el=$(x);if(el)el.textContent='—'});const s=$('#rv2Status');if(s)s.textContent='Adicione duas ou mais paradas para começar.'}
+async function rv2RenderMap(){
+  const box=$('#rv2Map');if(!box||typeof L==='undefined')return;
+  if(!RV2_MAP){RV2_MAP=L.map(box,{zoomControl:true});L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(RV2_MAP)}
+  if(RV2_LAYER)RV2_LAYER.remove();RV2_LAYER=L.layerGroup().addTo(RV2_MAP);
+  const pts=RV2_PLAN?.points||[];
+  if(RV2_PLAN&&pts.length>1){
+    const base=pts[0],order=RV2_PLAN.optimizedOrder||[];
+    L.marker([base.lat,base.lon]).addTo(RV2_LAYER).bindTooltip('Base');
+    order.forEach((idx,pos)=>{const p=pts[idx];if(!p)return;const icon=L.divIcon({className:'',html:'<div style="background:#111827;color:white;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:800;border:2px solid #fff;box-shadow:0 2px 6px #0005">'+(pos+1)+'</div>',iconSize:[30,30],iconAnchor:[15,15]});L.marker([p.lat,p.lon],{icon}).addTo(RV2_LAYER).bindPopup('<b>'+safe(p.destinatario||p.label||'Parada')+'</b><br>'+safe(p.endereco||p.cidade||''))});
+    const coords=(RV2_PLAN.geometry?.coordinates||[]).map(x=>[Number(x[1]),Number(x[0])]).filter(x=>Number.isFinite(x[0])&&Number.isFinite(x[1]));
+    if(coords.length>1)L.polyline(coords,{weight:6,opacity:.9,lineCap:'round',lineJoin:'round'}).addTo(RV2_LAYER);
+    const bounds=L.latLngBounds(coords.length?coords:[[base.lat,base.lon]]);if(bounds.isValid())RV2_MAP.fitBounds(bounds.pad(.12));
+  }else if(RV2_STOPS.length){
+    const coords=RV2_STOPS.filter(x=>Number.isFinite(Number(x.lat))&&Number.isFinite(Number(x.lon))).map((p,pos)=>{L.marker([p.lat,p.lon]).addTo(RV2_LAYER).bindTooltip(String(pos+1));return[p.lat,p.lon]});
+    if(coords.length){const bounds=L.latLngBounds(coords);if(bounds.isValid())RV2_MAP.fitBounds(bounds.pad(.2))}
+  }else RV2_MAP.setView([-22.74,-47.33],10);
+  setTimeout(()=>RV2_MAP.invalidateSize(),80)
+}
+async function rv2AddAddress(rawText=''){
+  const input=$('#rv2Address'),status=$('#rv2Status'),btn=$('#rv2Add'),raw=(rawText||input?.value||'').trim();
+  if(!raw){if(status)status.textContent='Digite ou fale um endereço.';return}
+  if(btn){btn.disabled=true;btn.textContent='Localizando…'}
+  try{
+    const r=await fetch('/api/roteirizador/endereco?endereco='+encodeURIComponent(raw),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Endereço não localizado.');
+    RV2_STOPS.push(j.stop);RV2_PLAN=null;
+    if(input)input.value='';
+    rv2RenderList();await rv2RenderMap();
+    if(status)status.textContent='Parada adicionada: '+(j.stop.label||j.stop.endereco||raw)+'.'
+  }catch(e){if(status)status.textContent='Erro: '+e.message}
+  finally{if(btn){btn.disabled=false;btn.textContent='Adicionar parada'}}
+}
+async function rv2Optimize(){
+  const status=$('#rv2Status'),btn=$('#rv2Optimize');
+  if(RV2_STOPS.length<2){if(status)status.textContent='Adicione pelo menos duas paradas para otimizar.';return}
+  if(btn){btn.disabled=true;btn.textContent='Otimizando…'}
+  if(status)status.textContent='Calculando a melhor sequência pelas vias reais…';
+  try{
+    const r=await fetch('/api/roteirizador/recalcular',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stops:RV2_STOPS,motorista:'Roteirizador V02',romaneio:'V02'})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível otimizar a rota.');
+    RV2_PLAN=j;RV2_ORDER=(j.optimizedOrder||[]).slice();
+    RV2_STOPS=RV2_ORDER.map(i=>j.points?.[i]).filter(Boolean).map(p=>({...p,source:p.source||'manual'}));
+    if($('#rv2Km'))$('#rv2Km').textContent=routeFmtKm(j.optimizedDistanceMeters||j.geometryDistanceMeters||0);
+    if($('#rv2Time'))$('#rv2Time').textContent=rv2FmtTime(j.durationSeconds||0);
+    if($('#rv2Method'))$('#rv2Method').textContent='OTIMIZADA';
+    if(status)status.textContent='Rota otimizada. O traçado acompanha ruas e rodovias.';
+    rv2RenderList();await rv2RenderMap()
+  }catch(e){if(status)status.textContent='Erro: '+e.message}
+  finally{if(btn){btn.disabled=false;btn.textContent='Otimizar rota'}}
+}
+function rv2Voice(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition,status=$('#rv2Status'),voice=$('#rv2Voice');
+  if(!SR){if(status)status.textContent='Reconhecimento de voz não disponível neste navegador. No app Android V02 ele será nativo.';return}
+  const rec=new SR();rec.lang='pt-BR';rec.interimResults=false;rec.maxAlternatives=1;
+  if(voice){voice.disabled=true;voice.textContent='🎙️ Ouvindo…'};if(status)status.textContent='Fale o endereço completo.';
+  rec.onresult=e=>{const txt=e.results?.[0]?.[0]?.transcript||'';const input=$('#rv2Address');if(input)input.value=txt;if(status)status.textContent='Ouvi: '+txt+'. Confira e toque em Adicionar parada.'};
+  rec.onerror=e=>{if(status)status.textContent='Não consegui ouvir o endereço: '+(e.error||'erro de voz')};
+  rec.onend=()=>{if(voice){voice.disabled=false;voice.textContent='🎙️ Falar'}};
+  rec.start()
+}
+function setupRoteirizadorV02(){
+  if($('#rv2Add'))$('#rv2Add').onclick=()=>rv2AddAddress();
+  if($('#rv2Address'))$('#rv2Address').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();rv2AddAddress()}};
+  if($('#rv2Voice'))$('#rv2Voice').onclick=rv2Voice;
+  if($('#rv2Optimize'))$('#rv2Optimize').onclick=rv2Optimize;
+  if($('#rv2Clear'))$('#rv2Clear').onclick=rv2Clear;
+  rv2RenderList()
+}
+
 function setupRoteirizadorTeste(){
   const d=$('#rtDate');if(d&&!d.value)d.value=iso(new Date());
   if(d)d.onchange=()=>{RT_PLAN=null;RT_ORDER=[];rtLoadManifests(true)};
@@ -3972,6 +4064,8 @@ function loadHeavyForTab(tab){
   }else if(tab==='agendamentos-copia'&&hasAnyPerm(['dashboard','agendamentos','agendamentos_copia'])){
     renderAgCopy();
     setTimeout(()=>refreshAgCopy(true),50);
+  }else if(tab==='roteirizador-v02'&&hasPerm('roteirizador')){
+    setTimeout(()=>{rv2RenderList();rv2RenderMap()},50);
   }else if(tab==='roteirizador-teste'&&hasPerm('roteirizador')){
     setTimeout(()=>rtLoadManifests(false),50);
   }else if(tab==='roteirizador'&&hasPerm('roteirizador')){
