@@ -1289,6 +1289,92 @@ async function start() {
         }catch(e){return sendJson(res,e.status||502,{ok:false,error:e.message||'Falha ao localizar endereço.'})}
       }
 
+      if (u.pathname === '/api/public-router/truck-restrictions' && req.method === 'POST') {
+        try{
+          if(!publicRouteAllowed(req))return sendJson(res,429,{ok:false,error:'Muitas consultas. Aguarde um minuto.'});
+          const body=await readJsonBodyLimited(req,512*1024);
+          const vehicle=body.vehicle&&typeof body.vehicle==='object'?body.vehicle:{};
+          const points=Array.isArray(body.points)?body.points.slice(0,40):[];
+          const norm=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+          const has=(txt,names)=>names.some(n=>norm(txt).includes(norm(n)));
+          const alerts=[];
+          const citySeen=new Set();
+
+          const spRuleA=[
+            'Avenida Paulista','Av Paulista','Avenida Rebouças','Av Rebouças','Avenida Eusébio Matoso','Av Eusebio Matoso',
+            'Avenida Professor Francisco Morato','Av Professor Francisco Morato','Avenida Nove de Julho','Av Nove de Julho','Avenida 9 de Julho','Av 9 de Julho',
+            'Avenida Cidade Jardim','Av Cidade Jardim','Avenida São Gabriel','Av Sao Gabriel','Avenida Santo Amaro','Av Santo Amaro',
+            'Avenida Santos Dumont','Av Santos Dumont','Avenida Tiradentes','Av Tiradentes','Avenida Prestes Maia','Av Prestes Maia',
+            'Avenida Rio Branco','Av Rio Branco','Avenida Senador Queirós','Av Senador Queiros','Avenida Ipiranga','Av Ipiranga',
+            'Avenida São Luiz','Av Sao Luiz','Rua Maria Paula','Avenida Vinte e Três de Maio','Av 23 de Maio','Avenida Rubem Berta','Av Rubem Berta',
+            'Avenida Alcântara Machado','Av Alcantara Machado','Rua Melo Freire','Avenida Conde de Frontin','Av Conde de Frontin',
+            'Marginal Pinheiros','Avenida dos Bandeirantes','Av dos Bandeirantes','Avenida Jornalista Roberto Marinho','Av Jornalista Roberto Marinho',
+            'Avenida Giovanni Gronchi','Av Giovanni Gronchi','Avenida Morumbi','Av Morumbi','Rua Doutor Luiz Migliano','Rua Dr Luiz Migliano',
+            'Avenida Padre Lebret','Av Padre Lebret','Avenida Jules Rimet','Av Jules Rimet'
+          ];
+          const spRulePeak=[
+            'Marginal Tietê','Marginal Tiete','Avenida General Edgar Facó','Av General Edgar Faco','Avenida Ermano Marchetti','Av Ermano Marchetti',
+            'Avenida Marquês de São Vicente','Av Marques de Sao Vicente','Rua Norma Pieruccini Giannotti','Rua Sérgio Tomás','Rua Sergio Tomas',
+            'Avenida Presidente Castello Branco','Av Presidente Castello Branco','Avenida do Estado','Av do Estado',
+            'Avenida Professor Luiz Inácio de Anhaia Mello','Av Professor Luiz Inacio de Anhaia Mello','Avenida Presidente Tancredo Neves','Av Presidente Tancredo Neves',
+            'Rua das Juntas Provisórias','Rua das Juntas Provisorias','Rua Bresser','Avenida Paes de Barros','Av Paes de Barros',
+            'Avenida Salim Farah Maluf','Av Salim Farah Maluf','Avenida São Miguel','Av Sao Miguel','Avenida Marechal Tito','Av Marechal Tito'
+          ];
+
+          for(let i=0;i<points.length;i++){
+            const p=points[i]||{};
+            const label=String(p.resolved||p.label||p.address||'');
+            const n=norm(label);
+            const inSaoPaulo=(n.includes('sao paulo')||n.includes(' sao paulo sp')||n.endsWith('sp brasil')) && !n.includes('estado de sao paulo');
+            if(!inSaoPaulo)continue;
+
+            if(!citySeen.has('sao-paulo')){
+              citySeen.add('sao-paulo');
+              alerts.push({
+                level:'city',
+                city:'São Paulo',
+                title:'São Paulo possui áreas e vias com restrição para caminhões',
+                detail:'Na ZMRC, a regra geral é proibição de 2ª a 6ª das 05h às 21h e aos sábados das 10h às 14h, exceto feriados. Há exceções e autorizações específicas, inclusive para alguns VUCs cadastrados.',
+                schedule:'2ª–6ª 05:00–21:00 • sábado 10:00–14:00',
+                source:'Prefeitura de São Paulo • Portaria SMT 137/2018'
+              });
+            }
+            if(has(label,spRuleA)){
+              alerts.push({
+                level:'street',city:'São Paulo',stopIndex:i,
+                title:'Via com restrição de caminhões',
+                street:label,
+                detail:'Trecho/endereço coincide com via estrutural restrita. Confira o trecho exato e a sinalização local antes de entrar.',
+                schedule:'2ª–6ª 05:00–21:00 • sábado 10:00–14:00',
+                source:'Prefeitura de São Paulo • Portaria SMT 137/2018'
+              });
+            }else if(has(label,spRulePeak)){
+              alerts.push({
+                level:'street',city:'São Paulo',stopIndex:i,
+                title:'Via com restrição em horários de pico',
+                street:label,
+                detail:'Trecho/endereço coincide com via estrutural restrita. Algumas vias desta categoria têm restrição em períodos de pico; confira o trecho e a sinalização.',
+                schedule:'2ª–6ª 05:00–09:00 e 17:00–21:00 • sábado 10:00–14:00',
+                source:'Prefeitura de São Paulo • Portaria SMT 137/2018'
+              });
+            }
+          }
+
+          const type=String(vehicle.type||'').trim();
+          const truck=/vuc|3\/4|toco|truck|carreta|caminh/i.test(type);
+          const response={
+            ok:true,
+            vehicleType:type||'Não informado',
+            isTruck:truck,
+            alerts,
+            count:alerts.length,
+            coverage:'Base inicial: regras oficiais do Município de São Paulo. Outras cidades serão adicionadas progressivamente.',
+            warning:'O MOVIT é um auxílio. Sinalização da via, autorizações especiais, obras e regras temporárias prevalecem.'
+          };
+          return sendJson(res,200,response);
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao verificar restrições.'})}
+      }
+
       if (u.pathname === '/api/public-router/optimize' && req.method === 'POST') {
         try{
           if(!publicRouteAllowed(req))return sendJson(res,429,{ok:false,error:'Muitas consultas. Aguarde um minuto.'});
