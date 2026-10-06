@@ -64,29 +64,44 @@ function routePublicHaversine(a,b){
   const x=Math.sin(dlat/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dlon/2)**2;
   return 2*R*Math.asin(Math.min(1,Math.sqrt(x)))
 }
+function routePublicStreetVariants(raw){
+  const out=[],push=x=>{x=String(x||'').trim().replace(/\s+/g,' ');if(x&&!out.includes(x))out.push(x)};
+  push(raw);
+  const parts=String(raw||'').split(',').map(x=>x.trim()).filter(Boolean);
+  if(parts.length>=2){
+    const street=parts[0].replace(/\b\d+[A-Za-z-]*\b/g,'').replace(/\s+/g,' ').trim();
+    const city=parts[parts.length-1].replace(/\bSP\b/ig,'').trim();
+    if(street&&city){
+      push(street+', '+city);
+      const words=street.split(/\s+/),last=words[words.length-1]||'';
+      if(last.length>=4&&/[aeiou]$/i.test(last)){
+        const prev=last[last.length-2];
+        if(prev&&/[bcdfghjklmnpqrstvwxyz]/i.test(prev)){
+          push([...words.slice(0,-1),last.slice(0,-1)+prev+last.slice(-1)].join(' ')+', '+city)
+        }
+      }
+    }
+  }
+  return out
+}
 async function routePublicGeocode(q){
   const raw=String(q||'').trim().replace(/\s+/g,' ');
   if(raw.length<4)throw Object.assign(new Error('Informe ao menos rua e cidade.'),{status:400});
   const candidates=[];
   const push=x=>{x=String(x||'').trim().replace(/\s+/g,' ');if(x&&!candidates.includes(x))candidates.push(x)};
-  push(raw);
-  if(!/\bSP\b|SÃO PAULO|SAO PAULO/i.test(raw))push(raw+', SP, Brasil');
-  push(raw+', Brasil');
-
-  const parts=raw.split(',').map(x=>x.trim()).filter(Boolean);
-  if(parts.length>=2){
-    const street=parts[0].replace(/\b\d+[A-Za-z-]*\b/g,'').replace(/\s{2,}/g,' ').trim();
-    const city=parts[parts.length-1];
-    if(street&&city){
-      push(street+', '+city+', SP, Brasil');
-      push(street+', '+city+', Brasil');
-    }
+  for(const baseQuery of routePublicStreetVariants(raw)){
+    push(baseQuery);
+    if(!/\bSP\b|SÃO PAULO|SAO PAULO/i.test(baseQuery))push(baseQuery+', SP, Brasil');
+    push(baseQuery+', Brasil');
   }
 
   const withoutNumber=raw.replace(/(^|,|\s)\d+[A-Za-z-]*(?=,|\s|$)/g,' ').replace(/\s+/g,' ').replace(/\s+,/g,',').trim();
   if(withoutNumber&&withoutNumber!==raw){
-    push(withoutNumber);
-    if(!/\bSP\b|SÃO PAULO|SAO PAULO/i.test(withoutNumber))push(withoutNumber+', SP, Brasil');
+    for(const baseQuery of routePublicStreetVariants(withoutNumber)){
+      push(baseQuery);
+      if(!/\bSP\b|SÃO PAULO|SAO PAULO/i.test(baseQuery))push(baseQuery+', SP, Brasil');
+      push(baseQuery+', Brasil');
+    }
   }
 
   for(const query of candidates){
