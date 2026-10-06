@@ -199,10 +199,20 @@ async function routePublicGeocode(q){
 }
 async function routePublicTable(points){
   const coords=points.map(p=>p.lon+','+p.lat).join(';');
-  const r=await fetch('https://router.project-osrm.org/table/v1/driving/'+coords+'?annotations=distance',{headers:{'User-Agent':'CONSTRULOG-Rotas/0.2'},signal:AbortSignal.timeout(20000)});
-  const j=await r.json();
-  if(!r.ok||j.code!=='Ok'||!Array.isArray(j.distances))throw new Error('Serviço de roteamento indisponível.');
-  return j.distances.map(row=>row.map(v=>Number.isFinite(v)?v:Infinity))
+  const bases=['https://router.project-osrm.org','https://routing.openstreetmap.de/routed-car'];
+  for(const base of bases){
+    try{
+      const r=await fetch(base+'/table/v1/driving/'+coords+'?annotations=distance',{headers:{'User-Agent':'MOVIT-Rotas/0.7'},signal:AbortSignal.timeout(18000)});
+      const j=await r.json();
+      if(r.ok&&j.code==='Ok'&&Array.isArray(j.distances)){
+        return j.distances.map(row=>row.map(v=>Number.isFinite(v)?v:Infinity))
+      }
+    }catch(e){
+      console.warn('MOVIT table falhou',base,String(e?.message||e))
+    }
+  }
+  console.warn('MOVIT usando matriz aproximada por distância geográfica');
+  return points.map(a=>points.map(b=>routePublicHaversine(a,b)*1.28))
 }
 function routePublicCycle(order,m){
   if(!order.length)return 0;let d=m[0][order[0]]||0;
@@ -240,10 +250,17 @@ function routePublicTwoOpt(order,m){
 }
 async function routePublicGeometry(points,order,returnToStart=true){
   const seq=returnToStart?[0,...order,0]:[0,...order],coords=seq.map(i=>points[i].lon+','+points[i].lat).join(';');
-  const r=await fetch('https://router.project-osrm.org/route/v1/driving/'+coords+'?overview=full&geometries=geojson&steps=false',{headers:{'User-Agent':'MOVIT-Rotas/0.7'},signal:AbortSignal.timeout(20000)});
-  const j=await r.json();
-  if(!r.ok||j.code!=='Ok'||!j.routes?.[0])throw new Error('Não foi possível desenhar a rota.');
-  return j.routes[0]
+  const bases=['https://router.project-osrm.org','https://routing.openstreetmap.de/routed-car'];
+  for(const base of bases){
+    try{
+      const r=await fetch(base+'/route/v1/driving/'+coords+'?overview=full&geometries=geojson&steps=false',{headers:{'User-Agent':'MOVIT-Rotas/0.7'},signal:AbortSignal.timeout(18000)});
+      const j=await r.json();
+      if(r.ok&&j.code==='Ok'&&j.routes?.[0])return j.routes[0]
+    }catch(e){
+      console.warn('MOVIT geometry falhou',base,String(e?.message||e))
+    }
+  }
+  throw Object.assign(new Error('O serviço de rotas está temporariamente indisponível. Tente novamente em alguns segundos.'),{status:503})
 }
 
 
@@ -1057,11 +1074,13 @@ async function start() {
           if(!start)start={lat:raw[0].lat,lon:raw[0].lon,label:'Início'};
           const points=[start,...raw].map((p,i)=>({lat:Number(p.lat),lon:Number(p.lon),label:String(p.label||p.address||('Parada '+i)).slice(0,220)}));
           if(points.some(p=>!Number.isFinite(p.lat)||!Number.isFinite(p.lon)||p.lat<-90||p.lat>90||p.lon<-180||p.lon>180))return sendJson(res,400,{ok:false,error:'Há coordenadas inválidas na rota.'});
+          console.log('MOVIT OPTIMIZE',JSON.stringify({stops:raw.length,returnToStart:body.returnToStart===true,hasStart:!!body.start}));
           const m=await routePublicTable(points),n=raw.length;
           const returnToStart=body.returnToStart===true;
           let order=routePublicNearest(m,n);
           order=returnToStart?routePublicTwoOpt(order,m):routePublicTwoOptOpen(order,m);
           const route=await routePublicGeometry(points,order,returnToStart);
+          console.log('MOVIT OPTIMIZE OK',JSON.stringify({stops:raw.length,distance:route.distance,duration:route.duration}));
           return sendJson(res,200,{ok:true,order,distanceMeters:route.distance,durationSeconds:route.duration,geometry:route.geometry,points,returnToStart});
         }catch(e){return sendJson(res,e.status||502,{ok:false,error:e.message||'Falha ao otimizar rota.'})}
       }
