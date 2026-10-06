@@ -1,7 +1,0 @@
-name = "lista-de-aniversario"
-pages_build_output_dir = "./public"
-compatibility_date = "2026-10-05"
-
-[[kv_namespaces]]
-binding = "STATE"
-id = "22a1a3b4b3c0429a8873e191814fd6c7"
