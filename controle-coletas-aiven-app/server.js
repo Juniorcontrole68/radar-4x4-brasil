@@ -194,6 +194,17 @@ function trackingHistoryDistanceMeters(a,b){
   const h=Math.sin(dLat/2)**2+Math.cos(lat1*rad)*Math.cos(lat2*rad)*Math.sin(dLon/2)**2;
   return 2*R*Math.asin(Math.min(1,Math.sqrt(h)))
 }
+const TRACKING_BASE_POINT={latitude:-22.69552,longitude:-47.307};
+const TRACKING_MAX_DISTANCE_METERS=450000;
+function trackingPointPlausible(lat,lon){
+  const latitude=Number(lat),longitude=Number(lon);
+  if(!Number.isFinite(latitude)||!Number.isFinite(longitude))return false;
+  if(latitude<-90||latitude>90||longitude<-180||longitude>180)return false;
+  return trackingHistoryDistanceMeters(
+    TRACKING_BASE_POINT,
+    {latitude,longitude}
+  )<=TRACKING_MAX_DISTANCE_METERS
+}
 function trackingHistoryStops(points,minMinutes=5,radiusMeters=150){
   const pts=(points||[]).filter(p=>Number.isFinite(Number(p.latitude))&&Number.isFinite(Number(p.longitude))&&p.captured_at);
   const out=[];let i=0;
@@ -1513,6 +1524,11 @@ async function start() {
           const sessionId=String(body.session_id||'').trim(),lat=Number(body.latitude),lon=Number(body.longitude);
           const captured=new Date(body.captured_at||Date.now());
           if(!Number.isFinite(lat)||lat<-90||lat>90||!Number.isFinite(lon)||lon<-180||lon>180)return sendJson(res,400,{ok:false,error:'Coordenadas inválidas.'});
+          if(!trackingPointPlausible(lat,lon)){
+            console.log('TRACKING GPS descartado fora da área operacional: '+JSON.stringify({driver:device.driver_name,plate:device.vehicle_plate,lat,lon}));
+            await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
+            return sendJson(res,200,{ok:true,ignored:true,reason:'outside_operational_area'});
+          }
           if(!Number.isFinite(captured.getTime()))return sendJson(res,400,{ok:false,error:'Data/hora inválida.'});
           let effectiveSessionId=sessionId;
           if(sessionId){
@@ -1746,6 +1762,8 @@ async function start() {
               FROM driver_tracking_points
               WHERE device_id=d.id
                 AND (captured_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+                AND latitude BETWEEN -27.5 AND -18.0
+                AND longitude BETWEEN -52.5 AND -42.0
               ORDER BY (s.id IS NOT NULL AND session_id=s.id) DESC,captured_at DESC LIMIT 1
             ) p ON TRUE
             WHERE d.active=TRUE
@@ -1771,6 +1789,8 @@ async function start() {
               FROM driver_tracking_points
               WHERE device_id=d.id
                 AND (captured_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+                AND latitude BETWEEN -27.5 AND -18.0
+                AND longitude BETWEEN -52.5 AND -42.0
               ORDER BY (s.id IS NOT NULL AND session_id=s.id) DESC,captured_at DESC LIMIT 1
             ) p ON TRUE
             LEFT JOIN LATERAL (
@@ -1783,6 +1803,8 @@ async function start() {
                 SELECT latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at
                 FROM driver_tracking_points
                 WHERE s.id IS NOT NULL AND session_id=s.id
+                  AND latitude BETWEEN -27.5 AND -18.0
+                  AND longitude BETWEEN -52.5 AND -42.0
                 ORDER BY captured_at DESC
                 LIMIT 1200
               ) x
