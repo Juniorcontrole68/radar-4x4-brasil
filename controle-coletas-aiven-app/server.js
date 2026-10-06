@@ -97,6 +97,40 @@ function routePublicStreetVariants(raw){
   }
   return out
 }
+async function routePublicViaCep(raw){
+  try{
+    const clean=String(raw||'').trim().replace(/\s+/g,' ');
+    const tryOne=async(city,street)=>{
+      city=String(city||'').trim().replace(/\bSP\b/ig,'');
+      street=String(street||'').trim().replace(/\b\d+[A-Za-z-]*\b/g,'').replace(/\s+/g,' ');
+      if(!city||!street)return null;
+      const u='https://viacep.com.br/ws/SP/'+encodeURIComponent(city)+'/'+encodeURIComponent(street)+'/json/';
+      const r=await fetch(u,{headers:{'User-Agent':'MOVIT/0.4'},signal:AbortSignal.timeout(10000)});
+      const j=await r.json().catch(()=>[]);
+      if(!r.ok||!Array.isArray(j)||!j.length)return null;
+      return j[0]
+    };
+    const parts=clean.split(',').map(x=>x.trim()).filter(Boolean);
+    let row=null;
+    if(parts.length>=2){
+      row=await tryOne(parts[parts.length-1],parts.slice(0,-1).join(' '))
+    }else{
+      const words=clean.split(/\s+/);
+      for(let cw=1;cw<=3&&!row;cw++){
+        if(words.length<=cw+1)break;
+        row=await tryOne(words.slice(-cw).join(' '),words.slice(0,-cw).join(' '))
+      }
+    }
+    if(!row)return null;
+    const cep=String(row.cep||'').replace(/\D/g,'');
+    if(cep.length!==8)return null;
+    const r=await fetch('https://brasilapi.com.br/api/cep/v2/'+cep,{headers:{'User-Agent':'MOVIT/0.4'},signal:AbortSignal.timeout(10000)});
+    const j=await r.json().catch(()=>({}));
+    const lat=Number(j?.location?.coordinates?.latitude),lon=Number(j?.location?.coordinates?.longitude);
+    if(!r.ok||!Number.isFinite(lat)||!Number.isFinite(lon))return null;
+    return {lat,lon,label:[row.logradouro,row.bairro,row.localidade,row.uf,row.cep].filter(Boolean).join(', '),city:row.localidade||'',state:row.uf||'SP'}
+  }catch{return null}
+}
 async function routePublicGeocode(q){
   const raw=String(q||'').trim().replace(/\s+/g,' ');
   if(raw.length<4)throw Object.assign(new Error('Informe ao menos rua e cidade.'),{status:400});
@@ -129,7 +163,9 @@ async function routePublicGeocode(q){
       }
     }catch(e){}
   }
-  throw Object.assign(new Error('Não localizei essa via. Tente "Nome da rua, Cidade". O número não é obrigatório.'),{status:404})
+  const cepHit=await routePublicViaCep(raw);
+  if(cepHit)return[cepHit];
+  throw Object.assign(new Error('Não localizei essa via. Digite ao menos nome da rua e cidade; o número é opcional.'),{status:404})
 }
 async function routePublicTable(points){
   const coords=points.map(p=>p.lon+','+p.lat).join(';');
