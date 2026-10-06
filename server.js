@@ -2894,8 +2894,15 @@ async function routeGeometryOpen(points,order){
 }
 
 async function routeFinalizePlan(stops,meta={}){
-  const baseGeo=await routeBaseGeo();
-  if(!baseGeo)throw new Error('Não foi possível localizar a base de Americana.');
+  let baseGeo=null,baseAddress=ROUTE_BASE_ADDRESS;
+  const customLat=Number(meta?.start?.lat),customLon=Number(meta?.start?.lon);
+  if(Number.isFinite(customLat)&&Number.isFinite(customLon)&&customLat>=-90&&customLat<=90&&customLon>=-180&&customLon<=180){
+    baseGeo={lat:customLat,lon:customLon};
+    baseAddress=String(meta?.start?.label||'Minha localização atual').slice(0,180)
+  }else{
+    baseGeo=await routeBaseGeo();
+    if(!baseGeo)throw new Error('Não foi possível localizar a base de Americana.')
+  }
   const clean=[],rejected=[];
   for(const raw of (stops||[])){
     let p={...raw},lat=Number(p.lat),lon=Number(p.lon);
@@ -2916,7 +2923,7 @@ async function routeFinalizePlan(stops,meta={}){
     clean.push({...p,lat,lon,radiusKm:radius/1000})
   }
   if(!clean.length)throw new Error('Nenhuma parada válida dentro do raio máximo de 300 km da base de Americana.');
-  const points=[{label:'Base Americana',address:ROUTE_BASE_ADDRESS,lat:baseGeo.lat,lon:baseGeo.lon,precision:'base'},...clean];
+  const points=[{label:baseAddress,address:baseAddress,lat:baseGeo.lat,lon:baseGeo.lon,precision:'base'},...clean];
   const mt=await routeOsrmTable(points),m=mt.matrix,n=clean.length;
   let optimized=routeExact(m,n),method='exata';
   if(!optimized){optimized=routeTwoOpt(routeNearest(m,n),m);method='heurística otimizada'}
@@ -2924,7 +2931,7 @@ async function routeFinalizePlan(stops,meta={}){
   const optMeters=routeCycleDistance(optimized,m),origMeters=routeCycleDistance(original,m);
   const [geo,outboundGeo]=await Promise.all([routeGeometry(points,optimized),routeGeometryOpen(points,optimized)]);
   return{
-    ok:true,date:meta.date||'',baseAddress:ROUTE_BASE_ADDRESS,radiusLimitKm:300,
+    ok:true,date:meta.date||'',baseAddress:baseAddress,radiusLimitKm:300,
     romaneio:meta.romaneio||'',motorista:meta.motorista||'',veiculo:meta.veiculo||'',
     deliveries:n,method,matrixSource:mt.source,
     optimizedOrder:optimized,originalOrder:original,
@@ -2932,6 +2939,8 @@ async function routeFinalizePlan(stops,meta={}){
     originalDistanceMeters:Number.isFinite(origMeters)?origMeters:0,
     optimizedLegs:routeLegs(optimized,m,points),originalLegs:routeLegs(original,m,points),
     points,stops:clean,matrix:m,geometry:geo.geometry,outboundGeometry:outboundGeo.geometry,
+    geometryDistanceMeters:Number.isFinite(geo.distanceMeters)?geo.distanceMeters:0,
+    durationSeconds:Number.isFinite(geo.durationSeconds)?geo.durationSeconds:0,
     outboundDistanceMeters:Number.isFinite(outboundGeo.distanceMeters)?outboundGeo.distanceMeters:0,rejectedStops:rejected,
     approximateStops:clean.filter(x=>['cidade','cliente','manual-aproximado','cte-aproximado'].includes(x.precision)).length
   }
@@ -4533,7 +4542,8 @@ if(req.method==='POST'&&u.pathname==='/api/roteirizador/recalcular'){try{
   const stops=Array.isArray(body.stops)?body.stops.slice(0,80):[];
   if(!stops.length)throw Object.assign(new Error('Nenhuma parada enviada para recalcular.'),{status:400});
   const x=await routeFinalizePlan(stops,{
-    date:String(body.date||''),romaneio:String(body.romaneio||''),motorista:String(body.motorista||''),veiculo:String(body.veiculo||'')
+    date:String(body.date||''),romaneio:String(body.romaneio||''),motorista:String(body.motorista||''),veiculo:String(body.veiculo||''),
+    start:body.start&&typeof body.start==='object'?body.start:null
   });
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
