@@ -31,7 +31,7 @@ public class MainActivity extends Activity {
     private WebView map;
     private JSONObject start=null,lastPlan=null;
     private android.content.SharedPreferences prefs;
-    private TextView account,routeTitle;
+    private TextView account,routeTitle,startPointLabel;
     private Button cloudSave,cloudRoutes,optimizeButton,testTrackingButton;
     private Switch returnStartHome;
     private LocationManager testLocationManager;
@@ -40,7 +40,10 @@ public class MainActivity extends Activity {
     private boolean testTrackingActive=false;
 
     @Override public void onCreate(Bundle b){
-        super.onCreate(b);prefs=getSharedPreferences("rv2_account",MODE_PRIVATE);buildUi();renderList();renderMap(null);refreshAccount();handleSharedRouteIntent(getIntent());
+        super.onCreate(b);
+        prefs=getSharedPreferences("rv2_account",MODE_PRIVATE);
+        if(!prefs.contains("current_return_start"))prefs.edit().putBoolean("current_return_start",true).apply();
+        buildUi();renderList();renderMap(null);refreshAccount();refreshStartPointUi();handleSharedRouteIntent(getIntent());
     }
 
     @Override protected void onNewIntent(Intent intent){
@@ -134,6 +137,16 @@ public class MainActivity extends Activity {
         LinearLayout info=card(14);
         summary=label("0 min • 0 paradas • 0 km",14,MUTED,true);info.addView(summary);
         routeTitle=label(prefs.getString("current_route_name","Nova rota"),22,TEXT,true);routeTitle.setPadding(0,dp(7),0,dp(8));info.addView(routeTitle);
+
+        LinearLayout startRow=new LinearLayout(this);startRow.setOrientation(LinearLayout.HORIZONTAL);startRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout startText=new LinearLayout(this);startText.setOrientation(LinearLayout.VERTICAL);
+        TextView startTitle=label("Ponto de partida",12,MUTED,true);startText.addView(startTitle);
+        startPointLabel=label("Será o primeiro endereço adicionado",14,TEXT,true);startPointLabel.setMaxLines(2);startText.addView(startPointLabel);
+        startRow.addView(startText,new LinearLayout.LayoutParams(0,-2,1));
+        Button changeStart=pill("Alterar",Color.WHITE,BLUE);changeStart.setBackground(strokedBg(Color.WHITE,LINE,12));changeStart.setOnClickListener(v->showStartPicker());
+        LinearLayout.LayoutParams csp=new LinearLayout.LayoutParams(dp(88),dp(42));csp.setMargins(dp(8),0,0,0);startRow.addView(changeStart,csp);
+        info.addView(startRow);
+        gap(info,8);
 
         returnStartHome=new Switch(this);
         returnStartHome.setText("Terminar no mesmo local de início");
@@ -514,6 +527,45 @@ public class MainActivity extends Activity {
         status.setText("Teste CONSTRULOG encerrado neste celular.");
     }
 
+    private void refreshStartPointUi(){
+        if(startPointLabel==null)return;
+        if(start==null){
+            startPointLabel.setText("Será o primeiro endereço adicionado");
+            return;
+        }
+        String text=start.optString("resolved",start.optString("label","Ponto de partida"));
+        startPointLabel.setText(text);
+    }
+
+    private void showStartPicker(){
+        ArrayList<String> labels=new ArrayList<>();
+        labels.add("📍 Usar localização atual");
+        for(int i=0;i<stops.size();i++){
+            JSONObject s=stops.get(i);
+            labels.add((i+1)+". "+s.optString("resolved",s.optString("label","Parada")));
+        }
+        new AlertDialog.Builder(this)
+            .setTitle("Alterar ponto de partida")
+            .setItems(labels.toArray(new String[0]),(d,which)->{
+                if(which==0){
+                    useLocation();
+                    return;
+                }
+                int idx=which-1;
+                if(idx>=0&&idx<stops.size()){
+                    try{
+                        start=new JSONObject(stops.get(idx).toString());
+                        lastPlan=null;
+                        refreshStartPointUi();
+                        renderMap(null);
+                        status.setText("Ponto de partida alterado para "+start.optString("resolved",start.optString("label","endereço selecionado"))+(prefs.getBoolean("current_return_start",true)?". O retorno será no mesmo local.":"."));
+                    }catch(Exception e){status.setText("Não foi possível alterar o ponto de partida.");}
+                }
+            })
+            .setNegativeButton("Cancelar",null)
+            .show();
+    }
+
     private void voice(){
         Intent i=new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
@@ -548,8 +600,9 @@ public class MainActivity extends Activity {
             Location l=lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
             if(l==null)l=lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
             if(l==null){status.setText("Ainda não há posição disponível. Abra o GPS e tente novamente.");return;}
-            start=new JSONObject();start.put("lat",l.getLatitude());start.put("lon",l.getLongitude());start.put("label","Minha localização");
-            status.setText("Ponto de início definido pela sua localização.");
+            start=new JSONObject();start.put("lat",l.getLatitude());start.put("lon",l.getLongitude());start.put("label","Localização atual");start.put("resolved","Localização atual");
+            lastPlan=null;refreshStartPointUi();renderMap(null);
+            status.setText("Localização atual definida como ponto de partida"+(prefs.getBoolean("current_return_start",true)?" e retorno.":"."));
         }catch(Exception e){status.setText("Não foi possível usar sua localização.");}
     }
 
@@ -577,7 +630,13 @@ public class MainActivity extends Activity {
                 s.put("approximate",approximate);
                 s.put("precision",p.optString("precision",""));
                 stops.add(s);
-                runOnUiThread(()->{address.setText("");status.setText("Parada adicionada.");renderList();renderMap(null);});
+                if(start==null)start=new JSONObject(s.toString());
+                runOnUiThread(()->{
+                    address.setText("");
+                    refreshStartPointUi();
+                    status.setText(stops.size()==1?"Primeiro endereço definido como ponto de partida"+(prefs.getBoolean("current_return_start",true)?" e retorno.":"."):"Parada adicionada.");
+                    renderList();renderMap(null);
+                });
             }catch(Exception e){runOnUiThread(()->status.setText("Erro: "+e.getMessage()));}
         });
     }
@@ -593,20 +652,25 @@ public class MainActivity extends Activity {
         exec.execute(()->{
             try{
                 JSONObject body=new JSONObject();JSONArray arr=new JSONArray();
-                boolean returnToStart=prefs.getBoolean("current_return_start",false);
+                boolean returnToStart=prefs.getBoolean("current_return_start",true);
                 JSONObject effectiveStart=start;
-                int firstStopIndex=0;
 
-                if(returnToStart&&effectiveStart==null&&!stops.isEmpty()){
+                if(effectiveStart==null&&!stops.isEmpty()){
                     effectiveStart=new JSONObject(stops.get(0).toString());
-                    effectiveStart.put("label",effectiveStart.optString("resolved",effectiveStart.optString("label","Início")));
                     start=new JSONObject(effectiveStart.toString());
-                    firstStopIndex=1;
                 }
+                if(effectiveStart==null)throw new Exception("Defina o ponto de partida.");
 
-                for(int k=firstStopIndex;k<stops.size();k++)arr.put(new JSONObject(stops.get(k).toString()));
+                double slat=effectiveStart.optDouble("lat",Double.NaN),slon=effectiveStart.optDouble("lon",Double.NaN);
+                for(JSONObject s:stops){
+                    double lat=s.optDouble("lat",Double.NaN),lon=s.optDouble("lon",Double.NaN);
+                    boolean sameStart=Double.isFinite(slat)&&Double.isFinite(slon)&&Double.isFinite(lat)&&Double.isFinite(lon)
+                        &&Math.abs(lat-slat)<0.000001&&Math.abs(lon-slon)<0.000001;
+                    if(!sameStart)arr.put(new JSONObject(s.toString()));
+                }
+                if(arr.length()<1)throw new Exception("Adicione pelo menos uma parada além do ponto de partida.");
                 body.put("stops",arr);
-                if(effectiveStart!=null)body.put("start",effectiveStart);
+                body.put("start",effectiveStart);
                 body.put("returnToStart",returnToStart);
                 JSONObject j=Api.post("/api/public-router/optimize",body);
                 if(!j.optBoolean("ok",false))throw new Exception(j.optString("error","Falha ao otimizar rota."));
@@ -614,8 +678,8 @@ public class MainActivity extends Activity {
                 JSONArray order=j.getJSONArray("order");
                 ArrayList<JSONObject> ordered=new ArrayList<>();
                 JSONArray points=j.getJSONArray("points");
-                boolean roundTrip=j.optBoolean("returnToStart",prefs.getBoolean("current_return_start",false));
-                if(roundTrip&&points.length()>0){
+                boolean roundTrip=j.optBoolean("returnToStart",prefs.getBoolean("current_return_start",true));
+                if(points.length()>0){
                     JSONObject startPoint=new JSONObject(points.getJSONObject(0).toString());
                     start=new JSONObject(startPoint.toString());
                     ordered.add(startPoint);
@@ -679,7 +743,13 @@ public class MainActivity extends Activity {
             Button up=pill("↑",Color.rgb(238,242,247),NAVY);up.setTextSize(17);up.setEnabled(idx>0);up.setAlpha(idx>0?1f:.35f);
             up.setOnClickListener(v->{if(idx>0){Collections.swap(stops,idx,idx-1);lastPlan=null;renderList();renderMap(null);}});
             Button del=pill("×",Color.rgb(255,241,242),Color.rgb(190,24,93));del.setTextSize(20);
-            del.setOnClickListener(v->{stops.remove(idx);lastPlan=null;renderList();renderMap(null);status.setText("Parada removida.");});
+            del.setOnClickListener(v->{
+                JSONObject removed=stops.remove(idx);
+                if(start!=null&&Math.abs(start.optDouble("lat",999)-removed.optDouble("lat",-999))<0.000001&&Math.abs(start.optDouble("lon",999)-removed.optDouble("lon",-999))<0.000001){
+                    start=stops.isEmpty()?null:stops.get(0);
+                }
+                lastPlan=null;refreshStartPointUi();renderList();renderMap(null);status.setText("Parada removida.");
+            });
             LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(dp(42),dp(42));bp.setMargins(dp(4),0,0,0);top.addView(up,bp);
             LinearLayout.LayoutParams bp2=new LinearLayout.LayoutParams(dp(42),dp(42));bp2.setMargins(dp(4),0,0,0);top.addView(del,bp2);
             row.addView(top);
