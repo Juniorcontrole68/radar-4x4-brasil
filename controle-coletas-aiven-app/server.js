@@ -1321,16 +1321,30 @@ async function start() {
           }
           if(!data)throw Object.assign(new Error('Serviço de postos temporariamente indisponível. Tente novamente.'),{status:503,cause:lastErr});
 
-          function minRouteMeters(p){
-            if(!routePoints.length)return null;
-            let best=Infinity;
-            const step=Math.max(1,Math.floor(routePoints.length/700));
+          const routeCum=[];
+          if(routePoints.length){
+            routeCum.push(0);
+            for(let i=1;i<routePoints.length;i++){
+              routeCum.push(routeCum[i-1]+routePublicHaversine(routePoints[i-1],routePoints[i]));
+            }
+          }
+          function nearestRouteInfo(p){
+            if(!routePoints.length)return {offset:null,index:-1,progress:null};
+            let best=Infinity,bestIdx=-1;
+            const step=Math.max(1,Math.floor(routePoints.length/900));
             for(let i=0;i<routePoints.length;i+=step){
               const d=routePublicHaversine(p,routePoints[i]);
-              if(d<best)best=d;
+              if(d<best){best=d;bestIdx=i}
             }
-            return best;
+            // Refina ao redor do melhor ponto amostrado.
+            const lo=Math.max(0,bestIdx-step),hi=Math.min(routePoints.length-1,bestIdx+step);
+            for(let i=lo;i<=hi;i++){
+              const d=routePublicHaversine(p,routePoints[i]);
+              if(d<best){best=d;bestIdx=i}
+            }
+            return {offset:best,index:bestIdx,progress:bestIdx>=0?routeCum[bestIdx]:null};
           }
+          const currentRoute=nearestRouteInfo({lat,lon});
 
           const raw=[];
           const seen=new Set();
@@ -1341,9 +1355,14 @@ async function start() {
             if(seen.has(key))continue;seen.add(key);
             const tags=el.tags||{};
             const p={lat:plat,lon:plon};
-            const off=minRouteMeters(p);
-            // Se há rota calculada, mostrar somente postos praticamente na rota.
+            const routeInfo=nearestRouteInfo(p);
+            const off=routeInfo.offset;
+            const ahead=(routePoints.length&&Number.isFinite(routeInfo.progress)&&Number.isFinite(currentRoute.progress))
+              ? routeInfo.progress-currentRoute.progress
+              : null;
+            // Se há rota calculada, manter postos praticamente no trajeto e evitar os que já ficaram para trás.
             if(routePoints.length&&Number.isFinite(off)&&off>1800)continue;
+            if(routePoints.length&&Number.isFinite(ahead)&&ahead<-800)continue;
             raw.push({
               id:String(el.type||'')+String(el.id||''),
               name:String(tags.name||tags.brand||'Posto de combustível').slice(0,160),
@@ -1351,12 +1370,21 @@ async function start() {
               operator:String(tags.operator||'').slice(0,120),
               lat:plat,lon:plon,
               routeOffsetMeters:Number.isFinite(off)?off:null,
+              routeProgressMeters:Number.isFinite(routeInfo.progress)?routeInfo.progress:null,
+              aheadMeters:Number.isFinite(ahead)?Math.max(0,ahead):null,
               directMeters:routePublicHaversine({lat,lon},p),
               openingHours:String(tags.opening_hours||'').slice(0,180)
             });
           }
 
-          raw.sort((a,b)=>a.directMeters-b.directMeters);
+          raw.sort((a,b)=>{
+            if(routePoints.length){
+              const aa=Number.isFinite(a.aheadMeters)?a.aheadMeters:Infinity;
+              const bb=Number.isFinite(b.aheadMeters)?b.aheadMeters:Infinity;
+              if(aa!==bb)return aa-bb;
+            }
+            return a.directMeters-b.directMeters;
+          });
           const candidates=raw.slice(0,18);
           if(!candidates.length)return sendJson(res,200,{ok:true,rows:[],routeFiltered:routePoints.length>0});
 
@@ -1364,7 +1392,14 @@ async function start() {
           const rows=candidates.map((s,i)=>({
             ...s,
             distanceMeters:Number.isFinite(matrix?.[0]?.[i+1])?matrix[0][i+1]:s.directMeters*1.28
-          })).sort((a,b)=>a.distanceMeters-b.distanceMeters).slice(0,10);
+          })).sort((a,b)=>{
+            if(routePoints.length){
+              const aa=Number.isFinite(a.aheadMeters)?a.aheadMeters:Infinity;
+              const bb=Number.isFinite(b.aheadMeters)?b.aheadMeters:Infinity;
+              if(aa!==bb)return aa-bb;
+            }
+            return a.distanceMeters-b.distanceMeters;
+          }).slice(0,10);
 
           return sendJson(res,200,{
             ok:true,
@@ -1372,7 +1407,7 @@ async function start() {
             routeFiltered:routePoints.length>0,
             maxRouteOffsetMeters:routePoints.length?1800:null,
             note:routePoints.length
-              ?'Postos até aproximadamente 1,8 km do trajeto atual.'
+              ?'Postos à frente, até aproximadamente 1,8 km do trajeto atual. A distância “à frente” é estimada sobre a linha da rota.'
               :'Rota ainda não otimizada; mostrando postos próximos da localização atual.'
           });
         }catch(e){return sendJson(res,e.status||502,{ok:false,error:e.message||'Falha ao localizar postos.'})}
