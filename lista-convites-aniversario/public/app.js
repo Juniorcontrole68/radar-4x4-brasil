@@ -1,4 +1,4 @@
-let DATA={event:{},guests:[]};let NEW_IMAGE_DATA=null;let REMOVE_IMAGE=false;
+let DATA={event:{},guests:[]};let NEW_IMAGE_DATA=null;let REMOVE_IMAGE=false;let NEW_EXTRA_IMAGE_DATA=null;let REMOVE_EXTRA_IMAGE=false;
 const $=s=>document.querySelector(s);const statusLabel={pendente:'Não enviado',enviado:'Aguardando',talvez:'Ainda não sabe',confirmado:'Confirmado','nao-vai':'Não vai'};
 async function api(url,opts={}){const r=await fetch(url,{headers:{'Content-Type':'application/json'},...opts});if(!r.ok)throw new Error((await r.json()).error||'Erro');return r.json()}
 function esc(s=''){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
@@ -68,38 +68,48 @@ window.sendInviteOnly=async id=>{
   const e=DATA.event;
   if(!g?.phone)return;
   if(!e.hasInviteImage){
-    alert('Ainda não há uma foto de convite cadastrada em Dados do aniversário.');
+    alert('Ainda não há uma imagem do convite cadastrada.');
     return;
   }
   try{
-    const r=await fetch('/api/invite-image?t='+Date.now());
-    if(!r.ok)throw new Error('Não foi possível carregar a foto do convite.');
-    const blob=await r.blob();
-    const ext=blob.type.includes('png')?'png':blob.type.includes('webp')?'webp':'jpg';
-    const file=new File([blob],`convite-junior-carol.${ext}`,{type:blob.type||'image/jpeg'});
+    const files=[];
+    const r1=await fetch('/api/invite-image?t='+Date.now());
+    if(!r1.ok)throw new Error('Não foi possível carregar a imagem do convite.');
+    const b1=await r1.blob();
+    const ext1=b1.type.includes('png')?'png':b1.type.includes('webp')?'webp':'jpg';
+    files.push(new File([b1],`convite-junior-carol.${ext1}`,{type:b1.type||'image/jpeg'}));
 
-    if(navigator.share&&(!navigator.canShare||navigator.canShare({files:[file]}))){
-      try{
-        await navigator.share({files:[file],title:'Convite de aniversário',text:`Convite para ${g.name}`});
-      }catch(err){
-        if(err?.name==='AbortError')return;
+    if(e.hasExtraImage){
+      const r2=await fetch('/api/extra-image?t='+Date.now());
+      if(r2.ok){
+        const b2=await r2.blob();
+        const ext2=b2.type.includes('png')?'png':b2.type.includes('webp')?'webp':'jpg';
+        files.push(new File([b2],`foto-extra.${ext2}`,{type:b2.type||'image/jpeg'}));
       }
-    }else{
+    }
+
+    if(navigator.share&&(!navigator.canShare||navigator.canShare({files}))){
+      await navigator.share({files,title:'Convite de aniversário',text:`Convite para ${g.name}`});
+      return;
+    }
+
+    for(const file of files){
       const url=URL.createObjectURL(file);
       const a=document.createElement('a');
       a.href=url;a.download=file.name;document.body.appendChild(a);a.click();a.remove();
       setTimeout(()=>URL.revokeObjectURL(url),1500);
     }
-
-    window.open(`https://wa.me/55${normalizeContactPhone(g.phone)}?text=${encodeURIComponent('Segue nosso convite de aniversário 🎉')}`,'_blank');
+    alert(files.length===2?'As duas imagens foram salvas para você encaminhar pelo WhatsApp.':'A imagem do convite foi salva para você encaminhar pelo WhatsApp.');
   }catch(err){
-    if(err?.name!=='AbortError')alert(err?.message||'Não foi possível preparar o convite.');
+    if(err?.name!=='AbortError')alert(err?.message||'Não foi possível preparar as imagens.');
   }
 };
-$('#editEvent').onclick=()=>{const e=DATA.event;NEW_IMAGE_DATA=null;REMOVE_IMAGE=false;$('#evInviteImage').value='';$('#evTitle').value=e.title||'';$('#evDate').value=e.date||'';$('#evTime').value=e.time||'';$('#evVenue').value=e.venue||'';$('#evAddress').value=e.address||'';$('#evMessage').value=e.message||'';$('#evCanvaUrl').value=e.canvaUrl||'';if(e.hasInviteImage){$('#imagePreview').src='/api/invite-image?t='+Date.now();$('#imagePreviewWrap').classList.remove('hidden')}else{$('#imagePreviewWrap').classList.add('hidden')}$('#eventDlg').showModal()};
+$('#editEvent').onclick=()=>{const e=DATA.event;NEW_IMAGE_DATA=null;REMOVE_IMAGE=false;NEW_EXTRA_IMAGE_DATA=null;REMOVE_EXTRA_IMAGE=false;$('#evInviteImage').value='';$('#evExtraImage').value='';$('#evTitle').value=e.title||'';$('#evDate').value=e.date||'';$('#evTime').value=e.time||'';$('#evVenue').value=e.venue||'';$('#evAddress').value=e.address||'';$('#evMessage').value=e.message||'';$('#evCanvaUrl').value=e.canvaUrl||'';if(e.hasInviteImage){$('#imagePreview').src='/api/invite-image?t='+Date.now();$('#imagePreviewWrap').classList.remove('hidden')}else{$('#imagePreviewWrap').classList.add('hidden')}if(e.hasExtraImage){$('#extraImagePreview').src='/api/extra-image?t='+Date.now();$('#extraImagePreviewWrap').classList.remove('hidden')}else{$('#extraImagePreviewWrap').classList.add('hidden')}$('#eventDlg').showModal()};
 $('#evInviteImage').onchange=()=>{const f=$('#evInviteImage').files[0];if(!f)return;if(!f.type.startsWith('image/'))return alert('Escolha uma imagem válida.');if(f.size>2*1024*1024)return alert('A imagem deve ter no máximo 2 MB.');const rd=new FileReader();rd.onload=()=>{NEW_IMAGE_DATA=rd.result;REMOVE_IMAGE=false;$('#imagePreview').src=rd.result;$('#imagePreviewWrap').classList.remove('hidden')};rd.readAsDataURL(f)};
 $('#removeInviteImage').onclick=()=>{NEW_IMAGE_DATA=null;REMOVE_IMAGE=true;$('#evInviteImage').value='';$('#imagePreviewWrap').classList.add('hidden')};
-$('#saveEvent').onclick=async()=>{const body={title:$('#evTitle').value,date:$('#evDate').value,time:$('#evTime').value,venue:$('#evVenue').value,address:$('#evAddress').value,message:$('#evMessage').value,canvaUrl:$('#evCanvaUrl').value.trim()};if(NEW_IMAGE_DATA)body.inviteImageData=NEW_IMAGE_DATA;if(REMOVE_IMAGE)body.removeInviteImage=true;await api('/api/event',{method:'PUT',body:JSON.stringify(body)});$('#eventDlg').close();await load()};
+$('#evExtraImage').onchange=()=>{const f=$('#evExtraImage').files[0];if(!f)return;if(!f.type.startsWith('image/'))return alert('Escolha uma foto extra válida.');if(f.size>2*1024*1024)return alert('A foto extra deve ter no máximo 2 MB.');const rd=new FileReader();rd.onload=()=>{NEW_EXTRA_IMAGE_DATA=rd.result;REMOVE_EXTRA_IMAGE=false;$('#extraImagePreview').src=rd.result;$('#extraImagePreviewWrap').classList.remove('hidden')};rd.readAsDataURL(f)};
+$('#removeExtraImage').onclick=()=>{NEW_EXTRA_IMAGE_DATA=null;REMOVE_EXTRA_IMAGE=true;$('#evExtraImage').value='';$('#extraImagePreviewWrap').classList.add('hidden')};
+$('#saveEvent').onclick=async()=>{const body={title:$('#evTitle').value,date:$('#evDate').value,time:$('#evTime').value,venue:$('#evVenue').value,address:$('#evAddress').value,message:$('#evMessage').value,canvaUrl:$('#evCanvaUrl').value.trim()};if(NEW_IMAGE_DATA)body.inviteImageData=NEW_IMAGE_DATA;if(REMOVE_IMAGE)body.removeInviteImage=true;if(NEW_EXTRA_IMAGE_DATA)body.extraImageData=NEW_EXTRA_IMAGE_DATA;if(REMOVE_EXTRA_IMAGE)body.removeExtraImage=true;await api('/api/event',{method:'PUT',body:JSON.stringify(body)});$('#eventDlg').close();await load()};
 load().catch(e=>alert(e.message));
 
 let deferredInstallPrompt=null;
