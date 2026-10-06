@@ -50,9 +50,22 @@ public class MainActivity extends Activity {
         return t;
     }
     private Button pill(String text,int fill,int textColor){
-        Button b=new Button(this);b.setText(text);b.setTextColor(textColor);b.setTextSize(14);b.setAllCaps(false);
-        b.setTypeface(Typeface.DEFAULT,Typeface.BOLD);b.setBackground(bg(fill,14));
-        b.setPadding(dp(14),dp(8),dp(14),dp(8));b.setMinHeight(dp(44));b.setStateListAnimator(null);
+        Button b=new Button(this);
+        b.setText(text);
+        b.setTextColor(textColor);
+        b.setTextSize(13);
+        b.setAllCaps(false);
+        b.setSingleLine(true);
+        b.setGravity(Gravity.CENTER);
+        b.setEllipsize(null);
+        b.setMinWidth(0);
+        b.setMinimumWidth(0);
+        b.setMinHeight(0);
+        b.setMinimumHeight(0);
+        b.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        b.setBackground(bg(fill,14));
+        b.setPadding(dp(8),dp(6),dp(8),dp(6));
+        b.setStateListAnimator(null);
         return b;
     }
     private LinearLayout card(int padding){
@@ -72,13 +85,13 @@ public class MainActivity extends Activity {
 
         // Barra superior
         LinearLayout top=new LinearLayout(this);top.setOrientation(LinearLayout.HORIZONTAL);top.setGravity(Gravity.CENTER_VERTICAL);top.setPadding(dp(14),dp(8),dp(14),dp(8));top.setBackgroundColor(Color.WHITE);
-        Button menu=pill("☰",Color.WHITE,NAVY);menu.setTextSize(22);menu.setPadding(0,0,0,0);menu.setOnClickListener(v->showMainMenu());
+        Button menu=pill("☰",Color.WHITE,NAVY);menu.setTextSize(22);menu.setOnClickListener(v->showMainMenu());
         top.addView(menu,new LinearLayout.LayoutParams(dp(48),dp(48)));
         LinearLayout topText=new LinearLayout(this);topText.setOrientation(LinearLayout.VERTICAL);topText.setPadding(dp(8),0,0,0);
         TextView movit=label("MOVIT",20,NAVY,true);
         TextView tag=label("Roteirizador",11,MUTED,false);
         topText.addView(movit);topText.addView(tag);top.addView(topText,new LinearLayout.LayoutParams(0,-2,1));
-        Button settings=pill("⚙",Color.WHITE,NAVY);settings.setTextSize(20);settings.setPadding(0,0,0,0);settings.setOnClickListener(v->showSettings());
+        Button settings=pill("⚙",Color.WHITE,NAVY);settings.setTextSize(20);settings.setOnClickListener(v->showSettings());
         top.addView(settings,new LinearLayout.LayoutParams(dp(48),dp(48)));
         page.addView(top);
 
@@ -97,10 +110,10 @@ public class MainActivity extends Activity {
         LinearLayout searchRow=new LinearLayout(this);searchRow.setOrientation(LinearLayout.HORIZONTAL);searchRow.setGravity(Gravity.CENTER_VERTICAL);
         address=new EditText(this);address.setHint("Adicione ou busque uma parada");address.setSingleLine(true);address.setTextSize(15);address.setTextColor(TEXT);address.setHintTextColor(Color.rgb(139,151,176));address.setBackground(strokedBg(Color.WHITE,LINE,16));address.setPadding(dp(14),0,dp(10),0);
         searchRow.addView(address,new LinearLayout.LayoutParams(0,dp(52),1));
-        Button voice=pill("🎙",Color.WHITE,BLUE);voice.setTextSize(18);voice.setPadding(0,0,0,0);voice.setOnClickListener(v->voice());
-        LinearLayout.LayoutParams vp=new LinearLayout.LayoutParams(dp(50),dp(50));vp.setMargins(dp(8),0,0,0);searchRow.addView(voice,vp);
-        Button add=pill("+",BLUE,Color.WHITE);add.setTextSize(22);add.setPadding(0,0,0,0);add.setOnClickListener(v->addAddress(address.getText().toString()));
-        LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(dp(50),dp(50));ap.setMargins(dp(6),0,0,0);searchRow.addView(add,ap);
+        Button voice=pill("Falar",Color.WHITE,BLUE);voice.setTextSize(13);voice.setPadding(0,0,0,0);voice.setOnClickListener(v->voice());
+        LinearLayout.LayoutParams vp=new LinearLayout.LayoutParams(dp(78),dp(50));vp.setMargins(dp(8),0,0,0);searchRow.addView(voice,vp);
+        Button add=pill("Adicionar",BLUE,Color.WHITE);add.setTextSize(13);add.setOnClickListener(v->addAddress(address.getText().toString()));
+        LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(dp(96),dp(50));ap.setMargins(dp(6),0,0,0);searchRow.addView(add,ap);
         root.addView(searchRow);
 
         status=label("Digite ou fale o endereço. Rua e cidade já são suficientes.",12,MUTED,false);status.setPadding(dp(4),dp(7),dp(4),dp(4));root.addView(status);
@@ -133,10 +146,10 @@ public class MainActivity extends Activity {
 
         // Barra inferior de ação
         LinearLayout bottom=card(10);bottom.setOrientation(LinearLayout.HORIZONTAL);bottom.setGravity(Gravity.CENTER_VERTICAL);
-        Button optimize=pill("Otimizar",Color.WHITE,NAVY);optimize.setBackground(strokedBg(Color.WHITE,LINE,14));optimize.setOnClickListener(v->optimize());
-        Button startBtn=pill("Iniciar rota",BLUE,Color.WHITE);startBtn.setOnClickListener(v->{if(lastPlan==null)optimize();else navigateFirst();});
-        bottom.addView(optimize,new LinearLayout.LayoutParams(0,dp(52),.8f));
-        LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(0,dp(52),1.2f);sp.setMargins(dp(8),0,0,0);bottom.addView(startBtn,sp);
+        Button optimize=pill("Otimizar rota",Color.WHITE,NAVY);optimize.setTextSize(14);optimize.setBackground(strokedBg(Color.WHITE,LINE,14));optimize.setOnClickListener(v->optimize());
+        Button startBtn=pill("Iniciar rota",BLUE,Color.WHITE);startBtn.setTextSize(14);startBtn.setOnClickListener(v->{if(lastPlan==null)optimize();else navigateFirst();});
+        bottom.addView(optimize,new LinearLayout.LayoutParams(0,dp(56),1f));
+        LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(0,dp(56),1f);sp.setMargins(dp(10),0,0,0);bottom.addView(startBtn,sp);
         root.addView(bottom);
 
         // objetos mantidos para compatibilidade
