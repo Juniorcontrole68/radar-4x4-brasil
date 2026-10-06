@@ -409,18 +409,47 @@ function routePublicTwoOpt(order,m){
   while(changed&&loops++<10){changed=false;for(let i=0;i<best.length-1;i++)for(let k=i+1;k<best.length;k++){const cand=best.slice(0,i).concat(best.slice(i,k+1).reverse(),best.slice(k+1)),d=routePublicCycle(cand,m);if(d+1<bestD){best=cand;bestD=d;changed=true}}}
   return best
 }
-async function routePublicGeometry(points,order,returnToStart=true){
+function routePublicAvoidanceHits(geometry,avoidPoints,radiusMeters=500){
+  const coords=geometry&&Array.isArray(geometry.coordinates)?geometry.coordinates:[];
+  if(!coords.length||!avoidPoints.length)return 0;
+  let hits=0;
+  for(const a of avoidPoints){
+    let best=Infinity;
+    const step=Math.max(1,Math.floor(coords.length/1600));
+    for(let i=0;i<coords.length;i+=step){
+      const x=coords[i],d=routePublicHaversine({lat:Number(a.lat),lon:Number(a.lon)},{lat:Number(x[1]),lon:Number(x[0])});
+      if(d<best)best=d;
+    }
+    if(best<=radiusMeters)hits++;
+  }
+  return hits
+}
+async function routePublicGeometry(points,order,returnToStart=true,avoidPoints=[]){
   const seq=returnToStart?[0,...order,0]:[0,...order],coords=seq.map(i=>points[i].lon+','+points[i].lat).join(';');
   const bases=['https://router.project-osrm.org','https://routing.openstreetmap.de/routed-car'];
+  const avoid=(Array.isArray(avoidPoints)?avoidPoints:[]).map(x=>({lat:Number(x.lat),lon:Number(x.lon),name:String(x.name||'Pedágio')}))
+    .filter(x=>Number.isFinite(x.lat)&&Number.isFinite(x.lon)).slice(0,12);
+  let best=null;
   for(const base of bases){
-    try{
-      const r=await fetch(base+'/route/v1/driving/'+coords+'?overview=full&geometries=geojson&steps=false',{headers:{'User-Agent':'MOVIT-Rotas/0.7'},signal:AbortSignal.timeout(18000)});
-      const j=await r.json();
-      if(r.ok&&j.code==='Ok'&&j.routes?.[0])return j.routes[0]
-    }catch(e){
-      console.warn('MOVIT geometry falhou',base,String(e?.message||e))
+    for(const alternatives of (avoid.length?[true,false]:[false])){
+      try{
+        const url=base+'/route/v1/driving/'+coords+'?overview=full&geometries=geojson&steps=false'+(alternatives?'&alternatives=true':'');
+        const r=await fetch(url,{headers:{'User-Agent':'MOVIT-Rotas/1.4'},signal:AbortSignal.timeout(20000)});
+        const j=await r.json();
+        if(!r.ok||j.code!=='Ok'||!Array.isArray(j.routes)||!j.routes.length)continue;
+        for(const candidate of j.routes){
+          const hits=routePublicAvoidanceHits(candidate.geometry,avoid,500);
+          candidate.avoidanceHits=hits;
+          if(!best||hits<best.avoidanceHits||(hits===best.avoidanceHits&&Number(candidate.distance||Infinity)<Number(best.distance||Infinity)))best=candidate;
+        }
+        if(best&&best.avoidanceHits===0)return best;
+        if(best&&!avoid.length)return best;
+      }catch(e){
+        console.warn('MOVIT geometry falhou',base,String(e?.message||e))
+      }
     }
   }
+  if(best)return best;
   throw Object.assign(new Error('O serviço de rotas está temporariamente indisponível. Tente novamente em alguns segundos.'),{status:503})
 }
 
@@ -1751,9 +1780,11 @@ async function start() {
           const m=await routePublicTable(points),n=raw.length;
           let order=routePublicNearest(m,n);
           order=returnToStart?routePublicTwoOpt(order,m):routePublicTwoOptOpen(order,m);
-          const route=await routePublicGeometry(points,order,returnToStart);
-          console.log('MOVIT OPTIMIZE OK',JSON.stringify({stops:raw.length,distance:route.distance,duration:route.duration}));
-          return sendJson(res,200,{ok:true,order,distanceMeters:route.distance,durationSeconds:route.duration,geometry:route.geometry,points,returnToStart});
+          const avoidTolls=Array.isArray(body.avoidTolls)?body.avoidTolls.slice(0,12):[];
+          const route=await routePublicGeometry(points,order,returnToStart,avoidTolls);
+          const avoidanceHits=Number(route.avoidanceHits||0);
+          console.log('MOVIT OPTIMIZE OK',JSON.stringify({stops:raw.length,distance:route.distance,duration:route.duration,avoidTolls:avoidTolls.length,avoidanceHits}));
+          return sendJson(res,200,{ok:true,order,distanceMeters:route.distance,durationSeconds:route.duration,geometry:route.geometry,points,returnToStart,avoidanceRequested:avoidTolls.length,avoidanceHits});
         }catch(e){return sendJson(res,e.status||502,{ok:false,error:e.message||'Falha ao otimizar rota.'})}
       }
 
