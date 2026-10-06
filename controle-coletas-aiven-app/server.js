@@ -1166,19 +1166,20 @@ async function start() {
         } catch(e){return sendJson(res,500,{ok:false,error:'Não foi possível verificar atualização.'});}
       }
 
-      if (req.method === 'GET' && /^\/downloads\/CONSTRULOG-Motorista-(NORMAL|TESTE)\.apk$/i.test(u.pathname)) {
+      if (req.method === 'GET' && /^\/downloads\/(CONSTRULOG-Motorista-(NORMAL|TESTE)\.apk|MOVIT\.apk|MOVIT-PLAYSTORE\.aab)$/i.test(u.pathname)) {
         try {
           const file=path.join(DRIVER_DOWNLOADS,path.basename(u.pathname));
-          if(!fs.existsSync(file))return sendJson(res,404,{ok:false,error:'APK ainda não publicado.'});
+          if(!fs.existsSync(file))return sendJson(res,404,{ok:false,error:'Arquivo ainda não publicado.'});
           const st=fs.statSync(file);
+          const isAab=/\.aab$/i.test(file);
           res.writeHead(200,{
-            'Content-Type':'application/vnd.android.package-archive',
+            'Content-Type':isAab?'application/octet-stream':'application/vnd.android.package-archive',
             'Content-Length':st.size,
             'Content-Disposition':'attachment; filename="'+path.basename(file)+'"',
             'Cache-Control':'no-store'
           });
           return fs.createReadStream(file).pipe(res);
-        } catch(e){return sendJson(res,500,{ok:false,error:'Falha ao baixar atualização.'});}
+        } catch(e){return sendJson(res,500,{ok:false,error:'Falha ao baixar aplicativo.'});}
       }
 
       if (req.method === 'POST' && u.pathname === '/api/auth/login') {
