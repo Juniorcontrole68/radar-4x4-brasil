@@ -167,11 +167,24 @@ app.post('/api/invite/:id/respond', async (req, res, next) => {
     const data = await load();
     const guest = data.guests.find(g => g.id === req.params.id);
     if (!guest) return res.status(404).json({ error: 'Convite não encontrado' });
-    const going = !!req.body?.going;
-    guest.status = going ? 'confirmado' : 'nao-vai';
-    guest.confirmed = going
-      ? Math.min(guest.invited, Math.max(1, Number(req.body?.confirmed || 1)))
-      : 0;
+
+    const response = String(req.body?.response || '').toLowerCase();
+
+    if (response === 'yes') {
+      const confirmed = Math.max(1, Math.floor(Number(req.body?.confirmed || 1)));
+      guest.confirmed = confirmed;
+      if (confirmed > Number(guest.invited || 0)) guest.invited = confirmed;
+      guest.status = 'confirmado';
+    } else if (response === 'maybe') {
+      guest.confirmed = null;
+      guest.status = 'talvez';
+    } else if (response === 'no') {
+      guest.confirmed = 0;
+      guest.status = 'nao-vai';
+    } else {
+      return res.status(400).json({ error: 'Resposta inválida' });
+    }
+
     guest.answeredAt = new Date().toISOString();
     await save(data);
     res.json({ ok: true, guest });
