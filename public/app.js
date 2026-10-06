@@ -3480,6 +3480,32 @@ async function refreshTracking(){
       ...(Array.isArray(live.rows)?live.rows:[]),
       ...((testLiveRes.ok&&testLive.ok&&Array.isArray(testLive.rows))?testLive.rows:[])
     ]);
+    // Rotas planejadas enviadas pelo MOVIT têm prioridade no teste/romaneio.
+    liveRows.forEach(r=>{
+      const mr=r?.movit_route?.route_data;
+      if(!mr||!Array.isArray(mr.stops)||!mr.stops.length)return;
+      const start=mr.start&&Number.isFinite(Number(mr.start.lat))&&Number.isFinite(Number(mr.start.lon))
+        ?mr.start
+        :mr.stops[0];
+      const points=[start,...mr.stops].map((p,i)=>({
+        lat:Number(p.lat),lon:Number(p.lon),
+        label:p.resolved||p.label||('Parada '+i),
+        destinatario:p.destinatario||p.resolved||p.label||('Parada '+i),
+        cidade:p.city||p.cidade||''
+      })).filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lon));
+      if(points.length<2)return;
+      const plan={
+        points,
+        optimizedOrder:Array.from({length:points.length-1},(_,i)=>i+1),
+        geometry:mr.geometry||null,
+        stops:mr.stops,
+        expectedDeliveries:mr.stops.length,
+        romaneio:r.movit_route.romaneio||''
+      };
+      const base=trackingBaseIdentity(r);
+      TRACKING_LOGICAL_ROUTES.set(trackingDriverKey(base.driver,base.plate),plan);
+      TRACKING_LOGICAL_ROUTES.set(trackingDriverKey(r.driver_name,r.vehicle_plate),plan);
+    });
     const operationRows=Array.isArray(TRACKING_DRIVER_ROWS)?TRACKING_DRIVER_ROWS:[];
     const approvedDevices=(requestRes.ok&&requests.ok&&Array.isArray(requests.rows)?requests.rows:[])
       .filter(x=>String(x.status||'').toLowerCase()==='approved');
