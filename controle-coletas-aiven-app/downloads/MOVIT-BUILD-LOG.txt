@@ -23,11 +23,11 @@ Daemon will be stopped at the end of the build
 > Task :app:compileInternalDebugShaders NO-SOURCE
 > Task :app:generateInternalDebugAssets UP-TO-DATE
 > Task :app:mergeInternalDebugAssets
-> Task :app:compressInternalDebugAssets
-> Task :app:desugarInternalDebugFileDependencies
-> Task :app:checkInternalDebugDuplicateClasses
-> Task :app:processInternalDebugJavaRes NO-SOURCE
 > Task :app:processInternalDebugManifestForPackage
+> Task :app:compressInternalDebugAssets
+> Task :app:checkInternalDebugDuplicateClasses
+> Task :app:desugarInternalDebugFileDependencies
+> Task :app:processInternalDebugJavaRes NO-SOURCE
 > Task :app:mergeExtDexInternalDebug
 > Task :app:mergeLibDexInternalDebug
 > Task :app:mergeInternalDebugJniLibFolders
@@ -48,7 +48,7 @@ Note: Recompile with -Xlint:deprecation for details.
 > Task :app:packageInternalDebug
 > Task :app:createInternalDebugApkListingFileRedirect
 > Task :app:assembleInternalDebug
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/movit_build-1791326565426.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/movit_build-1791326655836.json
 
 [Incubating] Problems report is available at: file:///home/runner/work/radar-4x4-brasil/radar-4x4-brasil/roteirizador-v02-android/build/reports/problems/problems-report.html
 
@@ -58,7 +58,7 @@ You can use '--warning-mode all' to show the individual deprecation warnings and
 
 For more on this, please refer to https://docs.gradle.org/8.13/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
 
-BUILD SUCCESSFUL in 32s
+BUILD SUCCESSFUL in 33s
 34 actionable tasks: 34 executed
 assembleInternalDebug exit=0
 === bundlePlayRelease ===
@@ -79,16 +79,16 @@ Daemon will be stopped at the end of the build
 > Task :app:processApplicationManifestPlayReleaseForBundle
 > Task :app:checkPlayReleaseAarMetadata
 > Task :app:packagePlayReleaseResources
-> Task :app:parsePlayReleaseLocalResources
 > Task :app:extractPlayReleaseVersionControlInfo
+> Task :app:parsePlayReleaseLocalResources
+> Task :app:processPlayReleaseManifestForPackage
 > Task :app:checkPlayReleaseDuplicateClasses
 > Task :app:generatePlayReleaseBuildConfig
 > Task :app:javaPreCompilePlayRelease
 > Task :app:desugarPlayReleaseFileDependencies
 > Task :app:mergePlayReleaseStartupProfile
-> Task :app:processPlayReleaseManifestForPackage
-> Task :app:mergeExtDexPlayRelease
 > Task :app:mergePlayReleaseShaders
+> Task :app:mergeExtDexPlayRelease
 > Task :app:compilePlayReleaseShaders NO-SOURCE
 > Task :app:generatePlayReleaseAssets UP-TO-DATE
 > Task :app:mergePlayReleaseAssets
@@ -98,13 +98,10 @@ Daemon will be stopped at the end of the build
 > Task :app:stripPlayReleaseDebugSymbols NO-SOURCE
 > Task :app:writePlayReleaseAppMetadata
 > Task :app:mergePlayReleaseArtProfile
-> Task :app:mergePlayReleaseJavaResource
 > Task :app:collectPlayReleaseDependencies
 > Task :app:configurePlayReleaseDependencies
-> Task :app:extractPlayReleaseNativeSymbolTables NO-SOURCE
-> Task :app:extractProguardFiles
 > Task :app:processPlayReleaseResources
-> Task :app:parsePlayReleaseIntegrityConfig
+> Task :app:mergePlayReleaseJavaResource
 > Task :app:bundlePlayReleaseResources
 
 > Task :app:compilePlayReleaseJavaWithJavac
@@ -112,12 +109,15 @@ Note: /home/runner/work/radar-4x4-brasil/radar-4x4-brasil/roteirizador-v02-andro
 Note: Recompile with -Xlint:deprecation for details.
 
 > Task :app:dexBuilderPlayRelease
+> Task :app:extractPlayReleaseNativeSymbolTables NO-SOURCE
 > Task :app:mergePlayReleaseGlobalSynthetics
+> Task :app:extractProguardFiles
 > Task :app:mergeDexPlayRelease
 > Task :app:generatePlayReleaseLintVitalReportModel
 > Task :app:buildPlayReleasePreBundle
 > Task :app:compilePlayReleaseArtProfile
 > Task :app:validateSigningPlayRelease
+> Task :app:parsePlayReleaseIntegrityConfig
 > Task :app:lintVitalAnalyzePlayRelease
 > Task :app:lintVitalReportPlayRelease
 > Task :app:lintVitalPlayRelease
@@ -126,7 +126,7 @@ Note: Recompile with -Xlint:deprecation for details.
 > Task :app:producePlayReleaseBundleIdeListingFile
 > Task :app:createPlayReleaseBundleListingFileRedirect
 > Task :app:bundlePlayRelease
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/movit_build-1791326596936.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/movit_build-1791326686660.json
 
 [Incubating] Problems report is available at: file:///home/runner/work/radar-4x4-brasil/radar-4x4-brasil/roteirizador-v02-android/build/reports/problems/problems-report.html
 
@@ -136,6 +136,6 @@ You can use '--warning-mode all' to show the individual deprecation warnings and
 
 For more on this, please refer to https://docs.gradle.org/8.13/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
 
-BUILD SUCCESSFUL in 27s
+BUILD SUCCESSFUL in 24s
 49 actionable tasks: 49 executed
 bundlePlayRelease exit=0
