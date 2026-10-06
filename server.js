@@ -2820,6 +2820,75 @@ function routeCycleDistance(order,m){
   d+=(m[order[order.length-1]][0]||0);
   return d
 }
+function routeOpenDistance(order,m,endIndex){
+  if(!order.length)return Number(m[0]?.[endIndex]||0);
+  let d=Number(m[0]?.[order[0]]||0);
+  for(let i=1;i<order.length;i++)d+=Number(m[order[i-1]]?.[order[i]]||0);
+  d+=Number(m[order[order.length-1]]?.[endIndex]||0);
+  return d
+}
+function routeExactOpen(m,intermediateIndexes,endIndex){
+  const n=intermediateIndexes.length;
+  if(n===0)return[];
+  if(n>12)return null;
+  const size=1<<n,dp=Array.from({length:size},()=>new Float64Array(n).fill(Infinity)),par=Array.from({length:size},()=>new Int16Array(n).fill(-1));
+  for(let j=0;j<n;j++)dp[1<<j][j]=m[0][intermediateIndexes[j]];
+  for(let mask=1;mask<size;mask++){
+    for(let j=0;j<n;j++){
+      if(!(mask&(1<<j)))continue;
+      const prev=mask^(1<<j);if(!prev)continue;
+      for(let k=0;k<n;k++){
+        if(!(prev&(1<<k)))continue;
+        const v=dp[prev][k]+m[intermediateIndexes[k]][intermediateIndexes[j]];
+        if(v<dp[mask][j]){dp[mask][j]=v;par[mask][j]=k}
+      }
+    }
+  }
+  const full=size-1;let best=Infinity,last=0;
+  for(let j=0;j<n;j++){
+    const v=dp[full][j]+m[intermediateIndexes[j]][endIndex];
+    if(v<best){best=v;last=j}
+  }
+  const rev=[];let mask=full,j=last;
+  while(j>=0){rev.push(intermediateIndexes[j]);const pj=par[mask][j];mask^=1<<j;j=pj}
+  return rev.reverse()
+}
+function routeNearestOpen(m,intermediateIndexes,endIndex){
+  const left=new Set(intermediateIndexes),out=[];let cur=0;
+  while(left.size){
+    let best=null,bd=Infinity;
+    for(const x of left){
+      const d=Number(m[cur]?.[x]||Infinity);
+      if(d<bd){bd=d;best=x}
+    }
+    if(best==null)best=[...left][0];
+    out.push(best);left.delete(best);cur=best
+  }
+  return out
+}
+function routeTwoOptOpen(order,m,endIndex){
+  let best=order.slice(),bestD=routeOpenDistance(best,m,endIndex),changed=true,loops=0;
+  while(changed&&loops++<8){
+    changed=false;
+    for(let i=0;i<best.length-1;i++)for(let k=i+1;k<best.length;k++){
+      const cand=best.slice(0,i).concat(best.slice(i,k+1).reverse(),best.slice(k+1));
+      const d=routeOpenDistance(cand,m,endIndex);
+      if(d+1<bestD){best=cand;bestD=d;changed=true}
+    }
+  }
+  return best
+}
+async function routeGeometryFixedEnd(points,order,endIndex){
+  try{
+    const seq=[0,...order,endIndex],coords=seq.map(i=>points[i].lon+','+points[i].lat).join(';');
+    const u='https://router.project-osrm.org/route/v1/driving/'+coords+'?overview=full&geometries=geojson&steps=false';
+    const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Roteirizador/1.0'},signal:AbortSignal.timeout(20000)});
+    const j=await r.json();
+    if(r.ok&&j.code==='Ok'&&j.routes?.[0])return{geometry:j.routes[0].geometry,distanceMeters:j.routes[0].distance,durationSeconds:j.routes[0].duration}
+  }catch{}
+  return{geometry:{type:'LineString',coordinates:[0,...order,endIndex].map(i=>[points[i].lon,points[i].lat])},distanceMeters:null,durationSeconds:null}
+}
+
 function routeNearest(m,n){
   const left=new Set(Array.from({length:n},(_,i)=>i+1)),out=[];let cur=0;
   while(left.size){
@@ -2898,11 +2967,12 @@ async function routeFinalizePlan(stops,meta={}){
   const customLat=Number(meta?.start?.lat),customLon=Number(meta?.start?.lon);
   if(Number.isFinite(customLat)&&Number.isFinite(customLon)&&customLat>=-90&&customLat<=90&&customLon>=-180&&customLon<=180){
     baseGeo={lat:customLat,lon:customLon};
-    baseAddress=String(meta?.start?.label||'Minha localização atual').slice(0,180)
+    baseAddress=String(meta?.start?.label||'Ponto inicial').slice(0,180)
   }else{
     baseGeo=await routeBaseGeo();
-    if(!baseGeo)throw new Error('Não foi possível localizar a base de Americana.')
+    if(!baseGeo)throw new Error('Não foi possível localizar o ponto inicial.')
   }
+
   const clean=[],rejected=[];
   for(const raw of (stops||[])){
     let p={...raw},lat=Number(p.lat),lon=Number(p.lon);
@@ -2922,26 +2992,60 @@ async function routeFinalizePlan(stops,meta={}){
     }
     clean.push({...p,lat,lon,radiusKm:radius/1000})
   }
-  if(!clean.length)throw new Error('Nenhuma parada válida dentro do raio máximo de 300 km da base de Americana.');
+
+  const endLat=Number(meta?.end?.lat),endLon=Number(meta?.end?.lon);
+  const hasFixedEnd=Number.isFinite(endLat)&&Number.isFinite(endLon)&&endLat>=-90&&endLat<=90&&endLon>=-180&&endLon<=180;
+  const endPoint=hasFixedEnd?{
+    ...(meta.end||{}),lat:endLat,lon:endLon,
+    label:String(meta?.end?.label||meta?.end?.endereco||meta?.end?.address||'Destino final').slice(0,220),
+    precision:meta?.end?.precision||'fixed-end'
+  }:null;
+
+  if(!clean.length&&!hasFixedEnd)throw new Error('Nenhuma parada válida encontrada.');
+
   const points=[{label:baseAddress,address:baseAddress,lat:baseGeo.lat,lon:baseGeo.lon,precision:'base'},...clean];
-  const mt=await routeOsrmTable(points),m=mt.matrix,n=clean.length;
-  let optimized=routeExact(m,n),method='exata';
-  if(!optimized){optimized=routeTwoOpt(routeNearest(m,n),m);method='heurística otimizada'}
-  const original=Array.from({length:n},(_,i)=>i+1);
-  const optMeters=routeCycleDistance(optimized,m),origMeters=routeCycleDistance(original,m);
-  const [geo,outboundGeo]=await Promise.all([routeGeometry(points,optimized),routeGeometryOpen(points,optimized)]);
+  if(hasFixedEnd)points.push(endPoint);
+
+  const mt=await routeOsrmTable(points),m=mt.matrix;
+  const intermediateIndexes=Array.from({length:clean.length},(_,i)=>i+1);
+  const original=intermediateIndexes.slice();
+  let optimized,method,optMeters,origMeters,geo,legs;
+
+  if(hasFixedEnd){
+    const endIndex=points.length-1;
+    optimized=routeExactOpen(m,intermediateIndexes,endIndex);method='exata • início/fim fixos';
+    if(!optimized){optimized=routeTwoOptOpen(routeNearestOpen(m,intermediateIndexes,endIndex),m,endIndex);method='heurística • início/fim fixos'}
+    optMeters=routeOpenDistance(optimized,m,endIndex);
+    origMeters=routeOpenDistance(original,m,endIndex);
+    geo=await routeGeometryFixedEnd(points,optimized,endIndex);
+    const seq=[0,...optimized,endIndex];
+    legs=[];
+    for(let i=1;i<seq.length;i++){
+      const a=seq[i-1],b=seq[i],meters=Number(m[a]?.[b]||0);
+      legs.push({fromIndex:a,toIndex:b,from:points[a]?.label||'',to:points[b]?.label||'',distanceMeters:meters,distanceKm:meters/1000})
+    }
+  }else{
+    const n=clean.length;
+    optimized=routeExact(m,n);method='exata';
+    if(!optimized){optimized=routeTwoOpt(routeNearest(m,n),m);method='heurística otimizada'}
+    optMeters=routeCycleDistance(optimized,m);origMeters=routeCycleDistance(original,m);
+    geo=await routeGeometry(points,optimized);
+    legs=routeLegs(optimized,m,points)
+  }
+
   return{
-    ok:true,date:meta.date||'',baseAddress:baseAddress,radiusLimitKm:300,
+    ok:true,date:meta.date||'',baseAddress,radiusLimitKm:300,
     romaneio:meta.romaneio||'',motorista:meta.motorista||'',veiculo:meta.veiculo||'',
-    deliveries:n,method,matrixSource:mt.source,
+    deliveries:clean.length+(hasFixedEnd?1:0),method,matrixSource:mt.source,
     optimizedOrder:optimized,originalOrder:original,
     optimizedDistanceMeters:Number.isFinite(optMeters)?optMeters:0,
     originalDistanceMeters:Number.isFinite(origMeters)?origMeters:0,
-    optimizedLegs:routeLegs(optimized,m,points),originalLegs:routeLegs(original,m,points),
-    points,stops:clean,matrix:m,geometry:geo.geometry,outboundGeometry:outboundGeo.geometry,
+    optimizedLegs:legs,originalLegs:hasFixedEnd?[]:routeLegs(original,m,points),
+    points,stops:clean,matrix:m,geometry:geo.geometry,outboundGeometry:geo.geometry,
     geometryDistanceMeters:Number.isFinite(geo.distanceMeters)?geo.distanceMeters:0,
     durationSeconds:Number.isFinite(geo.durationSeconds)?geo.durationSeconds:0,
-    outboundDistanceMeters:Number.isFinite(outboundGeo.distanceMeters)?outboundGeo.distanceMeters:0,rejectedStops:rejected,
+    outboundDistanceMeters:Number.isFinite(geo.distanceMeters)?geo.distanceMeters:0,rejectedStops:rejected,
+    fixedEnd:hasFixedEnd,endIndex:hasFixedEnd?points.length-1:null,
     approximateStops:clean.filter(x=>['cidade','cliente','manual-aproximado','cte-aproximado'].includes(x.precision)).length
   }
 }
@@ -4651,7 +4755,8 @@ if(req.method==='POST'&&u.pathname==='/api/roteirizador/recalcular'){try{
   if(!stops.length)throw Object.assign(new Error('Nenhuma parada enviada para recalcular.'),{status:400});
   const x=await routeFinalizePlan(stops,{
     date:String(body.date||''),romaneio:String(body.romaneio||''),motorista:String(body.motorista||''),veiculo:String(body.veiculo||''),
-    start:body.start&&typeof body.start==='object'?body.start:null
+    start:body.start&&typeof body.start==='object'?body.start:null,
+    end:body.end&&typeof body.end==='object'?body.end:null
   });
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
