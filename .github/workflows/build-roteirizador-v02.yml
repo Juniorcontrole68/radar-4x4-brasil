@@ -18,6 +18,10 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      MOVIT_KEYSTORE_PASSWORD: ${{ secrets.MOVIT_KEYSTORE_PASSWORD }}
+      MOVIT_KEY_ALIAS: ${{ secrets.MOVIT_KEY_ALIAS }}
+      MOVIT_KEY_PASSWORD: ${{ secrets.MOVIT_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,20 +32,48 @@ jobs:
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
-      - name: Build APK e AAB
+          gradle-version: '8.13'
+
+      - name: Preparar chave de upload Play Store
+        env:
+          MOVIT_KEYSTORE_B64: ${{ secrets.MOVIT_KEYSTORE_B64 }}
         run: |
-          gradle -p roteirizador-v02-android :app:assembleDebug --no-daemon
-          gradle -p roteirizador-v02-android :app:bundleRelease --no-daemon
-      - name: Publish APK
+          if [ -n "$MOVIT_KEYSTORE_B64" ]; then
+            echo "$MOVIT_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/movit-upload.jks"
+            echo "MOVIT_KEYSTORE_PATH=$RUNNER_TEMP/movit-upload.jks" >> "$GITHUB_ENV"
+          else
+            echo "Chave Play Store não configurada; o AAB será gerado sem assinatura de upload."
+          fi
+
+      - name: Build APK de teste e AAB Play Store
+        run: |
+          gradle -p roteirizador-v02-android :app:assembleTesteDebug --no-daemon
+          gradle -p roteirizador-v02-android :app:bundlePlayRelease --no-daemon
+
+      - name: Validar assinatura Play Store
+        run: |
+          AAB="roteirizador-v02-android/app/build/outputs/bundle/playRelease/app-play-release.aab"
+          test -f "$AAB"
+          if [ -z "$MOVIT_KEYSTORE_PATH" ]; then
+            echo "AAB Play Store gerado, porém ainda sem chave de upload configurada."
+          else
+            jarsigner -verify "$AAB"
+          fi
+
+      - name: Publicar arquivos
         run: |
           mkdir -p controle-coletas-aiven-app/downloads
-          cp roteirizador-v02-android/app/build/outputs/apk/debug/app-debug.apk controle-coletas-aiven-app/downloads/MOVIT.apk
-          cp roteirizador-v02-android/app/build/outputs/bundle/release/app-release.aab controle-coletas-aiven-app/downloads/MOVIT-PLAYSTORE.aab
-          git config user.name "CONSTRULOG Build"
+          cp roteirizador-v02-android/app/build/outputs/apk/teste/debug/app-teste-debug.apk controle-coletas-aiven-app/downloads/MOVIT.apk
+          if [ -n "$MOVIT_KEYSTORE_PATH" ]; then
+            cp roteirizador-v02-android/app/build/outputs/bundle/playRelease/app-play-release.aab controle-coletas-aiven-app/downloads/MOVIT-PLAYSTORE.aab
+          fi
+          git config user.name "MOVIT Build"
           git config user.email "actions@users.noreply.github.com"
-          git add controle-coletas-aiven-app/downloads/MOVIT.apk controle-coletas-aiven-app/downloads/MOVIT-PLAYSTORE.aab
-          git commit -m "Publica MOVIT Android 0.5.1 teste [skip ci]" || exit 0
+          git add controle-coletas-aiven-app/downloads/MOVIT.apk
+          if [ -n "$MOVIT_KEYSTORE_PATH" ]; then
+            git add controle-coletas-aiven-app/downloads/MOVIT-PLAYSTORE.aab
+          fi
+          git commit -m "Publica builds MOVIT Android [skip ci]" || exit 0
           git fetch origin controle-coletas-aiven
           git rebase origin/controle-coletas-aiven
           git push origin HEAD:controle-coletas-aiven
