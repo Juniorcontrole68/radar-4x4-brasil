@@ -715,17 +715,34 @@ public class MainActivity extends Activity {
     }
 
     private void renderMap(JSONObject plan){
-        String points="[]",geometry="null";
+        String points="[]",labels="[]",geometry="null",returnPoint="null",returnLabel="";
         try{
-            JSONArray a=new JSONArray();
-            for(JSONObject s:stops){JSONArray p=new JSONArray();p.put(s.getDouble("lat"));p.put(s.getDouble("lon"));a.put(p);}
-            points=a.toString();
+            JSONArray a=new JSONArray(),labs=new JSONArray();
+            for(JSONObject s:stops){
+                JSONArray p=new JSONArray();p.put(s.getDouble("lat"));p.put(s.getDouble("lon"));a.put(p);
+                labs.put(s.optString("resolved",s.optString("label","Parada")));
+            }
+            points=a.toString();labels=labs.toString();
             if(plan!=null&&plan.optJSONObject("geometry")!=null)geometry=plan.getJSONObject("geometry").toString();
+
+            if(prefs.getBoolean("current_return_start",false)){
+                JSONObject rp=start;
+                if(rp==null&&!stops.isEmpty())rp=stops.get(0);
+                if(rp!=null){
+                    JSONArray x=new JSONArray();x.put(rp.getDouble("lat"));x.put(rp.getDouble("lon"));
+                    returnPoint=x.toString();
+                    returnLabel=rp.optString("resolved",rp.optString("label","Ponto de início"));
+                }
+            }
         }catch(Exception ignored){}
+
+        String safeReturn=JSONObject.quote(returnLabel);
         String html="<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"+
-        "<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'><style>html,body,#m{height:100%;margin:0}</style></head><body><div id='m'></div>"+
+        "<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'><style>html,body,#m{height:100%;margin:0}.returnTag{background:#16142f;color:#fff;border:3px solid #fff;border-radius:18px;min-width:38px;height:34px;display:flex;align-items:center;justify-content:center;padding:0 8px;font:bold 12px sans-serif;box-shadow:0 2px 7px #0005;white-space:nowrap}</style></head><body><div id='m'></div>"+
         "<script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script><script>var m=L.map('m').setView([-22.8,-47.2],9);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(m);"+
-        "var pts="+points+";pts.forEach((p,i)=>{var n=i+1;var ic=L.divIcon({className:'',html:'<div style=\"width:34px;height:34px;border-radius:50%;background:#2f73e8;color:white;border:3px solid white;box-shadow:0 2px 7px #0005;display:flex;align-items:center;justify-content:center;font:bold 15px sans-serif\">'+n+'</div>',iconSize:[34,34],iconAnchor:[17,17]});L.marker(p,{icon:ic}).addTo(m).bindTooltip('Parada '+n,{direction:'top'});});var g="+geometry+";if(g&&g.coordinates){var ll=g.coordinates.map(x=>[x[1],x[0]]);L.polyline(ll,{weight:6,color:'#5fca43',opacity:.92,lineCap:'round',lineJoin:'round'}).addTo(m);if(ll.length)m.fitBounds(ll,{padding:[28,28]});}else if(pts.length)m.fitBounds(pts,{padding:[36,36]});</script></body></html>";
+        "var pts="+points+",labs="+labels+";pts.forEach((p,i)=>{var n=i+1;var ic=L.divIcon({className:'',html:'<div style=\"width:34px;height:34px;border-radius:50%;background:#2f73e8;color:white;border:3px solid white;box-shadow:0 2px 7px #0005;display:flex;align-items:center;justify-content:center;font:bold 15px sans-serif\">'+n+'</div>',iconSize:[34,34],iconAnchor:[17,17]});L.marker(p,{icon:ic}).addTo(m).bindPopup('<b>Parada '+n+'</b><br>'+(labs[i]||'' )).bindTooltip('Parada '+n,{direction:'top'});});"+
+        "var ret="+returnPoint+",retLabel="+safeReturn+";if(ret){var ric=L.divIcon({className:'',html:'<div class=\"returnTag\">↩ RETORNO</div>',iconSize:[86,34],iconAnchor:[43,-6]});L.marker(ret,{icon:ric,zIndexOffset:1000}).addTo(m).bindPopup('<b>Retorno ao ponto de início</b><br>'+retLabel).bindTooltip('Retorno ao início',{direction:'top'});}"+
+        "var g="+geometry+";if(g&&g.coordinates){var ll=g.coordinates.map(x=>[x[1],x[0]]);L.polyline(ll,{weight:6,color:'#5fca43',opacity:.92,lineCap:'round',lineJoin:'round'}).addTo(m);if(ll.length)m.fitBounds(ll,{padding:[28,28]});}else if(pts.length)m.fitBounds(pts,{padding:[36,36]});</script></body></html>";
         map.loadDataWithBaseURL("https://app.local/",html,"text/html","UTF-8",null);
     }
 
