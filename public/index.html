@@ -516,6 +516,13 @@
 <section id="roteirizador-v02" class="section">
   <div class="dash-intro"><h2>🧭 Roteirizador V02</h2><div class="muted">Versão mobile-first inspirada na experiência de roteirizadores modernos, com identidade própria CONSTRULOG. Digite ou fale os endereços, organize as paradas e otimize pelas vias reais.</div></div>
   <div class="card" style="padding:14px">
+    <div style="display:grid;grid-template-columns:minmax(220px,1fr) auto auto;gap:10px;align-items:end;margin-bottom:10px">
+      <label style="display:grid;gap:5px;font-size:12px;font-weight:700;color:#475569">Nome da rota
+        <input id="rv2RouteName" type="text" placeholder="Ex.: Campinas Centro • 06/10" style="width:100%;box-sizing:border-box;padding:12px 14px;border:1px solid var(--line);border-radius:12px;font-size:15px">
+      </label>
+      <button id="rv2Save" class="secondary" type="button">💾 Salvar rota</button>
+      <button id="rv2Share" class="secondary" type="button">💬 Compartilhar</button>
+    </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <div style="flex:1;min-width:240px">
         <input id="rv2Address" type="text" placeholder="Digite rua, número, bairro, cidade ou CEP" style="width:100%;box-sizing:border-box;padding:14px 16px;border:1px solid var(--line);border-radius:14px;font-size:16px">
@@ -533,6 +540,14 @@
     <div class="card kpi"><div class="label">Distância</div><div id="rv2Km" class="value">—</div></div>
     <div class="card kpi"><div class="label">Tempo estimado</div><div id="rv2Time" class="value">—</div></div>
     <div class="card kpi"><div class="label">Método</div><div id="rv2Method" class="value" style="font-size:20px">—</div></div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
+      <div><b>Rotas salvas</b><div class="muted">Histórico local deste aparelho. Abra, renomeie ou exclua quando quiser.</div></div>
+      <button id="rv2New" class="secondary" type="button">＋ Nova rota</button>
+    </div>
+    <div id="rv2SavedRoutes" style="display:grid;gap:8px;margin-top:12px"><div class="muted">Nenhuma rota salva ainda.</div></div>
   </div>
 
   <div class="route-layout">
