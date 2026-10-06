@@ -1938,14 +1938,16 @@ async function start() {
           }
 
           const found=[];
-          let scanned=0;
+          let scanned=0,matchedMessages=0,pdfAttachmentsSeen=0;
           for(const box of mailboxes){
             if(found.length>=60||scanned>=250)break;
             let lock=null;
             try{
               lock=await client.getMailboxLock(box,{description:'CONSTRULOG PDF Unificador'});
+              // O Titan pode não respeitar FROM da mesma forma em todas as caixas.
+              // Buscamos pelo período e filtramos o remetente após ler o cabeçalho,
+              // o que também funciona com nomes de exibição como "Administrador NF-e <nfe@navas.com.br>".
               const query={since,before};
-              if(sender)query.from=sender;
               let uids=await client.search(query,{uid:true});
               if(!Array.isArray(uids)||!uids.length)continue;
               if(scanned+uids.length>250)uids=uids.slice(Math.max(0,uids.length-(250-scanned)));
@@ -1954,14 +1956,27 @@ async function start() {
                 if(found.length>=60)break;
                 if(!msg.source)continue;
                 const parsed=await simpleParser(msg.source,{skipHtmlToText:true,skipTextToHtml:true});
+
+                if(sender){
+                  const needle=sender.trim().toLowerCase();
+                  const fromText=String(parsed.from?.text||'').toLowerCase();
+                  const fromAddresses=(parsed.from?.value||[]).map(x=>String(x.address||'').toLowerCase());
+                  const displayNames=(parsed.from?.value||[]).map(x=>String(x.name||'').toLowerCase());
+                  const match=fromText.includes(needle)||fromAddresses.some(x=>x===needle||x.includes(needle))||displayNames.some(x=>x.includes(needle));
+                  if(!match)continue;
+                }
+                matchedMessages++;
+
                 for(const a of parsed.attachments||[]){
                   if(found.length>=60)break;
-                  const filename=String(a.filename||'anexo.pdf');
-                  const isPdf=String(a.contentType||'').toLowerCase()==='application/pdf'||/\.pdf$/i.test(filename);
+                  const filename=String(a.filename||'anexo');
+                  const contentType=String(a.contentType||'').toLowerCase();
+                  const isPdf=contentType==='application/pdf'||contentType==='application/x-pdf'||/\.pdf$/i.test(filename);
+                  if(isPdf)pdfAttachmentsSeen++;
                   if(!isPdf||!a.content||!a.content.length)continue;
                   found.push({
                     date:msg.internalDate?new Date(msg.internalDate).getTime():0,
-                    filename,
+                    filename:/\.pdf$/i.test(filename)?filename:(filename+'.pdf'),
                     content:Buffer.from(a.content)
                   });
                 }
@@ -1973,7 +1988,12 @@ async function start() {
             }
           }
 
-          if(!found.length)return sendJson(res,404,{ok:false,error:'Nenhum anexo PDF foi encontrado com esses filtros.'});
+          if(!found.length){
+            let error='Nenhum anexo PDF foi encontrado com esses filtros.';
+            if(sender&&matchedMessages===0)error='Nenhum e-mail desse remetente foi encontrado no período. Confira o remetente ou tente deixar o campo Remetente em branco.';
+            else if(matchedMessages>0&&pdfAttachmentsSeen===0)error='Foram encontrados '+matchedMessages+' e-mail(s) desse remetente, mas nenhum anexo PDF. Os anexos podem estar em outro formato, como XML.';
+            return sendJson(res,404,{ok:false,error,matchedMessages,pdfAttachmentsSeen,scanned});
+          }
           found.sort((a,b)=>a.date-b.date||a.filename.localeCompare(b.filename,'pt-BR'));
 
           const merged=await PDFDocument.create();
