@@ -1289,6 +1289,95 @@ async function start() {
         }catch(e){return sendJson(res,e.status||502,{ok:false,error:e.message||'Falha ao localizar endereço.'})}
       }
 
+      if (u.pathname === '/api/public-router/fuel-stations' && req.method === 'POST') {
+        try{
+          if(!publicRouteAllowed(req))return sendJson(res,429,{ok:false,error:'Muitas consultas. Aguarde um minuto.'});
+          const body=await readJsonBodyLimited(req,512*1024);
+          const lat=Number(body.lat),lon=Number(body.lon);
+          if(!Number.isFinite(lat)||!Number.isFinite(lon)||lat<-90||lat>90||lon<-180||lon>180){
+            return sendJson(res,400,{ok:false,error:'Localização atual inválida.'});
+          }
+
+          const geom=body.geometry&&Array.isArray(body.geometry.coordinates)?body.geometry.coordinates:[];
+          const routePoints=geom.map(x=>({lat:Number(x[1]),lon:Number(x[0])})).filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lon));
+          const radius=routePoints.length?22000:12000;
+          const q='[out:json][timeout:18];('+
+            'node["amenity"="fuel"](around:'+radius+','+lat+','+lon+');'+
+            'way["amenity"="fuel"](around:'+radius+','+lat+','+lon+');'+
+            'relation["amenity"="fuel"](around:'+radius+','+lat+','+lon+');'+
+            ');out center tags;';
+          let data=null,lastErr=null;
+          for(const base of ['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter']){
+            try{
+              const r=await fetch(base,{
+                method:'POST',
+                headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8','User-Agent':'MOVIT-Rotas/1.0'},
+                body:'data='+encodeURIComponent(q),
+                signal:AbortSignal.timeout(22000)
+              });
+              const j=await r.json();
+              if(r.ok&&Array.isArray(j.elements)){data=j;break}
+            }catch(e){lastErr=e}
+          }
+          if(!data)throw Object.assign(new Error('Serviço de postos temporariamente indisponível. Tente novamente.'),{status:503,cause:lastErr});
+
+          function minRouteMeters(p){
+            if(!routePoints.length)return null;
+            let best=Infinity;
+            const step=Math.max(1,Math.floor(routePoints.length/700));
+            for(let i=0;i<routePoints.length;i+=step){
+              const d=routePublicHaversine(p,routePoints[i]);
+              if(d<best)best=d;
+            }
+            return best;
+          }
+
+          const raw=[];
+          const seen=new Set();
+          for(const el of data.elements){
+            const plat=Number(el.lat??el.center?.lat),plon=Number(el.lon??el.center?.lon);
+            if(!Number.isFinite(plat)||!Number.isFinite(plon))continue;
+            const key=plat.toFixed(5)+','+plon.toFixed(5);
+            if(seen.has(key))continue;seen.add(key);
+            const tags=el.tags||{};
+            const p={lat:plat,lon:plon};
+            const off=minRouteMeters(p);
+            // Se há rota calculada, mostrar somente postos praticamente na rota.
+            if(routePoints.length&&Number.isFinite(off)&&off>1800)continue;
+            raw.push({
+              id:String(el.type||'')+String(el.id||''),
+              name:String(tags.name||tags.brand||'Posto de combustível').slice(0,160),
+              brand:String(tags.brand||'').slice(0,120),
+              operator:String(tags.operator||'').slice(0,120),
+              lat:plat,lon:plon,
+              routeOffsetMeters:Number.isFinite(off)?off:null,
+              directMeters:routePublicHaversine({lat,lon},p),
+              openingHours:String(tags.opening_hours||'').slice(0,180)
+            });
+          }
+
+          raw.sort((a,b)=>a.directMeters-b.directMeters);
+          const candidates=raw.slice(0,18);
+          if(!candidates.length)return sendJson(res,200,{ok:true,rows:[],routeFiltered:routePoints.length>0});
+
+          const matrix=await routePublicTable([{lat,lon},...candidates.map(x=>({lat:x.lat,lon:x.lon}))]);
+          const rows=candidates.map((s,i)=>({
+            ...s,
+            distanceMeters:Number.isFinite(matrix?.[0]?.[i+1])?matrix[0][i+1]:s.directMeters*1.28
+          })).sort((a,b)=>a.distanceMeters-b.distanceMeters).slice(0,10);
+
+          return sendJson(res,200,{
+            ok:true,
+            rows,
+            routeFiltered:routePoints.length>0,
+            maxRouteOffsetMeters:routePoints.length?1800:null,
+            note:routePoints.length
+              ?'Postos até aproximadamente 1,8 km do trajeto atual.'
+              :'Rota ainda não otimizada; mostrando postos próximos da localização atual.'
+          });
+        }catch(e){return sendJson(res,e.status||502,{ok:false,error:e.message||'Falha ao localizar postos.'})}
+      }
+
       if (u.pathname === '/api/public-router/truck-restrictions' && req.method === 'POST') {
         try{
           if(!publicRouteAllowed(req))return sendJson(res,429,{ok:false,error:'Muitas consultas. Aguarde um minuto.'});
