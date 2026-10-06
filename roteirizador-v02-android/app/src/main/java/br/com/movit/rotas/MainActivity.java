@@ -1217,8 +1217,19 @@ public class MainActivity extends Activity {
         return s.optDouble("lat")+","+s.optDouble("lon");
     }
 
+    private String navigationTarget(JSONObject s){
+        // Se nossa geocodificação ficou apenas aproximada, deixe o próprio app
+        // de navegação resolver o endereço digitado pelo usuário. Isso evita
+        // enviar uma coordenada aproximada como se fosse o número exato.
+        if(s.optBoolean("approximate",false)){
+            String original=s.optString("original","").trim();
+            if(!original.isEmpty())return original;
+        }
+        return stopCoords(s);
+    }
+
     private void openStopInMaps(JSONObject s){
-        String d=stopCoords(s);
+        String d=navigationTarget(s);
         try{
             Intent i=new Intent(Intent.ACTION_VIEW,Uri.parse("google.navigation:q="+Uri.encode(d)+"&mode=d"));
             i.setPackage("com.google.android.apps.maps");
@@ -1229,9 +1240,12 @@ public class MainActivity extends Activity {
     }
 
     private void openStopInWaze(JSONObject s){
-        String d=stopCoords(s);
+        String d=navigationTarget(s);
         try{
-            startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://waze.com/ul?ll="+Uri.encode(d)+"&navigate=yes")));
+            String url=s.optBoolean("approximate",false)
+                ?"https://waze.com/ul?q="+Uri.encode(d)+"&navigate=yes"
+                :"https://waze.com/ul?ll="+Uri.encode(d)+"&navigate=yes";
+            startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));
         }catch(Exception e){
             status.setText("Não foi possível abrir o Waze.");
         }
