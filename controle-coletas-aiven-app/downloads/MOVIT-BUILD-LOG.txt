@@ -8,8 +8,8 @@ Daemon will be stopped at the end of the build
 > Task :app:javaPreCompileInternalDebug
 > Task :app:checkInternalDebugAarMetadata
 > Task :app:processInternalDebugNavigationResources
-> Task :app:compileInternalDebugNavigationResources
 > Task :app:generateInternalDebugResValues
+> Task :app:compileInternalDebugNavigationResources
 > Task :app:mapInternalDebugSourceSetPaths
 > Task :app:generateInternalDebugResources
 > Task :app:packageInternalDebugResources
@@ -23,14 +23,14 @@ Daemon will be stopped at the end of the build
 > Task :app:compileInternalDebugShaders NO-SOURCE
 > Task :app:generateInternalDebugAssets UP-TO-DATE
 > Task :app:mergeInternalDebugAssets
-> Task :app:compressInternalDebugAssets
-> Task :app:checkInternalDebugDuplicateClasses
-> Task :app:desugarInternalDebugFileDependencies
-> Task :app:processInternalDebugJavaRes NO-SOURCE
 > Task :app:processInternalDebugManifestForPackage
+> Task :app:compressInternalDebugAssets
+> Task :app:desugarInternalDebugFileDependencies
+> Task :app:checkInternalDebugDuplicateClasses
+> Task :app:processInternalDebugJavaRes NO-SOURCE
 > Task :app:mergeExtDexInternalDebug
-> Task :app:mergeLibDexInternalDebug
 > Task :app:mergeInternalDebugJniLibFolders
+> Task :app:mergeLibDexInternalDebug
 > Task :app:mergeInternalDebugNativeLibs NO-SOURCE
 > Task :app:stripInternalDebugDebugSymbols NO-SOURCE
 > Task :app:mergeInternalDebugJavaResource
@@ -48,7 +48,7 @@ Note: Recompile with -Xlint:deprecation for details.
 > Task :app:packageInternalDebug
 > Task :app:createInternalDebugApkListingFileRedirect
 > Task :app:assembleInternalDebug
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/movit_build-1791317771741.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/movit_build-1791317871050.json
 
 [Incubating] Problems report is available at: file:///home/runner/work/radar-4x4-brasil/radar-4x4-brasil/roteirizador-v02-android/build/reports/problems/problems-report.html
 
@@ -58,7 +58,7 @@ You can use '--warning-mode all' to show the individual deprecation warnings and
 
 For more on this, please refer to https://docs.gradle.org/8.13/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
 
-BUILD SUCCESSFUL in 29s
+BUILD SUCCESSFUL in 30s
 34 actionable tasks: 34 executed
 assembleInternalDebug exit=0
 === bundlePlayRelease ===
@@ -73,22 +73,22 @@ Daemon will be stopped at the end of the build
 > Task :app:generatePlayReleaseResources
 > Task :app:createPlayReleaseCompatibleScreenManifests
 > Task :app:extractDeepLinksPlayRelease
-> Task :app:mergePlayReleaseResources
 > Task :app:processPlayReleaseMainManifest
+> Task :app:mergePlayReleaseResources
 > Task :app:processPlayReleaseManifest
 > Task :app:processApplicationManifestPlayReleaseForBundle
 > Task :app:checkPlayReleaseAarMetadata
 > Task :app:packagePlayReleaseResources
-> Task :app:extractPlayReleaseVersionControlInfo
 > Task :app:parsePlayReleaseLocalResources
+> Task :app:extractPlayReleaseVersionControlInfo
+> Task :app:processPlayReleaseManifestForPackage
 > Task :app:checkPlayReleaseDuplicateClasses
 > Task :app:generatePlayReleaseBuildConfig
 > Task :app:javaPreCompilePlayRelease
 > Task :app:desugarPlayReleaseFileDependencies
 > Task :app:mergePlayReleaseStartupProfile
-> Task :app:mergePlayReleaseShaders
-> Task :app:processPlayReleaseManifestForPackage
 > Task :app:mergeExtDexPlayRelease
+> Task :app:mergePlayReleaseShaders
 > Task :app:compilePlayReleaseShaders NO-SOURCE
 > Task :app:generatePlayReleaseAssets UP-TO-DATE
 > Task :app:mergePlayReleaseAssets
@@ -98,14 +98,9 @@ Daemon will be stopped at the end of the build
 > Task :app:stripPlayReleaseDebugSymbols NO-SOURCE
 > Task :app:writePlayReleaseAppMetadata
 > Task :app:mergePlayReleaseArtProfile
-> Task :app:mergePlayReleaseJavaResource
-> Task :app:collectPlayReleaseDependencies
-> Task :app:configurePlayReleaseDependencies
-> Task :app:extractPlayReleaseNativeSymbolTables NO-SOURCE
-> Task :app:extractProguardFiles
-> Task :app:parsePlayReleaseIntegrityConfig
-> Task :app:validateSigningPlayRelease
 > Task :app:processPlayReleaseResources
+> Task :app:collectPlayReleaseDependencies
+> Task :app:mergePlayReleaseJavaResource
 > Task :app:bundlePlayReleaseResources
 
 > Task :app:compilePlayReleaseJavaWithJavac
@@ -114,10 +109,15 @@ Note: Recompile with -Xlint:deprecation for details.
 
 > Task :app:dexBuilderPlayRelease
 > Task :app:mergePlayReleaseGlobalSynthetics
+> Task :app:configurePlayReleaseDependencies
+> Task :app:extractPlayReleaseNativeSymbolTables NO-SOURCE
+> Task :app:extractProguardFiles
 > Task :app:mergeDexPlayRelease
 > Task :app:generatePlayReleaseLintVitalReportModel
 > Task :app:buildPlayReleasePreBundle
 > Task :app:compilePlayReleaseArtProfile
+> Task :app:validateSigningPlayRelease
+> Task :app:parsePlayReleaseIntegrityConfig
 > Task :app:lintVitalAnalyzePlayRelease
 > Task :app:lintVitalReportPlayRelease
 > Task :app:lintVitalPlayRelease
@@ -126,7 +126,7 @@ Note: Recompile with -Xlint:deprecation for details.
 > Task :app:producePlayReleaseBundleIdeListingFile
 > Task :app:createPlayReleaseBundleListingFileRedirect
 > Task :app:bundlePlayRelease
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/movit_build-1791317800407.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/movit_build-1791317901172.json
 
 [Incubating] Problems report is available at: file:///home/runner/work/radar-4x4-brasil/radar-4x4-brasil/roteirizador-v02-android/build/reports/problems/problems-report.html
 
