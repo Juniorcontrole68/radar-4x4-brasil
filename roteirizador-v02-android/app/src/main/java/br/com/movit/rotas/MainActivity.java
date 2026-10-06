@@ -409,8 +409,11 @@ public class MainActivity extends Activity {
             JSONObject r=rows.optJSONObject(i);if(r==null)continue;list.add(r);
             double km=r.optDouble("distanceMeters",0)/1000d;
             double off=r.isNull("routeOffsetMeters")?Double.NaN:r.optDouble("routeOffsetMeters",Double.NaN)/1000d;
-            String line=r.optString("name","Posto de combustível")+" • "+String.format(Locale.forLanguageTag("pt-BR"),"%.1f km",km);
-            if(Double.isFinite(off))line+=" • "+String.format(Locale.forLanguageTag("pt-BR"),"%.1f km da rota",off);
+            double ahead=r.isNull("aheadMeters")?Double.NaN:r.optDouble("aheadMeters",Double.NaN)/1000d;
+            String line=r.optString("name","Posto de combustível");
+            if(Double.isFinite(ahead))line+=" • "+String.format(Locale.forLanguageTag("pt-BR"),"%.1f km à frente",ahead);
+            else line+=" • "+String.format(Locale.forLanguageTag("pt-BR"),"%.1f km",km);
+            if(Double.isFinite(off))line+=" • "+String.format(Locale.forLanguageTag("pt-BR"),"%.1f km fora da rota",off);
             String hours=r.optString("openingHours","");if(!hours.isEmpty())line+="\nHorário: "+hours;
             labels.add(line);
         }
