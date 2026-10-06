@@ -3920,25 +3920,51 @@ async function rtOptimize(){
   finally{if(btn){btn.disabled=false;btn.textContent='Otimizar como Spoke'}}
 }
 
-let RV2_STOPS=[],RV2_PLAN=null,RV2_ORDER=[],RV2_MAP=null,RV2_LAYER=null;
+let RV2_STOPS=[],RV2_PLAN=null,RV2_ORDER=[],RV2_MAP=null,RV2_LAYER=null,RV2_START=null,RV2_RUNNING=false,RV2_DONE=[],RV2_SKIPPED=[];
 function rv2FmtTime(sec){
   const s=Number(sec);if(!Number.isFinite(s)||s<=0)return'—';
   const m=Math.round(s/60),h=Math.floor(m/60),mm=m%60;
   return h?((h+'h '+(mm?mm+'min':'' )).trim()):(m+' min')
 }
+function rv2StopKey(s){return [s?.lat,s?.lon,s?.label||s?.endereco||''].join('|')}
+function rv2StatusBadge(s){
+  const k=rv2StopKey(s);
+  if(RV2_DONE.includes(k))return '<span class="tracking-status ok">Concluída</span>';
+  if(RV2_SKIPPED.includes(k))return '<span class="tracking-status warn">Pulada</span>';
+  return ''
+}
+function rv2RemainingStops(){return RV2_STOPS.filter(s=>!RV2_DONE.includes(rv2StopKey(s))&&!RV2_SKIPPED.includes(rv2StopKey(s)))}
+function rv2RenderTrip(){
+  const box=$('#rv2ActiveTrip');if(!box)return;
+  if(!RV2_RUNNING){box.style.display='none';box.textContent='';return}
+  const remaining=rv2RemainingStops(),next=remaining[0];
+  box.style.display='block';
+  box.innerHTML='<b>Rota em andamento</b> • '+nf(RV2_DONE.length)+' concluída(s) • '+nf(RV2_SKIPPED.length)+' pulada(s) • '+nf(remaining.length)+' restante(s)'+
+    (next?'<div style="margin-top:6px">Próxima: <b>'+safe(next.label||next.endereco||'Parada')+'</b></div>':'<div style="margin-top:6px"><b>Rota concluída.</b></div>')
+}
 function rv2RenderList(){
   const box=$('#rv2List'),k=$('#rv2StopsKpi');if(k)k.textContent=nf(RV2_STOPS.length);if(!box)return;
-  if(!RV2_STOPS.length){box.innerHTML='<div class="muted">Nenhuma parada adicionada.</div>';return}
-  box.innerHTML=RV2_STOPS.map((s,pos)=>'<div class="route-stop"><div class="seq">'+(pos+1)+'</div><div><b>'+safe(s.label||s.endereco||'Parada')+'</b><div class="meta">'+safe((s.cidade||'')+(s.uf?' / '+s.uf:''))+'</div></div><div class="move"><button type="button" data-rv2-urgent="'+pos+'" title="Tornar próxima parada">⚡</button><button type="button" data-rv2-up="'+pos+'" '+(pos===0?'disabled':'')+'>↑</button><button type="button" data-rv2-down="'+pos+'" '+(pos===RV2_STOPS.length-1?'disabled':'')+'>↓</button><button type="button" data-rv2-del="'+pos+'" title="Excluir">✕</button></div></div>').join('');
+  if(!RV2_STOPS.length){box.innerHTML='<div class="muted">Nenhuma parada adicionada.</div>';rv2RenderTrip();return}
+  box.innerHTML=RV2_STOPS.map((s,pos)=>{
+    const done=RV2_DONE.includes(rv2StopKey(s)),skipped=RV2_SKIPPED.includes(rv2StopKey(s));
+    const tripActions=RV2_RUNNING&&!done&&!skipped
+      ?'<button type="button" data-rv2-nav="'+pos+'" title="Navegar">🧭</button><button type="button" data-rv2-done="'+pos+'" title="Concluir">✓</button><button type="button" data-rv2-skip="'+pos+'" title="Pular">↷</button>'
+      :'';
+    return '<div class="route-stop" style="'+((done||skipped)?'opacity:.62':'')+'"><div class="seq">'+(pos+1)+'</div><div><b>'+safe(s.label||s.endereco||'Parada')+'</b><div class="meta">'+safe((s.cidade||'')+(s.uf?' / '+s.uf:''))+'</div><div class="meta">'+rv2StatusBadge(s)+'</div></div><div class="move">'+tripActions+'<button type="button" data-rv2-urgent="'+pos+'" title="Tornar próxima parada">⚡</button><button type="button" data-rv2-up="'+pos+'" '+(pos===0?'disabled':'')+'>↑</button><button type="button" data-rv2-down="'+pos+'" '+(pos===RV2_STOPS.length-1?'disabled':'')+'>↓</button><button type="button" data-rv2-del="'+pos+'" title="Excluir">✕</button></div></div>'
+  }).join('');
   box.querySelectorAll('[data-rv2-up]').forEach(b=>b.onclick=()=>rv2Move(Number(b.dataset.rv2Up),-1));
   box.querySelectorAll('[data-rv2-down]').forEach(b=>b.onclick=()=>rv2Move(Number(b.dataset.rv2Down),1));
   box.querySelectorAll('[data-rv2-urgent]').forEach(b=>b.onclick=()=>rv2Urgent(Number(b.dataset.rv2Urgent)));
-  box.querySelectorAll('[data-rv2-del]').forEach(b=>b.onclick=()=>rv2Delete(Number(b.dataset.rv2Del)))
+  box.querySelectorAll('[data-rv2-del]').forEach(b=>b.onclick=()=>rv2Delete(Number(b.dataset.rv2Del)));
+  box.querySelectorAll('[data-rv2-nav]').forEach(b=>b.onclick=()=>rv2Navigate(Number(b.dataset.rv2Nav)));
+  box.querySelectorAll('[data-rv2-done]').forEach(b=>b.onclick=()=>rv2Complete(Number(b.dataset.rv2Done)));
+  box.querySelectorAll('[data-rv2-skip]').forEach(b=>b.onclick=()=>rv2Skip(Number(b.dataset.rv2Skip)));
+  rv2RenderTrip()
 }
 function rv2Move(pos,dir){const n=pos+dir;if(n<0||n>=RV2_STOPS.length)return;[RV2_STOPS[pos],RV2_STOPS[n]]=[RV2_STOPS[n],RV2_STOPS[pos]];RV2_PLAN=null;rv2RenderList();rv2RenderMap()}
 function rv2Urgent(pos){if(pos<=0)return;const [x]=RV2_STOPS.splice(pos,1);RV2_STOPS.unshift(x);RV2_PLAN=null;rv2RenderList();rv2RenderMap()}
-function rv2Delete(pos){RV2_STOPS.splice(pos,1);RV2_PLAN=null;rv2RenderList();rv2RenderMap();const s=$('#rv2Status');if(s)s.textContent=RV2_STOPS.length?'Parada removida. Otimize novamente quando quiser.':'Adicione duas ou mais paradas para começar.'}
-function rv2Clear(){RV2_STOPS=[];RV2_PLAN=null;RV2_ORDER=[];if(RV2_LAYER){RV2_LAYER.remove();RV2_LAYER=null}rv2RenderList();['#rv2Km','#rv2Time','#rv2Method'].forEach(x=>{const el=$(x);if(el)el.textContent='—'});const s=$('#rv2Status');if(s)s.textContent='Adicione duas ou mais paradas para começar.'}
+function rv2Delete(pos){const s=RV2_STOPS[pos],k=rv2StopKey(s);RV2_STOPS.splice(pos,1);RV2_DONE=RV2_DONE.filter(x=>x!==k);RV2_SKIPPED=RV2_SKIPPED.filter(x=>x!==k);RV2_PLAN=null;rv2RenderList();rv2RenderMap();const st=$('#rv2Status');if(st)st.textContent=RV2_STOPS.length?'Parada removida. Otimize novamente quando quiser.':'Adicione duas ou mais paradas para começar.'}
+function rv2Clear(){RV2_STOPS=[];RV2_PLAN=null;RV2_ORDER=[];RV2_START=null;RV2_RUNNING=false;RV2_DONE=[];RV2_SKIPPED=[];if(RV2_LAYER){RV2_LAYER.remove();RV2_LAYER=null}rv2RenderList();['#rv2Km','#rv2Time','#rv2Method'].forEach(x=>{const el=$(x);if(el)el.textContent='—'});const s=$('#rv2Status');if(s)s.textContent='Adicione duas ou mais paradas para começar.'}
 async function rv2RenderMap(){
   const box=$('#rv2Map');if(!box||typeof L==='undefined')return;
   if(!RV2_MAP){RV2_MAP=L.map(box,{zoomControl:true});L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(RV2_MAP)}
@@ -3946,13 +3972,15 @@ async function rv2RenderMap(){
   const pts=RV2_PLAN?.points||[];
   if(RV2_PLAN&&pts.length>1){
     const base=pts[0],order=RV2_PLAN.optimizedOrder||[];
-    L.marker([base.lat,base.lon]).addTo(RV2_LAYER).bindTooltip('Base');
+    L.marker([base.lat,base.lon]).addTo(RV2_LAYER).bindTooltip(RV2_START?'Minha localização':'Base');
     order.forEach((idx,pos)=>{const p=pts[idx];if(!p)return;const icon=L.divIcon({className:'',html:'<div style="background:#111827;color:white;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:800;border:2px solid #fff;box-shadow:0 2px 6px #0005">'+(pos+1)+'</div>',iconSize:[30,30],iconAnchor:[15,15]});L.marker([p.lat,p.lon],{icon}).addTo(RV2_LAYER).bindPopup('<b>'+safe(p.destinatario||p.label||'Parada')+'</b><br>'+safe(p.endereco||p.cidade||''))});
     const coords=(RV2_PLAN.geometry?.coordinates||[]).map(x=>[Number(x[1]),Number(x[0])]).filter(x=>Number.isFinite(x[0])&&Number.isFinite(x[1]));
     if(coords.length>1)L.polyline(coords,{weight:6,opacity:.9,lineCap:'round',lineJoin:'round'}).addTo(RV2_LAYER);
     const bounds=L.latLngBounds(coords.length?coords:[[base.lat,base.lon]]);if(bounds.isValid())RV2_MAP.fitBounds(bounds.pad(.12));
-  }else if(RV2_STOPS.length){
-    const coords=RV2_STOPS.filter(x=>Number.isFinite(Number(x.lat))&&Number.isFinite(Number(x.lon))).map((p,pos)=>{L.marker([p.lat,p.lon]).addTo(RV2_LAYER).bindTooltip(String(pos+1));return[p.lat,p.lon]});
+  }else if(RV2_STOPS.length||RV2_START){
+    const coords=[];
+    if(RV2_START){L.marker([RV2_START.lat,RV2_START.lon]).addTo(RV2_LAYER).bindTooltip('Minha localização');coords.push([RV2_START.lat,RV2_START.lon])}
+    RV2_STOPS.filter(x=>Number.isFinite(Number(x.lat))&&Number.isFinite(Number(x.lon))).forEach((p,pos)=>{L.marker([p.lat,p.lon]).addTo(RV2_LAYER).bindTooltip(String(pos+1));coords.push([p.lat,p.lon])});
     if(coords.length){const bounds=L.latLngBounds(coords);if(bounds.isValid())RV2_MAP.fitBounds(bounds.pad(.2))}
   }else RV2_MAP.setView([-22.74,-47.33],10);
   setTimeout(()=>RV2_MAP.invalidateSize(),80)
@@ -3972,24 +4000,75 @@ async function rv2AddAddress(rawText=''){
   }catch(e){if(status)status.textContent='Erro: '+e.message}
   finally{if(btn){btn.disabled=false;btn.textContent='Adicionar parada'}}
 }
-async function rv2Optimize(){
-  const status=$('#rv2Status'),btn=$('#rv2Optimize');
-  if(RV2_STOPS.length<2){if(status)status.textContent='Adicione pelo menos duas paradas para otimizar.';return}
-  if(btn){btn.disabled=true;btn.textContent='Otimizando…'}
+function rv2UseMyLocation(){
+  const status=$('#rv2Status'),btn=$('#rv2MyLocation');
+  if(!navigator.geolocation){if(status)status.textContent='Este aparelho não disponibiliza localização pelo navegador.';return}
+  if(btn){btn.disabled=true;btn.textContent='📍 Localizando…'}
+  if(status)status.textContent='Obtendo sua localização atual…';
+  navigator.geolocation.getCurrentPosition(async p=>{
+    RV2_START={lat:Number(p.coords.latitude),lon:Number(p.coords.longitude),label:'Minha localização atual'};
+    if(status)status.textContent='Origem definida pela sua localização atual.';
+    if(btn){btn.disabled=false;btn.textContent='📍 Minha localização'}
+    RV2_PLAN=null;await rv2RenderMap()
+  },e=>{
+    if(status)status.textContent='Não foi possível obter sua localização. Verifique a permissão de GPS.';
+    if(btn){btn.disabled=false;btn.textContent='📍 Minha localização'}
+  },{enableHighAccuracy:true,timeout:15000,maximumAge:30000})
+}
+async function rv2Optimize(stopsOverride=null){
+  const status=$('#rv2Status'),btn=$('#rv2Optimize'),stops=Array.isArray(stopsOverride)?stopsOverride:RV2_STOPS;
+  if(stops.length<2){if(status)status.textContent='Adicione pelo menos duas paradas para otimizar.';return}
+  if(btn&&!stopsOverride){btn.disabled=true;btn.textContent='Otimizando…'}
   if(status)status.textContent='Calculando a melhor sequência pelas vias reais…';
   try{
-    const r=await fetch('/api/roteirizador/recalcular',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stops:RV2_STOPS,motorista:'Roteirizador V02',romaneio:'V02'})});
+    const r=await fetch('/api/roteirizador/recalcular',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stops,motorista:'Roteirizador V02',romaneio:'V02',start:RV2_START})});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível otimizar a rota.');
     RV2_PLAN=j;RV2_ORDER=(j.optimizedOrder||[]).slice();
-    RV2_STOPS=RV2_ORDER.map(i=>j.points?.[i]).filter(Boolean).map(p=>({...p,source:p.source||'manual'}));
-    if($('#rv2Km'))$('#rv2Km').textContent=routeFmtKm(j.optimizedDistanceMeters||j.geometryDistanceMeters||0);
+    const optimizedStops=RV2_ORDER.map(i=>j.points?.[i]).filter(Boolean).map(p=>({...p,source:p.source||'manual'}));
+    if(stopsOverride){
+      const completed=RV2_STOPS.filter(s=>RV2_DONE.includes(rv2StopKey(s))||RV2_SKIPPED.includes(rv2StopKey(s)));
+      RV2_STOPS=[...completed,...optimizedStops]
+    }else RV2_STOPS=optimizedStops;
+    if($('#rv2Km'))$('#rv2Km').textContent=routeFmtKm(j.geometryDistanceMeters||j.optimizedDistanceMeters||0);
     if($('#rv2Time'))$('#rv2Time').textContent=rv2FmtTime(j.durationSeconds||0);
     if($('#rv2Method'))$('#rv2Method').textContent='OTIMIZADA';
     if(status)status.textContent='Rota otimizada. O traçado acompanha ruas e rodovias.';
     rv2RenderList();await rv2RenderMap()
   }catch(e){if(status)status.textContent='Erro: '+e.message}
-  finally{if(btn){btn.disabled=false;btn.textContent='Otimizar rota'}}
+  finally{if(btn&&!stopsOverride){btn.disabled=false;btn.textContent='Otimizar rota'}}
+}
+function rv2StartTrip(){
+  const status=$('#rv2Status');
+  if(RV2_STOPS.length<1){if(status)status.textContent='Adicione paradas antes de iniciar a rota.';return}
+  RV2_RUNNING=true;RV2_DONE=[];RV2_SKIPPED=[];rv2RenderList();
+  if(status)status.textContent='Rota iniciada. Use 🧭 para navegar até a próxima parada e ✓ ao concluir.'
+}
+function rv2Navigate(pos){
+  const s=RV2_STOPS[pos];if(!s)return;
+  const lat=Number(s.lat),lon=Number(s.lon);
+  if(!Number.isFinite(lat)||!Number.isFinite(lon))return;
+  const url='https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(lat+','+lon)+'&travelmode=driving';
+  window.open(url,'_blank','noopener')
+}
+function rv2Complete(pos){
+  const s=RV2_STOPS[pos];if(!s)return;const k=rv2StopKey(s);
+  if(!RV2_DONE.includes(k))RV2_DONE.push(k);RV2_SKIPPED=RV2_SKIPPED.filter(x=>x!==k);
+  rv2RenderList();
+  const status=$('#rv2Status'),rem=rv2RemainingStops();
+  if(status)status.textContent=rem.length?'Parada concluída. Próxima parada pronta.':'Todas as paradas foram concluídas.';
+}
+function rv2Skip(pos){
+  const s=RV2_STOPS[pos];if(!s)return;const k=rv2StopKey(s);
+  if(!RV2_SKIPPED.includes(k))RV2_SKIPPED.push(k);RV2_DONE=RV2_DONE.filter(x=>x!==k);
+  rv2RenderList();
+  const status=$('#rv2Status');if(status)status.textContent='Parada pulada. Você pode reotimizar o restante.'
+}
+async function rv2Reoptimize(){
+  const remaining=rv2RemainingStops(),status=$('#rv2Status');
+  if(remaining.length<2){if(status)status.textContent=remaining.length===1?'Resta apenas uma parada.':'Não há paradas suficientes para reotimizar.';return}
+  if(status)status.textContent='Reotimizando somente as paradas restantes…';
+  await rv2Optimize(remaining)
 }
 function rv2Voice(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition,status=$('#rv2Status'),voice=$('#rv2Voice');
@@ -4005,7 +4084,10 @@ function setupRoteirizadorV02(){
   if($('#rv2Add'))$('#rv2Add').onclick=()=>rv2AddAddress();
   if($('#rv2Address'))$('#rv2Address').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();rv2AddAddress()}};
   if($('#rv2Voice'))$('#rv2Voice').onclick=rv2Voice;
-  if($('#rv2Optimize'))$('#rv2Optimize').onclick=rv2Optimize;
+  if($('#rv2MyLocation'))$('#rv2MyLocation').onclick=rv2UseMyLocation;
+  if($('#rv2Optimize'))$('#rv2Optimize').onclick=()=>rv2Optimize();
+  if($('#rv2Start'))$('#rv2Start').onclick=rv2StartTrip;
+  if($('#rv2Reoptimize'))$('#rv2Reoptimize').onclick=rv2Reoptimize;
   if($('#rv2Clear'))$('#rv2Clear').onclick=rv2Clear;
   rv2RenderList()
 }
