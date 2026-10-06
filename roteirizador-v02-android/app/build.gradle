@@ -7,8 +7,8 @@ android {
         applicationId 'br.com.movit.rotas.teste'
         minSdk 26
         targetSdk 35
-        versionCode 13
-        versionName '0.7.4-teste'
+        versionCode 14
+        versionName '0.7.5-teste'
     }
     buildTypes { release { minifyEnabled false } }
 }
