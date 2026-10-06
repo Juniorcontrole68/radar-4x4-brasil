@@ -628,6 +628,16 @@ async function start() {
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
   await pool.query('CREATE INDEX IF NOT EXISTS idx_router_app_routes_user ON router_app_routes(user_id,updated_at DESC)');
+  await pool.query(`CREATE TABLE IF NOT EXISTS router_shared_routes (
+    id BIGSERIAL PRIMARY KEY,
+    share_token TEXT UNIQUE NOT NULL,
+    title TEXT NOT NULL,
+    driver_name TEXT NOT NULL DEFAULT '',
+    event_date DATE,
+    route_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_router_shared_routes_token ON router_shared_routes(share_token)');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS recebido BOOLEAN NOT NULL DEFAULT FALSE');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS data_recebimento DATE');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS previsao_pagamento_fatura DATE');
@@ -984,6 +994,47 @@ async function start() {
           if(!q.rowCount)return sendJson(res,404,{ok:false,error:'Rota não encontrada.'});
           return sendJson(res,200,{ok:true})
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao excluir rota.'})}
+      }
+
+      if (u.pathname === '/api/public-router/share' && req.method === 'POST') {
+        try{
+          if(!publicRouteAllowed(req))return sendJson(res,429,{ok:false,error:'Muitas consultas. Aguarde um minuto.'});
+          const body=await readJsonBodyLimited(req,1024*1024);
+          const driver=String(body.driver_name||'').trim().slice(0,120);
+          const eventDate=String(body.event_date||'').trim().slice(0,10);
+          const title=String(body.title||'').trim().slice(0,180)||[driver,eventDate].filter(Boolean).join(' ')||'Rota MOVIT';
+          const routeData=body.route_data&&typeof body.route_data==='object'?body.route_data:{};
+          const stops=Array.isArray(routeData.stops)?routeData.stops:[];
+          if(!stops.length)return sendJson(res,400,{ok:false,error:'A rota precisa ter pelo menos uma parada para compartilhar.'});
+          const token=crypto.randomBytes(10).toString('hex');
+          await pool.query("INSERT INTO router_shared_routes(share_token,title,driver_name,event_date,route_data) VALUES($1,$2,$3,$4::date,$5::jsonb)",[
+            token,title,driver,eventDate||null,JSON.stringify(routeData)
+          ]);
+          const base='https://controle-coletas-jr.onrender.com';
+          return sendJson(res,201,{ok:true,token,title,shareUrl:base+'/movit/rota/'+token,appUrl:'movit://route/'+token})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao compartilhar rota.'})}
+      }
+
+      if (u.pathname.match(/^\/api\/public-router\/share\/[a-f0-9]{20}$/) && req.method === 'GET') {
+        try{
+          const token=u.pathname.split('/').pop();
+          const q=await pool.query("SELECT title,driver_name,event_date::text,route_data,created_at FROM router_shared_routes WHERE share_token=$1 LIMIT 1",[token]);
+          if(!q.rowCount)return sendJson(res,404,{ok:false,error:'Rota compartilhada não encontrada.'});
+          return sendJson(res,200,{ok:true,...q.rows[0],token})
+        }catch(e){return sendJson(res,500,{ok:false,error:e.message||'Falha ao abrir rota compartilhada.'})}
+      }
+
+      if (u.pathname.match(/^\/movit\/rota\/[a-f0-9]{20}$/) && req.method === 'GET') {
+        try{
+          const token=u.pathname.split('/').pop();
+          const q=await pool.query("SELECT title,driver_name,event_date::text,route_data FROM router_shared_routes WHERE share_token=$1 LIMIT 1",[token]);
+          if(!q.rowCount){res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'});return res.end('<h2>Rota não encontrada</h2>')}
+          const row=q.rows[0],data=row.route_data||{},stops=Array.isArray(data.stops)?data.stops:[];
+          const esc=s=>String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+          const list=stops.map((s,i)=>'<div class="stop"><b>'+(i+1)+'. '+esc(s.label||s.resolved||'Parada')+'</b><div>'+esc(s.resolved||'')+'</div></div>').join('');
+          const html='<!doctype html><html lang="pt-BR"><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta charset="utf-8"><title>'+esc(row.title)+'</title><style>body{font-family:system-ui;margin:0;background:#f7f9fc;color:#16142f}.wrap{max-width:620px;margin:auto;padding:20px}.card{background:#fff;border-radius:20px;padding:18px;box-shadow:0 4px 20px #0001;margin-bottom:14px}.btn{display:block;text-align:center;background:#2f73e8;color:#fff;text-decoration:none;font-weight:700;padding:16px;border-radius:14px}.stop{padding:12px 0;border-bottom:1px solid #e6ebf2}.muted{color:#667085;font-size:14px}</style></head><body><div class="wrap"><div class="card"><h2>MOVIT</h2><h3>'+esc(row.title)+'</h3><div class="muted">'+stops.length+' paradas</div></div><div class="card"><a class="btn" href="movit://route/'+token+'">Abrir esta rota no MOVIT</a></div><div class="card">'+list+'</div></div></body></html>';
+          res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(html)
+        }catch(e){res.writeHead(500,{'Content-Type':'text/html; charset=utf-8'});return res.end('<h2>Erro ao abrir rota</h2>')}
       }
 
       if (u.pathname === '/api/public-router/geocode' && req.method === 'GET') {
