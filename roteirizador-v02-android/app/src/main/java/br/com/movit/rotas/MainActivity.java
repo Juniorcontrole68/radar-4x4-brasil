@@ -789,6 +789,8 @@ public class MainActivity extends Activity {
         if(lastPlan!=null){
             data.put("distanceMeters",lastPlan.optDouble("distanceMeters",0));
             data.put("durationSeconds",lastPlan.optDouble("durationSeconds",0));
+            if(lastPlan.optJSONObject("geometry")!=null)data.put("geometry",lastPlan.optJSONObject("geometry"));
+            if(lastPlan.optJSONArray("order")!=null)data.put("order",lastPlan.optJSONArray("order"));
         }
         return data;
     }
