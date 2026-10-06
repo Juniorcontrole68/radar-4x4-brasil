@@ -209,6 +209,25 @@ function routePublicCycle(order,m){
   for(let i=1;i<order.length;i++)d+=m[order[i-1]][order[i]]||0;
   d+=m[order[order.length-1]][0]||0;return d
 }
+function routePublicOpenDistance(order,m){
+  if(!order.length)return 0;
+  let d=m[0][order[0]]||0;
+  for(let i=1;i<order.length;i++)d+=m[order[i-1]][order[i]]||0;
+  return d
+}
+function routePublicTwoOptOpen(order,m){
+  let best=order.slice(),bestD=routePublicOpenDistance(best,m),changed=true,loops=0;
+  while(changed&&loops++<10){
+    changed=false;
+    for(let i=0;i<best.length-1;i++)for(let k=i+1;k<best.length;k++){
+      const cand=best.slice(0,i).concat(best.slice(i,k+1).reverse(),best.slice(k+1));
+      const d=routePublicOpenDistance(cand,m);
+      if(d+1<bestD){best=cand;bestD=d;changed=true}
+    }
+  }
+  return best
+}
+
 function routePublicNearest(m,n){
   const left=new Set(Array.from({length:n},(_,i)=>i+1)),out=[];let cur=0;
   while(left.size){let best=null,bd=Infinity;for(const x of left){const d=m[cur]?.[x];if(Number.isFinite(d)&&d<bd){bd=d;best=x}}if(best==null)best=[...left][0];out.push(best);left.delete(best);cur=best}
@@ -219,9 +238,9 @@ function routePublicTwoOpt(order,m){
   while(changed&&loops++<10){changed=false;for(let i=0;i<best.length-1;i++)for(let k=i+1;k<best.length;k++){const cand=best.slice(0,i).concat(best.slice(i,k+1).reverse(),best.slice(k+1)),d=routePublicCycle(cand,m);if(d+1<bestD){best=cand;bestD=d;changed=true}}}
   return best
 }
-async function routePublicGeometry(points,order){
-  const seq=[0,...order,0],coords=seq.map(i=>points[i].lon+','+points[i].lat).join(';');
-  const r=await fetch('https://router.project-osrm.org/route/v1/driving/'+coords+'?overview=full&geometries=geojson&steps=false',{headers:{'User-Agent':'CONSTRULOG-Rotas/0.2'},signal:AbortSignal.timeout(20000)});
+async function routePublicGeometry(points,order,returnToStart=true){
+  const seq=returnToStart?[0,...order,0]:[0,...order],coords=seq.map(i=>points[i].lon+','+points[i].lat).join(';');
+  const r=await fetch('https://router.project-osrm.org/route/v1/driving/'+coords+'?overview=full&geometries=geojson&steps=false',{headers:{'User-Agent':'MOVIT-Rotas/0.7'},signal:AbortSignal.timeout(20000)});
   const j=await r.json();
   if(!r.ok||j.code!=='Ok'||!j.routes?.[0])throw new Error('Não foi possível desenhar a rota.');
   return j.routes[0]
@@ -988,9 +1007,11 @@ async function start() {
           const points=[start,...raw].map((p,i)=>({lat:Number(p.lat),lon:Number(p.lon),label:String(p.label||p.address||('Parada '+i)).slice(0,220)}));
           if(points.some(p=>!Number.isFinite(p.lat)||!Number.isFinite(p.lon)||p.lat<-90||p.lat>90||p.lon<-180||p.lon>180))return sendJson(res,400,{ok:false,error:'Há coordenadas inválidas na rota.'});
           const m=await routePublicTable(points),n=raw.length;
-          const order=routePublicTwoOpt(routePublicNearest(m,n),m);
-          const route=await routePublicGeometry(points,order);
-          return sendJson(res,200,{ok:true,order,distanceMeters:route.distance,durationSeconds:route.duration,geometry:route.geometry,points});
+          const returnToStart=body.returnToStart===true;
+          let order=routePublicNearest(m,n);
+          order=returnToStart?routePublicTwoOpt(order,m):routePublicTwoOptOpen(order,m);
+          const route=await routePublicGeometry(points,order,returnToStart);
+          return sendJson(res,200,{ok:true,order,distanceMeters:route.distance,durationSeconds:route.duration,geometry:route.geometry,points,returnToStart});
         }catch(e){return sendJson(res,e.status||502,{ok:false,error:e.message||'Falha ao otimizar rota.'})}
       }
 
