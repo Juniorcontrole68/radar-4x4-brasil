@@ -167,7 +167,16 @@ public class MainActivity extends Activity {
         Intent i=new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE,"pt-BR");
-        i.putExtra(RecognizerIntent.EXTRA_PROMPT,"Fale o endereço completo");
+        i.putExtra(RecognizerIntent.EXTRA_PROMPT,"Fale o endereço completo. Você pode fazer pequenas pausas.");
+        i.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS,true);
+
+        // Dá mais tempo para o motorista concluir rua, número e cidade.
+        // Alguns aparelhos encerram o reconhecimento com pausas muito curtas;
+        // estes valores deixam a captura mais tolerante.
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS,8000L);
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,3500L);
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,5000L);
+
         try{startActivityForResult(i,REQ_VOICE);}catch(Exception e){status.setText("Reconhecimento de voz indisponível.");}
     }
 
