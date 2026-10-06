@@ -397,11 +397,14 @@ public class MainActivity extends Activity {
                 JSONArray rows=j.optJSONArray("rows");if(rows==null||rows.length()==0)throw new Exception("Endereço não encontrado.");
                 JSONObject p=rows.getJSONObject(0);JSONObject s=new JSONObject();
                 String confirmed=p.optString("label",q);
+                boolean approximate=p.optBoolean("approximate",false);
                 s.put("lat",p.getDouble("lat"));
                 s.put("lon",p.getDouble("lon"));
                 s.put("original",q);
                 s.put("label",confirmed);
                 s.put("resolved",confirmed);
+                s.put("approximate",approximate);
+                s.put("precision",p.optString("precision",""));
                 stops.add(s);
                 runOnUiThread(()->{address.setText("");status.setText("Parada adicionada.");renderList();renderMap(null);});
             }catch(Exception e){runOnUiThread(()->status.setText("Erro: "+e.getMessage()));}
@@ -476,6 +479,10 @@ public class MainActivity extends Activity {
             String original=s.optString("original","");
             TextView t=label(confirmed,14,TEXT,true);t.setMaxLines(3);
             info.addView(t);
+            if(s.optBoolean("approximate",false)){
+                TextView approx=label("Localização aproximada da rua/CEP",11,Color.rgb(185,93,0),true);
+                approx.setPadding(0,dp(2),0,0);info.addView(approx);
+            }
             if(!original.isEmpty()&&!original.equalsIgnoreCase(confirmed)){
                 TextView r=label("Digitado: "+original,11,MUTED,false);r.setMaxLines(2);r.setPadding(0,dp(2),0,0);info.addView(r);
             }
