@@ -30,7 +30,7 @@ public class MainActivity extends Activity {
     private WebView map;
     private JSONObject start=null,lastPlan=null;
     private android.content.SharedPreferences prefs;
-    private TextView account;
+    private TextView account,routeTitle;
     private Button cloudSave,cloudRoutes;
 
     @Override public void onCreate(Bundle b){
@@ -64,103 +64,183 @@ public class MainActivity extends Activity {
     }
 
     private void buildUi(){
-        final int NAVY=Color.rgb(22,20,47),GREEN=Color.rgb(99,202,67),BG=Color.rgb(246,248,251),TEXT=Color.rgb(30,41,59),MUTED=Color.rgb(100,116,139),LINE=Color.rgb(226,232,240);
-
-        getWindow().setStatusBarColor(NAVY);getWindow().setNavigationBarColor(NAVY);
+        final int NAVY=Color.rgb(22,20,47),BLUE=Color.rgb(47,115,232),GREEN=Color.rgb(99,202,67),BG=Color.rgb(248,250,253),TEXT=Color.rgb(22,27,45),MUTED=Color.rgb(91,105,135),LINE=Color.rgb(225,231,241);
+        getWindow().setStatusBarColor(Color.WHITE);getWindow().setNavigationBarColor(Color.WHITE);
+        if(Build.VERSION.SDK_INT>=23)getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
 
         LinearLayout page=new LinearLayout(this);page.setOrientation(LinearLayout.VERTICAL);page.setBackgroundColor(BG);
 
+        // Barra superior
+        LinearLayout top=new LinearLayout(this);top.setOrientation(LinearLayout.HORIZONTAL);top.setGravity(Gravity.CENTER_VERTICAL);top.setPadding(dp(14),dp(8),dp(14),dp(8));top.setBackgroundColor(Color.WHITE);
+        Button menu=pill("☰",Color.WHITE,NAVY);menu.setTextSize(22);menu.setPadding(0,0,0,0);menu.setOnClickListener(v->showMainMenu());
+        top.addView(menu,new LinearLayout.LayoutParams(dp(48),dp(48)));
+        LinearLayout topText=new LinearLayout(this);topText.setOrientation(LinearLayout.VERTICAL);topText.setPadding(dp(8),0,0,0);
+        TextView movit=label("MOVIT",20,NAVY,true);
+        TextView tag=label("Roteirizador",11,MUTED,false);
+        topText.addView(movit);topText.addView(tag);top.addView(topText,new LinearLayout.LayoutParams(0,-2,1));
+        Button settings=pill("⚙",Color.WHITE,NAVY);settings.setTextSize(20);settings.setPadding(0,0,0,0);settings.setOnClickListener(v->showSettings());
+        top.addView(settings,new LinearLayout.LayoutParams(dp(48),dp(48)));
+        page.addView(top);
+
         ScrollView outer=new ScrollView(this);outer.setFillViewport(true);
-        LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(dp(16),dp(14),dp(16),dp(22));
+        LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(dp(12),0,dp(12),dp(18));
         outer.addView(root,new ScrollView.LayoutParams(-1,-2));page.addView(outer,new LinearLayout.LayoutParams(-1,0,1));
 
-        // Cabeçalho MOVIT
-        LinearLayout hero=card(16);hero.setBackground(bg(NAVY,22));
-        LinearLayout heroRow=new LinearLayout(this);heroRow.setOrientation(LinearLayout.HORIZONTAL);heroRow.setGravity(Gravity.CENTER_VERTICAL);
-        ImageView logo=new ImageView(this);logo.setImageResource(br.com.movit.rotas.R.drawable.ic_movit);logo.setBackground(bg(Color.WHITE,16));logo.setPadding(dp(8),dp(8),dp(8),dp(8));
-        heroRow.addView(logo,new LinearLayout.LayoutParams(dp(62),dp(62)));
-        LinearLayout heroText=new LinearLayout(this);heroText.setOrientation(LinearLayout.VERTICAL);heroText.setPadding(dp(14),0,0,0);
-        TextView title=label("MOVIT",28,Color.WHITE,true);
-        TextView sub=label("Autonomia, Renda e Movimento",13,GREEN,true);
-        TextView sub2=label("Roteirização simples, rápida e inteligente",12,Color.rgb(203,213,225),false);
-        heroText.addView(title);heroText.addView(sub);heroText.addView(sub2);
-        heroRow.addView(heroText,new LinearLayout.LayoutParams(0,-2,1));
-        hero.addView(heroRow);
-
-        LinearLayout quick=new LinearLayout(this);quick.setOrientation(LinearLayout.HORIZONTAL);quick.setPadding(0,dp(12),0,0);
-        account=label("MODO TESTE",11,Color.WHITE,true);account.setBackground(bg(Color.argb(40,255,255,255),10));account.setGravity(Gravity.CENTER);account.setPadding(dp(10),dp(6),dp(10),dp(6));
-        cloudSave=pill("Salvar rota",Color.WHITE,NAVY);cloudSave.setOnClickListener(v->saveCloud());
-        cloudRoutes=pill("Rotas salvas",Color.rgb(44,42,73),Color.WHITE);cloudRoutes.setOnClickListener(v->loadCloudRoutes());
-        quick.addView(account,new LinearLayout.LayoutParams(0,dp(40),1));
-        LinearLayout.LayoutParams qp=new LinearLayout.LayoutParams(0,dp(44),1);qp.setMargins(dp(8),0,0,0);
-        quick.addView(cloudSave,qp);LinearLayout.LayoutParams qp2=new LinearLayout.LayoutParams(0,dp(44),1);qp2.setMargins(dp(8),0,0,0);quick.addView(cloudRoutes,qp2);
-        hero.addView(quick);root.addView(hero);
-
-        gap(root,12);
-
-        // Card de endereço
-        LinearLayout addCard=card(15);
-        TextView addTitle=label("Adicionar parada",17,TEXT,true);addCard.addView(addTitle);
-        TextView addHelp=label("Digite ou fale a rua e a cidade. O número é opcional.",12,MUTED,false);addHelp.setPadding(0,dp(3),0,dp(10));addCard.addView(addHelp);
-
-        address=new EditText(this);address.setHint("Ex.: Rua Domingos Carotti, Indaiatuba");address.setSingleLine(true);address.setTextSize(16);address.setTextColor(TEXT);address.setHintTextColor(Color.rgb(148,163,184));address.setBackground(strokedBg(Color.rgb(250,252,254),LINE,14));address.setPadding(dp(14),0,dp(14),0);
-        addCard.addView(address,new LinearLayout.LayoutParams(-1,dp(54)));
-
-        LinearLayout addRow=new LinearLayout(this);addRow.setOrientation(LinearLayout.HORIZONTAL);addRow.setPadding(0,dp(10),0,0);
-        Button voice=pill("🎙  Falar",Color.rgb(238,242,247),NAVY);voice.setOnClickListener(v->voice());
-        Button loc=pill("📍  Minha localização",Color.rgb(238,242,247),NAVY);loc.setOnClickListener(v->useLocation());
-        Button add=pill("+  Adicionar",GREEN,NAVY);add.setOnClickListener(v->addAddress(address.getText().toString()));
-        LinearLayout.LayoutParams ap1=new LinearLayout.LayoutParams(0,dp(48),1);
-        LinearLayout.LayoutParams ap2=new LinearLayout.LayoutParams(0,dp(48),1.35f);ap2.setMargins(dp(8),0,0,0);
-        LinearLayout.LayoutParams ap3=new LinearLayout.LayoutParams(0,dp(48),1.2f);ap3.setMargins(dp(8),0,0,0);
-        addRow.addView(voice,ap1);addRow.addView(loc,ap2);addRow.addView(add,ap3);
-        addCard.addView(addRow);
-
-        status=label("Adicione pelo menos duas paradas para começar.",12,MUTED,false);status.setPadding(0,dp(10),0,0);addCard.addView(status);
-        root.addView(addCard);
-
-        gap(root,12);
-
-        // Resumo
-        LinearLayout summaryCard=card(14);summaryCard.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout left=new LinearLayout(this);left.setOrientation(LinearLayout.VERTICAL);
-        TextView sm=label("RESUMO DA ROTA",11,MUTED,true);summary=label("0 paradas",20,NAVY,true);summary.setPadding(0,dp(3),0,0);left.addView(sm);left.addView(summary);
-        summaryCard.addView(left,new LinearLayout.LayoutParams(0,-2,1));
-        TextView tip=label("As paradas serão reorganizadas automaticamente.",11,MUTED,false);tip.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);summaryCard.addView(tip,new LinearLayout.LayoutParams(0,-1,1));
-        root.addView(summaryCard);
-
-        gap(root,12);
-
-        // Mapa
+        // Mapa grande
         LinearLayout mapCard=card(0);mapCard.setClipToOutline(true);
-        TextView mapTitle=label("Mapa da rota",16,TEXT,true);mapTitle.setPadding(dp(15),dp(14),dp(15),dp(8));mapCard.addView(mapTitle);
         map=new WebView(this);map.getSettings().setJavaScriptEnabled(true);map.setBackgroundColor(Color.WHITE);
-        mapCard.addView(map,new LinearLayout.LayoutParams(-1,dp(320)));
+        mapCard.addView(map,new LinearLayout.LayoutParams(-1,dp(360)));
         root.addView(mapCard);
+        gap(root,8);
 
-        gap(root,12);
+        // Busca estilo barra inferior do mapa
+        LinearLayout searchRow=new LinearLayout(this);searchRow.setOrientation(LinearLayout.HORIZONTAL);searchRow.setGravity(Gravity.CENTER_VERTICAL);
+        address=new EditText(this);address.setHint("Adicione ou busque uma parada");address.setSingleLine(true);address.setTextSize(15);address.setTextColor(TEXT);address.setHintTextColor(Color.rgb(139,151,176));address.setBackground(strokedBg(Color.WHITE,LINE,16));address.setPadding(dp(14),0,dp(10),0);
+        searchRow.addView(address,new LinearLayout.LayoutParams(0,dp(52),1));
+        Button voice=pill("🎙",Color.WHITE,BLUE);voice.setTextSize(18);voice.setPadding(0,0,0,0);voice.setOnClickListener(v->voice());
+        LinearLayout.LayoutParams vp=new LinearLayout.LayoutParams(dp(50),dp(50));vp.setMargins(dp(8),0,0,0);searchRow.addView(voice,vp);
+        Button add=pill("+",BLUE,Color.WHITE);add.setTextSize(22);add.setPadding(0,0,0,0);add.setOnClickListener(v->addAddress(address.getText().toString()));
+        LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(dp(50),dp(50));ap.setMargins(dp(6),0,0,0);searchRow.addView(add,ap);
+        root.addView(searchRow);
 
-        // Ações principais
-        LinearLayout actions=card(12);actions.setOrientation(LinearLayout.HORIZONTAL);
-        Button optimize=pill("⚡ Otimizar",GREEN,NAVY);optimize.setOnClickListener(v->optimize());
-        Button navigate=pill("▶ Navegar",NAVY,Color.WHITE);navigate.setOnClickListener(v->navigateFirst());
-        Button clear=pill("Limpar",Color.rgb(241,245,249),Color.rgb(71,85,105));clear.setOnClickListener(v->{stops.clear();lastPlan=null;summary.setText("0 paradas");renderList();renderMap(null);status.setText("Rota limpa.");});
-        LinearLayout.LayoutParams ac1=new LinearLayout.LayoutParams(0,dp(50),1.15f);
-        LinearLayout.LayoutParams ac2=new LinearLayout.LayoutParams(0,dp(50),1.15f);ac2.setMargins(dp(8),0,0,0);
-        LinearLayout.LayoutParams ac3=new LinearLayout.LayoutParams(0,dp(50),.75f);ac3.setMargins(dp(8),0,0,0);
-        actions.addView(optimize,ac1);actions.addView(navigate,ac2);actions.addView(clear,ac3);
-        root.addView(actions);
+        status=label("Digite ou fale o endereço. Rua e cidade já são suficientes.",12,MUTED,false);status.setPadding(dp(4),dp(7),dp(4),dp(4));root.addView(status);
 
-        gap(root,12);
+        // Resumo e nome da rota
+        LinearLayout info=card(14);
+        summary=label("0 min • 0 paradas • 0 km",14,MUTED,true);info.addView(summary);
+        routeTitle=label(prefs.getString("current_route_name","Nova rota"),22,TEXT,true);routeTitle.setPadding(0,dp(7),0,dp(8));info.addView(routeTitle);
 
-        // Lista de paradas
-        LinearLayout stopsCard=card(14);
-        TextView stopsTitle=label("Paradas",17,TEXT,true);stopsCard.addView(stopsTitle);
-        TextView stopsHelp=label("A primeira parada será a próxima após a otimização.",12,MUTED,false);stopsHelp.setPadding(0,dp(2),0,dp(8));stopsCard.addView(stopsHelp);
-        list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);stopsCard.addView(list,new LinearLayout.LayoutParams(-1,-2));
+        LinearLayout shareRow=new LinearLayout(this);shareRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button share=pill("↗  Compartilhar rota",Color.WHITE,BLUE);share.setBackground(strokedBg(Color.WHITE,LINE,14));share.setOnClickListener(v->shareRoute());
+        Button save=pill("Salvar",Color.WHITE,NAVY);save.setBackground(strokedBg(Color.WHITE,LINE,14));save.setOnClickListener(v->saveCloud());
+        shareRow.addView(share,new LinearLayout.LayoutParams(0,dp(48),1));
+        LinearLayout.LayoutParams svp=new LinearLayout.LayoutParams(dp(96),dp(48));svp.setMargins(dp(8),0,0,0);shareRow.addView(save,svp);
+        info.addView(shareRow);
+        root.addView(info);
+
+        gap(root,10);
+
+        // Paradas
+        LinearLayout stopsCard=card(12);
+        LinearLayout stHead=new LinearLayout(this);stHead.setOrientation(LinearLayout.HORIZONTAL);stHead.setGravity(Gravity.CENTER_VERTICAL);
+        TextView stopsTitle=label("Paradas",17,TEXT,true);stHead.addView(stopsTitle,new LinearLayout.LayoutParams(0,-2,1));
+        Button edit=pill("Editar",Color.WHITE,BLUE);edit.setBackground(strokedBg(Color.WHITE,LINE,12));edit.setOnClickListener(v->status.setText("Use ↑ para mover e × para excluir uma parada."));
+        stHead.addView(edit,new LinearLayout.LayoutParams(dp(82),dp(42)));stopsCard.addView(stHead);
+        list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);list.setPadding(0,dp(6),0,0);stopsCard.addView(list,new LinearLayout.LayoutParams(-1,-2));
         root.addView(stopsCard);
 
+        gap(root,10);
+
+        // Barra inferior de ação
+        LinearLayout bottom=card(10);bottom.setOrientation(LinearLayout.HORIZONTAL);bottom.setGravity(Gravity.CENTER_VERTICAL);
+        Button optimize=pill("Otimizar",Color.WHITE,NAVY);optimize.setBackground(strokedBg(Color.WHITE,LINE,14));optimize.setOnClickListener(v->optimize());
+        Button startBtn=pill("Iniciar rota",BLUE,Color.WHITE);startBtn.setOnClickListener(v->{if(lastPlan==null)optimize();else navigateFirst();});
+        bottom.addView(optimize,new LinearLayout.LayoutParams(0,dp(52),.8f));
+        LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(0,dp(52),1.2f);sp.setMargins(dp(8),0,0,0);bottom.addView(startBtn,sp);
+        root.addView(bottom);
+
+        // objetos mantidos para compatibilidade
+        account=label("Modo teste",11,MUTED,false);
+        cloudSave=save;cloudRoutes=edit;
+
         setContentView(page);
+    }
+
+    private void showMainMenu(){
+        final int NAVY=Color.rgb(22,20,47),BLUE=Color.rgb(47,115,232),TEXT=Color.rgb(22,27,45),MUTED=Color.rgb(91,105,135),LINE=Color.rgb(225,231,241);
+        LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(18),dp(10),dp(18),dp(14));
+        TextView title=label("MOVIT",24,NAVY,true);box.addView(title);
+        TextView test=label("Modo de teste • sem cadastro",12,MUTED,false);test.setPadding(0,0,0,dp(14));box.addView(test);
+
+        try{
+            JSONArray rows=new JSONArray(prefs.getString("local_routes","[]"));
+            TextView h=label("Rotas recentes",13,MUTED,true);box.addView(h);
+            for(int i=0;i<Math.min(rows.length(),6);i++){
+                final JSONObject row=rows.getJSONObject(i);
+                Button b=pill(row.optString("name","Rota"),Color.WHITE,TEXT);b.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);b.setBackground(strokedBg(Color.WHITE,LINE,10));
+                LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-1,dp(48));bp.setMargins(0,dp(6),0,0);box.addView(b,bp);
+                b.setOnClickListener(v->{openCloudRoute(row);});
+            }
+        }catch(Exception ignored){}
+
+        Button create=pill("+  Criar rota",BLUE,Color.WHITE);create.setOnClickListener(v->showCreateRoute());
+        LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,dp(54));cp.setMargins(0,dp(16),0,0);box.addView(create,cp);
+        Button saved=pill("Rotas salvas",Color.WHITE,NAVY);saved.setBackground(strokedBg(Color.WHITE,LINE,12));saved.setOnClickListener(v->loadCloudRoutes());
+        LinearLayout.LayoutParams xp=new LinearLayout.LayoutParams(-1,dp(50));xp.setMargins(0,dp(8),0,0);box.addView(saved,xp);
+        Button cfg=pill("Configurações",Color.WHITE,NAVY);cfg.setBackground(strokedBg(Color.WHITE,LINE,12));cfg.setOnClickListener(v->showSettings());
+        LinearLayout.LayoutParams gp=new LinearLayout.LayoutParams(-1,dp(50));gp.setMargins(0,dp(8),0,0);box.addView(cfg,gp);
+
+        new AlertDialog.Builder(this).setView(box).setNegativeButton("Fechar",null).show();
+    }
+
+    private void showCreateRoute(){
+        final int TEXT=Color.rgb(22,27,45),MUTED=Color.rgb(91,105,135);
+        LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(20),dp(6),dp(20),0);
+        TextView t=label("Criar rota",22,TEXT,true);box.addView(t);
+        TextView nlab=label("Nome da rota (opcional)",13,MUTED,false);nlab.setPadding(0,dp(16),0,dp(4));box.addView(nlab);
+        EditText name=new EditText(this);name.setHint(new java.text.SimpleDateFormat("EEEE",new Locale("pt","BR")).format(new Date()));box.addView(name);
+
+        TextView dlab=label("Selecione a data",13,MUTED,false);dlab.setPadding(0,dp(14),0,dp(4));box.addView(dlab);
+        RadioGroup rg=new RadioGroup(this);rg.setOrientation(RadioGroup.VERTICAL);
+        RadioButton today=new RadioButton(this);today.setText("Hoje  •  "+new java.text.SimpleDateFormat("dd/MM",Locale.getDefault()).format(new Date()));today.setChecked(true);
+        RadioButton tomorrow=new RadioButton(this);Calendar cal=Calendar.getInstance();cal.add(Calendar.DAY_OF_MONTH,1);tomorrow.setText("Amanhã  •  "+new java.text.SimpleDateFormat("dd/MM",Locale.getDefault()).format(cal.getTime()));
+        RadioButton choose=new RadioButton(this);choose.setText("Escolher data");
+        rg.addView(today);rg.addView(tomorrow);rg.addView(choose);box.addView(rg);
+
+        CheckBox reuse=new CheckBox(this);reuse.setText("Reutilizar paradas anteriores");reuse.setPadding(0,dp(10),0,0);box.addView(reuse);
+
+        AlertDialog d=new AlertDialog.Builder(this).setView(box).setNegativeButton("Cancelar",null).setPositiveButton("Confirmar",null).create();
+        d.setOnShowListener(x->d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            String nm=name.getText().toString().trim();
+            if(nm.isEmpty())nm="Rota "+new java.text.SimpleDateFormat("dd/MM/yyyy",Locale.getDefault()).format(new Date());
+            prefs.edit().putString("current_route_name",nm).apply();routeTitle.setText(nm);
+            if(!reuse.isChecked()){stops.clear();start=null;lastPlan=null;renderList();renderMap(null);}
+            status.setText("Rota criada. Adicione as paradas.");d.dismiss();
+        }));
+        d.show();
+    }
+
+    private void showSettings(){
+        final int TEXT=Color.rgb(22,27,45),MUTED=Color.rgb(91,105,135);
+        LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(20),dp(8),dp(20),dp(8));
+        TextView title=label("Configurações",22,TEXT,true);box.addView(title);
+
+        String[] navs={"Google Maps","Waze","Navegação do sistema"};
+        String[] sides={"Qualquer lado do veículo","Lado direito","Lado esquerdo"};
+        String[] times={"10 min","15 min","20 min","30 min","45 min","60 min"};
+        String[] vehicles={"Carro","Caminhão pequeno","Van","Moto"};
+        String[] ids={"Clássico e por ordem de rota","Somente número","Nome do cliente"};
+
+        Spinner nav=new Spinner(this);nav.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,navs));nav.setSelection(prefs.getInt("cfg_nav",0));
+        Spinner side=new Spinner(this);side.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,sides));side.setSelection(prefs.getInt("cfg_side",0));
+        Spinner tm=new Spinner(this);tm.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,times));tm.setSelection(prefs.getInt("cfg_time",2));
+        Spinner veh=new Spinner(this);veh.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,vehicles));veh.setSelection(prefs.getInt("cfg_vehicle",1));
+        Spinner idsSp=new Spinner(this);idsSp.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,ids));idsSp.setSelection(prefs.getInt("cfg_ids",0));
+        addSetting(box,"App de navegação",nav,MUTED,TEXT);
+        addSetting(box,"Lado da parada",side,MUTED,TEXT);
+        addSetting(box,"Tempo médio na parada",tm,MUTED,TEXT);
+        addSetting(box,"Tipo de veículo",veh,MUTED,TEXT);
+
+        Switch toll=new Switch(this);toll.setText("Evitar pedágios");toll.setChecked(prefs.getBoolean("cfg_toll",false));box.addView(toll);
+        addSetting(box,"ID de parada",idsSp,MUTED,TEXT);
+        Switch bubble=new Switch(this);bubble.setText("Balão do modo de navegação");bubble.setChecked(prefs.getBoolean("cfg_bubble",true));box.addView(bubble);
+
+        new AlertDialog.Builder(this).setView(box).setNegativeButton("Cancelar",null).setPositiveButton("Salvar",(d,w)->{
+            prefs.edit().putInt("cfg_nav",nav.getSelectedItemPosition()).putInt("cfg_side",side.getSelectedItemPosition()).putInt("cfg_time",tm.getSelectedItemPosition()).putInt("cfg_vehicle",veh.getSelectedItemPosition()).putInt("cfg_ids",idsSp.getSelectedItemPosition()).putBoolean("cfg_toll",toll.isChecked()).putBoolean("cfg_bubble",bubble.isChecked()).apply();
+            status.setText("Configurações salvas.");
+        }).show();
+    }
+
+    private void addSetting(LinearLayout box,String title,View control,int muted,int text){
+        TextView t=label(title,14,text,true);t.setPadding(0,dp(14),0,0);box.addView(t);box.addView(control);
+    }
+
+    private void shareRoute(){
+        if(stops.isEmpty()){status.setText("Adicione paradas antes de compartilhar.");return;}
+        StringBuilder sb=new StringBuilder();sb.append(prefs.getString("current_route_name","Minha rota")).append("\n\n");
+        for(int i=0;i<stops.size();i++)sb.append(i+1).append(". ").append(stops.get(i).optString("label","Parada")).append("\n");
+        Intent send=new Intent(Intent.ACTION_SEND);send.setType("text/plain");send.putExtra(Intent.EXTRA_SUBJECT,"Rota MOVIT");send.putExtra(Intent.EXTRA_TEXT,sb.toString());
+        startActivity(Intent.createChooser(send,"Compartilhar rota"));
     }
 
     private void voice(){
@@ -235,7 +315,7 @@ public class MainActivity extends Activity {
                 JSONArray points=j.getJSONArray("points");
                 for(int i=0;i<order.length();i++)ordered.add(points.getJSONObject(order.getInt(i)));
                 stops.clear();stops.addAll(ordered);
-                runOnUiThread(()->{status.setText("Rota otimizada.");summary.setText(stops.size()+" paradas • "+fmtKm(j.optDouble("distanceMeters",0))+" • "+fmtTime(j.optDouble("durationSeconds",0)));renderList();renderMap(j);});
+                runOnUiThread(()->{status.setText("Rota otimizada.");int[] mins={10,15,20,30,45,60};int stopMin=mins[Math.min(mins.length-1,Math.max(0,prefs.getInt("cfg_time",2)))];double totalSec=j.optDouble("durationSeconds",0)+(stops.size()*stopMin*60d);summary.setText(fmtTime(totalSec)+" • "+stops.size()+" paradas • "+fmtKm(j.optDouble("distanceMeters",0)));renderList();renderMap(j);});
             }catch(Exception e){runOnUiThread(()->status.setText("Erro: "+e.getMessage()));}
         });
     }
@@ -276,9 +356,16 @@ public class MainActivity extends Activity {
     private void navigateFirst(){
         if(stops.isEmpty()){status.setText("Nenhuma parada.");return;}
         JSONObject s=stops.get(0);String d=s.optDouble("lat")+","+s.optDouble("lon");
-        Intent i=new Intent(Intent.ACTION_VIEW,Uri.parse("google.navigation:q="+Uri.encode(d)+"&mode=d"));
-        i.setPackage("com.google.android.apps.maps");
-        try{startActivity(i);}catch(Exception e){startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://www.google.com/maps/dir/?api=1&destination="+Uri.encode(d)+"&travelmode=driving")));}
+        int nav=prefs.getInt("cfg_nav",0);
+        try{
+            if(nav==1){
+                Intent i=new Intent(Intent.ACTION_VIEW,Uri.parse("https://waze.com/ul?ll="+Uri.encode(d)+"&navigate=yes"));startActivity(i);
+            }else{
+                Intent i=new Intent(Intent.ACTION_VIEW,Uri.parse("google.navigation:q="+Uri.encode(d)+"&mode=d"));
+                if(nav==0)i.setPackage("com.google.android.apps.maps");
+                startActivity(i);
+            }
+        }catch(Exception e){startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://www.google.com/maps/dir/?api=1&destination="+Uri.encode(d)+"&travelmode=driving")));}
     }
 
     private void renderMap(JSONObject plan){
@@ -301,9 +388,9 @@ public class MainActivity extends Activity {
     private String userPlan(){return prefs.getString("plan","free");}
 
     private void refreshAccount(){
-        account.setText("Modo teste • sem cadastro");
-        cloudSave.setEnabled(true);
-        cloudRoutes.setEnabled(true);
+        if(account!=null)account.setText("Modo teste");
+        if(cloudSave!=null)cloudSave.setEnabled(true);
+        if(cloudRoutes!=null)cloudRoutes.setEnabled(true);
     }
 
     private void accountDialog(){
