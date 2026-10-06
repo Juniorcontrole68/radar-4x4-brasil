@@ -521,6 +521,7 @@
         <input id="rv2Address" type="text" placeholder="Digite rua, número, bairro, cidade ou CEP" style="width:100%;box-sizing:border-box;padding:14px 16px;border:1px solid var(--line);border-radius:14px;font-size:16px">
       </div>
       <button id="rv2Voice" class="secondary" type="button" title="Falar endereço">🎙️ Falar</button>
+      <button id="rv2MyLocation" class="secondary" type="button" title="Usar minha localização">📍 Minha localização</button>
       <button id="rv2Add" class="primary" type="button">Adicionar parada</button>
     </div>
     <div id="rv2VoiceHint" class="muted" style="margin-top:8px">No celular, toque em Falar e diga o endereço completo.</div>
@@ -543,9 +544,12 @@
         <div><b>Paradas da rota</b><div class="muted">Arraste pela ordem usando ↑ ↓ ou marque ⚡ para tornar a próxima parada.</div></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button id="rv2Optimize" class="primary" type="button">Otimizar rota</button>
+          <button id="rv2Start" class="primary" type="button">▶ Iniciar rota</button>
+          <button id="rv2Reoptimize" class="secondary" type="button">↻ Reotimizar restante</button>
           <button id="rv2Clear" class="secondary" type="button">Limpar</button>
         </div>
       </div>
+      <div id="rv2ActiveTrip" class="agcopy-info" style="margin-top:12px;display:none"></div>
       <div id="rv2List" class="route-list" style="margin-top:12px"><div class="muted">Nenhuma parada adicionada.</div></div>
     </div>
   </div>
