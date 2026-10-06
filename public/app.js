@@ -3593,7 +3593,7 @@ function renderTrackingAssignments(){
     return String(x.motorista||'').trim()&&String(x.veiculo||'').trim()&&roms.some(v=>String(v||'').trim())
   });
   if(info)info.textContent=rows.length
-    ?nf(rows.length)+' motorista(s) com romaneio e placa identificados hoje. Clique em “Enviar ao motorista” para gerar o link já associado.'
+    ?nf(rows.length)+' motorista(s) com romaneio e placa identificados hoje. Associação automática ativada: novos romaneios são vinculados ao rastreio sem ação do motorista.'
     :'Nenhum romaneio com motorista e placa identificado agora.';
   const body=rows.length?rows.map((x,i)=>{
     const driver=driverDisplayName(x.motorista||''),plate=String(x.veiculo||'').trim().toUpperCase();
@@ -3603,7 +3603,7 @@ function renderTrackingAssignments(){
       '<td><b>'+safe(plate)+'</b></td>'+
       '<td>'+safe(roms.join(', '))+'</td>'+
       '<td>'+nf(Number(x.entregas||x.total||0))+'</td>'+
-      '<td><button class="primary tracking-send-assignment" type="button" data-index="'+i+'">💬 Enviar ao motorista</button> <button class="secondary tracking-test-assignment" type="button" data-index="'+i+'">🧪 Testar no meu celular</button></td>'+
+      '<td><span class="tracking-status ok">Automático</span> <button class="secondary tracking-send-assignment" type="button" data-index="'+i+'">💬 Reenviar link</button> <button class="secondary tracking-test-assignment" type="button" data-index="'+i+'">🧪 Testar</button></td>'+
       '</tr>'
   }).join(''):'<tr><td colspan="5" class="muted">Nenhum romaneio disponível para envio.</td></tr>';
   tableEl.innerHTML='<thead><tr><th>Motorista</th><th>Placa</th><th>Romaneio(s)</th><th>Entregas</th><th>Ação</th></tr></thead><tbody>'+body+'</tbody>';
@@ -3639,7 +3639,7 @@ async function trackingSendAssignment(row,button=null){
   }catch(e){
     if(info)info.textContent='Erro ao preparar envio: '+e.message
   }finally{
-    if(button){button.disabled=false;button.textContent='💬 Enviar ao motorista'}
+    if(button){button.disabled=false;button.textContent='💬 Reenviar link'}
   }
 }
 window.trackingSendAssignment=trackingSendAssignment;
