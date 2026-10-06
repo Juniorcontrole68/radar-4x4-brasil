@@ -1,10 +1,10 @@
 plugins { id 'com.android.application' }
 
 android {
-    namespace 'br.com.motiv.rotas'
+    namespace 'br.com.movit.rotas'
     compileSdk 35
     defaultConfig {
-        applicationId 'br.com.motiv.rotas'
+        applicationId 'br.com.movit.rotas'
         minSdk 26
         targetSdk 35
         versionCode 4
