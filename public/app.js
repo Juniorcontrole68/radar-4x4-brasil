@@ -3379,7 +3379,7 @@ function renderTrackingMap(rows){
 
     const lat=Number(row.latitude),lon=Number(row.longitude);
     if(Number.isFinite(lat)&&Number.isFinite(lon)){
-      const firstName=trackingFirstName(row.driver_name);
+      const firstName=(row.test_only?'TESTE • ':'')+trackingFirstName(row.driver_name);
       const iconHtml='<div style="width:100px;height:54px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;pointer-events:none">'+
         '<div style="max-width:96px;padding:2px 6px;margin-bottom:2px;border-radius:7px;background:rgba(255,255,255,.96);border:1px solid #cbd5e1;box-shadow:0 1px 4px #0003;color:#0f172a;font-size:11px;font-weight:800;line-height:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+safe(firstName)+'</div>'+
         '<div style="width:30px;height:30px;border-radius:50%;background:'+actualColor+';border:3px solid #fff;box-shadow:0 2px 7px #0006;display:grid;place-items:center;color:#fff;font-size:15px">🚚</div>'+
@@ -3450,12 +3450,13 @@ async function refreshTracking(){
   const info=$('#trackingInfo');if(info)info.textContent='Atualizando motoristas e posições GPS…';
   try{
     const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
-    const [liveRes,driverRes,requestRes]=await Promise.all([
+    const [liveRes,testLiveRes,driverRes,requestRes]=await Promise.all([
       fetch('/api/tracking/live?light=1&t='+Date.now(),{cache:'no-store'}),
+      fetch('/api/tracking/test-live?t='+Date.now(),{cache:'no-store'}),
       fetch('/api/roteirizador/lista?date='+encodeURIComponent(today)+'&t='+Date.now(),{cache:'no-store'}),
       fetch('/api/tracking/requests?t='+Date.now(),{cache:'no-store'})
     ]);
-    const live=await liveRes.json().catch(()=>({})),drivers=await driverRes.json().catch(()=>({})),requests=await requestRes.json().catch(()=>({}));
+    const live=await liveRes.json().catch(()=>({})),testLive=await testLiveRes.json().catch(()=>({})),drivers=await driverRes.json().catch(()=>({})),requests=await requestRes.json().catch(()=>({}));
     if(!liveRes.ok||!live.ok)throw new Error(live.error||'Falha ao consultar GPS.');
     if(driverRes.ok&&drivers.ok&&Array.isArray(drivers.rows)){
       TRACKING_DRIVER_ROWS=drivers.rows.filter(x=>{
@@ -3475,7 +3476,10 @@ async function refreshTracking(){
       const driverInfo=$('#trackingDriverDayInfo');
       if(driverInfo)driverInfo.textContent='Não foi possível carregar a relação de motoristas agora. Tentando novamente automaticamente.';
     }
-    const liveRows=normalizeDriverNames(Array.isArray(live.rows)?live.rows:[]);
+    const liveRows=normalizeDriverNames([
+      ...(Array.isArray(live.rows)?live.rows:[]),
+      ...((testLiveRes.ok&&testLive.ok&&Array.isArray(testLive.rows))?testLive.rows:[])
+    ]);
     const operationRows=Array.isArray(TRACKING_DRIVER_ROWS)?TRACKING_DRIVER_ROWS:[];
     const approvedDevices=(requestRes.ok&&requests.ok&&Array.isArray(requests.rows)?requests.rows:[])
       .filter(x=>String(x.status||'').toLowerCase()==='approved');
@@ -3516,8 +3520,8 @@ async function refreshTracking(){
       const inOperation=r.operation_active||(plate&&todayKeys.has('P|'+plate))||(driver&&todayKeys.has('D|'+driver));
       const pointToday=r.captured_at&&new Date(r.captured_at).toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'})===today;
       const heartbeatFresh=Number.isFinite(Number(r.device_age_seconds))&&Number(r.device_age_seconds)<=300;
-      return inOperation&&(pointToday||heartbeatFresh);
-    }).map(r=>({...r,operation_active:true}));
+      return (r.test_only||inOperation)&&(pointToday||heartbeatFresh);
+    }).map(r=>({...r,operation_active:r.test_only?true:true}));
     // Mantém todos os motoristas da operação do dia no mapa. Quem ainda não tiver
     // GPS/aparelho ativo aparece com a rota planejada e status "Sem sinal", sem
     // criar posição fictícia no mapa.
