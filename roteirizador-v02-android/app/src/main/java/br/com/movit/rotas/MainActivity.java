@@ -277,10 +277,64 @@ public class MainActivity extends Activity {
 
     private void shareRoute(){
         if(stops.isEmpty()){status.setText("Adicione paradas antes de compartilhar.");return;}
-        StringBuilder sb=new StringBuilder();sb.append(prefs.getString("current_route_name","Minha rota")).append("\n\n");
-        for(int i=0;i<stops.size();i++)sb.append(i+1).append(". ").append(stops.get(i).optString("label","Parada")).append("\n");
-        Intent send=new Intent(Intent.ACTION_SEND);send.setType("text/plain");send.putExtra(Intent.EXTRA_SUBJECT,"Rota MOVIT");send.putExtra(Intent.EXTRA_TEXT,sb.toString());
-        startActivity(Intent.createChooser(send,"Compartilhar rota"));
+        final String driver=prefs.getString("current_driver_name","Motorista");
+        final String eventDate=prefs.getString("current_event_date",new java.text.SimpleDateFormat("yyyy-MM-dd",Locale.getDefault()).format(new Date()));
+        final String title=prefs.getString("current_route_name",driver+" "+eventDate);
+        status.setText("Gerando link da rota…");
+        exec.execute(()->{
+            try{
+                JSONObject body=new JSONObject();
+                body.put("driver_name",driver);
+                body.put("event_date",eventDate);
+                body.put("title",title);
+                body.put("route_data",currentRouteData());
+                JSONObject j=Api.post("/api/public-router/share",body);
+                String link=j.getString("shareUrl");
+                runOnUiThread(()->{
+                    Intent send=new Intent(Intent.ACTION_SEND);
+                    send.setType("text/plain");
+                    send.putExtra(Intent.EXTRA_SUBJECT,title);
+                    send.putExtra(Intent.EXTRA_TEXT,title+"\n"+link);
+                    startActivity(Intent.createChooser(send,"Compartilhar rota"));
+                    status.setText("Link da rota pronto para compartilhar.");
+                });
+            }catch(Exception e){runOnUiThread(()->status.setText("Compartilhar: "+e.getMessage()));}
+        });
+    }
+
+    private void handleSharedRouteIntent(Intent intent){
+        if(intent==null||intent.getData()==null)return;
+        Uri data=intent.getData();
+        if(!"movit".equalsIgnoreCase(data.getScheme())||!"route".equalsIgnoreCase(data.getHost()))return;
+        String token=data.getLastPathSegment();
+        if(token==null||token.length()<10)return;
+        status.setText("Abrindo rota compartilhada…");
+        exec.execute(()->{
+            try{
+                JSONObject j=Api.get("/api/public-router/share/"+URLEncoder.encode(token,"UTF-8"));
+                JSONObject route=j.optJSONObject("route_data");
+                if(route==null)throw new Exception("Rota compartilhada inválida.");
+                JSONArray arr=route.optJSONArray("stops");
+                stops.clear();
+                if(arr!=null)for(int i=0;i<arr.length();i++)stops.add(arr.getJSONObject(i));
+                start=route.optJSONObject("start");
+                lastPlan=null;
+                String title=j.optString("title","Rota compartilhada");
+                String driver=j.optString("driver_name","");
+                String eventDate=j.optString("event_date","");
+                prefs.edit()
+                    .putString("current_route_name",title)
+                    .putString("current_driver_name",driver)
+                    .putString("current_event_date",eventDate)
+                    .apply();
+                runOnUiThread(()->{
+                    routeTitle.setText(title);
+                    renderList();
+                    renderMap(null);
+                    status.setText("Rota compartilhada aberta. Toque em Otimizar para atualizar o trajeto.");
+                });
+            }catch(Exception e){runOnUiThread(()->status.setText("Abrir rota: "+e.getMessage()));}
+        });
     }
 
     private void voice(){
