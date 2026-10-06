@@ -125,8 +125,8 @@ public class MainActivity extends Activity {
         LinearLayout searchRow=new LinearLayout(this);searchRow.setOrientation(LinearLayout.HORIZONTAL);searchRow.setGravity(Gravity.CENTER_VERTICAL);
         address=new EditText(this);address.setHint("Adicione ou busque uma parada");address.setSingleLine(true);address.setTextSize(15);address.setTextColor(TEXT);address.setHintTextColor(Color.rgb(139,151,176));address.setBackground(strokedBg(Color.WHITE,LINE,16));address.setPadding(dp(14),0,dp(10),0);
         searchRow.addView(address,new LinearLayout.LayoutParams(0,dp(52),1));
-        Button voice=pill("Falar",Color.WHITE,BLUE);voice.setTextSize(13);voice.setPadding(0,0,0,0);voice.setOnClickListener(v->voice());
-        LinearLayout.LayoutParams vp=new LinearLayout.LayoutParams(dp(78),dp(50));vp.setMargins(dp(8),0,0,0);searchRow.addView(voice,vp);
+        Button voice=pill("🎤",Color.WHITE,BLUE);voice.setTextSize(22);voice.setPadding(0,0,0,0);voice.setOnClickListener(v->voice());
+        LinearLayout.LayoutParams vp=new LinearLayout.LayoutParams(dp(58),dp(50));vp.setMargins(dp(8),0,0,0);searchRow.addView(voice,vp);
         Button add=pill("Adicionar",BLUE,Color.WHITE);add.setTextSize(13);add.setOnClickListener(v->addAddress(address.getText().toString()));
         LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(dp(96),dp(50));ap.setMargins(dp(6),0,0,0);searchRow.addView(add,ap);
         root.addView(searchRow);
@@ -783,7 +783,12 @@ public class MainActivity extends Activity {
         super.onActivityResult(req,res,data);
         if(req==REQ_VOICE&&res==RESULT_OK&&data!=null){
             ArrayList<String> out=data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
-            if(out!=null&&!out.isEmpty()){address.setText(out.get(0));status.setText("Endereço reconhecido. Toque em + Parada.");}
+            if(out!=null&&!out.isEmpty()){
+                String spoken=out.get(0);
+                address.setText(spoken);
+                status.setText("Procurando endereços com esse nome em todo o Brasil…");
+                addAddress(spoken,true);
+            }
         }
     }
 
@@ -810,44 +815,89 @@ public class MainActivity extends Activity {
     }
 
     private void addAddress(String raw){
-        raw=raw.trim();if(raw.length()<5){status.setText("Informe um endereço mais completo.");return;}
-        final String q=raw;status.setText("Localizando endereço…");
-        double biasLat=Double.NaN,biasLon=Double.NaN;
-        try{
-            if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED){
-                LocationManager lm=(LocationManager)getSystemService(LOCATION_SERVICE);
-                Location l=lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
-                if(l==null)l=lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
-                if(l!=null){biasLat=l.getLatitude();biasLon=l.getLongitude();}
-            }
-        }catch(Exception ignored){}
-        final double qLat=biasLat,qLon=biasLon;
+        addAddress(raw,false);
+    }
+
+    private void addAddress(String raw,boolean reopenVoice){
+        raw=raw.trim();
+        if(raw.length()<4){status.setText("Informe ao menos o nome da rua.");return;}
+        final String q=raw;
+        status.setText("Procurando endereços com esse nome em todo o Brasil…");
         exec.execute(()->{
             try{
-                String path="/api/public-router/geocode?q="+URLEncoder.encode(q,"UTF-8");
-                if(Double.isFinite(qLat)&&Double.isFinite(qLon))path+="&lat="+qLat+"&lon="+qLon;
+                String path="/api/public-router/geocode?all=1&q="+URLEncoder.encode(q,"UTF-8");
                 JSONObject j=Api.get(path);
-                JSONArray rows=j.optJSONArray("rows");if(rows==null||rows.length()==0)throw new Exception("Endereço não encontrado.");
-                JSONObject p=rows.getJSONObject(0);JSONObject s=new JSONObject();
-                String confirmed=p.optString("label",q);
-                boolean approximate=p.optBoolean("approximate",false);
-                s.put("lat",p.getDouble("lat"));
-                s.put("lon",p.getDouble("lon"));
-                s.put("original",q);
-                s.put("label",confirmed);
-                s.put("resolved",confirmed);
-                s.put("approximate",approximate);
-                s.put("precision",p.optString("precision",""));
-                stops.add(s);
-                if(start==null)start=new JSONObject(s.toString());
+                JSONArray rows=j.optJSONArray("rows");
+                if(rows==null||rows.length()==0)throw new Exception("Endereço não encontrado.");
+                final JSONArray found=new JSONArray(rows.toString());
+                runOnUiThread(()->showAddressChoices(q,found,reopenVoice));
+            }catch(Exception e){
                 runOnUiThread(()->{
-                    address.setText("");
-                    refreshStartPointUi();
-                    status.setText(stops.size()==1?"Primeiro endereço definido como ponto de partida"+(prefs.getBoolean("current_return_start",true)?" e retorno.":"."):"Parada adicionada.");
-                    renderList();renderMap(null);
+                    status.setText("Erro: "+e.getMessage());
+                    if(reopenVoice)new Handler(Looper.getMainLooper()).postDelayed(()->voice(),900);
                 });
-            }catch(Exception e){runOnUiThread(()->status.setText("Erro: "+e.getMessage()));}
+            }
         });
+    }
+
+    private void showAddressChoices(String original,JSONArray rows,boolean reopenVoice){
+        final ArrayList<JSONObject> choices=new ArrayList<>();
+        final ArrayList<String> labels=new ArrayList<>();
+
+        for(int i=0;i<rows.length();i++){
+            JSONObject p=rows.optJSONObject(i);
+            if(p==null)continue;
+            choices.add(p);
+            String road=p.optString("road","");
+            String city=p.optString("city","");
+            String state=p.optString("state","");
+            String full=p.optString("label",original);
+            String title=!road.isEmpty()?road:full;
+            String where="";
+            if(!city.isEmpty())where=city;
+            if(!state.isEmpty())where+=(where.isEmpty()?"":" • ")+state;
+            labels.add(where.isEmpty()?title:(title+"\n"+where));
+        }
+
+        if(choices.isEmpty()){
+            status.setText("Nenhum endereço encontrado.");
+            if(reopenVoice)new Handler(Looper.getMainLooper()).postDelayed(()->voice(),900);
+            return;
+        }
+
+        new AlertDialog.Builder(this)
+            .setTitle("Qual endereço você deseja?")
+            .setItems(labels.toArray(new String[0]),(d,which)->{
+                if(which<0||which>=choices.size())return;
+                try{
+                    JSONObject p=choices.get(which);
+                    JSONObject s=new JSONObject();
+                    String confirmed=p.optString("label",original);
+                    s.put("lat",p.getDouble("lat"));
+                    s.put("lon",p.getDouble("lon"));
+                    s.put("original",original);
+                    s.put("label",confirmed);
+                    s.put("resolved",confirmed);
+                    s.put("approximate",p.optBoolean("approximate",false));
+                    s.put("precision",p.optString("precision",""));
+                    stops.add(s);
+                    if(start==null)start=new JSONObject(s.toString());
+                    address.setText("");
+                    lastPlan=null;
+                    refreshStartPointUi();
+                    renderList();
+                    renderMap(null);
+                    status.setText("Entrega "+stops.size()+" adicionada. Fale a próxima.");
+                    if(reopenVoice)new Handler(Looper.getMainLooper()).postDelayed(()->voice(),650);
+                }catch(Exception e){
+                    status.setText("Não foi possível adicionar esse endereço.");
+                }
+            })
+            .setNegativeButton("Cancelar",(d,w)->{
+                status.setText("Seleção cancelada.");
+                if(reopenVoice)new Handler(Looper.getMainLooper()).postDelayed(()->voice(),650);
+            })
+            .show();
     }
 
     private void optimize(){
