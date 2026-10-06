@@ -1,22 +1,56 @@
-=== assembleTesteDebug ===
+=== assembleInternalDebug ===
 To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.13/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
 Daemon will be stopped at the end of the build 
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/movit_build-1791300680076.json
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preInternalDebugBuild UP-TO-DATE
+> Task :app:mergeInternalDebugNativeDebugMetadata NO-SOURCE
+> Task :app:generateInternalDebugBuildConfig
+> Task :app:javaPreCompileInternalDebug
+> Task :app:checkInternalDebugAarMetadata
+> Task :app:processInternalDebugNavigationResources
+> Task :app:generateInternalDebugResValues
+> Task :app:compileInternalDebugNavigationResources
+> Task :app:mapInternalDebugSourceSetPaths
+> Task :app:generateInternalDebugResources
+> Task :app:packageInternalDebugResources
+> Task :app:mergeInternalDebugResources
+> Task :app:createInternalDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksInternalDebug
+> Task :app:parseInternalDebugLocalResources
+> Task :app:processInternalDebugMainManifest
+> Task :app:processInternalDebugManifest
+> Task :app:mergeInternalDebugShaders
+> Task :app:compileInternalDebugShaders NO-SOURCE
+> Task :app:generateInternalDebugAssets UP-TO-DATE
+> Task :app:mergeInternalDebugAssets
+> Task :app:compressInternalDebugAssets
+> Task :app:checkInternalDebugDuplicateClasses
+> Task :app:desugarInternalDebugFileDependencies
+> Task :app:processInternalDebugJavaRes NO-SOURCE
+> Task :app:mergeExtDexInternalDebug
+> Task :app:mergeLibDexInternalDebug
+> Task :app:mergeInternalDebugJniLibFolders
+> Task :app:mergeInternalDebugNativeLibs NO-SOURCE
+> Task :app:stripInternalDebugDebugSymbols NO-SOURCE
+> Task :app:mergeInternalDebugJavaResource
+> Task :app:validateSigningInternalDebug
+> Task :app:writeInternalDebugAppMetadata
+> Task :app:writeInternalDebugSigningConfigVersions
+> Task :app:processInternalDebugManifestForPackage
+> Task :app:processInternalDebugResources
+
+> Task :app:compileInternalDebugJavaWithJavac
+Note: /home/runner/work/radar-4x4-brasil/radar-4x4-brasil/roteirizador-v02-android/app/src/main/java/br/com/movit/rotas/MainActivity.java uses or overrides a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+
+> Task :app:dexBuilderInternalDebug
+> Task :app:mergeProjectDexInternalDebug
+> Task :app:packageInternalDebug
+> Task :app:createInternalDebugApkListingFileRedirect
+> Task :app:assembleInternalDebug
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/movit_build-1791300766562.json
 
 [Incubating] Problems report is available at: file:///home/runner/work/radar-4x4-brasil/radar-4x4-brasil/roteirizador-v02-android/build/reports/problems/problems-report.html
-
-FAILURE: Build failed with an exception.
-
-* What went wrong:
-Cannot locate tasks that match ':app:assembleTesteDebug' as task 'assembleTesteDebug' not found in project ':app'.
-
-* Try:
-> Run gradle tasks to get a list of available tasks.
-> For more on name expansion, please refer to https://docs.gradle.org/8.13/userguide/command_line_interface.html#sec:name_abbreviation in the Gradle documentation.
-> Run with --stacktrace option to get the stack trace.
-> Run with --info or --debug option to get more log output.
-> Run with --scan to get full insights.
-> Get more help at https://help.gradle.org.
 
 Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
 
@@ -24,8 +58,9 @@ You can use '--warning-mode all' to show the individual deprecation warnings and
 
 For more on this, please refer to https://docs.gradle.org/8.13/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
 
-BUILD FAILED in 15s
-assembleTesteDebug exit=1
+BUILD SUCCESSFUL in 29s
+34 actionable tasks: 34 executed
+assembleInternalDebug exit=0
 === bundlePlayRelease ===
 To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.13/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
 Daemon will be stopped at the end of the build 
@@ -33,27 +68,27 @@ Daemon will be stopped at the end of the build
 > Task :app:prePlayReleaseBuild UP-TO-DATE
 > Task :app:processPlayReleaseNavigationResources
 > Task :app:generatePlayReleaseResValues
-> Task :app:compilePlayReleaseNavigationResources
 > Task :app:mapPlayReleaseSourceSetPaths
+> Task :app:compilePlayReleaseNavigationResources
 > Task :app:generatePlayReleaseResources
 > Task :app:createPlayReleaseCompatibleScreenManifests
 > Task :app:extractDeepLinksPlayRelease
-> Task :app:mergePlayReleaseResources
 > Task :app:processPlayReleaseMainManifest
+> Task :app:mergePlayReleaseResources
 > Task :app:processPlayReleaseManifest
 > Task :app:processApplicationManifestPlayReleaseForBundle
 > Task :app:checkPlayReleaseAarMetadata
 > Task :app:packagePlayReleaseResources
-> Task :app:parsePlayReleaseLocalResources
 > Task :app:extractPlayReleaseVersionControlInfo
+> Task :app:processPlayReleaseManifestForPackage
+> Task :app:parsePlayReleaseLocalResources
 > Task :app:checkPlayReleaseDuplicateClasses
 > Task :app:generatePlayReleaseBuildConfig
-> Task :app:processPlayReleaseManifestForPackage
-> Task :app:javaPreCompilePlayRelease
 > Task :app:desugarPlayReleaseFileDependencies
+> Task :app:javaPreCompilePlayRelease
 > Task :app:mergePlayReleaseStartupProfile
-> Task :app:mergeExtDexPlayRelease
 > Task :app:mergePlayReleaseShaders
+> Task :app:mergeExtDexPlayRelease
 > Task :app:compilePlayReleaseShaders NO-SOURCE
 > Task :app:generatePlayReleaseAssets UP-TO-DATE
 > Task :app:mergePlayReleaseAssets
@@ -63,13 +98,9 @@ Daemon will be stopped at the end of the build
 > Task :app:stripPlayReleaseDebugSymbols NO-SOURCE
 > Task :app:writePlayReleaseAppMetadata
 > Task :app:mergePlayReleaseArtProfile
+> Task :app:processPlayReleaseResources
 > Task :app:collectPlayReleaseDependencies
 > Task :app:mergePlayReleaseJavaResource
-> Task :app:configurePlayReleaseDependencies
-> Task :app:extractPlayReleaseNativeSymbolTables NO-SOURCE
-> Task :app:extractProguardFiles
-> Task :app:processPlayReleaseResources
-> Task :app:parsePlayReleaseIntegrityConfig
 > Task :app:bundlePlayReleaseResources
 
 > Task :app:compilePlayReleaseJavaWithJavac
@@ -78,10 +109,14 @@ Note: Recompile with -Xlint:deprecation for details.
 
 > Task :app:dexBuilderPlayRelease
 > Task :app:mergePlayReleaseGlobalSynthetics
+> Task :app:configurePlayReleaseDependencies
+> Task :app:extractPlayReleaseNativeSymbolTables NO-SOURCE
+> Task :app:extractProguardFiles
 > Task :app:mergeDexPlayRelease
 > Task :app:generatePlayReleaseLintVitalReportModel
 > Task :app:buildPlayReleasePreBundle
 > Task :app:compilePlayReleaseArtProfile
+> Task :app:parsePlayReleaseIntegrityConfig
 > Task :app:lintVitalAnalyzePlayRelease
 > Task :app:lintVitalReportPlayRelease
 > Task :app:lintVitalPlayRelease
@@ -90,7 +125,7 @@ Note: Recompile with -Xlint:deprecation for details.
 > Task :app:producePlayReleaseBundleIdeListingFile
 > Task :app:createPlayReleaseBundleListingFileRedirect
 > Task :app:bundlePlayRelease
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/movit_build-1791300694454.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/movit_build-1791300795227.json
 
 [Incubating] Problems report is available at: file:///home/runner/work/radar-4x4-brasil/radar-4x4-brasil/roteirizador-v02-android/build/reports/problems/problems-report.html
 
@@ -100,6 +135,6 @@ You can use '--warning-mode all' to show the individual deprecation warnings and
 
 For more on this, please refer to https://docs.gradle.org/8.13/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
 
-BUILD SUCCESSFUL in 20s
+BUILD SUCCESSFUL in 25s
 48 actionable tasks: 48 executed
 bundlePlayRelease exit=0
