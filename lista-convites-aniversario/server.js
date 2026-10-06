@@ -10,6 +10,7 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const KEY = 'lista-convites-aniversario:v1';
 const IMAGE_KEY = 'lista-convites-aniversario:image:v1';
+const EXTRA_IMAGE_KEY = 'lista-convites-aniversario:image-extra:v1';
 
 const EMPTY = {
   event: {
@@ -20,7 +21,8 @@ const EMPTY = {
     address: '',
     message: 'Vai ser muito especial ter você comigo!',
     canvaUrl: '',
-    hasInviteImage: false
+    hasInviteImage: false,
+    hasExtraImage: false
   },
   guests: []
 };
@@ -63,8 +65,12 @@ app.put('/api/event', async (req, res, next) => {
     const body = { ...(req.body || {}) };
     const imageData = body.inviteImageData;
     const removeImage = !!body.removeInviteImage;
+    const extraImageData = body.extraImageData;
+    const removeExtraImage = !!body.removeExtraImage;
     delete body.inviteImageData;
     delete body.removeInviteImage;
+    delete body.extraImageData;
+    delete body.removeExtraImage;
 
     if (imageData) {
       const m = String(imageData).match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
@@ -78,6 +84,18 @@ app.put('/api/event', async (req, res, next) => {
       body.hasInviteImage = false;
     }
 
+    if (extraImageData) {
+      const m = String(extraImageData).match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+      if (!m) return res.status(400).json({ error: 'Foto extra inválida' });
+      const buffer = Buffer.from(m[2], 'base64');
+      if (buffer.length > 2 * 1024 * 1024) return res.status(400).json({ error: 'A foto extra deve ter no máximo 2 MB' });
+      await redis.hSet(EXTRA_IMAGE_KEY, { mime: m[1], data: m[2] });
+      body.hasExtraImage = true;
+    } else if (removeExtraImage) {
+      await redis.del(EXTRA_IMAGE_KEY);
+      body.hasExtraImage = false;
+    }
+
     data.event = { ...data.event, ...body };
     await save(data);
     res.json(data.event);
@@ -88,6 +106,17 @@ app.get('/api/invite-image', async (_req, res, next) => {
   try {
     const img = await redis.hGetAll(IMAGE_KEY);
     if (!img?.data) return res.status(404).send('Imagem não encontrada');
+    const buffer = Buffer.from(img.data, 'base64');
+    res.setHeader('Content-Type', img.mime || 'image/jpeg');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.send(buffer);
+  } catch (e) { next(e); }
+});
+
+app.get('/api/extra-image', async (_req, res, next) => {
+  try {
+    const img = await redis.hGetAll(EXTRA_IMAGE_KEY);
+    if (!img?.data) return res.status(404).send('Foto extra não encontrada');
     const buffer = Buffer.from(img.data, 'base64');
     res.setHeader('Content-Type', img.mime || 'image/jpeg');
     res.setHeader('Cache-Control', 'public, max-age=300');
