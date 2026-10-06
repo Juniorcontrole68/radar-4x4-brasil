@@ -1504,6 +1504,129 @@ async function start() {
         }catch(e){return sendJson(res,e.status||502,{ok:false,error:e.message||'Falha ao localizar postos.'})}
       }
 
+      if (u.pathname === '/api/public-router/tolls' && req.method === 'POST') {
+        try{
+          if(!publicRouteAllowed(req))return sendJson(res,429,{ok:false,error:'Muitas consultas. Aguarde um minuto.'});
+          const body=await readJsonBodyLimited(req,1024*1024);
+          const geom=body.geometry&&Array.isArray(body.geometry.coordinates)?body.geometry.coordinates:[];
+          if(geom.length<2)return sendJson(res,400,{ok:false,error:'Otimize a rota antes de calcular os pedágios.'});
+
+          const vehicle=body.vehicle&&typeof body.vehicle==='object'?body.vehicle:{};
+          const type=String(vehicle.type||'Carro');
+          let axles=Math.max(1,Math.min(9,Number(vehicle.axles)||1));
+          if(/carro|moto/i.test(type))axles=1;
+
+          const routePoints=geom.map(x=>({lat:Number(x[1]),lon:Number(x[0])})).filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lon));
+          if(routePoints.length<2)return sendJson(res,400,{ok:false,error:'Geometria da rota inválida.'});
+
+          const routeCum=[0];
+          for(let i=1;i<routePoints.length;i++)routeCum.push(routeCum[i-1]+routePublicHaversine(routePoints[i-1],routePoints[i]));
+          const totalRoute=routeCum[routeCum.length-1]||0;
+
+          // Amostra pontos da rota para consultar praças próximas sem um bbox gigantesco.
+          const sampleIdx=[0];
+          let lastM=0;
+          for(let i=1;i<routePoints.length-1;i++){
+            if(routeCum[i]-lastM>=12000){sampleIdx.push(i);lastM=routeCum[i]}
+          }
+          sampleIdx.push(routePoints.length-1);
+          const queries=sampleIdx.slice(0,35).map(i=>{
+            const p=routePoints[i];
+            return 'node["barrier"="toll_booth"](around:7000,'+p.lat+','+p.lon+');'+
+                   'node["highway"="toll_gantry"](around:7000,'+p.lat+','+p.lon+');'+
+                   'way["barrier"="toll_booth"](around:7000,'+p.lat+','+p.lon+');'+
+                   'way["highway"="toll_gantry"](around:7000,'+p.lat+','+p.lon+');';
+          }).join('');
+          const q='[out:json][timeout:25];('+queries+');out center tags;';
+
+          let data=null,lastErr=null;
+          for(const base of ['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter']){
+            try{
+              const r=await fetch(base,{
+                method:'POST',
+                headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8','User-Agent':'MOVIT-Rotas/1.3'},
+                body:'data='+encodeURIComponent(q),
+                signal:AbortSignal.timeout(26000)
+              });
+              const j=await r.json().catch(()=>null);
+              if(r.ok&&j&&Array.isArray(j.elements)){data=j;break}
+            }catch(e){lastErr=e}
+          }
+          if(!data)throw Object.assign(new Error('Serviço de pedágios temporariamente indisponível.'),{status:503,cause:lastErr});
+
+          const seen=new Set(),plazas=[];
+          function nearestRoute(p){
+            let best=Infinity,bestIdx=0;
+            const step=Math.max(1,Math.floor(routePoints.length/1200));
+            for(let i=0;i<routePoints.length;i+=step){
+              const d=routePublicHaversine(p,routePoints[i]);
+              if(d<best){best=d;bestIdx=i}
+            }
+            const lo=Math.max(0,bestIdx-step),hi=Math.min(routePoints.length-1,bestIdx+step);
+            for(let i=lo;i<=hi;i++){
+              const d=routePublicHaversine(p,routePoints[i]);
+              if(d<best){best=d;bestIdx=i}
+            }
+            return {offset:best,progress:routeCum[bestIdx]||0};
+          }
+          function parseCharge(tags){
+            const raw=String(tags.charge||tags['charge:motorcar']||tags['fee:amount']||'').trim();
+            if(!raw)return null;
+            const m=raw.replace(',','.').match(/(?:BRL|R\$)?\s*(\d+(?:\.\d+)?)/i);
+            if(!m)return null;
+            const value=Number(m[1]);
+            return Number.isFinite(value)&&value>0?value:null;
+          }
+
+          for(const el of data.elements){
+            const lat=Number(el.lat??el.center?.lat),lon=Number(el.lon??el.center?.lon);
+            if(!Number.isFinite(lat)||!Number.isFinite(lon))continue;
+            const near=nearestRoute({lat,lon});
+            if(near.offset>1400)continue;
+            const key=lat.toFixed(4)+','+lon.toFixed(4);
+            if(seen.has(key))continue;seen.add(key);
+            const tags=el.tags||{};
+            const baseCharge=parseCharge(tags);
+            // Quando OSM informa uma tarifa simples, tratamos como tarifa-base.
+            // Para caminhões a estimativa multiplica pelos eixos; o app marca isso como estimativa.
+            let amount=null,estimated=false;
+            if(Number.isFinite(baseCharge)){
+              amount=baseCharge;
+              if(!/carro|moto/i.test(type)&&axles>1){amount=baseCharge*axles;estimated=true}
+            }
+            plazas.push({
+              name:String(tags.name||tags.operator||'Praça de pedágio').slice(0,160),
+              operator:String(tags.operator||tags.brand||'').slice(0,140),
+              lat,lon,
+              kmFromStart:near.progress/1000,
+              routeOffsetMeters:near.offset,
+              baseAmount:Number.isFinite(baseCharge)?baseCharge:null,
+              amount:Number.isFinite(amount)?Math.round(amount*100)/100:null,
+              estimated,
+              source:Number.isFinite(baseCharge)?'OpenStreetMap / tarifa cadastrada':'OpenStreetMap / tarifa não cadastrada'
+            });
+          }
+
+          plazas.sort((a,b)=>a.kmFromStart-b.kmFromStart);
+          let total=0,priced=0;
+          for(const p of plazas){if(Number.isFinite(p.amount)){total+=p.amount;priced++}}
+          return sendJson(res,200,{
+            ok:true,
+            vehicleType:type,
+            axles,
+            routeKm:totalRoute/1000,
+            rows:plazas,
+            count:plazas.length,
+            pricedCount:priced,
+            total:Math.round(total*100)/100,
+            totalComplete:priced===plazas.length,
+            warning:priced===plazas.length
+              ?'Valores calculados conforme as tarifas disponíveis na base cartográfica. Confira a sinalização e a concessionária.'
+              :'Algumas praças não têm tarifa cadastrada na base pública; nesses casos o MOVIT mostra a praça, mas não inventa o valor.'
+          });
+        }catch(e){return sendJson(res,e.status||502,{ok:false,error:e.message||'Falha ao calcular pedágios.'})}
+      }
+
       if (u.pathname === '/api/public-router/truck-restrictions' && req.method === 'POST') {
         try{
           if(!publicRouteAllowed(req))return sendJson(res,429,{ok:false,error:'Muitas consultas. Aguarde um minuto.'});
