@@ -47,7 +47,7 @@ details{margin-top:12px}summary{cursor:pointer;color:#334155;font-weight:650;fon
       <summary>Configuração avançada</summary>
       <div class="grid" style="margin-top:10px">
         <label class="full">Servidor IMAP
-          <select id="host"><option value="imap.titan.email">imap.titan.email</option><option value="imap0101.titan.email">imap0101.titan.email (Europa)</option></select>
+          <select id="host"><option value="auto">Detectar automaticamente</option><option value="imap.titan.email">imap.titan.email</option><option value="imap0101.titan.email">imap0101.titan.email (Europa)</option></select>
         </label>
       </div>
     </details>
@@ -56,7 +56,7 @@ details{margin-top:12px}summary{cursor:pointer;color:#334155;font-weight:650;fon
       <button id="clear" class="secondary" type="button">Limpar senha</button>
     </div>
     <div id="status" class="status">Informe o período e a conta Titan. A senha é usada somente para esta consulta e não é armazenada.</div>
-    <div class="note">Limite de segurança: até 250 e-mails e 60 anexos PDF por consulta. O arquivo final é gerado na hora e não fica salvo no servidor.</div>
+    <div class="note">Limite de segurança: até 250 e-mails e 60 anexos PDF por consulta. O arquivo final é gerado na hora e não fica salvo no servidor.<br><br><b>Importante:</b> se sua conta Titan usa verificação em duas etapas (2FA), use uma <b>senha de aplicativo</b> no lugar da senha normal do webmail.</div>
   </div>
 </div>
 <script>
