@@ -447,6 +447,66 @@ public class MainActivity extends Activity {
         status.setText(rows.length()+" posto(s) encontrado(s) próximo(s) da rota.");
     }
 
+    private JSONArray avoidedTolls(){
+        try{return new JSONArray(prefs.getString("cfg_avoided_tolls","[]"));}
+        catch(Exception e){return new JSONArray();}
+    }
+
+    private boolean isAvoidedToll(JSONObject toll){
+        JSONArray arr=avoidedTolls();
+        double lat=toll.optDouble("lat",Double.NaN),lon=toll.optDouble("lon",Double.NaN);
+        for(int i=0;i<arr.length();i++){
+            JSONObject x=arr.optJSONObject(i);if(x==null)continue;
+            double xlat=x.optDouble("lat",Double.NaN),xlon=x.optDouble("lon",Double.NaN);
+            if(Double.isFinite(lat)&&Double.isFinite(lon)&&Double.isFinite(xlat)&&Double.isFinite(xlon)
+                &&Math.abs(lat-xlat)<0.0008&&Math.abs(lon-xlon)<0.0008)return true;
+        }
+        return false;
+    }
+
+    private void setAvoidedToll(JSONObject toll,boolean avoid){
+        JSONArray old=avoidedTolls(),next=new JSONArray();
+        double lat=toll.optDouble("lat",Double.NaN),lon=toll.optDouble("lon",Double.NaN);
+        for(int i=0;i<old.length();i++){
+            JSONObject x=old.optJSONObject(i);if(x==null)continue;
+            double xlat=x.optDouble("lat",Double.NaN),xlon=x.optDouble("lon",Double.NaN);
+            boolean same=Double.isFinite(lat)&&Double.isFinite(lon)&&Double.isFinite(xlat)&&Double.isFinite(xlon)
+                &&Math.abs(lat-xlat)<0.0008&&Math.abs(lon-xlon)<0.0008;
+            if(!same)next.put(x);
+        }
+        if(avoid){
+            JSONObject x=new JSONObject();
+            try{
+                x.put("name",toll.optString("name","Praça de pedágio"));
+                x.put("operator",toll.optString("operator",""));
+                x.put("lat",lat);x.put("lon",lon);
+                next.put(x);
+            }catch(Exception ignored){}
+        }
+        prefs.edit().putString("cfg_avoided_tolls",next.toString()).apply();
+    }
+
+    private void showTollAction(JSONObject toll){
+        boolean avoided=isAvoidedToll(toll);
+        StringBuilder msg=new StringBuilder();
+        String op=toll.optString("operator","");
+        if(!op.isEmpty())msg.append(op).append("\n");
+        double km=toll.optDouble("kmFromStart",Double.NaN);
+        if(Double.isFinite(km))msg.append("Km aproximado na rota: ").append(String.format(Locale.forLanguageTag("pt-BR"),"%.1f",km)).append("\n");
+        if(!toll.isNull("amount"))msg.append("Valor: ").append(brl(toll.optDouble("amount",0))).append("\n");
+        msg.append(avoided?"Este pedágio está marcado para ser evitado.":"O MOVIT tentará encontrar uma rota alternativa que não passe por esta praça.");
+        new AlertDialog.Builder(this)
+            .setTitle(toll.optString("name","Praça de pedágio"))
+            .setMessage(msg.toString())
+            .setPositiveButton(avoided?"Voltar a usar este pedágio":"Evitar este pedágio",(d,w)->{
+                setAvoidedToll(toll,!avoided);
+                status.setText(avoided?"Pedágio liberado novamente. Recalculando rota…":"Pedágio removido da rota. Procurando caminho alternativo…");
+                optimize();
+            })
+            .setNegativeButton("Cancelar",null)
+            .show();
+    }
+
     private void showTolls(boolean openDialog){
         if(lastPlan==null||lastPlan.optJSONObject("geometry")==null){
             status.setText("Primeiro termine de lançar as paradas e toque em Otimizar rota.");
@@ -471,35 +531,37 @@ public class MainActivity extends Activity {
                         else tollButton.setText("🛣 Pedágios • "+j.optInt("count",0)+" praça(s)");
                     }
                     if(!openDialog)return;
-                    StringBuilder msg=new StringBuilder();
-                    msg.append("Veículo: ").append(j.optString("vehicleType",vehicleType()));
-                    msg.append(" • ").append(j.optInt("axles",prefs.getInt("cfg_vehicle_axles",1))).append(" eixo(s)\n\n");
                     if(rows==null||rows.length()==0){
-                        msg.append("Nenhuma praça de pedágio cadastrada foi encontrada neste trajeto.");
-                    }else{
-                        for(int i=0;i<rows.length();i++){
-                            JSONObject p=rows.optJSONObject(i);if(p==null)continue;
-                            msg.append("• ").append(p.optString("name","Praça de pedágio"));
-                            double km=p.optDouble("kmFromStart",Double.NaN);
-                            if(Double.isFinite(km))msg.append(" • km ").append(String.format(Locale.forLanguageTag("pt-BR"),"%.1f",km));
-                            if(!p.isNull("amount")){
-                                msg.append("\n  ").append(brl(p.optDouble("amount",0)));
-                                if(p.optBoolean("estimated",false))msg.append(" (estimado pelos eixos)");
-                            }else{
-                                msg.append("\n  Tarifa não cadastrada na base");
-                            }
-                            String op=p.optString("operator","");if(!op.isEmpty())msg.append("\n  ").append(op);
-                            msg.append("\n\n");
-                        }
+                        new AlertDialog.Builder(this).setTitle("🛣 Pedágios da rota")
+                            .setMessage("Nenhuma praça de pedágio cadastrada foi encontrada neste trajeto.\n\n"+j.optString("warning",""))
+                            .setPositiveButton("OK",null).show();
+                        status.setText("Nenhum pedágio encontrado na rota.");
+                        return;
                     }
-                    if(j.optInt("pricedCount",0)>0){
-                        msg.append("Total");
-                        if(!j.optBoolean("totalComplete",false))msg.append(" conhecido");
-                        msg.append(": ").append(brl(j.optDouble("total",0))).append("\n\n");
+                    final ArrayList<JSONObject> tolls=new ArrayList<>();
+                    final ArrayList<String> labels=new ArrayList<>();
+                    for(int i=0;i<rows.length();i++){
+                        JSONObject p=rows.optJSONObject(i);if(p==null)continue;
+                        tolls.add(p);
+                        String line=p.optString("name","Praça de pedágio");
+                        double km=p.optDouble("kmFromStart",Double.NaN);
+                        if(Double.isFinite(km))line+=" • km "+String.format(Locale.forLanguageTag("pt-BR"),"%.1f",km);
+                        if(!p.isNull("amount"))line+="\n"+brl(p.optDouble("amount",0))+(p.optBoolean("estimated",false)?" • estimado pelos eixos":"");
+                        else line+="\nTarifa não cadastrada";
+                        String op=p.optString("operator","");if(!op.isEmpty())line+=" • "+op;
+                        if(isAvoidedToll(p))line+="\n✓ Marcado para evitar";
+                        labels.add(line);
                     }
-                    msg.append(j.optString("warning",""));
-                    new AlertDialog.Builder(this).setTitle("🛣 Pedágios da rota").setMessage(msg.toString()).setPositiveButton("OK",null).show();
-                    status.setText(j.optInt("count",0)+" praça(s) de pedágio encontrada(s) na rota.");
+                    String title="🛣 Pedágios • "+j.optInt("count",0)+" praça(s)";
+                    if(j.optInt("pricedCount",0)>0)title+=" • "+brl(j.optDouble("total",0));
+                    new AlertDialog.Builder(this)
+                        .setTitle(title)
+                        .setItems(labels.toArray(new String[0]),(d,which)->{
+                            if(which>=0&&which<tolls.size())showTollAction(tolls.get(which));
+                        })
+                        .setNegativeButton("Fechar",null)
+                        .show();
+                    status.setText(j.optInt("count",0)+" praça(s) de pedágio encontrada(s). Toque em uma para evitar.");
                 });
             }catch(Exception e){runOnUiThread(()->{
                 if(tollButton!=null){tollButton.setEnabled(true);tollButton.setText("🛣 Pedágios da rota");}
@@ -1009,6 +1071,7 @@ public class MainActivity extends Activity {
                 body.put("stops",arr);
                 body.put("start",effectiveStart);
                 body.put("returnToStart",returnToStart);
+                body.put("avoidTolls",avoidedTolls());
                 JSONObject j=Api.post("/api/public-router/optimize",body);
                 if(!j.optBoolean("ok",false))throw new Exception(j.optString("error","Falha ao otimizar rota."));
                 lastPlan=j;
@@ -1032,7 +1095,10 @@ public class MainActivity extends Activity {
                     int stopMin=mins[Math.min(mins.length-1,Math.max(0,prefs.getInt("cfg_time",2)))];
                     double totalSec=j.optDouble("durationSeconds",0)+(stops.size()*stopMin*60d);
                     summary.setText(fmtTime(totalSec)+" • "+stops.size()+" pontos • "+fmtKm(j.optDouble("distanceMeters",0))+(prefs.getBoolean("current_return_start",false)?" • retorna ao início":" • só ida"));
-                    status.setText("Rota otimizada com sucesso.");
+                    int avoidRequested=j.optInt("avoidanceRequested",0),avoidHits=j.optInt("avoidanceHits",0);
+                    if(avoidRequested>0&&avoidHits==0)status.setText("Rota reotimizada evitando "+avoidRequested+" pedágio(s) selecionado(s).");
+                    else if(avoidRequested>0)status.setText("Rota reotimizada, mas "+avoidHits+" pedágio(s) selecionado(s) ainda não têm desvio viável encontrado.");
+                    else status.setText("Rota otimizada com sucesso.");
                     renderList();renderMap(j);
                     if(isTruckVehicle())analyzeTruckRestrictions(false);
                     showTolls(false);
