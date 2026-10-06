@@ -57,10 +57,10 @@ jobs:
           set +e
           mkdir -p controle-coletas-aiven-app/downloads
           {
-            echo "=== assembleTesteDebug ==="
-            gradle -p roteirizador-v02-android :app:assembleTesteDebug --no-daemon
+            echo "=== assembleInternalDebug ==="
+            gradle -p roteirizador-v02-android :app:assembleInternalDebug --no-daemon
             A=$?
-            echo "assembleTesteDebug exit=$A"
+            echo "assembleInternalDebug exit=$A"
             echo "=== bundlePlayRelease ==="
             gradle -p roteirizador-v02-android :app:bundlePlayRelease --no-daemon
             B=$?
@@ -84,8 +84,8 @@ jobs:
         if: always()
         run: |
           mkdir -p controle-coletas-aiven-app/downloads
-          if [ -f roteirizador-v02-android/app/build/outputs/apk/teste/debug/app-teste-debug.apk ]; then
-            cp roteirizador-v02-android/app/build/outputs/apk/teste/debug/app-teste-debug.apk controle-coletas-aiven-app/downloads/MOVIT.apk
+          if [ -f roteirizador-v02-android/app/build/outputs/apk/internal/debug/app-internal-debug.apk ]; then
+            cp roteirizador-v02-android/app/build/outputs/apk/internal/debug/app-internal-debug.apk controle-coletas-aiven-app/downloads/MOVIT.apk
           fi
           if [ -n "$MOVIT_KEYSTORE_PATH" ] && [ -f roteirizador-v02-android/app/build/outputs/bundle/playRelease/app-play-release.aab ]; then
             cp roteirizador-v02-android/app/build/outputs/bundle/playRelease/app-play-release.aab controle-coletas-aiven-app/downloads/MOVIT-PLAYSTORE.aab
