@@ -2471,6 +2471,27 @@ function trackingHasPosition(row){
   return Number.isFinite(a)&&Number.isFinite(b)&&a>=-90&&a<=90&&b>=-180&&b<=180
 }
 function trackingDriverKey(driver,plate){return trackingNorm(driver)+'|'+trackingNorm(plate)}
+function trackingMatchOperationRow(row){
+  const rows=Array.isArray(TRACKING_DRIVER_ROWS)?TRACKING_DRIVER_ROWS:[];
+  const p=trackingNorm(row?.vehicle_plate||row?.veiculo||''),d=trackingNorm(row?.driver_name||row?.motorista||'');
+  if(p){
+    const byPlate=rows.find(x=>trackingNorm(x.veiculo||x.vehicle_plate||'')===p);
+    if(byPlate)return byPlate
+  }
+  if(d){
+    const exact=rows.find(x=>trackingNorm(x.motorista||x.driver_name||'')===d);
+    if(exact)return exact;
+    const near=rows.filter(x=>{
+      const xd=trackingNorm(x.motorista||x.driver_name||'');
+      return xd&&(xd.includes(d)||d.includes(xd))
+    });
+    if(near.length===1)return near[0];
+    const first=d.split(' ')[0];
+    const firstHits=rows.filter(x=>trackingNorm(x.motorista||x.driver_name||'').split(' ')[0]===first);
+    if(first&&firstHits.length===1)return firstHits[0]
+  }
+  return null
+}
 function trackingPopulateDriverList(){
   const sel=$('#trackingDriverName'),info=$('#trackingDriverDayInfo');if(!sel)return;
   const source=(Array.isArray(TRACKING_DRIVER_ROWS)&&TRACKING_DRIVER_ROWS.length)
@@ -3456,9 +3477,17 @@ async function refreshTracking(){
       if(plate)todayKeys.add('P|'+plate);
       if(driver)todayKeys.add('D|'+driver);
     }
-    const currentRows=liveRows.filter(r=>{
+    const currentRows=liveRows.map(r=>{
+      const op=trackingMatchOperationRow(r);
+      return op?{
+        ...r,
+        driver_name:driverDisplayName(op.motorista||op.driver_name||r.driver_name||''),
+        vehicle_plate:String(op.veiculo||op.vehicle_plate||r.vehicle_plate||'').trim().toUpperCase(),
+        operation_active:true
+      }:{...r,operation_active:false}
+    }).filter(r=>{
       const plate=trackingNorm(r.vehicle_plate||''),driver=trackingNorm(r.driver_name||'');
-      const inOperation=(plate&&todayKeys.has('P|'+plate))||(driver&&todayKeys.has('D|'+driver));
+      const inOperation=r.operation_active||(plate&&todayKeys.has('P|'+plate))||(driver&&todayKeys.has('D|'+driver));
       const pointToday=r.captured_at&&new Date(r.captured_at).toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'})===today;
       const heartbeatFresh=Number.isFinite(Number(r.device_age_seconds))&&Number(r.device_age_seconds)<=300;
       return inOperation&&(pointToday||heartbeatFresh);
