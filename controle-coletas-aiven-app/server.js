@@ -723,6 +723,21 @@ async function start() {
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
   await pool.query('CREATE INDEX IF NOT EXISTS idx_router_shared_routes_token ON router_shared_routes(share_token)');
+  await pool.query(`CREATE TABLE IF NOT EXISTS movit_romaneio_routes (
+    id BIGSERIAL PRIMARY KEY,
+    romaneio TEXT NOT NULL,
+    driver_name TEXT NOT NULL,
+    event_date DATE NOT NULL,
+    title TEXT NOT NULL,
+    route_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    source TEXT NOT NULL DEFAULT 'MOVIT',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (romaneio,event_date)
+  )`);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_movit_romaneio_routes_driver_date ON movit_romaneio_routes(lower(driver_name),event_date DESC)');
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_movit_romaneio_routes_romaneio ON movit_romaneio_routes(romaneio,event_date DESC)');
+
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS recebido BOOLEAN NOT NULL DEFAULT FALSE');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS data_recebimento DATE');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS previsao_pagamento_fatura DATE');
@@ -1120,6 +1135,51 @@ async function start() {
           const html='<!doctype html><html lang="pt-BR"><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta charset="utf-8"><title>'+esc(row.title)+'</title><style>body{font-family:system-ui;margin:0;background:#f7f9fc;color:#16142f}.wrap{max-width:620px;margin:auto;padding:20px}.card{background:#fff;border-radius:20px;padding:18px;box-shadow:0 4px 20px #0001;margin-bottom:14px}.btn{display:block;text-align:center;background:#2f73e8;color:#fff;text-decoration:none;font-weight:700;padding:16px;border-radius:14px}.stop{padding:12px 0;border-bottom:1px solid #e6ebf2}.muted{color:#667085;font-size:14px}</style></head><body><div class="wrap"><div class="card"><h2>MOVIT</h2><h3>'+esc(row.title)+'</h3><div class="muted">'+stops.length+' paradas</div></div><div class="card"><a class="btn" href="movit://route/'+token+'">Abrir esta rota no MOVIT</a></div><div class="card">'+list+'</div></div></body></html>';
           res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(html)
         }catch(e){res.writeHead(500,{'Content-Type':'text/html; charset=utf-8'});return res.end('<h2>Erro ao abrir rota</h2>')}
+      }
+
+      if (u.pathname === '/api/public-router/export-construlog' && req.method === 'POST') {
+        try{
+          if(!publicRouteAllowed(req))return sendJson(res,429,{ok:false,error:'Muitas consultas. Aguarde um minuto.'});
+          const body=await readJsonBodyLimited(req,1024*1024);
+          const romaneio=String(body.romaneio||'').trim().replace(/\s+/g,' ').slice(0,80);
+          const driver=String(body.driver_name||'').trim().replace(/\s+/g,' ').slice(0,120);
+          const eventDate=String(body.event_date||'').trim().slice(0,10);
+          const title=String(body.title||'').trim().slice(0,180)||[driver,eventDate].filter(Boolean).join(' ');
+          const routeData=body.route_data&&typeof body.route_data==='object'?body.route_data:{};
+          const stops=Array.isArray(routeData.stops)?routeData.stops:[];
+          if(!romaneio)return sendJson(res,400,{ok:false,error:'Informe o número do romaneio.'});
+          if(driver.length<2)return sendJson(res,400,{ok:false,error:'Informe o motorista.'});
+          if(!/^\d{4}-\d{2}-\d{2}$/.test(eventDate))return sendJson(res,400,{ok:false,error:'Data do evento inválida.'});
+          if(!stops.length)return sendJson(res,400,{ok:false,error:'A rota precisa ter ao menos uma parada.'});
+
+          await pool.query(
+            `INSERT INTO movit_romaneio_routes(romaneio,driver_name,event_date,title,route_data,updated_at)
+             VALUES($1,$2,$3::date,$4,$5::jsonb,NOW())
+             ON CONFLICT (romaneio,event_date) DO UPDATE SET
+               driver_name=EXCLUDED.driver_name,title=EXCLUDED.title,route_data=EXCLUDED.route_data,updated_at=NOW()`,
+            [romaneio,driver,eventDate,title,JSON.stringify(routeData)]
+          );
+
+          // Se já existir uma associação de rastreio para este motorista/data,
+          // acrescenta o romaneio sem apagar os demais.
+          const a=await pool.query(
+            `SELECT id,romaneios FROM driver_tracking_assignments
+             WHERE active=TRUE AND work_date=$1::date
+               AND lower(trim(driver_name))=lower(trim($2))
+             ORDER BY updated_at DESC,id DESC LIMIT 1`,
+            [eventDate,driver]
+          );
+          let linked=false;
+          if(a.rowCount){
+            const current=Array.isArray(a.rows[0].romaneios)?a.rows[0].romaneios:[];
+            const next=[...new Set([...current.map(String),romaneio])].slice(0,20);
+            await pool.query("UPDATE driver_tracking_assignments SET romaneios=$1::jsonb,updated_at=NOW() WHERE id=$2",[JSON.stringify(next),a.rows[0].id]);
+            linked=true;
+          }
+
+          return sendJson(res,200,{ok:true,romaneio,driver_name:driver,event_date:eventDate,linked_to_tracking:linked,
+            message:linked?'Rota enviada à CONSTRULOG e associada ao rastreamento.':'Rota enviada à CONSTRULOG. O romaneio ficará disponível para o mapa quando o motorista estiver associado no rastreamento.'});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao enviar rota para a CONSTRULOG.'})}
       }
 
       if (u.pathname === '/api/public-router/geocode' && req.method === 'GET') {
@@ -2336,12 +2396,42 @@ async function start() {
             const prev=freshest.get(key);
             if(!prev||at>prev._freshAt)freshest.set(key,{...row,_freshAt:at});
           }
-          const rows=[...freshest.values()].map(({_freshAt,...row})=>row)
+          let rows=[...freshest.values()].map(({_freshAt,...row})=>row)
             .sort((a,b)=>{
               const ta=Math.max(a.captured_at?new Date(a.captured_at).getTime():0,a.last_seen_at?new Date(a.last_seen_at).getTime():0);
               const tb=Math.max(b.captured_at?new Date(b.captured_at).getTime():0,b.last_seen_at?new Date(b.last_seen_at).getTime():0);
               return tb-ta
             });
+
+          // Enriquece cada motorista do mapa com romaneio e rota planejada recebida do MOVIT.
+          if(rows.length){
+            const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+            for(const row of rows){
+              const ar=await pool.query(
+                `SELECT romaneios FROM driver_tracking_assignments
+                 WHERE active=TRUE AND work_date=$1::date
+                   AND (
+                     lower(trim(driver_name))=lower(trim($2))
+                     OR (COALESCE($3,'')<>'' AND upper(trim(COALESCE(vehicle_plate,'')))=upper(trim($3)))
+                   )
+                 ORDER BY updated_at DESC,id DESC LIMIT 1`,
+                [today,row.driver_name||'',row.vehicle_plate||'']
+              );
+              row.romaneios=ar.rowCount&&Array.isArray(ar.rows[0].romaneios)?ar.rows[0].romaneios:[];
+              const rr=await pool.query(
+                `SELECT romaneio,title,route_data,updated_at
+                 FROM movit_romaneio_routes
+                 WHERE event_date=$1::date
+                   AND (
+                     lower(trim(driver_name))=lower(trim($2))
+                     OR romaneio=ANY($3::text[])
+                   )
+                 ORDER BY updated_at DESC LIMIT 1`,
+                [today,row.driver_name||'',row.romaneios.map(String)]
+              );
+              row.movit_route=rr.rowCount?rr.rows[0]:null;
+            }
+          }
           return sendJson(res,200,{ok:true,light,rows,server_time:new Date().toISOString()})
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao consultar rastreamento.'})}
       }
