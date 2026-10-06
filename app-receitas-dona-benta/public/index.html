@@ -16,7 +16,7 @@
     <div class="search-row">
       <input id="search" placeholder="Buscar receita ou ingrediente...">
       <select id="category"><option value="">Todas as categorias</option></select>
-      <button id="favoritesOnly">♡ Favoritos</button>
+      <button id="favoritesOnly">♡ Favoritos</button><button id="shoppingOpen">🛒 Lista de compras</button>
     </div>
   </div>
 </header>
@@ -28,7 +28,7 @@
   <section id="grid" class="grid"></section>
   <div id="empty" class="empty">Nenhuma receita encontrada.</div>
 </main>
-<dialog id="recipeDialog">
+<dialog id="shoppingDialog"><article><button class="close" id="closeShopping">✕</button><h2>Lista de compras</h2><p>Itens adicionados das receitas.</p><ul id="shoppingList"></ul><div class="recipe-actions"><button class="open-btn" id="copyShopping">Copiar lista</button><button class="fav-btn" id="clearShopping">Limpar</button></div></article></dialog><dialog id="recipeDialog">
   <article>
     <button class="close" id="closeDialog">✕</button>
     <div class="dialog-head">
@@ -50,7 +50,7 @@
     <ul id="ingredients"></ul>
     <h3>Modo de preparo</h3>
     <ol id="steps"></ol>
-    <div class="tip"><strong>Dica:</strong> <span id="dialogTip"></span></div>
+    <div class="tip"><strong>Dica:</strong> <span id="dialogTip"></span></div><div class="recipe-actions"><button class="open-btn" id="addShopping">🛒 Adicionar ingredientes à lista</button></div>
   </article>
 </dialog>
 <script src="app.js"></script>
