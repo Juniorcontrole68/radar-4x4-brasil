@@ -89,7 +89,7 @@ window.sendInviteOnly=async id=>{
     }
 
     if(navigator.share&&(!navigator.canShare||navigator.canShare({files}))){
-      await navigator.share({files,title:'Convite de aniversário',text:`Convite para ${g.name}`});
+      await navigator.share({files,title:'Convite de aniversário'});
       return;
     }
 
