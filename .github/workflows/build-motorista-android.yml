@@ -1,0 +1,53 @@
+name: Build CONSTRULOG Motorista
+
+on:
+  push:
+    branches: [controle-coletas-aiven]
+    paths:
+      - 'motorista-android-v2/**'
+      - '.github/workflows/build-motorista-android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: controle-coletas-aiven
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build APK 1.0.9
+        run: gradle -p motorista-android-v2 :app:assembleDebug --no-daemon
+
+      - name: Publish APKs
+        run: |
+          cp motorista-android-v2/app/build/outputs/apk/debug/app-debug.apk controle-coletas-aiven-app/downloads/CONSTRULOG-Motorista-NORMAL.apk
+          cp motorista-android-v2/app/build/outputs/apk/debug/app-debug.apk controle-coletas-aiven-app/downloads/CONSTRULOG-Motorista-TESTE.apk
+          python3 - <<'PY'
+          import json
+          p='controle-coletas-aiven-app/downloads/update.json'
+          d=json.load(open(p))
+          d['normal'].update(versionCode=10,versionName='1.0.9',notes='Correção do GPS em segundo plano, reinício automático e rastreamento por romaneio.')
+          d['teste'].update(versionCode=10,versionName='1.0.9-teste',notes='Teste 1.0.9 com novo serviço nativo de GPS.')
+          open(p,'w').write(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+          PY
+
+      - name: Commit published APK
+        run: |
+          git config user.name "CONSTRULOG Build"
+          git config user.email "actions@users.noreply.github.com"
+          git add controle-coletas-aiven-app/downloads/CONSTRULOG-Motorista-NORMAL.apk controle-coletas-aiven-app/downloads/CONSTRULOG-Motorista-TESTE.apk controle-coletas-aiven-app/downloads/update.json
+          git commit -m "Publica app motorista 1.0.9 [skip ci]" || exit 0
+          git push origin HEAD:controle-coletas-aiven
