@@ -25,14 +25,17 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Build APK
-        run: gradle -p roteirizador-v02-android :app:assembleDebug --no-daemon
+      - name: Build APK e AAB
+        run: |
+          gradle -p roteirizador-v02-android :app:assembleDebug --no-daemon
+          gradle -p roteirizador-v02-android :app:bundleRelease --no-daemon
       - name: Publish APK
         run: |
           mkdir -p controle-coletas-aiven-app/downloads
           cp roteirizador-v02-android/app/build/outputs/apk/debug/app-debug.apk controle-coletas-aiven-app/downloads/ROTEIRIZADOR-V02.apk
+          cp roteirizador-v02-android/app/build/outputs/bundle/release/app-release.aab controle-coletas-aiven-app/downloads/ROTEIRIZADOR-V02-PLAYSTORE.aab
           git config user.name "CONSTRULOG Build"
           git config user.email "actions@users.noreply.github.com"
-          git add controle-coletas-aiven-app/downloads/ROTEIRIZADOR-V02.apk
-          git commit -m "Publica Roteirizador V02 Android 0.2.0 [skip ci]" || exit 0
+          git add controle-coletas-aiven-app/downloads/ROTEIRIZADOR-V02.apk controle-coletas-aiven-app/downloads/ROTEIRIZADOR-V02-PLAYSTORE.aab
+          git commit -m "Publica Roteirizador V02 Android 0.3.0 [skip ci]" || exit 0
           git push origin HEAD:controle-coletas-aiven
