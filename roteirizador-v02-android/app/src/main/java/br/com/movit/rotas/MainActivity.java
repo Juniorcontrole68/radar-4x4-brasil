@@ -22,7 +22,7 @@ import java.util.*;
 import java.util.concurrent.*;
 
 public class MainActivity extends Activity {
-    private static final int REQ_VOICE=10,REQ_LOC=11,REQ_TEST_LOC=12;
+    private static final int REQ_VOICE=10,REQ_LOC=11,REQ_TEST_LOC=12,REQ_FUEL_LOC=13;
     private final ArrayList<JSONObject> stops=new ArrayList<>();
     private final ExecutorService exec=Executors.newSingleThreadExecutor();
     private LinearLayout list;
@@ -32,7 +32,7 @@ public class MainActivity extends Activity {
     private JSONObject start=null,lastPlan=null;
     private android.content.SharedPreferences prefs;
     private TextView account,routeTitle,startPointLabel;
-    private Button cloudSave,cloudRoutes,optimizeButton,testTrackingButton,truckRestrictionsButton;
+    private Button cloudSave,cloudRoutes,optimizeButton,testTrackingButton,truckRestrictionsButton,fuelButton;
     private Switch returnStartHome;
     private LocationManager testLocationManager;
     private LocationListener testLocationListener;
@@ -169,6 +169,12 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams trp=new LinearLayout.LayoutParams(-1,dp(48));trp.setMargins(0,0,0,dp(8));
         info.addView(truckRestrictionsButton,trp);
         refreshTruckButton();
+
+        fuelButton=pill("⛽ Postos na rota",Color.rgb(239,246,255),Color.rgb(30,64,175));
+        fuelButton.setBackground(strokedBg(Color.rgb(239,246,255),Color.rgb(147,197,253),14));
+        fuelButton.setOnClickListener(v->findFuelStations());
+        LinearLayout.LayoutParams flp=new LinearLayout.LayoutParams(-1,dp(48));flp.setMargins(0,0,0,dp(8));
+        info.addView(fuelButton,flp);
 
         testTrackingButton=pill("🧪 Testar no mapa CONSTRULOG",Color.rgb(255,247,237),Color.rgb(154,52,18));
         testTrackingButton.setBackground(strokedBg(Color.rgb(255,247,237),Color.rgb(253,186,116),14));
@@ -358,6 +364,72 @@ public class MainActivity extends Activity {
 
     private void addSetting(LinearLayout box,String title,View control,int muted,int text){
         TextView t=label(title,14,text,true);t.setPadding(0,dp(14),0,0);box.addView(t);box.addView(control);
+    }
+
+    private void findFuelStations(){
+        if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED){
+            requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION,Manifest.permission.ACCESS_COARSE_LOCATION},REQ_FUEL_LOC);
+            return;
+        }
+        try{
+            LocationManager lm=(LocationManager)getSystemService(LOCATION_SERVICE);
+            Location l=lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+            if(l==null)l=lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+            if(l==null){status.setText("Ainda não há localização disponível. Ative o GPS e tente novamente.");return;}
+            if(fuelButton!=null){fuelButton.setEnabled(false);fuelButton.setText("⛽ Procurando postos…");}
+            status.setText("Procurando postos próximos sem sair da rota…");
+            final double lat=l.getLatitude(),lon=l.getLongitude();
+            exec.execute(()->{
+                try{
+                    JSONObject body=new JSONObject();body.put("lat",lat);body.put("lon",lon);
+                    if(lastPlan!=null&&lastPlan.optJSONObject("geometry")!=null)body.put("geometry",lastPlan.optJSONObject("geometry"));
+                    JSONObject j=Api.post("/api/public-router/fuel-stations",body);
+                    JSONArray rows=j.optJSONArray("rows");
+                    runOnUiThread(()->showFuelStations(rows,j.optString("note","")));
+                }catch(Exception e){runOnUiThread(()->{
+                    if(fuelButton!=null){fuelButton.setEnabled(true);fuelButton.setText("⛽ Postos na rota");}
+                    status.setText("Postos: "+e.getMessage());
+                });}
+            });
+        }catch(Exception e){status.setText("Não foi possível usar sua localização atual.");}
+    }
+
+    private void showFuelStations(JSONArray rows,String note){
+        if(fuelButton!=null){fuelButton.setEnabled(true);fuelButton.setText("⛽ Postos na rota");}
+        if(rows==null||rows.length()==0){
+            new AlertDialog.Builder(this).setTitle("Postos na rota")
+                .setMessage("Nenhum posto foi encontrado próximo do trajeto atual.\n\n"+note)
+                .setPositiveButton("OK",null).show();
+            status.setText("Nenhum posto encontrado próximo da rota.");
+            return;
+        }
+        final ArrayList<JSONObject> list=new ArrayList<>();
+        final ArrayList<String> labels=new ArrayList<>();
+        for(int i=0;i<rows.length();i++){
+            JSONObject r=rows.optJSONObject(i);if(r==null)continue;list.add(r);
+            double km=r.optDouble("distanceMeters",0)/1000d;
+            double off=r.isNull("routeOffsetMeters")?Double.NaN:r.optDouble("routeOffsetMeters",Double.NaN)/1000d;
+            String line=r.optString("name","Posto de combustível")+" • "+String.format(Locale.forLanguageTag("pt-BR"),"%.1f km",km);
+            if(Double.isFinite(off))line+=" • "+String.format(Locale.forLanguageTag("pt-BR"),"%.1f km da rota",off);
+            String hours=r.optString("openingHours","");if(!hours.isEmpty())line+="\nHorário: "+hours;
+            labels.add(line);
+        }
+        new AlertDialog.Builder(this)
+            .setTitle("⛽ Postos na rota")
+            .setMessage(note)
+            .setItems(labels.toArray(new String[0]),(d,which)->{
+                if(which<0||which>=list.size())return;
+                JSONObject r=list.get(which);
+                String[] nav={"Google Maps","Waze"};
+                new AlertDialog.Builder(this).setTitle(r.optString("name","Posto de combustível"))
+                    .setItems(nav,(d2,w)->{
+                        JSONObject s=new JSONObject();
+                        try{s.put("lat",r.optDouble("lat"));s.put("lon",r.optDouble("lon"));}catch(Exception ignored){}
+                        if(w==0)openStopInMaps(s);else openStopInWaze(s);
+                    }).setNegativeButton("Cancelar",null).show();
+            })
+            .setNegativeButton("Fechar",null).show();
+        status.setText(rows.length()+" posto(s) encontrado(s) próximo(s) da rota.");
     }
 
     private String vehicleType(){
@@ -731,6 +803,7 @@ public class MainActivity extends Activity {
         super.onRequestPermissionsResult(requestCode,permissions,grantResults);
         if(requestCode==REQ_LOC&&grantResults.length>0&&grantResults[0]==PackageManager.PERMISSION_GRANTED)useLocation();
         if(requestCode==REQ_TEST_LOC&&grantResults.length>0&&grantResults[0]==PackageManager.PERMISSION_GRANTED)startConstrulogTest();
+        if(requestCode==REQ_FUEL_LOC&&grantResults.length>0&&grantResults[0]==PackageManager.PERMISSION_GRANTED)findFuelStations();
     }
 
     private void addAddress(String raw){
