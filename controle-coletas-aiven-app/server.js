@@ -1545,6 +1545,83 @@ async function start() {
           let axles=Math.max(1,Math.min(9,Number(vehicle.axles)||1));
           if(/carro|moto/i.test(type))axles=1;
 
+          // Fonte principal de pedágios: QualP. Mantemos a base pública abaixo como fallback.
+          const qualpToken=String(process.env.QUALP_API_KEY||'').trim();
+          const qualpLocations=Array.isArray(body.locations)?body.locations.map(x=>String(x||'').trim()).filter(Boolean):[];
+          if(qualpToken&&qualpLocations.length>=2){
+            try{
+              const qualpTruck=/vuc|3\/4|toco|truck|carreta|caminh/i.test(type);
+              const qualpAxis=qualpTruck?Math.max(2,Math.min(9,Number(vehicle.axles)||2)):2;
+              const qr=await fetch('https://api.qualp.com.br/rotas/v4',{
+                method:'POST',
+                headers:{
+                  'Content-Type':'application/json',
+                  'Accept':'application/json',
+                  'Access-Token':qualpToken,
+                  'User-Agent':'MOVIT-Rotas/1.0'
+                },
+                body:JSON.stringify({
+                  locations:qualpLocations,
+                  config:{
+                    route:{type_route:'efficient',calculate_return:false,optimized_route:false},
+                    vehicle:{type:qualpTruck?'truck':'car',axis:qualpAxis}
+                  },
+                  show:{tolls:true,polyline:false}
+                }),
+                signal:AbortSignal.timeout(25000)
+              });
+              const qj=await qr.json().catch(()=>null);
+              if(qr.ok&&qj&&Array.isArray(qj.pedagios)){
+                const rows=qj.pedagios.map((p,idx)=>{
+                  const tariffs=p&&typeof p.tarifa==='object'&&p.tarifa?p.tarifa:{};
+                  let amount=Number(tariffs[String(qualpAxis)]);
+                  if(!Number.isFinite(amount)&&!qualpTruck)amount=Number(tariffs['2']);
+                  if(!Number.isFinite(amount)){
+                    const vals=Object.values(tariffs).map(Number).filter(Number.isFinite);
+                    if(vals.length)amount=vals[0];
+                  }
+                  const lat=Number(p.latitude??p.lat??p.coordenada_latitude);
+                  const lon=Number(p.longitude??p.lng??p.lon??p.coordenada_longitude);
+                  return {
+                    name:String(p.nome||p.name||'Praça de pedágio').slice(0,160),
+                    operator:String(p.concessionaria||p.operator||'').slice(0,140),
+                    road:String(p.rodovia||'').slice(0,80),
+                    municipality:String(p.municipio||'').slice(0,100),
+                    state:String(p.uf||'').slice(0,8),
+                    lat:Number.isFinite(lat)?lat:null,
+                    lon:Number.isFinite(lon)?lon:null,
+                    kmFromStart:Number.isFinite(Number(p.km))?Number(p.km):idx,
+                    routeOffsetMeters:0,
+                    baseAmount:Number.isFinite(amount)?amount:null,
+                    amount:Number.isFinite(amount)?Math.round(amount*100)/100:null,
+                    estimated:false,
+                    source:'QualP'
+                  };
+                });
+                let total=0,priced=0;
+                for(const p of rows){if(Number.isFinite(p.amount)){total+=p.amount;priced++}}
+                return sendJson(res,200,{
+                  ok:true,
+                  provider:'QualP',
+                  vehicleType:type,
+                  axles:qualpAxis,
+                  routeKm:Number(qj?.distancia?.valor)||null,
+                  rows,
+                  count:rows.length,
+                  pricedCount:priced,
+                  total:Math.round(total*100)/100,
+                  totalComplete:priced===rows.length,
+                  warning:priced===rows.length
+                    ?'Pedágios e tarifas calculados pelo QualP conforme o perfil do veículo.'
+                    :'O QualP retornou a rota, mas alguma tarifa não veio disponível para o perfil selecionado.'
+                });
+              }
+              console.warn('MOVIT QUALP TOLLS fallback',{status:qr.status,message:qj?.message||'resposta sem pedágios'});
+            }catch(qe){
+              console.warn('MOVIT QUALP TOLLS fallback',{error:String(qe&&qe.message||qe)});
+            }
+          }
+
           const routePoints=geom.map(x=>({lat:Number(x[1]),lon:Number(x[0])})).filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lon));
           if(routePoints.length<2)return sendJson(res,400,{ok:false,error:'Geometria da rota inválida.'});
 
