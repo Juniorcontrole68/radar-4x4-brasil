@@ -42,11 +42,10 @@ public class MainActivity extends Activity {
         TextView sub2=new TextView(this);sub2.setText("Crie sua rota digitando ou falando os endereços.");sub2.setTextSize(13);sub2.setPadding(0,0,0,12);
 
         LinearLayout accountRow=new LinearLayout(this);accountRow.setOrientation(LinearLayout.HORIZONTAL);
-        account=new TextView(this);account.setText("Modo visitante");account.setTextSize(13);account.setPadding(0,8,8,8);
-        Button login=new Button(this);login.setText("Conta");login.setOnClickListener(v->accountDialog());
-        cloudSave=new Button(this);cloudSave.setText("☁ Salvar");cloudSave.setOnClickListener(v->saveCloud());
-        cloudRoutes=new Button(this);cloudRoutes.setText("Minhas rotas");cloudRoutes.setOnClickListener(v->loadCloudRoutes());
-        accountRow.addView(account,new LinearLayout.LayoutParams(0,-2,1));accountRow.addView(login);accountRow.addView(cloudSave);accountRow.addView(cloudRoutes);
+        account=new TextView(this);account.setText("Modo teste • sem cadastro");account.setTextSize(13);account.setPadding(0,8,8,8);
+        cloudSave=new Button(this);cloudSave.setText("💾 Salvar rota");cloudSave.setOnClickListener(v->saveCloud());
+        cloudRoutes=new Button(this);cloudRoutes.setText("Rotas salvas");cloudRoutes.setOnClickListener(v->loadCloudRoutes());
+        accountRow.addView(account,new LinearLayout.LayoutParams(0,-2,1));accountRow.addView(cloudSave);accountRow.addView(cloudRoutes);
 
         address=new EditText(this);address.setHint("Rua, número, bairro, cidade ou CEP");address.setSingleLine(true);address.setTextSize(16);
 
@@ -186,25 +185,9 @@ public class MainActivity extends Activity {
     private String userPlan(){return prefs.getString("plan","free");}
 
     private void refreshAccount(){
-        String t=token();
-        if(t.isEmpty()){
-            account.setText("Modo visitante • entre para salvar na nuvem");
-            cloudSave.setEnabled(false);cloudRoutes.setEnabled(false);return;
-        }
-        account.setText(userName()+" • plano "+userPlan());
-        cloudSave.setEnabled(true);cloudRoutes.setEnabled(true);
-        exec.execute(()->{
-            try{
-                JSONObject j=Api.getAuth("/api/router-app/me",t),u=j.getJSONObject("user");
-                prefs.edit().putString("name",u.optString("name",userName())).putString("plan",u.optString("plan","free")).apply();
-                int usage=u.optInt("usage",0);JSONObject lim=u.optJSONObject("limits");int max=lim==null?0:lim.optInt("routesPerMonth",0);
-                runOnUiThread(()->account.setText(userName()+" • "+userPlan()+" • "+usage+"/"+max+" rotas/mês"));
-            }catch(Exception e){
-                if(String.valueOf(e.getMessage()).toLowerCase().contains("sessão")){
-                    prefs.edit().clear().apply();runOnUiThread(this::refreshAccount);
-                }
-            }
-        });
+        account.setText("Modo teste • sem cadastro");
+        cloudSave.setEnabled(true);
+        cloudRoutes.setEnabled(true);
     }
 
     private void accountDialog(){
@@ -258,33 +241,38 @@ public class MainActivity extends Activity {
     }
 
     private void saveCloud(){
-        if(token().isEmpty()){accountDialog();return;}
         if(stops.isEmpty()){status.setText("Adicione uma rota antes de salvar.");return;}
         final EditText input=new EditText(this);input.setHint("Nome da rota");input.setText("Rota "+new java.text.SimpleDateFormat("dd/MM/yyyy",Locale.getDefault()).format(new Date()));
-        new AlertDialog.Builder(this).setTitle("Salvar na nuvem").setView(input).setNegativeButton("Cancelar",null).setPositiveButton("Salvar",(d,w)->{
-            final String name=input.getText().toString().trim();
-            exec.execute(()->{
-                try{
-                    JSONObject b=new JSONObject();b.put("name",name.isEmpty()?"Minha rota":name);b.put("route_data",currentRouteData());
-                    Api.postAuth("/api/router-app/routes",b,token());
-                    runOnUiThread(()->{status.setText("Rota salva na nuvem.");refreshAccount();});
-                }catch(Exception e){runOnUiThread(()->status.setText("Salvar: "+e.getMessage()));}
-            });
+        new AlertDialog.Builder(this).setTitle("Salvar rota no aparelho").setView(input).setNegativeButton("Cancelar",null).setPositiveButton("Salvar",(d,w)->{
+            try{
+                String name=input.getText().toString().trim();
+                if(name.isEmpty())name="Minha rota";
+                JSONArray saved=new JSONArray(prefs.getString("local_routes","[]"));
+                JSONObject row=new JSONObject();
+                row.put("id",System.currentTimeMillis());
+                row.put("name",name);
+                row.put("updated_at",new java.text.SimpleDateFormat("dd/MM/yyyy HH:mm",Locale.getDefault()).format(new Date()));
+                row.put("route_data",currentRouteData());
+                JSONArray next=new JSONArray();next.put(row);
+                for(int i=0;i<saved.length()&&i<29;i++)next.put(saved.get(i));
+                prefs.edit().putString("local_routes",next.toString()).apply();
+                status.setText("Rota salva neste aparelho.");
+            }catch(Exception e){status.setText("Salvar: "+e.getMessage());}
         }).show();
     }
 
     private void loadCloudRoutes(){
-        if(token().isEmpty()){accountDialog();return;}
-        status.setText("Carregando suas rotas…");
-        exec.execute(()->{
-            try{
-                JSONObject j=Api.getAuth("/api/router-app/routes",token());JSONArray rows=j.optJSONArray("rows");
-                if(rows==null||rows.length()==0){runOnUiThread(()->status.setText("Você ainda não tem rotas salvas na nuvem."));return;}
-                final String[] names=new String[rows.length()];final JSONObject[] items=new JSONObject[rows.length()];
-                for(int i=0;i<rows.length();i++){items[i]=rows.getJSONObject(i);names[i]=items[i].optString("name","Rota")+" • "+items[i].optString("updated_at","").replace("T"," ").replace("Z","");}
-                runOnUiThread(()->new AlertDialog.Builder(this).setTitle("Minhas rotas").setItems(names,(d,which)->openCloudRoute(items[which])).setNegativeButton("Fechar",null).show());
-            }catch(Exception e){runOnUiThread(()->status.setText("Rotas: "+e.getMessage()));}
-        });
+        try{
+            JSONArray rows=new JSONArray(prefs.getString("local_routes","[]"));
+            if(rows.length()==0){status.setText("Você ainda não tem rotas salvas neste aparelho.");return;}
+            final String[] names=new String[rows.length()];
+            final JSONObject[] items=new JSONObject[rows.length()];
+            for(int i=0;i<rows.length();i++){
+                items[i]=rows.getJSONObject(i);
+                names[i]=items[i].optString("name","Rota")+" • "+items[i].optString("updated_at","");
+            }
+            new AlertDialog.Builder(this).setTitle("Rotas salvas").setItems(names,(d,which)->openCloudRoute(items[which])).setNegativeButton("Fechar",null).show();
+        }catch(Exception e){status.setText("Rotas: "+e.getMessage());}
     }
 
     private void openCloudRoute(JSONObject row){
