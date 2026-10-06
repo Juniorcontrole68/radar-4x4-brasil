@@ -51,6 +51,57 @@ function sendJson(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
+const ROUTE_PUBLIC_LIMIT = new Map();
+function publicRouteAllowed(req){
+  const ip=String(req.headers['x-forwarded-for']||req.socket?.remoteAddress||'').split(',')[0].trim();
+  const now=Date.now(),key=ip||'unknown',row=ROUTE_PUBLIC_LIMIT.get(key)||{at:now,count:0};
+  if(now-row.at>60000){row.at=now;row.count=0}
+  row.count++;ROUTE_PUBLIC_LIMIT.set(key,row);
+  return row.count<=90
+}
+function routePublicHaversine(a,b){
+  const R=6371000,r=Math.PI/180,dlat=(b.lat-a.lat)*r,dlon=(b.lon-a.lon)*r;
+  const x=Math.sin(dlat/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dlon/2)**2;
+  return 2*R*Math.asin(Math.min(1,Math.sqrt(x)))
+}
+async function routePublicGeocode(q){
+  const u=new URL('https://nominatim.openstreetmap.org/search');
+  u.searchParams.set('q',q);u.searchParams.set('format','jsonv2');u.searchParams.set('limit','5');u.searchParams.set('countrycodes','br');u.searchParams.set('addressdetails','1');
+  const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Rotas/0.2 (+https://controle-coletas-jr.onrender.com)','Accept-Language':'pt-BR,pt;q=0.9'},signal:AbortSignal.timeout(15000)});
+  const j=await r.json();
+  if(!r.ok||!Array.isArray(j)||!j.length)throw Object.assign(new Error('Endereço não encontrado.'),{status:404});
+  return j.map(x=>({lat:Number(x.lat),lon:Number(x.lon),label:x.display_name||q,city:x.address?.city||x.address?.town||x.address?.village||'',state:x.address?.state||''})).filter(x=>Number.isFinite(x.lat)&&Number.isFinite(x.lon))
+}
+async function routePublicTable(points){
+  const coords=points.map(p=>p.lon+','+p.lat).join(';');
+  const r=await fetch('https://router.project-osrm.org/table/v1/driving/'+coords+'?annotations=distance',{headers:{'User-Agent':'CONSTRULOG-Rotas/0.2'},signal:AbortSignal.timeout(20000)});
+  const j=await r.json();
+  if(!r.ok||j.code!=='Ok'||!Array.isArray(j.distances))throw new Error('Serviço de roteamento indisponível.');
+  return j.distances.map(row=>row.map(v=>Number.isFinite(v)?v:Infinity))
+}
+function routePublicCycle(order,m){
+  if(!order.length)return 0;let d=m[0][order[0]]||0;
+  for(let i=1;i<order.length;i++)d+=m[order[i-1]][order[i]]||0;
+  d+=m[order[order.length-1]][0]||0;return d
+}
+function routePublicNearest(m,n){
+  const left=new Set(Array.from({length:n},(_,i)=>i+1)),out=[];let cur=0;
+  while(left.size){let best=null,bd=Infinity;for(const x of left){const d=m[cur]?.[x];if(Number.isFinite(d)&&d<bd){bd=d;best=x}}if(best==null)best=[...left][0];out.push(best);left.delete(best);cur=best}
+  return out
+}
+function routePublicTwoOpt(order,m){
+  let best=order.slice(),bestD=routePublicCycle(best,m),changed=true,loops=0;
+  while(changed&&loops++<10){changed=false;for(let i=0;i<best.length-1;i++)for(let k=i+1;k<best.length;k++){const cand=best.slice(0,i).concat(best.slice(i,k+1).reverse(),best.slice(k+1)),d=routePublicCycle(cand,m);if(d+1<bestD){best=cand;bestD=d;changed=true}}}
+  return best
+}
+async function routePublicGeometry(points,order){
+  const seq=[0,...order,0],coords=seq.map(i=>points[i].lon+','+points[i].lat).join(';');
+  const r=await fetch('https://router.project-osrm.org/route/v1/driving/'+coords+'?overview=full&geometries=geojson&steps=false',{headers:{'User-Agent':'CONSTRULOG-Rotas/0.2'},signal:AbortSignal.timeout(20000)});
+  const j=await r.json();
+  if(!r.ok||j.code!=='Ok'||!j.routes?.[0])throw new Error('Não foi possível desenhar a rota.');
+  return j.routes[0]
+}
+
 async function readJsonBody(req) {
   let raw = '';
   for await (const chunk of req) raw += chunk;
@@ -650,6 +701,33 @@ async function start() {
   http.createServer(async (req, res) => {
     try {
       const u = new URL(req.url, 'http://localhost');
+
+      if (u.pathname === '/api/public-router/geocode' && req.method === 'GET') {
+        try{
+          if(!publicRouteAllowed(req))return sendJson(res,429,{ok:false,error:'Muitas consultas. Aguarde um minuto.'});
+          const q=String(u.searchParams.get('q')||'').trim().slice(0,250);
+          if(q.length<5)return sendJson(res,400,{ok:false,error:'Informe um endereço mais completo.'});
+          const rows=await routePublicGeocode(q);
+          return sendJson(res,200,{ok:true,rows});
+        }catch(e){return sendJson(res,e.status||502,{ok:false,error:e.message||'Falha ao localizar endereço.'})}
+      }
+
+      if (u.pathname === '/api/public-router/optimize' && req.method === 'POST') {
+        try{
+          if(!publicRouteAllowed(req))return sendJson(res,429,{ok:false,error:'Muitas consultas. Aguarde um minuto.'});
+          const body=await readJsonBodyLimited(req,512*1024);
+          const raw=Array.isArray(body.stops)?body.stops.slice(0,30):[];
+          if(raw.length<2)return sendJson(res,400,{ok:false,error:'Informe pelo menos duas paradas.'});
+          let start=body.start&&typeof body.start==='object'?body.start:null;
+          if(!start)start={lat:raw[0].lat,lon:raw[0].lon,label:'Início'};
+          const points=[start,...raw].map((p,i)=>({lat:Number(p.lat),lon:Number(p.lon),label:String(p.label||p.address||('Parada '+i)).slice(0,220)}));
+          if(points.some(p=>!Number.isFinite(p.lat)||!Number.isFinite(p.lon)||p.lat<-90||p.lat>90||p.lon<-180||p.lon>180))return sendJson(res,400,{ok:false,error:'Há coordenadas inválidas na rota.'});
+          const m=await routePublicTable(points),n=raw.length;
+          const order=routePublicTwoOpt(routePublicNearest(m,n),m);
+          const route=await routePublicGeometry(points,order);
+          return sendJson(res,200,{ok:true,order,distanceMeters:route.distance,durationSeconds:route.duration,geometry:route.geometry,points});
+        }catch(e){return sendJson(res,e.status||502,{ok:false,error:e.message||'Falha ao otimizar rota.'})}
+      }
 
       if (u.pathname === '/api/painel/frota-state' && req.method === 'GET') {
         try {
