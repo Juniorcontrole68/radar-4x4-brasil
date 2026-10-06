@@ -812,9 +812,21 @@ public class MainActivity extends Activity {
     private void addAddress(String raw){
         raw=raw.trim();if(raw.length()<5){status.setText("Informe um endereço mais completo.");return;}
         final String q=raw;status.setText("Localizando endereço…");
+        double biasLat=Double.NaN,biasLon=Double.NaN;
+        try{
+            if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED){
+                LocationManager lm=(LocationManager)getSystemService(LOCATION_SERVICE);
+                Location l=lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+                if(l==null)l=lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                if(l!=null){biasLat=l.getLatitude();biasLon=l.getLongitude();}
+            }
+        }catch(Exception ignored){}
+        final double qLat=biasLat,qLon=biasLon;
         exec.execute(()->{
             try{
-                JSONObject j=Api.get("/api/public-router/geocode?q="+URLEncoder.encode(q,"UTF-8"));
+                String path="/api/public-router/geocode?q="+URLEncoder.encode(q,"UTF-8");
+                if(Double.isFinite(qLat)&&Double.isFinite(qLon))path+="&lat="+qLat+"&lon="+qLon;
+                JSONObject j=Api.get(path);
                 JSONArray rows=j.optJSONArray("rows");if(rows==null||rows.length()==0)throw new Exception("Endereço não encontrado.");
                 JSONObject p=rows.getJSONObject(0);JSONObject s=new JSONObject();
                 String confirmed=p.optString("label",q);
