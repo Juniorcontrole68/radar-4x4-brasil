@@ -1341,6 +1341,44 @@ async function start() {
           if(driver.length<2)return sendJson(res,400,{ok:false,error:'Informe o nome do motorista.'});
           if(plate&&plate.length<7)return sendJson(res,400,{ok:false,error:'Informe uma placa válida ou deixe em branco.'});
           const requestToken=crypto.randomBytes(32).toString('hex');
+
+          // Auto-recuperação: se este mesmo motorista/placa/aparelho já foi
+          // aprovado antes, não exige uma nova aprovação manual. Gera uma nova
+          // credencial válida e deixa o app recuperar o rastreio sozinho.
+          const previouslyApproved=await pool.query(
+            `SELECT 1
+             FROM driver_tracking_requests
+             WHERE status='approved'
+               AND lower(trim(driver_name))=lower(trim($1))
+               AND upper(trim(COALESCE(vehicle_plate,'')))=upper(trim(COALESCE($2,'')))
+               AND lower(trim(COALESCE(device_name,'')))=lower(trim(COALESCE($3,'')))
+             ORDER BY decided_at DESC NULLS LAST,created_at DESC
+             LIMIT 1`,
+            [driver,plate,deviceName]
+          );
+          if(previouslyApproved.rowCount){
+            const token=crypto.randomBytes(32).toString('hex');
+            const client=await pool.connect();
+            try{
+              await client.query('BEGIN');
+              const dev=await client.query(
+                "INSERT INTO driver_tracking_devices(token_hash,driver_name,vehicle_plate,device_name,last_seen_at) VALUES($1,$2,$3,$4,NOW()) RETURNING id::text AS id",
+                [dashboardTokenHash(token),driver,plate,deviceName]
+              );
+              await client.query(
+                "INSERT INTO driver_tracking_sessions(device_id,status) VALUES($1,'active')",
+                [dev.rows[0].id]
+              );
+              await client.query(
+                "INSERT INTO driver_tracking_requests(request_token_hash,driver_name,vehicle_plate,device_name,status,issued_token,approved_device_id,decided_at) VALUES($1,$2,$3,$4,'approved',$5,$6,NOW())",
+                [dashboardTokenHash(requestToken),driver,plate,deviceName,token,dev.rows[0].id]
+              );
+              await client.query('COMMIT');
+              console.log('TRACKING AUTO-RECUPERACAO aprovada: '+JSON.stringify({driver,plate,deviceName,deviceId:dev.rows[0].id}));
+              return sendJson(res,201,{ok:true,status:'approved',request_token:requestToken,token,driver_name:driver,vehicle_plate:plate,message:'Aparelho reconhecido. Rastreamento liberado automaticamente.'});
+            }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+          }
+
           await pool.query(
             "INSERT INTO driver_tracking_requests(request_token_hash,driver_name,vehicle_plate,device_name,status) VALUES($1,$2,$3,$4,'pending')",
             [dashboardTokenHash(requestToken),driver,plate,deviceName]
@@ -1383,14 +1421,9 @@ async function start() {
           const client=await pool.connect();
           try{
             await client.query('BEGIN');
-            await client.query(
-              `UPDATE driver_tracking_devices
-               SET active=FALSE
-               WHERE active=TRUE
-                 AND lower(trim(driver_name))=lower(trim($1))
-                 AND upper(trim(COALESCE(vehicle_plate,'')))=upper(trim(COALESCE($2,'')))`,
-              [row.driver_name,row.vehicle_plate||'']
-            );
+            // Não desativa imediatamente aparelhos anteriores da mesma placa.
+            // Isso evita que uma nova solicitação/reaprovação invalide o token
+            // que o app ainda está usando enquanto recebe a nova credencial.
             const dev=await client.query(
               "INSERT INTO driver_tracking_devices(token_hash,driver_name,vehicle_plate,device_name,last_seen_at) VALUES($1,$2,$3,$4,NOW()) RETURNING id::text AS id",
               [dashboardTokenHash(token),row.driver_name,row.vehicle_plate||'',deviceName]
