@@ -10,7 +10,7 @@ async function load(){
  $('#message').textContent=friendlyMessage(e.message||'');
  if(e.hasInviteImage){$('#inviteImage').src='/api/invite-image?t='+Date.now();$('#inviteImageWrap').classList.remove('hidden')}
  if(e.canvaUrl){$('#canvaLink').href=e.canvaUrl;$('#canvaWrap').classList.remove('hidden')}
- $('#qty').max=g.invited;$('#qty').value=Math.min(g.confirmed||g.invited||1,g.invited);
+ $('#qty').removeAttribute('max');$('#qty').value=g.confirmed||g.invited||1;
  if(g.status==='confirmado')showThanks(`Presença já confirmada para ${g.confirmed} pessoa(s). Obrigado! 🎉`);
  if(g.status==='nao-vai')showThanks('Resposta registrada. Obrigado por nos avisar!');
 }
@@ -18,5 +18,5 @@ function showThanks(t){$('#responseBox').classList.add('hidden');$('#thanks').cl
 $('#yes').onclick=()=>{$('#qtyBox').classList.remove('hidden')};
 $('#maybe').onclick=async()=>{await api('/api/invite/'+id+'/respond',{method:'POST',body:JSON.stringify({response:'maybe'})});showThanks('Sem problema! Quando decidir, abra este convite novamente. 😊')};
 $('#no').onclick=async()=>{await api('/api/invite/'+id+'/respond',{method:'POST',body:JSON.stringify({response:'no'})});showThanks('Resposta registrada. Obrigado por nos avisar!')};
-$('#confirm').onclick=async()=>{const q=Math.max(1,Math.min(Number($('#qty').value||1),INV.guest.invited));await api('/api/invite/'+id+'/respond',{method:'POST',body:JSON.stringify({response:'yes',confirmed:q})});showThanks(`Presença confirmada para ${q} pessoa(s). Esperamos vocês! 🎉`)};
+$('#confirm').onclick=async()=>{const q=Math.max(1,Number($('#qty').value||1));await api('/api/invite/'+id+'/respond',{method:'POST',body:JSON.stringify({response:'yes',confirmed:q})});showThanks(`Presença confirmada para ${q} pessoa(s). Esperamos vocês! 🎉`)};
 load().catch(e=>{document.body.innerHTML=`<main class="inviteCard"><h1>Convite não encontrado</h1><p>${e.message}</p></main>`});
