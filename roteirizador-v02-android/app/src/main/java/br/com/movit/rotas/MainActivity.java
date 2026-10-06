@@ -32,6 +32,7 @@ public class MainActivity extends Activity {
     private android.content.SharedPreferences prefs;
     private TextView account,routeTitle;
     private Button cloudSave,cloudRoutes,optimizeButton;
+    private Switch returnStartHome;
 
     @Override public void onCreate(Bundle b){
         super.onCreate(b);prefs=getSharedPreferences("rv2_account",MODE_PRIVATE);buildUi();renderList();renderMap(null);refreshAccount();handleSharedRouteIntent(getIntent());
@@ -128,6 +129,21 @@ public class MainActivity extends Activity {
         LinearLayout info=card(14);
         summary=label("0 min • 0 paradas • 0 km",14,MUTED,true);info.addView(summary);
         routeTitle=label(prefs.getString("current_route_name","Nova rota"),22,TEXT,true);routeTitle.setPadding(0,dp(7),0,dp(8));info.addView(routeTitle);
+
+        returnStartHome=new Switch(this);
+        returnStartHome.setText("Terminar no mesmo local de início");
+        returnStartHome.setTextColor(TEXT);
+        returnStartHome.setTextSize(14);
+        returnStartHome.setChecked(prefs.getBoolean("current_return_start",false));
+        returnStartHome.setPadding(0,0,0,dp(8));
+        returnStartHome.setOnCheckedChangeListener((buttonView,isChecked)->{
+            prefs.edit().putBoolean("current_return_start",isChecked).apply();
+            lastPlan=null;
+            summary.setText(stops.size()+" parada"+(stops.size()==1?"":"s")+(isChecked?" • ida e volta":" • só ida"));
+            status.setText(isChecked?"A rota terminará no mesmo local de início.":"A rota terminará na última parada.");
+            renderMap(null);
+        });
+        info.addView(returnStartHome);
 
         LinearLayout shareRow=new LinearLayout(this);shareRow.setOrientation(LinearLayout.HORIZONTAL);
         Button share=pill("↗  Compartilhar rota",Color.WHITE,BLUE);share.setBackground(strokedBg(Color.WHITE,LINE,14));share.setOnClickListener(v->shareRoute());
@@ -238,6 +254,7 @@ public class MainActivity extends Activity {
                 .putBoolean("current_return_start",returnStart.isChecked())
                 .apply();
             routeTitle.setText(routeName);
+            if(returnStartHome!=null)returnStartHome.setChecked(returnStart.isChecked());
             if(!reuse.isChecked()){stops.clear();start=null;lastPlan=null;renderList();renderMap(null);}
             status.setText(returnStart.isChecked()?"Rota criada com retorno ao ponto de saída.":"Rota criada sem retorno ao ponto de saída.");
             d.dismiss();
@@ -273,6 +290,7 @@ public class MainActivity extends Activity {
 
         new AlertDialog.Builder(this).setView(box).setNegativeButton("Cancelar",null).setPositiveButton("Salvar",(d,w)->{
             prefs.edit().putInt("cfg_nav",nav.getSelectedItemPosition()).putInt("cfg_side",side.getSelectedItemPosition()).putInt("cfg_time",tm.getSelectedItemPosition()).putInt("cfg_vehicle",veh.getSelectedItemPosition()).putInt("cfg_ids",idsSp.getSelectedItemPosition()).putBoolean("cfg_toll",toll.isChecked()).putBoolean("current_return_start",returnStart.isChecked()).putBoolean("cfg_bubble",bubble.isChecked()).apply();
+            if(returnStartHome!=null)returnStartHome.setChecked(returnStart.isChecked());
             status.setText("Configurações salvas.");
         }).show();
     }
@@ -554,7 +572,7 @@ public class MainActivity extends Activity {
         String html="<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"+
         "<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'><style>html,body,#m{height:100%;margin:0}</style></head><body><div id='m'></div>"+
         "<script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script><script>var m=L.map('m').setView([-22.8,-47.2],9);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(m);"+
-        "var pts="+points+";pts.forEach((p,i)=>L.marker(p).addTo(m).bindTooltip(String(i+1)));var g="+geometry+";if(g&&g.coordinates){var ll=g.coordinates.map(x=>[x[1],x[0]]);L.polyline(ll,{weight:6,color:'#5fca43',opacity:.92,lineCap:'round',lineJoin:'round'}).addTo(m);if(ll.length)m.fitBounds(ll,{padding:[20,20]});}else if(pts.length)m.fitBounds(pts,{padding:[30,30]});</script></body></html>";
+        "var pts="+points+";pts.forEach((p,i)=>{var n=i+1;var ic=L.divIcon({className:'',html:'<div style=\"width:34px;height:34px;border-radius:50%;background:#2f73e8;color:white;border:3px solid white;box-shadow:0 2px 7px #0005;display:flex;align-items:center;justify-content:center;font:bold 15px sans-serif\">'+n+'</div>',iconSize:[34,34],iconAnchor:[17,17]});L.marker(p,{icon:ic}).addTo(m).bindTooltip('Parada '+n,{direction:'top'});});var g="+geometry+";if(g&&g.coordinates){var ll=g.coordinates.map(x=>[x[1],x[0]]);L.polyline(ll,{weight:6,color:'#5fca43',opacity:.92,lineCap:'round',lineJoin:'round'}).addTo(m);if(ll.length)m.fitBounds(ll,{padding:[28,28]});}else if(pts.length)m.fitBounds(pts,{padding:[36,36]});</script></body></html>";
         map.loadDataWithBaseURL("https://app.local/",html,"text/html","UTF-8",null);
     }
 
