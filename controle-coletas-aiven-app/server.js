@@ -1240,6 +1240,41 @@ async function start() {
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao iniciar teste MOVIT/CONSTRULOG.'})}
       }
 
+      if (req.method === 'GET' && u.pathname === '/movit/privacidade') {
+        const html=`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Política de Privacidade - MOVIT</title><style>body{font-family:system-ui,-apple-system,sans-serif;max-width:820px;margin:0 auto;padding:28px;color:#18142f;line-height:1.55}h1,h2{color:#18142f}a{color:#2f73e8}.box{background:#f7f9fc;border:1px solid #e5e7eb;border-radius:14px;padding:16px}</style></head><body>
+        <h1>Política de Privacidade do MOVIT</h1>
+        <p>Última atualização: 6 de outubro de 2026.</p>
+        <p>O MOVIT é um aplicativo de roteirização para criação, otimização e compartilhamento de rotas de entrega.</p>
+        <h2>Dados tratados</h2>
+        <p>O aplicativo pode tratar endereços informados pelo usuário, coordenadas de latitude e longitude, nome do motorista, número de romaneio, data da rota e dados técnicos necessários para calcular e compartilhar rotas.</p>
+        <h2>Localização</h2>
+        <p>A localização do aparelho é acessada somente quando o usuário solicita usar a localização atual como ponto de partida ou utiliza uma função de rastreamento/teste disponibilizada fora da versão pública da Play Store. A versão pública da Play Store não executa rastreamento contínuo em segundo plano.</p>
+        <h2>Finalidades</h2>
+        <p>Os dados são usados para localizar endereços, otimizar a sequência das paradas, desenhar rotas, abrir destinos em aplicativos de navegação, compartilhar rotas e, quando aplicável, integrar a operação ao sistema CONSTRULOG.</p>
+        <h2>Compartilhamento</h2>
+        <p>Para geocodificação e cálculo de rotas, dados de endereço e coordenadas podem ser enviados a serviços de mapas e roteamento. Quando o usuário cria um link de compartilhamento, os dados necessários da rota ficam armazenados em nossos servidores para que o destinatário possa abrir a mesma rota.</p>
+        <h2>Retenção e exclusão</h2>
+        <p>Rotas salvas localmente permanecem no aparelho até serem removidas pelo usuário. Links e rotas enviados ao servidor podem ser mantidos enquanto forem necessários para a funcionalidade e operação do serviço. Solicitações de exclusão podem ser feitas pelo canal de suporte informado na página do aplicativo na Google Play.</p>
+        <h2>Segurança</h2>
+        <p>Adotamos medidas técnicas para proteger os dados em trânsito e restringir o acesso aos recursos do serviço.</p>
+        <h2>Contato</h2>
+        <div class="box">Suporte MOVIT: junior.controle68@gmail.com</div>
+        </body></html>`;
+        res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'public, max-age=300'});
+        return res.end(html);
+      }
+
+      if (req.method === 'GET' && u.pathname === '/movit/termos') {
+        const html=`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Termos de Uso - MOVIT</title><style>body{font-family:system-ui,-apple-system,sans-serif;max-width:820px;margin:0 auto;padding:28px;color:#18142f;line-height:1.55}h1,h2{color:#18142f}</style></head><body>
+        <h1>Termos de Uso do MOVIT</h1><p>Última atualização: 6 de outubro de 2026.</p>
+        <p>O MOVIT auxilia no planejamento e navegação de rotas. O usuário é responsável por conferir endereços, condições da via, restrições de trânsito, segurança e regras aplicáveis ao veículo antes de iniciar o deslocamento.</p>
+        <p>Resultados de geocodificação, distância e tempo são estimativas e podem variar conforme os dados cartográficos, trânsito, obras e condições reais da via.</p>
+        <p>Ao compartilhar uma rota, o usuário declara possuir autorização para usar os dados operacionais envolvidos e reconhece que o destinatário do link poderá visualizar os pontos compartilhados.</p>
+        <p>Contato: junior.controle68@gmail.com</p></body></html>`;
+        res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'public, max-age=300'});
+        return res.end(html);
+      }
+
       if (u.pathname === '/api/public-router/geocode' && req.method === 'GET') {
         try{
           if(!publicRouteAllowed(req))return sendJson(res,429,{ok:false,error:'Muitas consultas. Aguarde um minuto.'});
