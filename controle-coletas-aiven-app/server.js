@@ -1254,10 +1254,27 @@ async function start() {
         try{
           if(!publicRouteAllowed(req))return sendJson(res,429,{ok:false,error:'Muitas consultas. Aguarde um minuto.'});
           const body=await readJsonBodyLimited(req,512*1024);
-          const raw=Array.isArray(body.stops)?body.stops.slice(0,30):[];
-          if(raw.length<2)return sendJson(res,400,{ok:false,error:'Informe pelo menos duas paradas.'});
+          let raw=Array.isArray(body.stops)?body.stops.slice(0,30):[];
+          const returnToStart=body.returnToStart===true;
           let start=body.start&&typeof body.start==='object'?body.start:null;
-          if(!start)start={lat:raw[0].lat,lon:raw[0].lon,label:'Início'};
+
+          // Quando o usuário pede para terminar no mesmo local de início e não
+          // definiu um ponto inicial por GPS, a PRIMEIRA parada digitada passa a
+          // ser o ponto fixo de saída/retorno. Ela não entra novamente na lista
+          // de paradas a otimizar.
+          if(returnToStart&&!start&&raw.length>=2){
+            start={...raw[0],label:raw[0].resolved||raw[0].label||'Início'};
+            raw=raw.slice(1);
+          }else if(!start&&raw.length){
+            start={lat:raw[0].lat,lon:raw[0].lon,label:raw[0].resolved||raw[0].label||'Início'};
+          }
+
+          if(returnToStart){
+            if(!start||raw.length<1)return sendJson(res,400,{ok:false,error:'Informe o ponto inicial e pelo menos uma parada.'});
+          }else{
+            if(raw.length<2)return sendJson(res,400,{ok:false,error:'Informe pelo menos duas paradas.'});
+          }
+
           const points=[start,...raw].map((p,i)=>({
             ...p,
             lat:Number(p.lat),
@@ -1267,9 +1284,8 @@ async function start() {
             label:String(p.resolved||p.label||p.address||('Parada '+i)).slice(0,220)
           }));
           if(points.some(p=>!Number.isFinite(p.lat)||!Number.isFinite(p.lon)||p.lat<-90||p.lat>90||p.lon<-180||p.lon>180))return sendJson(res,400,{ok:false,error:'Há coordenadas inválidas na rota.'});
-          console.log('MOVIT OPTIMIZE',JSON.stringify({stops:raw.length,returnToStart:body.returnToStart===true,hasStart:!!body.start}));
+          console.log('MOVIT OPTIMIZE',JSON.stringify({stops:raw.length,returnToStart,hasExplicitStart:!!body.start,startLabel:start?.label||''}));
           const m=await routePublicTable(points),n=raw.length;
-          const returnToStart=body.returnToStart===true;
           let order=routePublicNearest(m,n);
           order=returnToStart?routePublicTwoOpt(order,m):routePublicTwoOptOpen(order,m);
           const route=await routePublicGeometry(points,order,returnToStart);
