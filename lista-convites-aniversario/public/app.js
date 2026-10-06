@@ -51,37 +51,10 @@ window.editGuest=id=>openGuest(DATA.guests.find(x=>x.id===id));
 $('#saveGuest').onclick=async()=>{const invited=Number($('#invited').value);const minimum=$('#invitedChoice')?.value==='more'?6:1;if(!Number.isInteger(invited)||invited<minimum){$('#invited').setCustomValidity('Informe um número inteiro de '+minimum+' pessoas ou mais.');$('#invited').reportValidity();$('#invited').setCustomValidity('');return;}const id=$('#guestId').value;const body={name:$('#name').value,phone:$('#phone').value,invited,note:$('#note').value};if($('#confirmed').value!==''){body.confirmed=Number($('#confirmed').value);body.status=body.confirmed>0?'confirmado':'nao-vai'};if(id)await api('/api/guests/'+id,{method:'PUT',body:JSON.stringify(body)});else await api('/api/guests',{method:'POST',body:JSON.stringify(body)});$('#guestDlg').close();await load()};
 window.removeGuest=async id=>{if(confirm('Excluir este convidado?')){await api('/api/guests/'+id,{method:'DELETE'});await load()}};
 
-async function getInviteFile(){
-  const r=await fetch('/api/invite-image?t='+Date.now());
-  if(!r.ok)throw new Error('Não foi possível carregar a foto do convite.');
-  const blob=await r.blob();
-  const ext=blob.type.includes('png')?'png':blob.type.includes('webp')?'webp':'jpg';
-  return new File([blob],`convite-junior-carol.${ext}`,{type:blob.type||'image/jpeg'});
-}
-async function shareInviteImage(){
-  const file=await getInviteFile();
-  if(navigator.share&&(!navigator.canShare||navigator.canShare({files:[file]}))){
-    await navigator.share({files:[file],title:'Convite de aniversário',text:'Convite de aniversário de Junior e Carol'});
-    return true;
-  }
-  const url=URL.createObjectURL(file);
-  const a=document.createElement('a');
-  a.href=url;a.download=file.name;document.body.appendChild(a);a.click();a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),1500);
-  alert('A foto do convite foi salva. Anexe essa foto na conversa do WhatsApp que será aberta em seguida.');
-  return true;
-}
 window.sendWa=async id=>{
   const g=DATA.guests.find(x=>x.id===id);if(!g?.phone)return;
-  const e=DATA.event;
-  if(e.hasInviteImage){
-    try{await shareInviteImage()}catch(err){
-      if(err?.name==='AbortError')return;
-      alert(err?.message||'Não foi possível compartilhar a foto do convite.');
-      return;
-    }
-  }
   const link=`${location.origin}/confirmar.html?id=${encodeURIComponent(g.id)}`;
+  const e=DATA.event;
   const when=[e.date?fmtDate(e.date):'',e.time?`às ${e.time}`:''].filter(Boolean).join(' ');
   const cleanMessage=String(e.message||'').replace(/ter você comigo/gi,'ter você conosco').replace(/ter voce comigo/gi,'ter voce conosco');
   const text=`Olá, ${g.name}! 🎉\n\nVenha comemorar com a gente! Junior e Carol${when?` — ${when}`:''}.${e.venue?`\n📍 ${e.venue}`:''}${e.address?` - ${e.address}`:''}\n\n${cleanMessage}\n\nConfirme sua presença aqui:\n${link}`;
