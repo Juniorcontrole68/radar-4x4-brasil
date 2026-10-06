@@ -396,7 +396,12 @@ public class MainActivity extends Activity {
                 JSONObject j=Api.get("/api/public-router/geocode?q="+URLEncoder.encode(q,"UTF-8"));
                 JSONArray rows=j.optJSONArray("rows");if(rows==null||rows.length()==0)throw new Exception("Endereço não encontrado.");
                 JSONObject p=rows.getJSONObject(0);JSONObject s=new JSONObject();
-                s.put("lat",p.getDouble("lat"));s.put("lon",p.getDouble("lon"));s.put("label",q);s.put("resolved",p.optString("label",q));
+                String confirmed=p.optString("label",q);
+                s.put("lat",p.getDouble("lat"));
+                s.put("lon",p.getDouble("lon"));
+                s.put("original",q);
+                s.put("label",confirmed);
+                s.put("resolved",confirmed);
                 stops.add(s);
                 runOnUiThread(()->{address.setText("");status.setText("Parada adicionada.");renderList();renderMap(null);});
             }catch(Exception e){runOnUiThread(()->status.setText("Erro: "+e.getMessage()));}
@@ -452,7 +457,7 @@ public class MainActivity extends Activity {
     private String fmtTime(double sec){long min=Math.round(sec/60d);return min>=60?(min/60+"h "+min%60+"min"):(min+" min");}
 
     private void renderList(){
-        final int NAVY=Color.rgb(22,20,47),GREEN=Color.rgb(99,202,67),TEXT=Color.rgb(30,41,59),MUTED=Color.rgb(100,116,139),LINE=Color.rgb(226,232,240);
+        final int NAVY=Color.rgb(22,20,47),GREEN=Color.rgb(99,202,67),BLUE=Color.rgb(47,115,232),TEXT=Color.rgb(30,41,59),MUTED=Color.rgb(100,116,139),LINE=Color.rgb(226,232,240);
         list.removeAllViews();
         if(lastPlan==null)summary.setText(stops.size()+" parada"+(stops.size()==1?"":"s"));
         if(stops.isEmpty()){
@@ -460,40 +465,75 @@ public class MainActivity extends Activity {
         }
         for(int i=0;i<stops.size();i++){
             final int idx=i;JSONObject s=stops.get(i);
-            LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(10),dp(10),dp(8),dp(10));row.setBackground(strokedBg(Color.rgb(250,252,254),LINE,14));
+            LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.VERTICAL);row.setPadding(dp(10),dp(10),dp(8),dp(10));row.setBackground(strokedBg(Color.rgb(250,252,254),LINE,14));
             if(i>0){LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(-1,-2);rp.setMargins(0,dp(8),0,0);row.setLayoutParams(rp);}
 
-            TextView num=label(String.valueOf(i+1),14,NAVY,true);num.setGravity(Gravity.CENTER);num.setBackground(bg(GREEN,50));row.addView(num,new LinearLayout.LayoutParams(dp(36),dp(36)));
+            LinearLayout top=new LinearLayout(this);top.setOrientation(LinearLayout.HORIZONTAL);top.setGravity(Gravity.CENTER_VERTICAL);
+            TextView num=label(String.valueOf(i+1),14,NAVY,true);num.setGravity(Gravity.CENTER);num.setBackground(bg(GREEN,50));top.addView(num,new LinearLayout.LayoutParams(dp(36),dp(36)));
 
             LinearLayout info=new LinearLayout(this);info.setOrientation(LinearLayout.VERTICAL);info.setPadding(dp(10),0,dp(6),0);
-            TextView t=label(s.optString("label","Parada"),14,TEXT,true);t.setMaxLines(2);
-            String resolved=s.optString("resolved","");
-            TextView r=label(resolved.isEmpty()?"Endereço confirmado":resolved,11,MUTED,false);r.setMaxLines(2);r.setPadding(0,dp(2),0,0);
-            info.addView(t);info.addView(r);row.addView(info,new LinearLayout.LayoutParams(0,-2,1));
+            String confirmed=s.optString("resolved",s.optString("label","Parada"));
+            String original=s.optString("original","");
+            TextView t=label(confirmed,14,TEXT,true);t.setMaxLines(3);
+            info.addView(t);
+            if(!original.isEmpty()&&!original.equalsIgnoreCase(confirmed)){
+                TextView r=label("Digitado: "+original,11,MUTED,false);r.setMaxLines(2);r.setPadding(0,dp(2),0,0);info.addView(r);
+            }
+            top.addView(info,new LinearLayout.LayoutParams(0,-2,1));
 
-            Button up=pill("↑",Color.rgb(238,242,247),NAVY);up.setTextSize(17);up.setPadding(0,0,0,0);up.setEnabled(idx>0);up.setAlpha(idx>0?1f:.35f);
+            Button up=pill("↑",Color.rgb(238,242,247),NAVY);up.setTextSize(17);up.setEnabled(idx>0);up.setAlpha(idx>0?1f:.35f);
             up.setOnClickListener(v->{if(idx>0){Collections.swap(stops,idx,idx-1);lastPlan=null;renderList();renderMap(null);}});
-            Button del=pill("×",Color.rgb(255,241,242),Color.rgb(190,24,93));del.setTextSize(20);del.setPadding(0,0,0,0);
+            Button del=pill("×",Color.rgb(255,241,242),Color.rgb(190,24,93));del.setTextSize(20);
             del.setOnClickListener(v->{stops.remove(idx);lastPlan=null;renderList();renderMap(null);status.setText("Parada removida.");});
-            LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(dp(42),dp(42));bp.setMargins(dp(4),0,0,0);
-            row.addView(up,bp);LinearLayout.LayoutParams bp2=new LinearLayout.LayoutParams(dp(42),dp(42));bp2.setMargins(dp(4),0,0,0);row.addView(del,bp2);
+            LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(dp(42),dp(42));bp.setMargins(dp(4),0,0,0);top.addView(up,bp);
+            LinearLayout.LayoutParams bp2=new LinearLayout.LayoutParams(dp(42),dp(42));bp2.setMargins(dp(4),0,0,0);top.addView(del,bp2);
+            row.addView(top);
+
+            LinearLayout navRow=new LinearLayout(this);navRow.setOrientation(LinearLayout.HORIZONTAL);navRow.setPadding(dp(46),dp(8),0,0);
+            Button maps=pill("Google Maps",Color.WHITE,BLUE);maps.setBackground(strokedBg(Color.WHITE,LINE,12));maps.setOnClickListener(v->openStopInMaps(stops.get(idx)));
+            Button waze=pill("Waze",Color.WHITE,BLUE);waze.setBackground(strokedBg(Color.WHITE,LINE,12));waze.setOnClickListener(v->openStopInWaze(stops.get(idx)));
+            navRow.addView(maps,new LinearLayout.LayoutParams(0,dp(44),1));
+            LinearLayout.LayoutParams wp=new LinearLayout.LayoutParams(0,dp(44),.8f);wp.setMargins(dp(8),0,0,0);navRow.addView(waze,wp);
+            row.addView(navRow);
+
             list.addView(row);
+        }
+    }
+
+    private String stopCoords(JSONObject s){
+        return s.optDouble("lat")+","+s.optDouble("lon");
+    }
+
+    private void openStopInMaps(JSONObject s){
+        String d=stopCoords(s);
+        try{
+            Intent i=new Intent(Intent.ACTION_VIEW,Uri.parse("google.navigation:q="+Uri.encode(d)+"&mode=d"));
+            i.setPackage("com.google.android.apps.maps");
+            startActivity(i);
+        }catch(Exception e){
+            startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://www.google.com/maps/dir/?api=1&destination="+Uri.encode(d)+"&travelmode=driving")));
+        }
+    }
+
+    private void openStopInWaze(JSONObject s){
+        String d=stopCoords(s);
+        try{
+            startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://waze.com/ul?ll="+Uri.encode(d)+"&navigate=yes")));
+        }catch(Exception e){
+            status.setText("Não foi possível abrir o Waze.");
         }
     }
 
     private void navigateFirst(){
         if(stops.isEmpty()){status.setText("Nenhuma parada.");return;}
-        JSONObject s=stops.get(0);String d=s.optDouble("lat")+","+s.optDouble("lon");
-        int nav=prefs.getInt("cfg_nav",0);
-        try{
-            if(nav==1){
-                Intent i=new Intent(Intent.ACTION_VIEW,Uri.parse("https://waze.com/ul?ll="+Uri.encode(d)+"&navigate=yes"));startActivity(i);
-            }else{
-                Intent i=new Intent(Intent.ACTION_VIEW,Uri.parse("google.navigation:q="+Uri.encode(d)+"&mode=d"));
-                if(nav==0)i.setPackage("com.google.android.apps.maps");
-                startActivity(i);
-            }
-        }catch(Exception e){startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://www.google.com/maps/dir/?api=1&destination="+Uri.encode(d)+"&travelmode=driving")));}
+        final JSONObject s=stops.get(0);
+        new AlertDialog.Builder(this)
+            .setTitle("Abrir próxima parada")
+            .setItems(new String[]{"Google Maps","Waze"},(d,which)->{
+                if(which==0)openStopInMaps(s);else openStopInWaze(s);
+            })
+            .setNegativeButton("Cancelar",null)
+            .show();
     }
 
     private void renderMap(JSONObject plan){
