@@ -5,7 +5,7 @@ function esc(s=''){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt
 function fmtDate(d){if(!d)return'';return new Date(d+'T12:00:00').toLocaleDateString('pt-BR')}
 function render(){const g=DATA.guests;$('#pageTitle').textContent=DATA.event.title||'Lista de Convites';const info=[fmtDate(DATA.event.date),DATA.event.time,DATA.event.venue].filter(Boolean).join(' • ');$('#eventInfo').textContent=info;
 $('#cConvites').textContent=g.length;$('#cPessoas').textContent=g.reduce((a,x)=>a+Number(x.invited||0),0);$('#cConfirmadas').textContent=g.filter(x=>x.status==='confirmado').reduce((a,x)=>a+Number(x.confirmed||0),0);$('#cAguardando').textContent=g.filter(x=>['pendente','enviado','talvez'].includes(x.status)).reduce((a,x)=>a+Number(x.invited||0),0);$('#cNao').textContent=g.filter(x=>x.status==='nao-vai').reduce((a,x)=>a+Number(x.invited||0),0);
-const q=$('#search').value.toLowerCase(),sf=$('#statusFilter').value;const list=g.filter(x=>(!q||x.name.toLowerCase().includes(q)||x.phone.includes(q))&&(!sf||x.status===sf));$('#empty').style.display=list.length?'none':'block';$('#tbody').innerHTML=list.map(x=>`<tr><td><strong>${esc(x.name)}</strong><br><small>${esc(x.phone||'Sem WhatsApp')}</small></td><td>${x.invited}</td><td><span class="badge b-${x.status}">${statusLabel[x.status]||x.status}</span></td><td>${x.confirmed==null?'—':x.confirmed}</td><td><div class="actions">${x.phone?`<button class="wa mini" onclick="sendWa('${x.id}','junior')">Junior – Business</button><button class="wa mini" onclick="sendWa('${x.id}','carol')">Carol – WhatsApp</button><button class="ghost mini" onclick="sendInviteOnly('${x.id}')">Convite separado</button>`:''}<button class="ghost mini" onclick="editGuest('${x.id}')">Editar</button><button class="ghost mini" onclick="removeGuest('${x.id}')">Excluir</button></div></td></tr>`).join('')}
+const q=$('#search').value.toLowerCase(),sf=$('#statusFilter').value;const list=g.filter(x=>(!q||x.name.toLowerCase().includes(q)||x.phone.includes(q))&&(!sf||x.status===sf));$('#empty').style.display=list.length?'none':'block';$('#tbody').innerHTML=list.map(x=>`<tr><td><strong>${esc(x.name)}</strong><br><small>${esc(x.phone||'Sem WhatsApp')}</small></td><td>${x.invited}</td><td><span class="badge b-${x.status}">${statusLabel[x.status]||x.status}</span></td><td>${x.confirmed==null?'—':x.confirmed}</td><td><div class="actions">${x.phone?`<button class="wa mini" onclick="sendWa('${x.id}')">WhatsApp</button><button class="ghost mini" onclick="sendInviteOnly('${x.id}')">Enviar convite separado</button>`:''}<button class="ghost mini" onclick="editGuest('${x.id}')">Editar</button><button class="ghost mini" onclick="removeGuest('${x.id}')">Excluir</button></div></td></tr>`).join('')}
 async function load(){DATA=await api('/api/data');render()}
 $('#search').oninput=render;$('#statusFilter').onchange=render;$('#addGuest').onclick=()=>openGuest();
 function syncInvitedChoice(){const choice=$('#invitedChoice');if(!choice)return;const manual=choice.value==='more';$('#invited').hidden=!manual;$('#invited').disabled=!manual;$('#invited').required=manual;if(!manual)$('#invited').value=choice.value;}
@@ -51,7 +51,7 @@ window.editGuest=id=>openGuest(DATA.guests.find(x=>x.id===id));
 $('#saveGuest').onclick=async()=>{const invited=Number($('#invited').value);const minimum=$('#invitedChoice')?.value==='more'?6:1;if(!Number.isInteger(invited)||invited<minimum){$('#invited').setCustomValidity('Informe um número inteiro de '+minimum+' pessoas ou mais.');$('#invited').reportValidity();$('#invited').setCustomValidity('');return;}const id=$('#guestId').value;const body={name:$('#name').value,phone:$('#phone').value,invited,note:$('#note').value};if($('#confirmed').value!==''){body.confirmed=Number($('#confirmed').value);body.status=body.confirmed>0?'confirmado':'nao-vai'};if(id)await api('/api/guests/'+id,{method:'PUT',body:JSON.stringify(body)});else await api('/api/guests',{method:'POST',body:JSON.stringify(body)});$('#guestDlg').close();await load()};
 window.removeGuest=async id=>{if(confirm('Excluir este convidado?')){await api('/api/guests/'+id,{method:'DELETE'});await load()}};
 
-window.sendWa=async (id,sender='junior')=>{
+window.sendWa=async id=>{
   const g=DATA.guests.find(x=>x.id===id);if(!g?.phone)return;
   const link=`${location.origin}/confirmar.html?id=${encodeURIComponent(g.id)}`;
   const e=DATA.event;
@@ -66,7 +66,7 @@ window.sendWa=async (id,sender='junior')=>{
 window.sendInviteOnly=async id=>{
   const g=DATA.guests.find(x=>x.id===id);
   const e=DATA.event;
-  if(!g)return;
+  if(!g?.phone)return;
   if(!e.hasInviteImage){
     alert('Ainda não há uma foto de convite cadastrada em Dados do aniversário.');
     return;
@@ -77,17 +77,23 @@ window.sendInviteOnly=async id=>{
     const blob=await r.blob();
     const ext=blob.type.includes('png')?'png':blob.type.includes('webp')?'webp':'jpg';
     const file=new File([blob],`convite-junior-carol.${ext}`,{type:blob.type||'image/jpeg'});
+
     if(navigator.share&&(!navigator.canShare||navigator.canShare({files:[file]}))){
-      await navigator.share({files:[file],title:'Convite de aniversário',text:`Convite para ${g.name}`});
-      return;
+      try{
+        await navigator.share({files:[file],title:'Convite de aniversário',text:`Convite para ${g.name}`});
+      }catch(err){
+        if(err?.name==='AbortError')return;
+      }
+    }else{
+      const url=URL.createObjectURL(file);
+      const a=document.createElement('a');
+      a.href=url;a.download=file.name;document.body.appendChild(a);a.click();a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),1500);
     }
-    const url=URL.createObjectURL(file);
-    const a=document.createElement('a');
-    a.href=url;a.download=file.name;document.body.appendChild(a);a.click();a.remove();
-    setTimeout(()=>URL.revokeObjectURL(url),1500);
-    alert('A foto do convite foi salva para você encaminhar pelo WhatsApp.');
+
+    window.open(`https://wa.me/55${normalizeContactPhone(g.phone)}?text=${encodeURIComponent('Segue nosso convite de aniversário 🎉')}`,'_blank');
   }catch(err){
-    if(err?.name!=='AbortError')alert(err?.message||'Não foi possível compartilhar o convite.');
+    if(err?.name!=='AbortError')alert(err?.message||'Não foi possível preparar o convite.');
   }
 };
 $('#editEvent').onclick=()=>{const e=DATA.event;NEW_IMAGE_DATA=null;REMOVE_IMAGE=false;$('#evInviteImage').value='';$('#evTitle').value=e.title||'';$('#evDate').value=e.date||'';$('#evTime').value=e.time||'';$('#evVenue').value=e.venue||'';$('#evAddress').value=e.address||'';$('#evMessage').value=e.message||'';$('#evCanvaUrl').value=e.canvaUrl||'';if(e.hasInviteImage){$('#imagePreview').src='/api/invite-image?t='+Date.now();$('#imagePreviewWrap').classList.remove('hidden')}else{$('#imagePreviewWrap').classList.add('hidden')}$('#eventDlg').showModal()};
