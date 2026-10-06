@@ -156,11 +156,7 @@ const catalogExpansion=[
 ['camarao-alho','Camarão ao Alho e Óleo','Peixes','25 min',4,'camarão'],
 ['camarao-molho','Camarão ao Molho','Peixes','35 min',5,'camarão'],
 ['torta-sardinha','Torta de Sardinha','Massas e pães','1 h',10,'sardinha'],
-['sopa-feijao','Sopa de Feijão com Macarrão','Sopas','40 min',6,'feijão cozido'],
-['sopa-abobora','Sopa Cremosa de Abóbora','Sopas','40 min',6,'abóbora'],
-['sopa-mandioca-carne','Sopa de Mandioca com Carne','Sopas','1 h',6,'mandioca e carne'],
 ['caldo-verde','Caldo Verde','Sopas','45 min',6,'batata e couve'],
-['creme-ervilha','Creme de Ervilha','Sopas','45 min',6,'ervilha seca']
 ];
 const recipeTemplates={
 'Carnes':m=>({ingredients:[m,'1 cebola','2 dentes de alho','2 tomates','sal, pimenta e cheiro-verde'],steps:['Tempere o ingrediente principal.','Doure bem e junte cebola, alho e tomate.','Cozinhe até ficar macio e ajuste os temperos.'],tip:'Dourar bem antes de adicionar líquido concentra o sabor.'}),
