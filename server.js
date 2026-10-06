@@ -2958,6 +2958,33 @@ function routeReadJson(req,maxBytes=1024*1024){
     req.on('error',reject)
   })
 }
+function routeStreetVariants(raw){
+  const out=[],push=x=>{x=String(x||'').trim().replace(/\s+/g,' ');if(x&&!out.includes(x))out.push(x)};
+  push(raw);
+  const parts=String(raw||'').split(',').map(x=>x.trim()).filter(Boolean);
+  if(parts.length>=2){
+    const street=parts[0].replace(/\b\d+[A-Za-z-]*\b/g,'').replace(/\s+/g,' ').trim();
+    const city=parts[parts.length-1].replace(/\bSP\b/ig,'').trim();
+    if(street&&city){
+      push(street+', '+city);
+      // Tolerância simples para erros de uma letra comuns em sobrenomes/logradouros:
+      // tenta duplicar a última consoante quando a palavra final termina em vogal+i/o/a/e.
+      const words=street.split(/\s+/);
+      const last=words[words.length-1]||'';
+      if(last.length>=4){
+        const lc=last.toLowerCase();
+        if(/[aeiou]$/.test(lc)){
+          const prev=last[last.length-2];
+          if(prev&&/[bcdfghjklmnpqrstvwxyz]/i.test(prev)){
+            const alt=[...words.slice(0,-1),last.slice(0,-1)+prev+last.slice(-1)].join(' ');
+            push(alt+', '+city)
+          }
+        }
+      }
+    }
+  }
+  return out
+}
 async function routeResolveManualAddress(address){
   const raw=String(address||'').trim().replace(/\s+/g,' ');
   if(raw.length<4)throw Object.assign(new Error('Informe ao menos o nome da rua e a cidade.'),{status:400});
@@ -2966,28 +2993,20 @@ async function routeResolveManualAddress(address){
 
   const candidates=[];
   const push=q=>{q=String(q||'').trim().replace(/\s+/g,' ');if(q&&!candidates.includes(q))candidates.push(q)};
-  // 1) Tenta exatamente o que o usuário digitou.
-  push(raw);
-  // 2) Prioriza SP quando o estado não foi informado.
-  if(!/\bSP\b|SÃO PAULO|SAO PAULO/i.test(raw))push(raw+', SP, Brasil');
-  push(raw+', Brasil');
-
-  // 3) Se veio "Rua X, Cidade", faz busca estruturada simplificada.
-  const parts=raw.split(',').map(x=>x.trim()).filter(Boolean);
-  if(parts.length>=2){
-    const street=parts[0].replace(/\b\d+[A-Za-z-]*\b/g,'').replace(/\s{2,}/g,' ').trim();
-    const city=parts[parts.length-1];
-    if(street&&city){
-      push(street+', '+city+', SP, Brasil');
-      push(street+', '+city+', Brasil');
-    }
+  for(const baseQuery of routeStreetVariants(raw)){
+    push(baseQuery);
+    if(!/\bSP\b|SÃO PAULO|SAO PAULO/i.test(baseQuery))push(baseQuery+', SP, Brasil');
+    push(baseQuery+', Brasil');
   }
 
-  // 4) Se houver número, também tenta sem número para localizar o centro da via.
+  // Se houver número, também tenta sem número para localizar o centro da via.
   const withoutNumber=raw.replace(/(^|,|\s)\d+[A-Za-z-]*(?=,|\s|$)/g,' ').replace(/\s+/g,' ').replace(/\s+,/g,',').trim();
   if(withoutNumber&&withoutNumber!==raw){
-    push(withoutNumber);
-    if(!/\bSP\b|SÃO PAULO|SAO PAULO/i.test(withoutNumber))push(withoutNumber+', SP, Brasil');
+    for(const baseQuery of routeStreetVariants(withoutNumber)){
+      push(baseQuery);
+      if(!/\bSP\b|SÃO PAULO|SAO PAULO/i.test(baseQuery))push(baseQuery+', SP, Brasil');
+      push(baseQuery+', Brasil');
+    }
   }
 
   let geo=null,used='';
