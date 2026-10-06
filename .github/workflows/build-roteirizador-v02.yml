@@ -51,11 +51,26 @@ jobs:
           fi
 
       - name: Build APK de teste e AAB Play Store
+        id: movit_build
+        continue-on-error: true
         run: |
-          gradle -p roteirizador-v02-android :app:assembleTesteDebug --no-daemon
-          gradle -p roteirizador-v02-android :app:bundlePlayRelease --no-daemon
+          set +e
+          mkdir -p controle-coletas-aiven-app/downloads
+          {
+            echo "=== assembleTesteDebug ==="
+            gradle -p roteirizador-v02-android :app:assembleTesteDebug --no-daemon
+            A=$?
+            echo "assembleTesteDebug exit=$A"
+            echo "=== bundlePlayRelease ==="
+            gradle -p roteirizador-v02-android :app:bundlePlayRelease --no-daemon
+            B=$?
+            echo "bundlePlayRelease exit=$B"
+            exit $(( A != 0 || B != 0 ))
+          } 2>&1 | tee controle-coletas-aiven-app/downloads/MOVIT-BUILD-LOG.txt
+          exit ${PIPESTATUS[0]}
 
       - name: Validar assinatura Play Store
+        if: steps.movit_build.outcome == 'success'
         run: |
           AAB="roteirizador-v02-android/app/build/outputs/bundle/playRelease/app-play-release.aab"
           test -f "$AAB"
@@ -66,19 +81,22 @@ jobs:
           fi
 
       - name: Publicar arquivos
+        if: always()
         run: |
           mkdir -p controle-coletas-aiven-app/downloads
-          cp roteirizador-v02-android/app/build/outputs/apk/teste/debug/app-teste-debug.apk controle-coletas-aiven-app/downloads/MOVIT.apk
-          if [ -n "$MOVIT_KEYSTORE_PATH" ]; then
+          if [ -f roteirizador-v02-android/app/build/outputs/apk/teste/debug/app-teste-debug.apk ]; then
+            cp roteirizador-v02-android/app/build/outputs/apk/teste/debug/app-teste-debug.apk controle-coletas-aiven-app/downloads/MOVIT.apk
+          fi
+          if [ -n "$MOVIT_KEYSTORE_PATH" ] && [ -f roteirizador-v02-android/app/build/outputs/bundle/playRelease/app-play-release.aab ]; then
             cp roteirizador-v02-android/app/build/outputs/bundle/playRelease/app-play-release.aab controle-coletas-aiven-app/downloads/MOVIT-PLAYSTORE.aab
           fi
           git config user.name "MOVIT Build"
           git config user.email "actions@users.noreply.github.com"
-          git add controle-coletas-aiven-app/downloads/MOVIT.apk
-          if [ -n "$MOVIT_KEYSTORE_PATH" ]; then
-            git add controle-coletas-aiven-app/downloads/MOVIT-PLAYSTORE.aab
-          fi
+          git add controle-coletas-aiven-app/downloads/MOVIT-BUILD-LOG.txt
+          if [ -f controle-coletas-aiven-app/downloads/MOVIT.apk ]; then git add controle-coletas-aiven-app/downloads/MOVIT.apk; fi
+          if [ -f controle-coletas-aiven-app/downloads/MOVIT-PLAYSTORE.aab ]; then git add controle-coletas-aiven-app/downloads/MOVIT-PLAYSTORE.aab; fi
           git commit -m "Publica builds MOVIT Android [skip ci]" || exit 0
           git fetch origin controle-coletas-aiven
           git rebase origin/controle-coletas-aiven
           git push origin HEAD:controle-coletas-aiven
+          if [ "${{ steps.movit_build.outcome }}" != "success" ]; then exit 1; fi
