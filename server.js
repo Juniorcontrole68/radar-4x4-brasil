@@ -2959,24 +2959,48 @@ function routeReadJson(req,maxBytes=1024*1024){
   })
 }
 async function routeResolveManualAddress(address){
-  const raw=String(address||'').trim();
-  if(raw.length<5)throw Object.assign(new Error('Digite um endereço completo.'),{status:400});
+  const raw=String(address||'').trim().replace(/\s+/g,' ');
+  if(raw.length<4)throw Object.assign(new Error('Informe ao menos o nome da rua e a cidade.'),{status:400});
   const base=await routeBaseGeo();
   if(!base)throw new Error('Não foi possível localizar a base de Americana.');
+
   const candidates=[];
-  if(!/\bSP\b|SÃO PAULO|SAO PAULO/i.test(raw))candidates.push(raw+', SP, Brasil');
-  candidates.push(raw+', Brasil');
+  const push=q=>{q=String(q||'').trim().replace(/\s+/g,' ');if(q&&!candidates.includes(q))candidates.push(q)};
+  // 1) Tenta exatamente o que o usuário digitou.
+  push(raw);
+  // 2) Prioriza SP quando o estado não foi informado.
+  if(!/\bSP\b|SÃO PAULO|SAO PAULO/i.test(raw))push(raw+', SP, Brasil');
+  push(raw+', Brasil');
+
+  // 3) Se veio "Rua X, Cidade", faz busca estruturada simplificada.
+  const parts=raw.split(',').map(x=>x.trim()).filter(Boolean);
+  if(parts.length>=2){
+    const street=parts[0].replace(/\b\d+[A-Za-z-]*\b/g,'').replace(/\s{2,}/g,' ').trim();
+    const city=parts[parts.length-1];
+    if(street&&city){
+      push(street+', '+city+', SP, Brasil');
+      push(street+', '+city+', Brasil');
+    }
+  }
+
+  // 4) Se houver número, também tenta sem número para localizar o centro da via.
+  const withoutNumber=raw.replace(/(^|,|\s)\d+[A-Za-z-]*(?=,|\s|$)/g,' ').replace(/\s+/g,' ').replace(/\s+,/g,',').trim();
+  if(withoutNumber&&withoutNumber!==raw){
+    push(withoutNumber);
+    if(!/\bSP\b|SÃO PAULO|SAO PAULO/i.test(withoutNumber))push(withoutNumber+', SP, Brasil');
+  }
+
   let geo=null,used='';
   for(const q of candidates){
     geo=await routeGeocode(q,base,ROUTE_MAX_RADIUS_METERS);
     if(geo){used=q;break}
   }
-  if(!geo)throw Object.assign(new Error('Endereço não localizado dentro do raio máximo de 300 km da base.'),{status:422});
+  if(!geo)throw Object.assign(new Error('Não localizei essa via. Tente "Nome da rua, Cidade" — o número não é obrigatório.'),{status:422});
   return{
     source:'manual',originalOrder:0,ctrc:'',nf:'',destinatario:'Endereço digitado',
     cidade:geo.city||'',uf:/São Paulo|Sao Paulo/i.test(geo.state||'')?'SP':'',
-    endereco:raw,numero:'',bairro:'',cep:'',precision:'manual',query:used,
-    lat:geo.lat,lon:geo.lon,label:raw,radiusKm:routeHaversine(base,geo)/1000
+    endereco:raw,numero:'',bairro:'',cep:'',precision:/\d/.test(raw)?'manual':'manual-aproximado',query:used,
+    lat:geo.lat,lon:geo.lon,label:geo.displayName||raw,radiusKm:routeHaversine(base,geo)/1000
   }
 }
 async function routeLookupCteBarcode(code,date=''){
