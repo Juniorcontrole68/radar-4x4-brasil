@@ -4080,6 +4080,85 @@ function rv2Voice(){
   rec.onend=()=>{if(voice){voice.disabled=false;voice.textContent='🎙️ Falar'}};
   rec.start()
 }
+
+const RV2_STORAGE_KEY='construlog_rv2_saved_routes_v1';
+function rv2SavedRead(){
+  try{const x=JSON.parse(localStorage.getItem(RV2_STORAGE_KEY)||'[]');return Array.isArray(x)?x:[]}catch{return[]}
+}
+function rv2SavedWrite(rows){localStorage.setItem(RV2_STORAGE_KEY,JSON.stringify(rows.slice(0,50)))}
+function rv2RouteName(){
+  const el=$('#rv2RouteName'),v=String(el?.value||'').trim();
+  if(v)return v;
+  const d=new Date(),date=d.toLocaleDateString('pt-BR');
+  return 'Rota '+date
+}
+function rv2RenderSaved(){
+  const box=$('#rv2SavedRoutes');if(!box)return;
+  const rows=rv2SavedRead();
+  if(!rows.length){box.innerHTML='<div class="muted">Nenhuma rota salva ainda.</div>';return}
+  box.innerHTML=rows.map((r,i)=>{
+    const when=r.savedAt?new Date(r.savedAt).toLocaleString('pt-BR'):'';
+    const count=Array.isArray(r.stops)?r.stops.length:0;
+    return '<div class="route-stop"><div class="seq">💾</div><div><b>'+safe(r.name||'Rota sem nome')+'</b><div class="meta">'+nf(count)+' parada(s)'+(when?' • '+safe(when):'')+'</div></div><div class="move"><button type="button" data-rv2-open="'+i+'">Abrir</button><button type="button" data-rv2-share-saved="'+i+'">💬</button><button type="button" data-rv2-delete-saved="'+i+'">✕</button></div></div>'
+  }).join('');
+  box.querySelectorAll('[data-rv2-open]').forEach(b=>b.onclick=()=>rv2OpenSaved(Number(b.dataset.rv2Open)));
+  box.querySelectorAll('[data-rv2-share-saved]').forEach(b=>b.onclick=()=>rv2ShareSaved(Number(b.dataset.rv2ShareSaved)));
+  box.querySelectorAll('[data-rv2-delete-saved]').forEach(b=>b.onclick=()=>rv2DeleteSaved(Number(b.dataset.rv2DeleteSaved)))
+}
+function rv2CurrentSnapshot(){
+  return{
+    id:'r'+Date.now(),
+    name:rv2RouteName(),
+    savedAt:new Date().toISOString(),
+    start:RV2_START?{...RV2_START}:null,
+    stops:RV2_STOPS.map(s=>({...s})),
+    running:RV2_RUNNING,
+    done:[...RV2_DONE],
+    skipped:[...RV2_SKIPPED]
+  }
+}
+function rv2SaveRoute(){
+  const status=$('#rv2Status');
+  if(!RV2_STOPS.length){if(status)status.textContent='Adicione pelo menos uma parada antes de salvar.';return}
+  const snap=rv2CurrentSnapshot(),rows=rv2SavedRead();
+  rows.unshift(snap);rv2SavedWrite(rows);rv2RenderSaved();
+  if(status)status.textContent='Rota “‘'+snap.name+'” salva neste aparelho.'
+}
+function rv2OpenSaved(i){
+  const r=rv2SavedRead()[i],status=$('#rv2Status');if(!r)return;
+  RV2_START=r.start||null;RV2_STOPS=(r.stops||[]).map(x=>({...x}));RV2_PLAN=null;RV2_ORDER=[];RV2_RUNNING=!!r.running;RV2_DONE=Array.isArray(r.done)?r.done.slice():[];RV2_SKIPPED=Array.isArray(r.skipped)?r.skipped.slice():[];
+  const name=$('#rv2RouteName');if(name)name.value=r.name||'';
+  rv2RenderList();rv2RenderMap();
+  if(status)status.textContent='Rota salva carregada. Toque em Otimizar rota para recalcular pelas vias atuais.'
+}
+function rv2DeleteSaved(i){
+  const rows=rv2SavedRead();if(!rows[i])return;
+  rows.splice(i,1);rv2SavedWrite(rows);rv2RenderSaved()
+}
+function rv2NewRoute(){
+  rv2Clear();const name=$('#rv2RouteName');if(name)name.value='';const st=$('#rv2Status');if(st)st.textContent='Nova rota. Digite ou fale o primeiro endereço.'
+}
+function rv2ShareText(snapshot=rv2CurrentSnapshot()){
+  const lines=[snapshot.name||'Minha rota',''];
+  (snapshot.stops||[]).forEach((s,i)=>lines.push((i+1)+'. '+(s.label||s.endereco||'Parada')+((s.cidade)?' • '+s.cidade:'') ));
+  lines.push('','Criado no Roteirizador V02');
+  return lines.join('\n')
+}
+async function rv2Share(){
+  const status=$('#rv2Status');
+  if(!RV2_STOPS.length){if(status)status.textContent='Adicione pelo menos uma parada antes de compartilhar.';return}
+  const text=rv2ShareText();
+  if(navigator.share){
+    try{await navigator.share({title:rv2RouteName(),text});return}catch(e){if(e?.name==='AbortError')return}
+  }
+  window.open('https://wa.me/?text='+encodeURIComponent(text),'_blank','noopener')
+}
+async function rv2ShareSaved(i){
+  const r=rv2SavedRead()[i];if(!r)return;
+  const text=rv2ShareText(r);
+  if(navigator.share){try{await navigator.share({title:r.name||'Rota',text});return}catch(e){if(e?.name==='AbortError')return}}
+  window.open('https://wa.me/?text='+encodeURIComponent(text),'_blank','noopener')
+}
 function setupRoteirizadorV02(){
   if($('#rv2Add'))$('#rv2Add').onclick=()=>rv2AddAddress();
   if($('#rv2Address'))$('#rv2Address').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();rv2AddAddress()}};
@@ -4089,7 +4168,11 @@ function setupRoteirizadorV02(){
   if($('#rv2Start'))$('#rv2Start').onclick=rv2StartTrip;
   if($('#rv2Reoptimize'))$('#rv2Reoptimize').onclick=rv2Reoptimize;
   if($('#rv2Clear'))$('#rv2Clear').onclick=rv2Clear;
-  rv2RenderList()
+  if($('#rv2Save'))$('#rv2Save').onclick=rv2SaveRoute;
+  if($('#rv2Share'))$('#rv2Share').onclick=rv2Share;
+  if($('#rv2New'))$('#rv2New').onclick=rv2NewRoute;
+  rv2RenderList();
+  rv2RenderSaved()
 }
 
 function setupRoteirizadorTeste(){
