@@ -3824,7 +3824,7 @@ function rtUrgent(pos){
   if(pos<=0||pos>=RT_ORDER.length)return;
   const [idx]=RT_ORDER.splice(pos,1);RT_ORDER.unshift(idx);rtRender()
 }
-function rtRenderMap(){
+async function rtRenderMap(){
   const box=$('#rtMap');if(!box||!RT_PLAN)return;
   if(typeof L==='undefined'){box.innerHTML='<div class="muted" style="padding:24px">Mapa indisponível.</div>';return}
   if(!RT_MAP){
@@ -3833,7 +3833,7 @@ function rtRenderMap(){
   }
   if(RT_LAYER)RT_LAYER.remove();
   RT_LAYER=L.layerGroup().addTo(RT_MAP);
-  const points=RT_PLAN.points||[],base=points[0],order=RT_ORDER;
+  const points=RT_PLAN.points||[],base=points[0],order=RT_ORDER.slice();
   if(!base)return;
   L.marker([base.lat,base.lon]).addTo(RT_LAYER).bindTooltip('BASE • Americana');
   order.forEach((idx,pos)=>{
@@ -3841,9 +3841,32 @@ function rtRenderMap(){
     const icon=L.divIcon({className:'',html:'<div style="background:#0f766e;color:#fff;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-weight:800;border:2px solid #fff;box-shadow:0 1px 5px #0005">'+(pos+1)+'</div>',iconSize:[28,28],iconAnchor:[14,14]});
     L.marker([p.lat,p.lon],{icon}).addTo(RT_LAYER).bindPopup('<b>'+safe(p.destinatario||p.label||'Parada')+'</b><br>'+safe((p.cidade||'')+(p.uf?' / '+p.uf:'')))
   });
-  const coords=[base,...order.map(i=>points[i]).filter(Boolean),base].map(p=>[p.lat,p.lon]);
-  if(coords.length>2)L.polyline(coords,{weight:5,opacity:.82,dashArray:'10 5'}).addTo(RT_LAYER);
-  const bounds=L.latLngBounds(coords);if(bounds.isValid())RT_MAP.fitBounds(bounds.pad(.12));
+
+  let routeCoords=[];
+  try{
+    const sameAsOptimized=JSON.stringify(order)===JSON.stringify(RT_PLAN.optimizedOrder||[]);
+    if(sameAsOptimized && Array.isArray(RT_PLAN.geometry?.coordinates)){
+      routeCoords=RT_PLAN.geometry.coordinates.map(x=>[Number(x[1]),Number(x[0])]).filter(x=>Number.isFinite(x[0])&&Number.isFinite(x[1]))
+    }else{
+      const r=await fetch('/api/roteirizador/geometria-order',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({points:points.map(p=>({lat:p.lat,lon:p.lon})),order})
+      });
+      const j=await r.json().catch(()=>({}));
+      if(r.ok&&j.ok&&Array.isArray(j.geometry?.coordinates)){
+        routeCoords=j.geometry.coordinates.map(x=>[Number(x[1]),Number(x[0])]).filter(x=>Number.isFinite(x[0])&&Number.isFinite(x[1]))
+      }
+    }
+  }catch(e){}
+
+  if(!routeCoords.length){
+    routeCoords=[base,...order.map(i=>points[i]).filter(Boolean),base].map(p=>[p.lat,p.lon])
+  }
+  if(routeCoords.length>2)L.polyline(routeCoords,{weight:5,opacity:.88,dashArray:'10 6',lineCap:'round',lineJoin:'round'}).addTo(RT_LAYER);
+
+  const markerCoords=[[base.lat,base.lon],...order.map(i=>[points[i]?.lat,points[i]?.lon]).filter(x=>Number.isFinite(x[0])&&Number.isFinite(x[1]))];
+  const bounds=L.latLngBounds(routeCoords.length?routeCoords:markerCoords);if(bounds.isValid())RT_MAP.fitBounds(bounds.pad(.12));
   setTimeout(()=>RT_MAP.invalidateSize(),80)
 }
 function rtRender(){
