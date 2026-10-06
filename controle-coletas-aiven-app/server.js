@@ -1072,7 +1072,14 @@ async function start() {
           if(raw.length<2)return sendJson(res,400,{ok:false,error:'Informe pelo menos duas paradas.'});
           let start=body.start&&typeof body.start==='object'?body.start:null;
           if(!start)start={lat:raw[0].lat,lon:raw[0].lon,label:'Início'};
-          const points=[start,...raw].map((p,i)=>({lat:Number(p.lat),lon:Number(p.lon),label:String(p.label||p.address||('Parada '+i)).slice(0,220)}));
+          const points=[start,...raw].map((p,i)=>({
+            ...p,
+            lat:Number(p.lat),
+            lon:Number(p.lon),
+            original:String(p.original||p.label||p.address||'').slice(0,240),
+            resolved:String(p.resolved||p.label||p.address||('Parada '+i)).slice(0,320),
+            label:String(p.resolved||p.label||p.address||('Parada '+i)).slice(0,220)
+          }));
           if(points.some(p=>!Number.isFinite(p.lat)||!Number.isFinite(p.lon)||p.lat<-90||p.lat>90||p.lon<-180||p.lon>180))return sendJson(res,400,{ok:false,error:'Há coordenadas inválidas na rota.'});
           console.log('MOVIT OPTIMIZE',JSON.stringify({stops:raw.length,returnToStart:body.returnToStart===true,hasStart:!!body.start}));
           const m=await routePublicTable(points),n=raw.length;
