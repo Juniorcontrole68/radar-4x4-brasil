@@ -1755,7 +1755,11 @@ async function start() {
           const password=String(body.password||'');
           const sender=String(body.sender||'').trim().slice(0,220);
           const scope=body.scope==='all'?'all':'inbox';
-          const host=['imap.titan.email','imap0101.titan.email'].includes(String(body.host||''))?String(body.host):'imap.titan.email';
+          const requestedHost=String(body.host||'auto');
+          const hostCandidates=requestedHost==='auto'
+            ? ['imap.titan.email','imap0101.titan.email']
+            : ([requestedHost].filter(h=>['imap.titan.email','imap0101.titan.email'].includes(h)));
+          if(!hostCandidates.length)hostCandidates.push('imap.titan.email');
           const from=String(body.from||''),to=String(body.to||'');
           if(!email||!password)return sendJson(res,400,{ok:false,error:'Informe o e-mail e a senha do Titan.'});
           if(!/^\d{4}-\d{2}-\d{2}$/.test(from)||!/^\d{4}-\d{2}-\d{2}$/.test(to))return sendJson(res,400,{ok:false,error:'Informe um período válido.'});
@@ -1765,15 +1769,37 @@ async function start() {
           const days=(before-since)/86400000;
           if(days>93)return sendJson(res,400,{ok:false,error:'Para segurança, consulte no máximo 90 dias por vez.'});
 
-          client=new ImapFlow({
-            host,port:993,secure:true,
-            auth:{user:email,pass:password},
-            logger:false,
-            tls:{rejectUnauthorized:true},
-            socketTimeout:45000,
-            greetingTimeout:20000
-          });
-          await client.connect();
+          let connectedHost='',lastConnectError=null;
+          for(const host of hostCandidates){
+            try{
+              client=new ImapFlow({
+                host,port:993,secure:true,
+                auth:{user:email,pass:password},
+                logger:false,
+                tls:{rejectUnauthorized:true},
+                socketTimeout:45000,
+                greetingTimeout:20000
+              });
+              await client.connect();
+              connectedHost=host;
+              lastConnectError=null;
+              break;
+            }catch(err){
+              lastConnectError=err;
+              try{client?.close()}catch(_){}
+              client=null;
+            }
+          }
+          if(!client){
+            const raw=String(lastConnectError?.message||'').toLowerCase();
+            const authFail=lastConnectError?.authenticationFailed||raw.includes('auth')||raw.includes('password')||raw.includes('login');
+            if(authFail){
+              const e=new Error('O Titan recusou o login IMAP. Se a senha abre o webmail, verifique se a conta usa 2FA; nesse caso é necessário usar uma senha de aplicativo. Também confirme se o e-mail digitado é o endereço completo da caixa.');
+              e.status=401;throw e;
+            }
+            const e=new Error('Não foi possível conectar ao servidor IMAP do Titan. Tente novamente em alguns instantes.');
+            e.status=502;throw e;
+          }
 
           let mailboxes=['INBOX'];
           if(scope==='all'){
@@ -1855,8 +1881,12 @@ async function start() {
           });
           return res.end(Buffer.from(bytes));
         }catch(e){
-          const msg=String(e?.authenticationFailed?'Falha no login do Titan. Confira e-mail, senha de aplicativo e acesso IMAP.':(e.message||'Falha ao unificar PDFs.'));
-          return sendJson(res,e.status||500,{ok:false,error:msg});
+          const raw=String(e?.message||'');
+          const authLike=e?.authenticationFailed||/auth|password|login|credentials|senha/i.test(raw);
+          const msg=authLike
+            ? 'O Titan recusou o login IMAP. Se sua senha normal funciona no webmail, verifique se o 2FA está ativado e use uma senha de aplicativo. Confirme também o endereço completo do e-mail.'
+            : (raw||'Falha ao unificar PDFs.');
+          return sendJson(res,e.status||(authLike?401:500),{ok:false,error:msg});
         }finally{
           try{if(client)await client.logout()}catch(e){try{client?.close()}catch(_){}}
         }
