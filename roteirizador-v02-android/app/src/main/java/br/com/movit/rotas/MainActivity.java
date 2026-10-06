@@ -38,6 +38,8 @@ public class MainActivity extends Activity {
     private LocationListener testLocationListener;
     private String testTrackingToken="";
     private boolean testTrackingActive=false;
+    private AlertDialog fuelDialog,tollDialog,restrictionDialog;
+    private boolean fuelRequestRunning=false,tollRequestRunning=false,restrictionRequestRunning=false;
 
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
@@ -379,6 +381,8 @@ public class MainActivity extends Activity {
     }
 
     private void findFuelStations(){
+        if(fuelDialog!=null&&fuelDialog.isShowing())return;
+        if(fuelRequestRunning){status.setText("A consulta de postos já está em andamento.");return;}
         if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED){
             requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION,Manifest.permission.ACCESS_COARSE_LOCATION},REQ_FUEL_LOC);
             return;
@@ -388,6 +392,7 @@ public class MainActivity extends Activity {
             Location l=lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
             if(l==null)l=lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
             if(l==null){status.setText("Ainda não há localização disponível. Ative o GPS e tente novamente.");return;}
+            fuelRequestRunning=true;
             if(fuelButton!=null){fuelButton.setEnabled(false);fuelButton.setText("⛽ Procurando postos…");}
             status.setText("Procurando postos próximos sem sair da rota…");
             final double lat=l.getLatitude(),lon=l.getLongitude();
@@ -399,19 +404,24 @@ public class MainActivity extends Activity {
                     JSONArray rows=j.optJSONArray("rows");
                     runOnUiThread(()->showFuelStations(rows,j.optString("note","")));
                 }catch(Exception e){runOnUiThread(()->{
+                    fuelRequestRunning=false;
                     if(fuelButton!=null){fuelButton.setEnabled(true);fuelButton.setText("⛽ Postos na rota");}
                     status.setText("Postos: "+e.getMessage());
                 });}
             });
-        }catch(Exception e){status.setText("Não foi possível usar sua localização atual.");}
+        }catch(Exception e){fuelRequestRunning=false;status.setText("Não foi possível usar sua localização atual.");}
     }
 
     private void showFuelStations(JSONArray rows,String note){
+        fuelRequestRunning=false;
         if(fuelButton!=null){fuelButton.setEnabled(true);fuelButton.setText("⛽ Postos na rota");}
         if(rows==null||rows.length()==0){
-            new AlertDialog.Builder(this).setTitle("Postos na rota")
+            if(fuelDialog!=null&&fuelDialog.isShowing())return;
+            fuelDialog=new AlertDialog.Builder(this).setTitle("Postos na rota")
                 .setMessage("Nenhum posto foi encontrado próximo do trajeto atual.\n\n"+note)
-                .setPositiveButton("OK",null).show();
+                .setPositiveButton("OK",null).create();
+            fuelDialog.setOnDismissListener(d->fuelDialog=null);
+            fuelDialog.show();
             status.setText("Nenhum posto encontrado próximo da rota.");
             return;
         }
@@ -429,7 +439,8 @@ public class MainActivity extends Activity {
             String hours=r.optString("openingHours","");if(!hours.isEmpty())line+="\nHorário: "+hours;
             labels.add(line);
         }
-        new AlertDialog.Builder(this)
+        if(fuelDialog!=null&&fuelDialog.isShowing())return;
+        fuelDialog=new AlertDialog.Builder(this)
             .setTitle("⛽ Postos na rota")
             .setMessage(note)
             .setItems(labels.toArray(new String[0]),(d,which)->{
@@ -443,7 +454,9 @@ public class MainActivity extends Activity {
                         if(w==0)openStopInMaps(s);else openStopInWaze(s);
                     }).setNegativeButton("Cancelar",null).show();
             })
-            .setNegativeButton("Fechar",null).show();
+            .setNegativeButton("Fechar",null).create();
+        fuelDialog.setOnDismissListener(d->fuelDialog=null);
+        fuelDialog.show();
         status.setText(rows.length()+" posto(s) encontrado(s) próximo(s) da rota.");
     }
 
@@ -508,6 +521,8 @@ public class MainActivity extends Activity {
     }
 
     private void showTolls(boolean openDialog){
+        if(openDialog&&tollDialog!=null&&tollDialog.isShowing())return;
+        if(tollRequestRunning){if(openDialog)status.setText("O cálculo de pedágios já está em andamento.");return;}
         if(lastPlan==null||lastPlan.optJSONObject("geometry")==null){
             status.setText("Primeiro termine de lançar as paradas e toque em Otimizar rota.");
             if(openDialog)new AlertDialog.Builder(this)
@@ -516,15 +531,28 @@ public class MainActivity extends Activity {
                 .setPositiveButton("OK",null).show();
             return;
         }
+        tollRequestRunning=true;
         if(tollButton!=null){tollButton.setEnabled(false);tollButton.setText("🛣 Calculando pedágios…");}
         exec.execute(()->{
             try{
                 JSONObject body=new JSONObject();
                 body.put("geometry",lastPlan.optJSONObject("geometry"));
                 body.put("vehicle",vehicleProfile());
+                JSONArray routeLocations=new JSONArray();
+                JSONArray planPoints=lastPlan.optJSONArray("points");
+                if(planPoints!=null){
+                    for(int i=0;i<planPoints.length();i++){
+                        JSONObject p=planPoints.optJSONObject(i);if(p==null)continue;
+                        double lat=p.optDouble("lat",Double.NaN),lon=p.optDouble("lon",Double.NaN);
+                        if(Double.isFinite(lat)&&Double.isFinite(lon))routeLocations.put(lat+","+lon);
+                    }
+                }
+                if(prefs.getBoolean("current_return_start",false)&&routeLocations.length()>0)routeLocations.put(routeLocations.optString(0));
+                body.put("locations",routeLocations);
                 JSONObject j=Api.post("/api/public-router/tolls",body);
                 JSONArray rows=j.optJSONArray("rows");
                 runOnUiThread(()->{
+                    tollRequestRunning=false;
                     if(tollButton!=null){
                         tollButton.setEnabled(true);
                         if(j.optBoolean("totalComplete",false))tollButton.setText("🛣 Pedágios • "+brl(j.optDouble("total",0)));
@@ -532,9 +560,12 @@ public class MainActivity extends Activity {
                     }
                     if(!openDialog)return;
                     if(rows==null||rows.length()==0){
-                        new AlertDialog.Builder(this).setTitle("🛣 Pedágios da rota")
+                        if(tollDialog!=null&&tollDialog.isShowing())return;
+                        tollDialog=new AlertDialog.Builder(this).setTitle("🛣 Pedágios da rota")
                             .setMessage("Nenhuma praça de pedágio cadastrada foi encontrada neste trajeto.\n\n"+j.optString("warning",""))
-                            .setPositiveButton("OK",null).show();
+                            .setPositiveButton("OK",null).create();
+                        tollDialog.setOnDismissListener(d->tollDialog=null);
+                        tollDialog.show();
                         status.setText("Nenhum pedágio encontrado na rota.");
                         return;
                     }
@@ -554,16 +585,20 @@ public class MainActivity extends Activity {
                     }
                     String title="🛣 Pedágios • "+j.optInt("count",0)+" praça(s)";
                     if(j.optInt("pricedCount",0)>0)title+=" • "+brl(j.optDouble("total",0));
-                    new AlertDialog.Builder(this)
+                    if(tollDialog!=null&&tollDialog.isShowing())return;
+                    tollDialog=new AlertDialog.Builder(this)
                         .setTitle(title)
                         .setItems(labels.toArray(new String[0]),(d,which)->{
                             if(which>=0&&which<tolls.size())showTollAction(tolls.get(which));
                         })
                         .setNegativeButton("Fechar",null)
-                        .show();
+                        .create();
+                    tollDialog.setOnDismissListener(d->tollDialog=null);
+                    tollDialog.show();
                     status.setText(j.optInt("count",0)+" praça(s) de pedágio encontrada(s). Toque em uma para evitar.");
                 });
             }catch(Exception e){runOnUiThread(()->{
+                tollRequestRunning=false;
                 if(tollButton!=null){tollButton.setEnabled(true);tollButton.setText("🛣 Pedágios da rota");}
                 if(openDialog)status.setText("Pedágios: "+e.getMessage());
             });}
@@ -610,6 +645,8 @@ public class MainActivity extends Activity {
     }
 
     private void analyzeTruckRestrictions(boolean showDialog){
+        if(showDialog&&restrictionDialog!=null&&restrictionDialog.isShowing())return;
+        if(restrictionRequestRunning){if(showDialog)status.setText("A análise de restrições já está em andamento.");return;}
         if(!isTruckVehicle()){
             if(showDialog)new AlertDialog.Builder(this)
                 .setTitle("Perfil do veículo")
@@ -622,6 +659,7 @@ public class MainActivity extends Activity {
             if(showDialog)status.setText("Adicione os endereços da rota antes de verificar restrições.");
             return;
         }
+        restrictionRequestRunning=true;
         if(showDialog)status.setText("Verificando restrições para "+vehicleType()+"…");
         exec.execute(()->{
             try{
@@ -636,6 +674,7 @@ public class MainActivity extends Activity {
                 JSONArray alerts=j.optJSONArray("alerts");
                 int count=j.optInt("count",alerts==null?0:alerts.length());
                 runOnUiThread(()->{
+                    restrictionRequestRunning=false;
                     if(truckRestrictionsButton!=null){
                         truckRestrictionsButton.setText(count>0?"⚠ "+count+" alerta"+(count==1?"":"s")+" de caminhão":"✓ Sem alerta cadastrado • "+vehicleType());
                     }
@@ -655,10 +694,14 @@ public class MainActivity extends Activity {
                         }
                     }
                     msg.append(j.optString("coverage","")).append("\n\n").append(j.optString("warning",""));
-                    new AlertDialog.Builder(this).setTitle("Restrições para caminhão").setMessage(msg.toString()).setPositiveButton("OK",null).show();
+                    if(restrictionDialog!=null&&restrictionDialog.isShowing())return;
+                    restrictionDialog=new AlertDialog.Builder(this).setTitle("Restrições para caminhão").setMessage(msg.toString()).setPositiveButton("OK",null).create();
+                    restrictionDialog.setOnDismissListener(d->restrictionDialog=null);
+                    restrictionDialog.show();
                     status.setText(count>0?count+" alerta(s) encontrado(s) para o veículo.":"Nenhuma restrição cadastrada encontrada nesta rota.");
                 });
             }catch(Exception e){runOnUiThread(()->{
+                restrictionRequestRunning=false;
                 if(showDialog)status.setText("Restrições: "+e.getMessage());
             });}
         });
