@@ -1,0 +1,9 @@
+{
+  "name": "Lista de Convites — Junior e Carol",
+  "short_name": "Convites",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#111111",
+  "icons": []
+}
