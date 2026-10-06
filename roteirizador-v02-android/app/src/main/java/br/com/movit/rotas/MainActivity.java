@@ -302,28 +302,59 @@ public class MainActivity extends Activity {
     private void shareRoute(){
         if(stops.isEmpty()){status.setText("Adicione paradas antes de compartilhar.");return;}
         final String driver=prefs.getString("current_driver_name","Motorista");
-        final String eventDate=prefs.getString("current_event_date",new java.text.SimpleDateFormat("yyyy-MM-dd",Locale.getDefault()).format(new Date()));
-        final String title=prefs.getString("current_route_name",driver+" "+eventDate);
+        final String eventDateIso=prefs.getString("current_event_date",new java.text.SimpleDateFormat("yyyy-MM-dd",Locale.getDefault()).format(new Date()));
+        String dateBr=eventDateIso;
+        try{
+            Date parsed=new java.text.SimpleDateFormat("yyyy-MM-dd",Locale.getDefault()).parse(eventDateIso);
+            if(parsed!=null)dateBr=new java.text.SimpleDateFormat("dd/MM/yyyy",Locale.getDefault()).format(parsed);
+        }catch(Exception ignored){}
+        final String eventDateBr=dateBr;
+        final String title=driver+" "+eventDateBr;
         status.setText("Gerando link da rota…");
         exec.execute(()->{
             try{
                 JSONObject body=new JSONObject();
                 body.put("driver_name",driver);
-                body.put("event_date",eventDate);
+                body.put("event_date",eventDateIso);
                 body.put("title",title);
                 body.put("route_data",currentRouteData());
                 JSONObject j=Api.post("/api/public-router/share",body);
-                String link=j.getString("shareUrl");
-                runOnUiThread(()->{
+                final String link=j.getString("shareUrl");
+                final String msg="Rota MOVIT - "+driver+" - "+eventDateBr+"\n"+link;
+                runOnUiThread(()->showShareOptions(title,msg,link));
+            }catch(Exception e){runOnUiThread(()->status.setText("Compartilhar: "+e.getMessage()));}
+        });
+    }
+
+    private void showShareOptions(String title,String msg,String link){
+        final String[] options={"WhatsApp","Copiar link","Outros aplicativos"};
+        new AlertDialog.Builder(this)
+            .setTitle("Compartilhar rota")
+            .setItems(options,(d,which)->{
+                if(which==0){
+                    try{
+                        Intent send=new Intent(Intent.ACTION_SEND);
+                        send.setType("text/plain");
+                        send.setPackage("com.whatsapp");
+                        send.putExtra(Intent.EXTRA_TEXT,msg);
+                        startActivity(send);
+                    }catch(Exception e){
+                        status.setText("WhatsApp não encontrado. Use Copiar link ou Outros aplicativos.");
+                    }
+                }else if(which==1){
+                    ClipboardManager cm=(ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+                    if(cm!=null)cm.setPrimaryClip(ClipData.newPlainText(title,link));
+                    status.setText("Link da rota copiado.");
+                }else{
                     Intent send=new Intent(Intent.ACTION_SEND);
                     send.setType("text/plain");
                     send.putExtra(Intent.EXTRA_SUBJECT,title);
-                    send.putExtra(Intent.EXTRA_TEXT,title+"\n"+link);
+                    send.putExtra(Intent.EXTRA_TEXT,msg);
                     startActivity(Intent.createChooser(send,"Compartilhar rota"));
-                    status.setText("Link da rota pronto para compartilhar.");
-                });
-            }catch(Exception e){runOnUiThread(()->status.setText("Compartilhar: "+e.getMessage()));}
-        });
+                }
+            })
+            .setNegativeButton("Cancelar",null)
+            .show();
     }
 
     private void handleSharedRouteIntent(Intent intent){
