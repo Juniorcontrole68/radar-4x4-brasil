@@ -31,7 +31,7 @@ public class MainActivity extends Activity {
     private JSONObject start=null,lastPlan=null;
     private android.content.SharedPreferences prefs;
     private TextView account,routeTitle;
-    private Button cloudSave,cloudRoutes;
+    private Button cloudSave,cloudRoutes,optimizeButton;
 
     @Override public void onCreate(Bundle b){
         super.onCreate(b);prefs=getSharedPreferences("rv2_account",MODE_PRIVATE);buildUi();renderList();renderMap(null);refreshAccount();handleSharedRouteIntent(getIntent());
@@ -152,9 +152,9 @@ public class MainActivity extends Activity {
 
         // Barra inferior de ação
         LinearLayout bottom=card(10);bottom.setOrientation(LinearLayout.HORIZONTAL);bottom.setGravity(Gravity.CENTER_VERTICAL);
-        Button optimize=pill("Otimizar rota",Color.WHITE,NAVY);optimize.setTextSize(14);optimize.setBackground(strokedBg(Color.WHITE,LINE,14));optimize.setOnClickListener(v->optimize());
+        optimizeButton=pill("Otimizar rota",Color.WHITE,NAVY);optimizeButton.setTextSize(14);optimizeButton.setBackground(strokedBg(Color.WHITE,LINE,14));optimizeButton.setOnClickListener(v->optimize());
         Button startBtn=pill("Iniciar rota",BLUE,Color.WHITE);startBtn.setTextSize(14);startBtn.setOnClickListener(v->{if(lastPlan==null)optimize();else navigateFirst();});
-        bottom.addView(optimize,new LinearLayout.LayoutParams(0,dp(56),1f));
+        bottom.addView(optimizeButton,new LinearLayout.LayoutParams(0,dp(56),1f));
         LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(0,dp(56),1f);sp.setMargins(dp(10),0,0,0);bottom.addView(startBtn,sp);
         root.addView(bottom);
 
@@ -404,21 +404,47 @@ public class MainActivity extends Activity {
     }
 
     private void optimize(){
-        if(stops.size()<2){status.setText("Adicione pelo menos duas paradas.");return;}
-        status.setText("Otimizando pelas vias reais…");
+        if(stops.size()<2){status.setText("Adicione pelo menos duas paradas para otimizar.");return;}
+        if(optimizeButton!=null){
+            optimizeButton.setEnabled(false);
+            optimizeButton.setText("Otimizando…");
+            optimizeButton.setAlpha(.65f);
+        }
+        status.setText("Calculando a melhor sequência pelas vias reais…");
         exec.execute(()->{
             try{
                 JSONObject body=new JSONObject();JSONArray arr=new JSONArray();
                 for(JSONObject s:stops)arr.put(new JSONObject(s.toString()));
-                body.put("stops",arr);if(start!=null)body.put("start",start);
+                body.put("stops",arr);
+                if(start!=null)body.put("start",start);
                 body.put("returnToStart",prefs.getBoolean("current_return_start",false));
-                JSONObject j=Api.post("/api/public-router/optimize",body);lastPlan=j;
-                JSONArray order=j.getJSONArray("order");ArrayList<JSONObject> ordered=new ArrayList<>();
+                JSONObject j=Api.post("/api/public-router/optimize",body);
+                if(!j.optBoolean("ok",false))throw new Exception(j.optString("error","Falha ao otimizar rota."));
+                lastPlan=j;
+                JSONArray order=j.getJSONArray("order");
+                ArrayList<JSONObject> ordered=new ArrayList<>();
                 JSONArray points=j.getJSONArray("points");
-                for(int i=0;i<order.length();i++)ordered.add(points.getJSONObject(order.getInt(i)));
+                for(int i=0;i<order.length();i++){
+                    int idx=order.getInt(i);
+                    if(idx>=0&&idx<points.length())ordered.add(points.getJSONObject(idx));
+                }
+                if(ordered.isEmpty())throw new Exception("O servidor não retornou uma sequência válida.");
                 stops.clear();stops.addAll(ordered);
-                runOnUiThread(()->{status.setText("Rota otimizada.");int[] mins={10,15,20,30,45,60};int stopMin=mins[Math.min(mins.length-1,Math.max(0,prefs.getInt("cfg_time",2)))];double totalSec=j.optDouble("durationSeconds",0)+(stops.size()*stopMin*60d);summary.setText(fmtTime(totalSec)+" • "+stops.size()+" paradas • "+fmtKm(j.optDouble("distanceMeters",0))+(prefs.getBoolean("current_return_start",false)?" • ida e volta":" • só ida"));renderList();renderMap(j);});
-            }catch(Exception e){runOnUiThread(()->status.setText("Erro: "+e.getMessage()));}
+                runOnUiThread(()->{
+                    int[] mins={10,15,20,30,45,60};
+                    int stopMin=mins[Math.min(mins.length-1,Math.max(0,prefs.getInt("cfg_time",2)))];
+                    double totalSec=j.optDouble("durationSeconds",0)+(stops.size()*stopMin*60d);
+                    summary.setText(fmtTime(totalSec)+" • "+stops.size()+" paradas • "+fmtKm(j.optDouble("distanceMeters",0))+(prefs.getBoolean("current_return_start",false)?" • ida e volta":" • só ida"));
+                    status.setText("Rota otimizada com sucesso.");
+                    renderList();renderMap(j);
+                    if(optimizeButton!=null){optimizeButton.setEnabled(true);optimizeButton.setText("Otimizar rota");optimizeButton.setAlpha(1f);}
+                });
+            }catch(Exception e){
+                runOnUiThread(()->{
+                    status.setText("Não foi possível otimizar: "+e.getMessage());
+                    if(optimizeButton!=null){optimizeButton.setEnabled(true);optimizeButton.setText("Tentar novamente");optimizeButton.setAlpha(1f);}
+                });
+            }
         });
     }
 
