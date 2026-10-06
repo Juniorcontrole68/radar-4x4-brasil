@@ -593,16 +593,33 @@ public class MainActivity extends Activity {
         exec.execute(()->{
             try{
                 JSONObject body=new JSONObject();JSONArray arr=new JSONArray();
-                for(JSONObject s:stops)arr.put(new JSONObject(s.toString()));
+                boolean returnToStart=prefs.getBoolean("current_return_start",false);
+                JSONObject effectiveStart=start;
+                int firstStopIndex=0;
+
+                if(returnToStart&&effectiveStart==null&&!stops.isEmpty()){
+                    effectiveStart=new JSONObject(stops.get(0).toString());
+                    effectiveStart.put("label",effectiveStart.optString("resolved",effectiveStart.optString("label","Início")));
+                    start=new JSONObject(effectiveStart.toString());
+                    firstStopIndex=1;
+                }
+
+                for(int k=firstStopIndex;k<stops.size();k++)arr.put(new JSONObject(stops.get(k).toString()));
                 body.put("stops",arr);
-                if(start!=null)body.put("start",start);
-                body.put("returnToStart",prefs.getBoolean("current_return_start",false));
+                if(effectiveStart!=null)body.put("start",effectiveStart);
+                body.put("returnToStart",returnToStart);
                 JSONObject j=Api.post("/api/public-router/optimize",body);
                 if(!j.optBoolean("ok",false))throw new Exception(j.optString("error","Falha ao otimizar rota."));
                 lastPlan=j;
                 JSONArray order=j.getJSONArray("order");
                 ArrayList<JSONObject> ordered=new ArrayList<>();
                 JSONArray points=j.getJSONArray("points");
+                boolean roundTrip=j.optBoolean("returnToStart",prefs.getBoolean("current_return_start",false));
+                if(roundTrip&&points.length()>0){
+                    JSONObject startPoint=new JSONObject(points.getJSONObject(0).toString());
+                    start=new JSONObject(startPoint.toString());
+                    ordered.add(startPoint);
+                }
                 for(int i=0;i<order.length();i++){
                     int idx=order.getInt(i);
                     if(idx>=0&&idx<points.length())ordered.add(points.getJSONObject(idx));
@@ -613,7 +630,7 @@ public class MainActivity extends Activity {
                     int[] mins={10,15,20,30,45,60};
                     int stopMin=mins[Math.min(mins.length-1,Math.max(0,prefs.getInt("cfg_time",2)))];
                     double totalSec=j.optDouble("durationSeconds",0)+(stops.size()*stopMin*60d);
-                    summary.setText(fmtTime(totalSec)+" • "+stops.size()+" paradas • "+fmtKm(j.optDouble("distanceMeters",0))+(prefs.getBoolean("current_return_start",false)?" • ida e volta":" • só ida"));
+                    summary.setText(fmtTime(totalSec)+" • "+stops.size()+" pontos • "+fmtKm(j.optDouble("distanceMeters",0))+(prefs.getBoolean("current_return_start",false)?" • retorna ao início":" • só ida"));
                     status.setText("Rota otimizada com sucesso.");
                     renderList();renderMap(j);
                     if(optimizeButton!=null){optimizeButton.setEnabled(true);optimizeButton.setText("Otimizar rota");optimizeButton.setAlpha(1f);}
