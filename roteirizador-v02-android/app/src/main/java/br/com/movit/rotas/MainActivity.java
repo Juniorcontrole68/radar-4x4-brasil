@@ -9,6 +9,7 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.location.Location;
 import android.location.LocationManager;
+import android.location.LocationListener;
 import android.net.Uri;
 import android.os.*;
 import android.speech.RecognizerIntent;
@@ -21,7 +22,7 @@ import java.util.*;
 import java.util.concurrent.*;
 
 public class MainActivity extends Activity {
-    private static final int REQ_VOICE=10,REQ_LOC=11;
+    private static final int REQ_VOICE=10,REQ_LOC=11,REQ_TEST_LOC=12;
     private final ArrayList<JSONObject> stops=new ArrayList<>();
     private final ExecutorService exec=Executors.newSingleThreadExecutor();
     private LinearLayout list;
@@ -31,8 +32,12 @@ public class MainActivity extends Activity {
     private JSONObject start=null,lastPlan=null;
     private android.content.SharedPreferences prefs;
     private TextView account,routeTitle;
-    private Button cloudSave,cloudRoutes,optimizeButton;
+    private Button cloudSave,cloudRoutes,optimizeButton,testTrackingButton;
     private Switch returnStartHome;
+    private LocationManager testLocationManager;
+    private LocationListener testLocationListener;
+    private String testTrackingToken="";
+    private boolean testTrackingActive=false;
 
     @Override public void onCreate(Bundle b){
         super.onCreate(b);prefs=getSharedPreferences("rv2_account",MODE_PRIVATE);buildUi();renderList();renderMap(null);refreshAccount();handleSharedRouteIntent(getIntent());
@@ -144,6 +149,11 @@ public class MainActivity extends Activity {
             renderMap(null);
         });
         info.addView(returnStartHome);
+
+        testTrackingButton=pill("🧪 Testar no mapa CONSTRULOG",Color.rgb(255,247,237),Color.rgb(154,52,18));
+        testTrackingButton.setBackground(strokedBg(Color.rgb(255,247,237),Color.rgb(253,186,116),14));
+        testTrackingButton.setOnClickListener(v->{if(testTrackingActive)stopConstrulogTest();else startConstrulogTest();});
+        LinearLayout.LayoutParams testLp=new LinearLayout.LayoutParams(-1,dp(48));testLp.setMargins(0,0,0,dp(8));info.addView(testTrackingButton,testLp);
 
         LinearLayout shareRow=new LinearLayout(this);shareRow.setOrientation(LinearLayout.HORIZONTAL);
         Button share=pill("↗  Compartilhar rota",Color.WHITE,BLUE);share.setBackground(strokedBg(Color.WHITE,LINE,14));share.setOnClickListener(v->shareRoute());
@@ -415,6 +425,95 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void startConstrulogTest(){
+        final String driver=prefs.getString("current_driver_name","").trim();
+        final String romaneio=prefs.getString("current_romaneio","").trim();
+        final String eventDate=prefs.getString("current_event_date",new java.text.SimpleDateFormat("yyyy-MM-dd",Locale.getDefault()).format(new Date()));
+        if(driver.isEmpty()){status.setText("Crie a rota e informe o motorista antes do teste.");return;}
+        if(romaneio.isEmpty()){status.setText("Informe o romaneio CONSTRULOG antes do teste.");return;}
+        if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED){
+            requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION,Manifest.permission.ACCESS_COARSE_LOCATION},REQ_TEST_LOC);
+            return;
+        }
+        if(testTrackingButton!=null){testTrackingButton.setEnabled(false);testTrackingButton.setText("Iniciando teste…");}
+        status.setText("Associando este celular ao romaneio "+romaneio+"…");
+        exec.execute(()->{
+            try{
+                JSONObject b=new JSONObject();
+                b.put("driver_name",driver);
+                b.put("romaneio",romaneio);
+                b.put("event_date",eventDate);
+                b.put("title",prefs.getString("current_route_name",driver+" "+eventDate));
+                b.put("route_data",currentRouteData());
+                JSONObject j=Api.post("/api/public-router/test-tracking/start",b);
+                testTrackingToken=j.getString("token");
+                prefs.edit().putString("test_tracking_token",testTrackingToken).apply();
+                runOnUiThread(()->{
+                    testTrackingActive=true;
+                    if(testTrackingButton!=null){testTrackingButton.setEnabled(true);testTrackingButton.setText("Parar teste CONSTRULOG");}
+                    status.setText("TESTE ATIVO • "+driver+" • Romaneio "+romaneio+". Sua posição já pode aparecer no mapa.");
+                    beginTestLocationUpdates();
+                });
+            }catch(Exception e){
+                runOnUiThread(()->{
+                    if(testTrackingButton!=null){testTrackingButton.setEnabled(true);testTrackingButton.setText("🧪 Testar no mapa CONSTRULOG");}
+                    status.setText("Teste CONSTRULOG: "+e.getMessage());
+                });
+            }
+        });
+    }
+
+    private void beginTestLocationUpdates(){
+        try{
+            if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED)return;
+            testLocationManager=(LocationManager)getSystemService(LOCATION_SERVICE);
+            if(testLocationListener!=null){
+                try{testLocationManager.removeUpdates(testLocationListener);}catch(Exception ignored){}
+            }
+            testLocationListener=new LocationListener(){
+                @Override public void onLocationChanged(Location location){sendTestLocation(location);}
+                @Override public void onProviderEnabled(String provider){}
+                @Override public void onProviderDisabled(String provider){}
+                @Override public void onStatusChanged(String provider,int statusCode,Bundle extras){}
+            };
+            boolean gps=testLocationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
+            boolean net=testLocationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+            if(gps)testLocationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER,10000L,5f,testLocationListener);
+            if(net)testLocationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER,15000L,10f,testLocationListener);
+            Location last=null;
+            if(gps)last=testLocationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+            if(last==null&&net)last=testLocationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+            if(last!=null)sendTestLocation(last);
+            if(!gps&&!net)status.setText("Teste iniciado, mas o GPS está desligado.");
+        }catch(Exception e){status.setText("Teste ativo, mas não consegui iniciar o GPS: "+e.getMessage());}
+    }
+
+    private void sendTestLocation(Location l){
+        if(!testTrackingActive||l==null||testTrackingToken==null||testTrackingToken.isEmpty())return;
+        final String token=testTrackingToken;
+        final double lat=l.getLatitude(),lon=l.getLongitude();
+        final float acc=l.hasAccuracy()?l.getAccuracy():0f;
+        exec.execute(()->{
+            try{
+                JSONObject b=new JSONObject();
+                b.put("latitude",lat);b.put("longitude",lon);b.put("accuracy_m",acc);
+                b.put("captured_at",new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX",Locale.getDefault()).format(new Date()));
+                Api.postAuth("/api/tracking/test/point",b,token);
+                runOnUiThread(()->status.setText("TESTE ATIVO • posição enviada à CONSTRULOG às "+new java.text.SimpleDateFormat("HH:mm:ss",Locale.getDefault()).format(new Date())));
+            }catch(Exception e){runOnUiThread(()->status.setText("Teste ativo • falha ao enviar GPS: "+e.getMessage()));}
+        });
+    }
+
+    private void stopConstrulogTest(){
+        testTrackingActive=false;
+        try{
+            if(testLocationManager!=null&&testLocationListener!=null)testLocationManager.removeUpdates(testLocationListener);
+        }catch(Exception ignored){}
+        testLocationListener=null;
+        if(testTrackingButton!=null){testTrackingButton.setEnabled(true);testTrackingButton.setText("🧪 Testar no mapa CONSTRULOG");}
+        status.setText("Teste CONSTRULOG encerrado neste celular.");
+    }
+
     private void voice(){
         Intent i=new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
@@ -457,6 +556,7 @@ public class MainActivity extends Activity {
     @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults){
         super.onRequestPermissionsResult(requestCode,permissions,grantResults);
         if(requestCode==REQ_LOC&&grantResults.length>0&&grantResults[0]==PackageManager.PERMISSION_GRANTED)useLocation();
+        if(requestCode==REQ_TEST_LOC&&grantResults.length>0&&grantResults[0]==PackageManager.PERMISSION_GRANTED)startConstrulogTest();
     }
 
     private void addAddress(String raw){
@@ -739,4 +839,10 @@ public class MainActivity extends Activity {
         }catch(Exception e){status.setText("Não foi possível abrir a rota.");}
     }
 
+
+    @Override protected void onDestroy(){
+        try{if(testLocationManager!=null&&testLocationListener!=null)testLocationManager.removeUpdates(testLocationListener);}catch(Exception ignored){}
+        exec.shutdownNow();
+        super.onDestroy();
+    }
 }
