@@ -50,7 +50,7 @@ function guestPublic(g) {
   return { id:g.id, name:g.name, invited:g.invited, status:g.status, confirmed:g.confirmed };
 }
 
-app.use(express.json({ limit: '8mb' }));
+app.use(express.json({ limit: '15mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
@@ -88,7 +88,7 @@ app.put('/api/event', async (req, res, next) => {
       const m = String(extraImageData).match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
       if (!m) return res.status(400).json({ error: 'Foto extra inválida' });
       const buffer = Buffer.from(m[2], 'base64');
-      if (buffer.length > 5 * 1024 * 1024) return res.status(400).json({ error: 'A foto extra deve ter no máximo 5 MB' });
+      if (buffer.length > 10 * 1024 * 1024) return res.status(400).json({ error: 'A foto extra deve ter no máximo 10 MB' });
       await redis.hSet(EXTRA_IMAGE_KEY, { mime: m[1], data: m[2] });
       body.hasExtraImage = true;
     } else if (removeExtraImage) {
