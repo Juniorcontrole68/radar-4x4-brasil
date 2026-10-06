@@ -1,4 +1,4 @@
-name: Build motiv Android
+name: Build MOVIT Android
 
 on:
   push:
@@ -32,10 +32,10 @@ jobs:
       - name: Publish APK
         run: |
           mkdir -p controle-coletas-aiven-app/downloads
-          cp roteirizador-v02-android/app/build/outputs/apk/debug/app-debug.apk controle-coletas-aiven-app/downloads/MOTIV.apk
-          cp roteirizador-v02-android/app/build/outputs/bundle/release/app-release.aab controle-coletas-aiven-app/downloads/MOTIV-PLAYSTORE.aab
+          cp roteirizador-v02-android/app/build/outputs/apk/debug/app-debug.apk controle-coletas-aiven-app/downloads/MOVIT.apk
+          cp roteirizador-v02-android/app/build/outputs/bundle/release/app-release.aab controle-coletas-aiven-app/downloads/MOVIT-PLAYSTORE.aab
           git config user.name "CONSTRULOG Build"
           git config user.email "actions@users.noreply.github.com"
-          git add controle-coletas-aiven-app/downloads/MOTIV.apk controle-coletas-aiven-app/downloads/MOTIV-PLAYSTORE.aab
-          git commit -m "Publica motiv Android 0.4.0 [skip ci]" || exit 0
+          git add controle-coletas-aiven-app/downloads/MOVIT.apk controle-coletas-aiven-app/downloads/MOVIT-PLAYSTORE.aab
+          git commit -m "Publica MOVIT Android 0.4.0 [skip ci]" || exit 0
           git push origin HEAD:controle-coletas-aiven
