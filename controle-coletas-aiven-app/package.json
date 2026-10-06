@@ -3,10 +3,17 @@
   "version": "2.2.0",
   "private": true,
   "main": "server.js",
-  "scripts": {"start": "node server.js"},
-  "engines": {"node": ">=20"},
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "express": "^5.1.0",
-    "pg": "^8.16.3"
+    "pg": "^8.16.3",
+    "imapflow": "^1.0.181",
+    "mailparser": "^3.7.4",
+    "pdf-lib": "^1.17.1"
   }
 }
