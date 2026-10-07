@@ -3,6 +3,7 @@ const path = require('path');
 const http = require('http');
 const Module = require('module');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
 const { PDFDocument } = require('pdf-lib');
@@ -40,6 +41,59 @@ const ACCOUNTS_INDEX = path.join(__dirname, '..', 'contas-a-pagar-v3', 'public',
 const DRIVER_DOWNLOADS = path.join(__dirname, 'downloads');
 const DRIVER_UPDATE_FILE = path.join(DRIVER_DOWNLOADS, 'update.json');
 const DRIVER_PUBLIC_BASE = 'https://controle-coletas-jr.onrender.com';
+
+const DASH_INTERNAL_PORT = Number(process.env.DASH_INTERNAL_PORT || 10001);
+const DASH_INTERNAL_HOST = '127.0.0.1';
+const DASHBOARD_DIR = path.join(__dirname, 'dashboard');
+let DASH_CHILD = null;
+const DASH_API_PREFIXES = [
+  '/api/sheet/','/api/bi2/','/api/ssw/','/api/tracking/','/api/roteirizador/',
+  '/api/programacao-entregas','/api/programacao-simulacao','/api/evolucao-motoristas',
+  '/api/agendamento-teste','/api/nf-materiais','/api/frota-state','/api/frota-maintenance-file',
+  '/api/carregamentos-count','/api/carregamentos-finais','/api/coletas/status',
+  '/api/lotacao','/api/auth/'
+];
+function isDashboardApiPath(pathname){
+  return DASH_API_PREFIXES.some(p=>pathname===p||pathname.startsWith(p));
+}
+function proxyDashboard(req,res,targetPath){
+  const headers={...req.headers,host:DASH_INTERNAL_HOST+':'+DASH_INTERNAL_PORT};
+  const pr=http.request({
+    host:DASH_INTERNAL_HOST,
+    port:DASH_INTERNAL_PORT,
+    method:req.method,
+    path:targetPath,
+    headers
+  },pres=>{
+    const outHeaders={...pres.headers};
+    res.writeHead(pres.statusCode||502,outHeaders);
+    pres.pipe(res)
+  });
+  pr.on('error',err=>{
+    if(!res.headersSent)res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+    if(!res.writableEnded)res.end(JSON.stringify({ok:false,error:'Módulo interno da Torre de Controle indisponível: '+err.message}))
+  });
+  req.pipe(pr)
+}
+function startUnifiedDashboardChild(){
+  if(DASH_CHILD&&!DASH_CHILD.killed)return;
+  const childPath=path.join(DASHBOARD_DIR,'server.js');
+  if(!fs.existsSync(childPath)){console.warn('Dashboard interno não encontrado:',childPath);return}
+  DASH_CHILD=spawn(process.execPath,[childPath],{
+    cwd:DASHBOARD_DIR,
+    env:{
+      ...process.env,
+      PORT:String(DASH_INTERNAL_PORT),
+      COLETAS_PORTAL_URL:'http://127.0.0.1:'+String(PORT)
+    },
+    stdio:['ignore','inherit','inherit']
+  });
+  DASH_CHILD.on('exit',(code,signal)=>{
+    console.error('Dashboard interno encerrou',code,signal);
+    DASH_CHILD=null;
+    setTimeout(()=>{try{startUnifiedDashboardChild()}catch(e){console.error(e)}},2000)
+  })
+}
 
 function sendHtml(res, file) {
   res.writeHead(200, {
@@ -1131,11 +1185,21 @@ async function start() {
     }
   }
   await migrateLegacyBillsIfNeeded();
+  startUnifiedDashboardChild();
   
 
   http.createServer(async (req, res) => {
     try {
       const u = new URL(req.url, 'http://localhost');
+
+      // Torre de Controle unificada: dashboard e APIs do dashboard rodam neste mesmo serviço.
+      if(u.pathname==='/dashboard'||u.pathname.startsWith('/dashboard/')){
+        const sub=u.pathname.replace(/^\/dashboard/,'')||'/';
+        return proxyDashboard(req,res,sub+(u.search||''))
+      }
+      if(isDashboardApiPath(u.pathname)){
+        return proxyDashboard(req,res,u.pathname+(u.search||''))
+      }
 
       if (u.pathname === '/api/router-app/register' && req.method === 'POST') {
         try{
