@@ -966,8 +966,23 @@ function checkerValueAggregate(rows){
     media:x.lancamentos?x.valor/x.lancamentos:0
   })).sort((a,b)=>(rank[a.funcao]??9)-(rank[b.funcao]??9)||b.valor-a.valor||a.nome.localeCompare(b.nome,'pt-BR'))
 }
+async function refreshCheckerCarsLoaded(){
+  const el=$('#checkerCarsLoaded');if(!el)return;
+  const date=$('#checkerValueTo')?.value||iso(new Date());
+  el.textContent='…';
+  try{
+    const r=await fetch('/api/carregamentos-count?data='+encodeURIComponent(date)+'&t='+Date.now(),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao consultar carregamentos.');
+    el.textContent=nf(Number(j.total||0))
+  }catch(e){
+    el.textContent='—';
+    console.warn('Total de carros carregados:',e)
+  }
+}
 function renderCheckerValueReport(){
   if(!$('#checkerValueTable'))return;
+  refreshCheckerCarsLoaded().catch(()=>{});
   const from=$('#checkerValueFrom')?.value||'',to=$('#checkerValueTo')?.value||'';
   const rows=checkerValueRowsBetween(from,to),agg=checkerValueAggregate(rows);
   const conferentes=agg.filter(x=>x.funcao==='Conferente'),ajudantes=agg.filter(x=>x.funcao==='Ajudante');
