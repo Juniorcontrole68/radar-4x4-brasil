@@ -35,6 +35,7 @@ const DRIVER_TEST_INSTALL_PAGE = path.join(__dirname, 'motorista-teste-instalar.
 const LOTACAO_PAGE = path.join(__dirname, 'lotacao.html');
 const FROTA_PAGE = path.join(__dirname, 'frota.html');
 const PDF_UNIFIER_PAGE = path.join(__dirname, 'pdf-unificador.html');
+const MOVIT_PC_PAGE = path.join(__dirname, 'movit-pc.html');
 const ACCOUNTS_INDEX = path.join(__dirname, '..', 'contas-a-pagar-v3', 'public', 'index.html');
 const DRIVER_DOWNLOADS = path.join(__dirname, 'downloads');
 const DRIVER_UPDATE_FILE = path.join(DRIVER_DOWNLOADS, 'update.json');
@@ -2181,6 +2182,10 @@ async function start() {
       }
       if (req.method === 'GET' && (u.pathname === '/' || u.pathname === '/painel')) {
         return sendHtml(res, PANEL);
+      }
+
+      if (req.method === 'GET' && (u.pathname === '/movit-pc' || u.pathname === '/movit-pc/')) {
+        return sendHtml(res, MOVIT_PC_PAGE);
       }
 
       if (req.method === 'GET' && (u.pathname === '/pdf-unificador' || u.pathname === '/pdf-unificador/')) {
