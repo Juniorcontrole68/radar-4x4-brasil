@@ -4577,54 +4577,28 @@ async function setupPdfNotas(){
   const info=document.querySelector('#pdfNotasInfo');
   const tbody=document.querySelector('#pdfNotasBody');
   const stat=document.querySelector('#pdfNotasStats');
-  let srcBytes=null, pages=[];
-  const setInfo=(t)=>{if(info)info.textContent=t};
+  let sources=[],pages=[];
+  const setInfo=t=>{if(info)info.textContent=t};
+  const normTxt=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').toUpperCase().trim();
+  const hasSpecial=txt=>{const s=normTxt(txt);return /\bTUBO(?:S)?\b/.test(s)||/\bCAIXA(?:S)?\s+D[ '\u2019]?AGUA\b/.test(s)||/\bCAIXA(?:S)?\s+DE\s+AGUA\b/.test(s)||/\bCAIXA(?:S)?\s+DAGUA\b/.test(s)};
+  const parseWeight=txt=>{const s=String(txt||'').replace(/\s+/g,' ');const pats=[/PESO\s*BRUTO\s*[:\-]?\s*([0-9.]+,[0-9]{1,3}|[0-9]+(?:[.,][0-9]+)?)/i,/PESO\s*BRUTO[^0-9]{0,25}([0-9.]+,[0-9]{1,3}|[0-9]+(?:[.,][0-9]+)?)/i];for(const re of pats){const m=s.match(re);if(m){const v=Number(m[1].replace(/\./g,'').replace(',','.'));if(Number.isFinite(v))return v}}return null};
+  const parseNfe=txt=>{const s=String(txt||'').replace(/\s+/g,' ');for(const re of [/NF-?E\s*(?:N[º°O.]*)?\s*[:\-]?\s*(\d{1,3}(?:\.\d{3}){1,3}|\d{5,12})/i,/N[º°]\s*[:\-]?\s*(\d{1,3}(?:\.\d{3}){1,3}|\d{5,12})/i]){const m=s.match(re);if(m)return m[1]}return''};
+  const categoryOf=p=>p.hasSpecial?1:(p.weight!==null&&p.weight>100?2:3);
   const render=()=>{
-    if(stat){
-      const notas=pages.filter(p=>p.isNote), tubo=notas.filter(p=>p.hasTube), acima=tubo.filter(p=>p.weight!==null&&p.weight>100), semAbaixo=notas.filter(p=>!p.hasTube&&p.weight!==null&&p.weight<100);
-      stat.innerHTML='<b>'+notas.length+'</b> notas fiscais • <b>'+tubo.length+'</b> com TUBO • <b>'+acima.length+'</b> com TUBO e >100 kg • <b>'+semAbaixo.length+'</b> sem TUBO e <100 kg';
-    }
-    if(tbody)tbody.innerHTML=pages.filter(p=>p.isNote).map(p=>'<tr><td>'+p.page+'</td><td>'+safe(p.nfe||'—')+'</td><td>'+(p.hasTube?'Sim':'Não')+'</td><td>'+(p.weight===null?'—':p.weight.toLocaleString('pt-BR',{minimumFractionDigits:3,maximumFractionDigits:3})+' kg')+'</td></tr>').join('');
+    const notes=pages.filter(p=>p.isNote),g1=notes.filter(p=>categoryOf(p)===1),g2=notes.filter(p=>categoryOf(p)===2),g3=notes.filter(p=>categoryOf(p)===3);
+    if(stat)stat.innerHTML='<b>'+notes.length+'</b> nota(s) fiscal(is) • <b>'+g1.length+'</b> com TUBO e/ou CAIXA D\'ÁGUA • <b>'+g2.length+'</b> sem esses itens e acima de 100 kg • <b>'+g3.length+'</b> restante';
+    if(tbody)tbody.innerHTML=notes.length?notes.map(p=>{const cat=categoryOf(p),label=cat===1?'1 • Tubos / Caixas d\'água':cat===2?'2 • > 100 kg':'3 • Restante';return '<tr><td>'+safe(p.fileName)+'</td><td>'+p.page+'</td><td>'+safe(p.nfe||'—')+'</td><td>'+(p.hasSpecial?'Sim':'Não')+'</td><td>'+(p.weight===null?'—':p.weight.toLocaleString('pt-BR',{minimumFractionDigits:3,maximumFractionDigits:3})+' kg')+'</td><td><b>'+safe(label)+'</b></td></tr>'}).join(''):'<tr><td colspan="6" class="muted">Nenhuma nota fiscal identificada.</td></tr>';
   };
-  async function analyze(file){
+  async function analyze(files){
     if(!window.pdfjsLib)throw new Error('Leitor de PDF não carregou.');
-    srcBytes=new Uint8Array(await file.arrayBuffer());
-    const pdf=await window.pdfjsLib.getDocument({data:srcBytes.slice()}).promise;
-    pages=[];
-    for(let n=1;n<=pdf.numPages;n++){
-      setInfo('Lendo página '+n+' de '+pdf.numPages+'…');
-      const page=await pdf.getPage(n), tc=await page.getTextContent();
-      const txt=tc.items.map(x=>x.str).join(' ').replace(/\s+/g,' ').trim();
-      const isNote=/NOTA\s+FISCAL/i.test(txt)&&/PESO\s*BRUTO/i.test(txt);
-      pages.push({page:n,text:txt,isNote,hasTube:/\bTUBO\b/i.test(txt),weight:pdfNotasParseWeight(txt),nfe:pdfNotasNfe(txt)});
-    }
-    render(); setInfo('PDF analisado. Escolha abaixo qual grupo deseja gerar.');
+    sources=[];pages=[];
+    for(let fi=0;fi<files.length;fi++){const file=files[fi],bytes=new Uint8Array(await file.arrayBuffer()),pdf=await window.pdfjsLib.getDocument({data:bytes.slice()}).promise;sources.push({name:file.name,bytes,numPages:pdf.numPages});for(let n=1;n<=pdf.numPages;n++){setInfo('Lendo '+file.name+' • página '+n+' de '+pdf.numPages+'…');const page=await pdf.getPage(n),tc=await page.getTextContent(),txt=tc.items.map(x=>x.str).join(' ').replace(/\s+/g,' ').trim(),s=normTxt(txt);const isNote=(/NOTA\s+FISCAL/.test(s)||/DANFE/.test(s)||/NF-?E/.test(s))&&/PESO\s*BRUTO/.test(s);pages.push({sourceIndex:fi,fileName:file.name,page:n,text:txt,isNote,hasSpecial:hasSpecial(txt),weight:parseWeight(txt),nfe:parseNfe(txt)})}}
+    render();setInfo('Análise concluída. Clique em “Unificar e gerar 3 arquivos”.');
   }
-  input.addEventListener('change',async()=>{
-    const f=input.files?.[0]; if(!f)return;
-    try{setInfo('Abrindo PDF…');await analyze(f)}
-    catch(e){setInfo('Erro: '+(e.message||e))}
-  });
-  async function exportGroup(kind){
-    try{
-      if(!srcBytes)throw new Error('Selecione um PDF primeiro.');
-      if(!window.PDFLib)throw new Error('Gerador de PDF não carregou.');
-      let selected=[];
-      const notes=pages.filter(p=>p.isNote);
-      if(kind==='tubo')selected=notes.filter(p=>p.hasTube);
-      if(kind==='tubo100')selected=notes.filter(p=>p.hasTube&&p.weight!==null&&p.weight>100);
-      if(kind==='semtubo100')selected=notes.filter(p=>!p.hasTube&&p.weight!==null&&p.weight<100);
-      if(!selected.length)throw new Error('Nenhuma nota encontrada para este filtro.');
-      setInfo('Gerando PDF com '+selected.length+' nota(s)…');
-      const src=await window.PDFLib.PDFDocument.load(srcBytes.slice()), out=await window.PDFLib.PDFDocument.create();
-      const idx=selected.map(p=>p.page-1), copied=await out.copyPages(src,idx); copied.forEach(p=>out.addPage(p));
-      const bytes=await out.save(), blob=new Blob([bytes],{type:'application/pdf'}), url=URL.createObjectURL(blob);
-      const link=document.createElement('a');link.href=url;
-      const names={tubo:'notas_com_tubo.pdf',tubo100:'notas_com_tubo_acima_100kg.pdf',semtubo100:'notas_sem_tubo_abaixo_100kg.pdf'};
-      link.download=names[kind]||'notas_filtradas.pdf';document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
-      setInfo('PDF gerado com '+selected.length+' nota(s).');
-    }catch(e){setInfo('Erro: '+(e.message||e))}
-  }
-  document.querySelectorAll('[data-pdf-filter]').forEach(b=>b.addEventListener('click',()=>exportGroup(b.dataset.pdfFilter)));
+  input.addEventListener('change',async()=>{const files=[...(input.files||[])].filter(f=>/\.pdf$/i.test(f.name)||f.type==='application/pdf');if(!files.length)return;try{setInfo('Abrindo '+files.length+' PDF(s)…');await analyze(files)}catch(e){setInfo('Erro: '+(e.message||e))}});
+  async function buildPdf(selected,name){if(!selected.length)return null;const out=await window.PDFLib.PDFDocument.create(),bySource=new Map();selected.forEach(p=>{if(!bySource.has(p.sourceIndex))bySource.set(p.sourceIndex,[]);bySource.get(p.sourceIndex).push(p)});for(const [sourceIndex,items] of [...bySource.entries()].sort((a,b)=>a[0]-b[0])){const src=await window.PDFLib.PDFDocument.load(sources[sourceIndex].bytes.slice()),idx=items.sort((a,b)=>a.page-b.page).map(p=>p.page-1),copied=await out.copyPages(src,idx);copied.forEach(p=>out.addPage(p))}return{name,bytes:await out.save(),count:selected.length}}
+  function downloadPdf(item){if(!item)return;const blob=new Blob([item.bytes],{type:'application/pdf'}),url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=item.name;document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000)}
+  async function generateThree(){try{if(!sources.length)throw new Error('Selecione os PDFs dos e-mails primeiro.');if(!window.PDFLib)throw new Error('Gerador de PDF não carregou.');const notes=pages.filter(p=>p.isNote);if(!notes.length)throw new Error('Nenhuma nota fiscal foi identificada nos PDFs selecionados.');const g1=notes.filter(p=>categoryOf(p)===1),g2=notes.filter(p=>categoryOf(p)===2),g3=notes.filter(p=>categoryOf(p)===3);setInfo('Gerando os 3 arquivos…');const outputs=await Promise.all([buildPdf(g1,'01_notas_tubos_ou_caixas_dagua.pdf'),buildPdf(g2,'02_notas_sem_tubos_caixas_acima_100kg.pdf'),buildPdf(g3,'03_restante_das_notas.pdf')]);let delay=0;for(const item of outputs){if(!item)continue;setTimeout(()=>downloadPdf(item),delay);delay+=450}setInfo('Pronto. Arquivo 1: '+g1.length+' nota(s) • Arquivo 2: '+g2.length+' nota(s) • Arquivo 3: '+g3.length+' nota(s). Arquivos vazios não são baixados.')}catch(e){setInfo('Erro: '+(e.message||e))}}
+  const mergeBtn=document.querySelector('#pdfNotasMerge3');if(mergeBtn)mergeBtn.addEventListener('click',generateThree);
 }
 document.addEventListener('DOMContentLoaded',()=>setupPdfNotas());
