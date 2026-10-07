@@ -37,6 +37,7 @@ const LOTACAO_PAGE = path.join(__dirname, 'lotacao.html');
 const FROTA_PAGE = path.join(__dirname, 'frota.html');
 const PDF_UNIFIER_PAGE = path.join(__dirname, 'pdf-unificador.html');
 const MOVIT_PC_PAGE = path.join(__dirname, 'movit-pc.html');
+const MOVIT_CENTRAL_PAGE = path.join(__dirname, 'movit-central.html');
 const ACCOUNTS_INDEX = path.join(__dirname, '..', 'contas-a-pagar-v3', 'public', 'index.html');
 const DRIVER_DOWNLOADS = path.join(__dirname, 'downloads');
 const DRIVER_UPDATE_FILE = path.join(DRIVER_DOWNLOADS, 'update.json');
@@ -1174,6 +1175,82 @@ async function start() {
   )`);
   await pool.query("CREATE TABLE IF NOT EXISTS dashboard_embed_tickets (ticket_hash TEXT PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES dashboard_users(id) ON DELETE CASCADE, expires_at TIMESTAMPTZ NOT NULL, used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())");
   await pool.query('CREATE INDEX IF NOT EXISTS idx_dashboard_embed_tickets_exp ON dashboard_embed_tickets (expires_at)');
+  await pool.query(`CREATE TABLE IF NOT EXISTS movit_modules (
+    key TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'Operação',
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS movit_clients (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    document TEXT,
+    email TEXT,
+    phone TEXT,
+    plan TEXT NOT NULL DEFAULT 'Personalizado',
+    monthly_fee NUMERIC(12,2) NOT NULL DEFAULT 0,
+    due_day INTEGER NOT NULL DEFAULT 10,
+    status TEXT NOT NULL DEFAULT 'pilot',
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_movit_clients_slug_lower ON movit_clients(lower(slug))');
+  await pool.query(`CREATE TABLE IF NOT EXISTS movit_client_modules (
+    client_id BIGINT NOT NULL REFERENCES movit_clients(id) ON DELETE CASCADE,
+    module_key TEXT NOT NULL REFERENCES movit_modules(key) ON DELETE CASCADE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY(client_id,module_key)
+  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS movit_payments (
+    id BIGSERIAL PRIMARY KEY,
+    client_id BIGINT NOT NULL REFERENCES movit_clients(id) ON DELETE CASCADE,
+    reference_month DATE NOT NULL,
+    due_date DATE,
+    amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',
+    paid_at TIMESTAMPTZ,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(client_id,reference_month)
+  )`);
+  const movitSeedModules=[
+    ['lotacao','Lotação','Logística'],
+    ['coletas','Coletas','Lotação'],
+    ['financeiro_lotacao','Financeiro Lotação','Lotação'],
+    ['operacao','Operação','Operação'],
+    ['visao_geral','Visão Geral','Operação'],
+    ['dashboards','Dashboards','Operação'],
+    ['agendamento','Agendamento','Operação'],
+    ['programacao','Programação','Operação'],
+    ['roteirizador','Roteirizador','Operação'],
+    ['rastreio','Rastreio de Carga','Operação'],
+    ['financeiro_operacoes','Financeiro Operações','Operação'],
+    ['frota','Frota','Gestão'],
+    ['contas_pagar','Contas a Pagar','Gestão'],
+    ['usuarios','Usuários','Administração'],
+    ['app_movit','App MOVIT','Aplicativo']
+  ];
+  for(const m of movitSeedModules){
+    await pool.query('INSERT INTO movit_modules(key,name,category) VALUES($1,$2,$3) ON CONFLICT(key) DO UPDATE SET name=EXCLUDED.name,category=EXCLUDED.category,updated_at=NOW()',m);
+  }
+  const construlogSeed=await pool.query("INSERT INTO movit_clients(name,slug,plan,monthly_fee,due_day,status,notes) VALUES('CONSTRULOG','construlog','Personalizado',0,10,'pilot','Cliente inicial / piloto da plataforma MOVIT') ON CONFLICT DO NOTHING RETURNING id");
+  let construlogId=construlogSeed.rows[0]?.id;
+  if(!construlogId){
+    const cq=await pool.query("SELECT id FROM movit_clients WHERE lower(slug)='construlog' LIMIT 1");
+    construlogId=cq.rows[0]?.id;
+  }
+  if(construlogId){
+    const initialModules=['lotacao','coletas','financeiro_lotacao','operacao','visao_geral','dashboards','agendamento','programacao','roteirizador','rastreio','frota','contas_pagar','usuarios'];
+    for(const moduleKey of initialModules){
+      await pool.query('INSERT INTO movit_client_modules(client_id,module_key,enabled) VALUES($1,$2,TRUE) ON CONFLICT(client_id,module_key) DO NOTHING',[construlogId,moduleKey]);
+    }
+  }
   const adminUser=String(process.env.DASHBOARD_INITIAL_ADMIN_USER||'Junior').trim();
   const adminPass=String(process.env.DASHBOARD_INITIAL_ADMIN_PASSWORD||'').trim();
   if(adminUser&&adminPass){
@@ -2244,6 +2321,81 @@ async function start() {
           return sendJson(res,200,{ok:true,token,user:{id:row.id,username:row.username,is_admin:!!row.is_admin,permissions:row.is_admin?['*']:dashboardPerms(row.permissions)}});
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao autorizar módulo.'});}
       }
+      if (req.method === 'GET' && (u.pathname === '/movit-central' || u.pathname === '/movit-central/')) {
+        try{
+          await dashboardSession(req,true);
+          return sendHtml(res,MOVIT_CENTRAL_PAGE);
+        }catch(e){
+          res.writeHead(302,{Location:'/?login=1','Cache-Control':'no-store'});
+          return res.end();
+        }
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/movit-central/clients') {
+        try{
+          await dashboardSession(req,true);
+          const mq=await pool.query("SELECT key,name,category FROM movit_modules WHERE active=TRUE ORDER BY category,name");
+          const cq=await pool.query(`SELECT c.id::text,c.name,c.slug,c.document,c.email,c.phone,c.plan,c.monthly_fee,c.due_day,c.status,c.notes,c.created_at,c.updated_at,
+            COALESCE((SELECT json_agg(cm.module_key ORDER BY cm.module_key) FROM movit_client_modules cm WHERE cm.client_id=c.id AND cm.enabled=TRUE),'[]'::json) AS modules
+            FROM movit_clients c ORDER BY lower(c.name)`);
+          return sendJson(res,200,{ok:true,modules:mq.rows,clients:cq.rows});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar MOVIT Central.'})}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/movit-central/clients') {
+        try{
+          await dashboardSession(req,true);
+          const body=await readJsonBodyLimited(req,128*1024);
+          const name=String(body.name||'').trim().slice(0,160);
+          const slug=String(body.slug||name).trim().toLowerCase().replace(/[^a-z0-9_-]+/g,'-').replace(/^-+|-+$/g,'').slice(0,100);
+          if(name.length<2||slug.length<2)return sendJson(res,400,{ok:false,error:'Informe o nome e o identificador do cliente.'});
+          const dueDay=Math.min(31,Math.max(1,Number(body.due_day)||10));
+          const monthlyFee=Math.max(0,Number(body.monthly_fee)||0);
+          const status=['pilot','active','trial','overdue','blocked'].includes(body.status)?body.status:'pilot';
+          const q=await pool.query(`INSERT INTO movit_clients(name,slug,document,email,phone,plan,monthly_fee,due_day,status,notes)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id::text,name,slug,document,email,phone,plan,monthly_fee,due_day,status,notes`,
+            [name,slug,String(body.document||'').trim().slice(0,60)||null,String(body.email||'').trim().slice(0,180)||null,String(body.phone||'').trim().slice(0,80)||null,String(body.plan||'Personalizado').trim().slice(0,80),monthlyFee,dueDay,status,String(body.notes||'').trim().slice(0,2000)||null]);
+          const client=q.rows[0];
+          const modules=Array.isArray(body.modules)?[...new Set(body.modules.map(String))]:[];
+          for(const moduleKey of modules){
+            await pool.query('INSERT INTO movit_client_modules(client_id,module_key,enabled) SELECT $1,key,TRUE FROM movit_modules WHERE key=$2 ON CONFLICT(client_id,module_key) DO UPDATE SET enabled=TRUE,updated_at=NOW()',[client.id,moduleKey]);
+          }
+          client.modules=modules;
+          return sendJson(res,201,{ok:true,client});
+        }catch(e){
+          const msg=e.code==='23505'?'Já existe um cliente com esse identificador.':(e.message||'Falha ao criar cliente.');
+          return sendJson(res,e.code==='23505'?409:(e.status||500),{ok:false,error:msg})
+        }
+      }
+
+      const movitClientMatch=u.pathname.match(/^\/api\/movit-central\/clients\/(\d+)$/);
+      if (movitClientMatch && req.method === 'PATCH') {
+        try{
+          await dashboardSession(req,true);
+          const id=movitClientMatch[1],body=await readJsonBodyLimited(req,128*1024);
+          const name=String(body.name||'').trim().slice(0,160);
+          const slug=String(body.slug||name).trim().toLowerCase().replace(/[^a-z0-9_-]+/g,'-').replace(/^-+|-+$/g,'').slice(0,100);
+          if(name.length<2||slug.length<2)return sendJson(res,400,{ok:false,error:'Informe o nome e o identificador do cliente.'});
+          const dueDay=Math.min(31,Math.max(1,Number(body.due_day)||10));
+          const monthlyFee=Math.max(0,Number(body.monthly_fee)||0);
+          const status=['pilot','active','trial','overdue','blocked'].includes(body.status)?body.status:'pilot';
+          const q=await pool.query(`UPDATE movit_clients SET name=$1,slug=$2,document=$3,email=$4,phone=$5,plan=$6,monthly_fee=$7,due_day=$8,status=$9,notes=$10,updated_at=NOW()
+            WHERE id=$11 RETURNING id::text,name,slug,document,email,phone,plan,monthly_fee,due_day,status,notes`,
+            [name,slug,String(body.document||'').trim().slice(0,60)||null,String(body.email||'').trim().slice(0,180)||null,String(body.phone||'').trim().slice(0,80)||null,String(body.plan||'Personalizado').trim().slice(0,80),monthlyFee,dueDay,status,String(body.notes||'').trim().slice(0,2000)||null,id]);
+          if(!q.rowCount)return sendJson(res,404,{ok:false,error:'Cliente não encontrado.'});
+          const modules=Array.isArray(body.modules)?[...new Set(body.modules.map(String))]:[];
+          await pool.query('UPDATE movit_client_modules SET enabled=FALSE,updated_at=NOW() WHERE client_id=$1',[id]);
+          for(const moduleKey of modules){
+            await pool.query('INSERT INTO movit_client_modules(client_id,module_key,enabled) SELECT $1,key,TRUE FROM movit_modules WHERE key=$2 ON CONFLICT(client_id,module_key) DO UPDATE SET enabled=TRUE,updated_at=NOW()',[id,moduleKey]);
+          }
+          const client=q.rows[0];client.modules=modules;
+          return sendJson(res,200,{ok:true,client});
+        }catch(e){
+          const msg=e.code==='23505'?'Já existe um cliente com esse identificador.':(e.message||'Falha ao atualizar cliente.');
+          return sendJson(res,e.code==='23505'?409:(e.status||500),{ok:false,error:msg})
+        }
+      }
+
       if (req.method === 'GET' && (u.pathname === '/' || u.pathname === '/painel')) {
         return sendHtml(res, PANEL);
       }
