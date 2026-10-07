@@ -2202,6 +2202,7 @@ async function start() {
           const password=String(body.password||'');
           const sender=String(body.sender||'').trim().slice(0,220);
           const scope=body.scope==='all'?'all':'inbox';
+          const pdfMode=body.mode==='city'?'city':'tubes';
           const requestedHost=String(body.host||'auto');
           const hostCandidates=requestedHost==='auto'
             ? ['imap.titan.email','imap0101.titan.email']
@@ -2325,32 +2326,85 @@ async function start() {
           }
           found.sort((a,b)=>a.date-b.date||a.filename.localeCompare(b.filename,'pt-BR'));
 
+          const normPdfText=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').toUpperCase().trim();
+          const cityFromDanfe=text=>{
+            const compact=String(text||'').replace(/\s+/g,' ');
+            const dest=(compact.match(/DESTINAT[AÁ]RIO\s*\/\s*REMETENTE([\s\S]{0,1800}?)(?:FATURA|C[AÁ]LCULO\s+DO\s+IMPOSTO|TRANSPORTADOR)/i)||[])[1]||compact;
+            const patterns=[
+              /MUNIC[IÍ]PIO\s+([A-ZÀ-Ý][A-ZÀ-Ý0-9 .'-]{1,70}?)\s+(?:FONE\s*\/\s*FAX|UF\b|INSCRI[CÇ][AÃ]O\s+ESTADUAL|HORA\s+SA[IÍ]DA)/i,
+              /MUNIC[IÍ]PIO\s+([A-ZÀ-Ý][A-ZÀ-Ý0-9 .'-]{1,70}?)\s+SP\b/i
+            ];
+            for(const re of patterns){
+              const m=dest.match(re);
+              if(m&&m[1])return m[1].replace(/\s+/g,' ').trim();
+            }
+            return 'SEM CIDADE';
+          };
+
+          const notes=[];
+          let nonNotes=0,parseFailures=0;
+          for(const item of found){
+            try{
+              const parsedPdf=await pdfParse(item.content);
+              const text=String(parsedPdf?.text||'');
+              const norm=normPdfText(text);
+              const isNote=/\bDANFE\b/.test(norm)||/NOTA\s+FISCAL\s+ELETRONICA/.test(norm)||/\bNF-?E\b/.test(norm);
+              if(!isNote){nonNotes++;continue}
+              item.hasTube=/\bTUBO(?:S)?\b/.test(norm);
+              item.city=cityFromDanfe(text);
+              notes.push(item);
+            }catch(e){
+              parseFailures++;
+              console.warn('PDF Unificador: texto não lido',item.filename,e.message);
+            }
+          }
+
+          if(!notes.length){
+            return sendJson(res,422,{ok:false,error:'Os PDFs foram encontrados, mas nenhuma nota fiscal DANFE pôde ser identificada para ordenar.',pdfAttachmentsSeen,nonNotes,parseFailures});
+          }
+
+          if(pdfMode==='city'){
+            notes.sort((a,b)=>{
+              const ca=normPdfText(a.city||'SEM CIDADE'),cb=normPdfText(b.city||'SEM CIDADE');
+              if(ca==='SEM CIDADE'&&cb!=='SEM CIDADE')return 1;
+              if(cb==='SEM CIDADE'&&ca!=='SEM CIDADE')return -1;
+              return ca.localeCompare(cb,'pt-BR')||a.date-b.date||a.filename.localeCompare(b.filename,'pt-BR');
+            });
+          }else{
+            notes.sort((a,b)=>Number(b.hasTube)-Number(a.hasTube)||a.date-b.date||a.filename.localeCompare(b.filename,'pt-BR'));
+          }
+
           const merged=await PDFDocument.create();
           let mergedCount=0,skipped=0;
-          for(const item of found){
+          for(const item of notes){
             try{
               const src=await PDFDocument.load(item.content,{ignoreEncryption:true,updateMetadata:false});
               const indices=src.getPageIndices();
               if(!indices.length){skipped++;continue}
-              const pages=await merged.copyPages(src,indices);
-              pages.forEach(p=>merged.addPage(p));
+              const copiedPages=await merged.copyPages(src,indices);
+              copiedPages.forEach(p=>merged.addPage(p));
               mergedCount++;
             }catch(e){
               skipped++;
               console.warn('PDF Unificador: PDF ignorado',item.filename,e.message);
             }
           }
-          if(!mergedCount||merged.getPageCount()===0)return sendJson(res,422,{ok:false,error:'Os anexos encontrados não puderam ser unidos. Verifique se os PDFs não estão protegidos por senha.'});
+          if(!mergedCount||merged.getPageCount()===0)return sendJson(res,422,{ok:false,error:'As notas encontradas não puderam ser unidas. Verifique se os PDFs não estão protegidos por senha.'});
           const bytes=await merged.save({useObjectStreams:false});
           const safeFrom=from.replace(/-/g,''),safeTo=to.replace(/-/g,'');
-          const filename='PDFs-unificados-'+safeFrom+'-a-'+safeTo+'.pdf';
+          const filename=(pdfMode==='city'?'Notas-por-cidade-':'Notas-por-tubos-')+safeFrom+'-a-'+safeTo+'.pdf';
+          const tubeCount=notes.filter(x=>x.hasTube).length;
+          const cityCount=new Set(notes.map(x=>normPdfText(x.city||'SEM CIDADE'))).size;
           res.writeHead(200,{
             'Content-Type':'application/pdf',
             'Content-Length':bytes.length,
             'Content-Disposition':'attachment; filename="'+filename+'"',
             'Cache-Control':'no-store',
             'X-PDF-Count':String(mergedCount),
-            'X-PDF-Skipped':String(skipped)
+            'X-PDF-Skipped':String(skipped+nonNotes+parseFailures),
+            'X-Tube-Count':String(tubeCount),
+            'X-City-Count':String(cityCount),
+            'X-PDF-Mode':pdfMode
           });
           return res.end(Buffer.from(bytes));
         }catch(e){
