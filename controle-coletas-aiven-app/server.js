@@ -2368,6 +2368,66 @@ async function start() {
         }
       }
 
+      if (req.method === 'GET' && u.pathname === '/api/movit-central/payments') {
+        try{
+          await dashboardSession(req,true);
+          const q=await pool.query(`SELECT p.id::text,p.client_id::text,c.name AS client_name,p.reference_month,p.due_date,p.amount,p.status,p.paid_at,p.notes,p.created_at,p.updated_at
+            FROM movit_payments p JOIN movit_clients c ON c.id=p.client_id
+            ORDER BY p.reference_month DESC,lower(c.name),p.id DESC LIMIT 500`);
+          return sendJson(res,200,{ok:true,rows:q.rows});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar mensalidades.'})}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/movit-central/payments') {
+        try{
+          await dashboardSession(req,true);
+          const body=await readJsonBodyLimited(req,64*1024);
+          const clientId=String(body.client_id||'').trim();
+          if(!/^\d+$/.test(clientId))return sendJson(res,400,{ok:false,error:'Cliente inválido.'});
+          const cq=await pool.query('SELECT id,name,monthly_fee,due_day FROM movit_clients WHERE id=$1 LIMIT 1',[clientId]);
+          if(!cq.rowCount)return sendJson(res,404,{ok:false,error:'Cliente não encontrado.'});
+          const c=cq.rows[0];
+          let ref=String(body.reference_month||'').trim();
+          if(!/^\d{4}-\d{2}$/.test(ref)){
+            const now=new Date();ref=now.getUTCFullYear()+'-'+String(now.getUTCMonth()+1).padStart(2,'0');
+          }
+          const refDate=ref+'-01';
+          const [yy,mm]=ref.split('-').map(Number);
+          const lastDay=new Date(Date.UTC(yy,mm,0)).getUTCDate();
+          const dueDay=Math.min(Number(c.due_day)||10,lastDay);
+          const dueDate=ref+'-'+String(dueDay).padStart(2,'0');
+          const amount=body.amount==null?Number(c.monthly_fee||0):Math.max(0,Number(body.amount)||0);
+          const q=await pool.query(`INSERT INTO movit_payments(client_id,reference_month,due_date,amount,status,notes)
+            VALUES($1,$2::date,$3::date,$4,'pending',$5)
+            ON CONFLICT(client_id,reference_month) DO UPDATE SET due_date=EXCLUDED.due_date,amount=EXCLUDED.amount,notes=EXCLUDED.notes,updated_at=NOW()
+            RETURNING id::text,client_id::text,reference_month,due_date,amount,status,paid_at,notes`,
+            [clientId,refDate,dueDate,amount,String(body.notes||'').trim().slice(0,1000)||null]);
+          return sendJson(res,200,{ok:true,payment:q.rows[0]});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao gerar mensalidade.'})}
+      }
+
+      const movitPaymentMatch=u.pathname.match(/^\/api\/movit-central\/payments\/(\d+)$/);
+      if (movitPaymentMatch && req.method === 'PATCH') {
+        try{
+          await dashboardSession(req,true);
+          const id=movitPaymentMatch[1],body=await readJsonBodyLimited(req,64*1024);
+          const status=['pending','paid','overdue','cancelled'].includes(body.status)?body.status:null;
+          if(!status)return sendJson(res,400,{ok:false,error:'Status de pagamento inválido.'});
+          const q=await pool.query(`UPDATE movit_payments SET status=$1,paid_at=CASE WHEN $1='paid' THEN COALESCE(paid_at,NOW()) ELSE NULL END,updated_at=NOW()
+            WHERE id=$2 RETURNING id::text,client_id::text,reference_month,due_date,amount,status,paid_at,notes`,[status,id]);
+          if(!q.rowCount)return sendJson(res,404,{ok:false,error:'Mensalidade não encontrada.'});
+          return sendJson(res,200,{ok:true,payment:q.rows[0]});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao atualizar mensalidade.'})}
+      }
+
+      if (req.method === 'POST' && u.pathname === '/api/movit-central/payments/recalculate-overdue') {
+        try{
+          await dashboardSession(req,true);
+          const q=await pool.query("UPDATE movit_payments SET status='overdue',updated_at=NOW() WHERE status='pending' AND due_date<CURRENT_DATE RETURNING id");
+          return sendJson(res,200,{ok:true,updated:q.rowCount});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao atualizar vencimentos.'})}
+      }
+
       const movitClientMatch=u.pathname.match(/^\/api\/movit-central\/clients\/(\d+)$/);
       if (movitClientMatch && req.method === 'PATCH') {
         try{
