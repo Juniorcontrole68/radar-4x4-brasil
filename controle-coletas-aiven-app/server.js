@@ -2349,45 +2349,87 @@ async function start() {
             let lock=null;
             try{
               lock=await client.getMailboxLock(box,{description:'CONSTRULOG PDF Unificador'});
-              // Para compatibilidade com o IMAP do Titan, não dependemos do SEARCH SINCE/BEFORE.
-              // Lemos as mensagens mais recentes da pasta e filtramos a data localmente.
-              const total=Number(client.mailbox?.exists||0);
-              if(!total)continue;
-              const remaining=Math.max(0,250-scanned);
-              if(!remaining)break;
-              const take=Math.min(total,remaining);
-              const seqStart=Math.max(1,total-take+1);
-              const seqRange=seqStart+':'+total;
-              scanned+=take;
-              for await (const msg of client.fetch(seqRange,{uid:true,internalDate:true,source:true,envelope:true})){
-                const msgDate=msg.internalDate?new Date(msg.internalDate):null;
-                if(!msgDate||msgDate<since||msgDate>=before)continue;
-                if(found.length>=60)break;
-                if(!msg.source)continue;
-                const parsed=await simpleParser(msg.source,{skipHtmlToText:true,skipTextToHtml:true});
+              // Busca primeiro pelo período no próprio servidor IMAP. Isso evita perder notas antigas
+              // quando há mais de 250 mensagens novas na caixa.
+              let uidList=[];
+              try{
+                const searchQuery={since,before};
+                if(sender)searchQuery.from=sender;
+                uidList=await client.search(searchQuery,{uid:true});
+              }catch(searchErr){
+                console.warn('PDF Unificador: SEARCH por período falhou, usando fallback recente',box,searchErr.message);
+              }
 
-                if(sender){
-                  const needle=sender.trim().toLowerCase();
-                  const fromText=String(parsed.from?.text||'').toLowerCase();
-                  const fromAddresses=(parsed.from?.value||[]).map(x=>String(x.address||'').toLowerCase());
-                  const displayNames=(parsed.from?.value||[]).map(x=>String(x.name||'').toLowerCase());
-                  const match=fromText.includes(needle)||fromAddresses.some(x=>x===needle||x.includes(needle))||displayNames.some(x=>x.includes(needle));
-                  if(!match)continue;
-                }
-                matchedMessages++;
-
-                for(const a of parsed.attachments||[]){
+              if(uidList.length){
+                const remaining=Math.max(0,250-scanned);
+                uidList=uidList.slice(-remaining);
+                scanned+=uidList.length;
+                const uidRange=uidList.join(',');
+                for await (const msg of client.fetch(uidRange,{uid:true,internalDate:true,source:true,envelope:true},{uid:true})){
                   if(found.length>=60)break;
-                  const filename=String(a.filename||'anexo');
-                  const contentType=String(a.contentType||'').toLowerCase();
-                  const isPdf=contentType==='application/pdf'||contentType==='application/x-pdf'||/\.pdf$/i.test(filename);
-                  if(isPdf)pdfAttachmentsSeen++;
-                  if(!isPdf||!a.content||!a.content.length)continue;
-                  found.push({
-                    date:msg.internalDate?new Date(msg.internalDate).getTime():0,
-                    filename:/\.pdf$/i.test(filename)?filename:(filename+'.pdf'),
-                    content:Buffer.from(a.content)
-                  });
+                  if(!msg.source)continue;
+                  const parsed=await simpleParser(msg.source,{skipHtmlToText:true,skipTextToHtml:true});
+                  if(sender){
+                    const needle=sender.trim().toLowerCase();
+                    const fromText=String(parsed.from?.text||'').toLowerCase();
+                    const fromAddresses=(parsed.from?.value||[]).map(x=>String(x.address||'').toLowerCase());
+                    const displayNames=(parsed.from?.value||[]).map(x=>String(x.name||'').toLowerCase());
+                    const match=fromText.includes(needle)||fromAddresses.some(x=>x===needle||x.includes(needle))||displayNames.some(x=>x.includes(needle));
+                    if(!match)continue;
+                  }
+                  matchedMessages++;
+                  for(const a of parsed.attachments||[]){
+                    if(found.length>=60)break;
+                    const filename=String(a.filename||'anexo');
+                    const contentType=String(a.contentType||'').toLowerCase();
+                    const isPdf=contentType==='application/pdf'||contentType==='application/x-pdf'||/\.pdf$/i.test(filename);
+                    if(isPdf)pdfAttachmentsSeen++;
+                    if(!isPdf||!a.content||!a.content.length)continue;
+                    found.push({
+                      date:msg.internalDate?new Date(msg.internalDate).getTime():0,
+                      filename:/\.pdf$/i.test(filename)?filename:(filename+'.pdf'),
+                      content:Buffer.from(a.content)
+                    });
+                  }
+                }
+              }else{
+                // Fallback: servidores que não suportarem SEARCH por período.
+                const total=Number(client.mailbox?.exists||0);
+                if(!total)continue;
+                const remaining=Math.max(0,250-scanned);
+                if(!remaining)break;
+                const take=Math.min(total,remaining);
+                const seqStart=Math.max(1,total-take+1);
+                const seqRange=seqStart+':'+total;
+                scanned+=take;
+                for await (const msg of client.fetch(seqRange,{uid:true,internalDate:true,source:true,envelope:true})){
+                  const msgDate=msg.internalDate?new Date(msg.internalDate):null;
+                  if(!msgDate||msgDate<since||msgDate>=before)continue;
+                  if(found.length>=60)break;
+                  if(!msg.source)continue;
+                  const parsed=await simpleParser(msg.source,{skipHtmlToText:true,skipTextToHtml:true});
+                  if(sender){
+                    const needle=sender.trim().toLowerCase();
+                    const fromText=String(parsed.from?.text||'').toLowerCase();
+                    const fromAddresses=(parsed.from?.value||[]).map(x=>String(x.address||'').toLowerCase());
+                    const displayNames=(parsed.from?.value||[]).map(x=>String(x.name||'').toLowerCase());
+                    const match=fromText.includes(needle)||fromAddresses.some(x=>x===needle||x.includes(needle))||displayNames.some(x=>x.includes(needle));
+                    if(!match)continue;
+                  }
+                  matchedMessages++;
+                  for(const a of parsed.attachments||[]){
+                    if(found.length>=60)break;
+                    const filename=String(a.filename||'anexo');
+                    const contentType=String(a.contentType||'').toLowerCase();
+                    const isPdf=contentType==='application/pdf'||contentType==='application/x-pdf'||/\.pdf$/i.test(filename);
+                    if(isPdf)pdfAttachmentsSeen++;
+                    if(!isPdf||!a.content||!a.content.length)continue;
+                    found.push({
+                      date:msg.internalDate?new Date(msg.internalDate).getTime():0,
+                      filename:/\.pdf$/i.test(filename)?filename:(filename+'.pdf'),
+                      content:Buffer.from(a.content)
+                    });
+                  }
                 }
               }
             }catch(e){
