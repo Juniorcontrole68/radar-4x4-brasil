@@ -728,7 +728,7 @@ function financeRender(){
   if(profitPctEl)profitPctEl.classList.toggle('finance-target-bad',tot.profitPct<55);
   if(driverPctEl)driverPctEl.classList.toggle('finance-target-bad',tot.costPct>45);
   const info=$('#financeInfo');
-  if(info)info.textContent=nf(rows.length)+' lançamento(s) • '+nf(drivers.length)+' motorista(s) • período '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje')+' • base: ENTREGUE / Frete Mot Liq / Frete Vialog Liq';
+  if(info){const at=S.opsUpdatedAt?new Date(S.opsUpdatedAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'—';info.textContent=nf(rows.length)+' lançamento(s) • '+nf(drivers.length)+' motorista(s) • período '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje')+' • fonte atualizada às '+at+' • base: ENTREGUE / Frete Mot Liq / Frete Vialog Liq'};
   const tableRows=drivers.map(x=>({
     motorista:x.motorista,pago:brl(x.paid),receber:brl(x.receive),lucro:brl(x.profit),
     lucroPct:x.profitPct.toFixed(1).replace('.',',')+'%',custoPct:x.costPct.toFixed(1).replace('.',',')+'%'
@@ -823,14 +823,28 @@ function financeSetMonthCurrent(){
 function financeSetToday(){
   const d=iso(new Date());if($('#financeFrom'))$('#financeFrom').value=d;if($('#financeTo'))$('#financeTo').value=d;financeRender()
 }
+async function financeRefreshNow(){
+  const btn=$('#financeRefreshNow'),info=$('#financeInfo');
+  if(btn){btn.disabled=true;btn.textContent='Atualizando…'}
+  if(info)info.textContent='Buscando os lançamentos mais recentes no Google Sheets…';
+  try{
+    await refreshData(false);
+    financeRender();
+  }catch(e){
+    if(info)info.textContent='Falha ao atualizar: '+(e.message||e)
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='↻ Atualizar agora'}
+  }
+}
 function setupFinanceDashboard(){
   if(!$('#financeDriverPanel'))return;
   const t=new Date();
   if($('#financeFrom')&&!$('#financeFrom').value)$('#financeFrom').value=iso(t);
   if($('#financeTo')&&!$('#financeTo').value)$('#financeTo').value=iso(t);
-  if($('#financeApply'))$('#financeApply').onclick=financeRender;
-  if($('#financeMonth'))$('#financeMonth').onclick=financeSetMonthCurrent;
-  if($('#financeToday'))$('#financeToday').onclick=financeSetToday;
+  if($('#financeApply'))$('#financeApply').onclick=async()=>{await refreshData(false);financeRender()};
+  if($('#financeRefreshNow'))$('#financeRefreshNow').onclick=financeRefreshNow;
+  if($('#financeMonth'))$('#financeMonth').onclick=async()=>{financeSetMonthCurrent();await refreshData(false);financeRender()};
+  if($('#financeToday'))$('#financeToday').onclick=async()=>{financeSetToday();await refreshData(false);financeRender()};
   if($('#financeExportPdf'))$('#financeExportPdf').onclick=financeExportPdf;
   if($('#financeFrom'))$('#financeFrom').onchange=financeRender;
   if($('#financeTo'))$('#financeTo').onchange=financeRender
@@ -1452,7 +1466,7 @@ async function refreshData(first=false){
     ]);
     let updated=false,errors=[];
     if(needOps){
-      if(ro.status==='fulfilled'){S.ops=Array.isArray(ro.value)?ro.value:[];S.opsUpdatedAt=Date.now();updated=true}else errors.push('Operações: '+(ro.reason?.message||ro.reason))
+      if(ro.status==='fulfilled'){S.ops=Array.isArray(ro.value)?ro.value:[];S.opsUpdatedAt=Date.now();updated=true;try{financeRender()}catch(e){console.warn('Resultado por motorista:',e)}}else errors.push('Operações: '+(ro.reason?.message||ro.reason))
     }else S.ops=[];
     if(needSch){
       if(ra.status==='fulfilled'){S.sch=Array.isArray(ra.value)?ra.value:[];S.agCopy=S.sch;window.__agCopyLoadedAt=Date.now();updated=true}else errors.push('Agendamentos: '+(ra.reason?.message||ra.reason))
