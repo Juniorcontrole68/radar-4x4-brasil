@@ -1,6 +1,6 @@
 const DASH_SESSION_KEY='construlog_dashboard_session';
 const DASH_EMBEDDED=new URLSearchParams(location.search).get('embed')==='1';
-const PORTAL_ORIGIN='https://controle-coletas-jr.onrender.com';
+const PORTAL_ORIGIN=location.origin;
 let DASH_SESSION_TOKEN=String(window.__DASHBOARD_SESSION_TOKEN__||'');
 let DASH_SESSION_USER=window.__DASHBOARD_SESSION_USER__||null;
 try{
