@@ -64,16 +64,60 @@ input,select,textarea{width:100%;padding:10px 11px;border:1px solid #cbd5e1;bord
       </form>
     </div>
   </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="actions" style="justify-content:space-between;margin-bottom:12px">
+      <h2 style="margin:0">Mensalidades</h2>
+      <div class="actions">
+        <select id="billingClient" style="min-width:220px"></select>
+        <input id="billingMonth" type="month" style="width:auto">
+        <button id="generateBilling" class="btn primary" type="button">Gerar mensalidade</button>
+        <button id="recalcBilling" class="btn secondary" type="button">Atualizar vencidos</button>
+      </div>
+    </div>
+    <div id="billingTable" class="clients"><div class="empty">Carregando mensalidades…</div></div>
+    <div id="billingMsg" class="msg"></div>
+  </div>
 </div>
 <script>
 const $=id=>document.getElementById(id);
-let MODULES=[],CLIENTS=[];
+let MODULES=[],CLIENTS=[],PAYMENTS=[];
 for(let i=1;i<=31;i++)$('dueDay').insertAdjacentHTML('beforeend','<option value="'+i+'">Dia '+i+'</option>');
 function money(v){return Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}
 function statusLabel(s){return ({pilot:'PILOTO',active:'ATIVO',trial:'TESTE',overdue:'VENCIDO',blocked:'BLOQUEADO'})[s]||String(s||'').toUpperCase()}
 function renderModules(selected=[]){
   const set=new Set(selected||[]);
   $('modules').innerHTML=MODULES.map(m=>'<label class="mod"><input type="checkbox" value="'+m.key+'" '+(set.has(m.key)?'checked':'')+'><span><b>'+m.name+'</b><small>'+m.category+'</small></span></label>').join('');
+}
+function renderBilling(){
+  const clientOptions='<option value="">Selecione o cliente</option>'+CLIENTS.map(c=>'<option value="'+c.id+'">'+c.name+'</option>').join('');
+  $('billingClient').innerHTML=clientOptions;
+  const rows=PAYMENTS.map(p=>{
+    const ref=String(p.reference_month||'').slice(0,7);
+    const due=String(p.due_date||'').slice(0,10).split('-').reverse().join('/');
+    const statusText={pending:'PENDENTE',paid:'PAGO',overdue:'VENCIDO',cancelled:'CANCELADO'}[p.status]||p.status;
+    const tagClass=p.status==='paid'?'active':(p.status==='overdue'?'overdue':(p.status==='cancelled'?'blocked':'trial'));
+    return '<div class="client"><div class="client-head"><h3>'+p.client_name+' • '+ref+'</h3><span class="tag '+tagClass+'">'+statusText+'</span></div><div class="meta">Vencimento: '+due+' • '+money(p.amount)+'</div><div class="actions" style="margin-top:8px">'+
+      (p.status!=='paid'?'<button class="btn primary" data-pay="'+p.id+'">Marcar pago</button>':'')+
+      (p.status!=='cancelled'?'<button class="btn secondary" data-cancel="'+p.id+'">Cancelar</button>':'')+
+      '</div></div>'
+  }).join('');
+  $('billingTable').innerHTML=rows||'<div class="empty">Nenhuma mensalidade cadastrada.</div>';
+  document.querySelectorAll('[data-pay]').forEach(b=>b.onclick=()=>setPaymentStatus(b.dataset.pay,'paid'));
+  document.querySelectorAll('[data-cancel]').forEach(b=>b.onclick=()=>setPaymentStatus(b.dataset.cancel,'cancelled'));
+}
+async function setPaymentStatus(id,status){
+  $('billingMsg').textContent='Atualizando…';
+  try{
+    const r=await fetch('/api/movit-central/payments/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})});
+    const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao atualizar mensalidade.');
+    $('billingMsg').style.color='#15803d';$('billingMsg').textContent='✓ Mensalidade atualizada.';
+    await loadPayments();
+  }catch(e){$('billingMsg').style.color='#b91c1c';$('billingMsg').textContent=e.message}
+}
+async function loadPayments(){
+  const r=await fetch('/api/movit-central/payments',{cache:'no-store'});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar mensalidades.');
+  PAYMENTS=j.rows||[];renderBilling();
 }
 function renderClients(){
   $('kClients').textContent=CLIENTS.length;
@@ -95,8 +139,29 @@ function editClient(id){
 async function load(){
   const r=await fetch('/api/movit-central/clients',{cache:'no-store'});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar MOVIT Central.');
   MODULES=j.modules||[];CLIENTS=j.clients||[];renderClients();resetForm();
+  await loadPayments();
 }
 $('newClient').onclick=resetForm;$('reset').onclick=resetForm;
+const now=new Date();$('billingMonth').value=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+$('generateBilling').onclick=async()=>{
+  const clientId=$('billingClient').value,reference=$('billingMonth').value;
+  if(!clientId||!reference){$('billingMsg').style.color='#b91c1c';$('billingMsg').textContent='Selecione o cliente e o mês.';return}
+  $('billingMsg').style.color='#475569';$('billingMsg').textContent='Gerando mensalidade…';
+  try{
+    const r=await fetch('/api/movit-central/payments',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_id:clientId,reference_month:reference})});
+    const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao gerar mensalidade.');
+    $('billingMsg').style.color='#15803d';$('billingMsg').textContent='✓ Mensalidade gerada.';
+    await loadPayments();
+  }catch(e){$('billingMsg').style.color='#b91c1c';$('billingMsg').textContent=e.message}
+};
+$('recalcBilling').onclick=async()=>{
+  $('billingMsg').style.color='#475569';$('billingMsg').textContent='Atualizando vencimentos…';
+  try{
+    const r=await fetch('/api/movit-central/payments/recalculate-overdue',{method:'POST'});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao atualizar vencimentos.');
+    $('billingMsg').style.color='#15803d';$('billingMsg').textContent='✓ '+(j.updated||0)+' mensalidade(s) atualizada(s).';
+    await loadPayments();
+  }catch(e){$('billingMsg').style.color='#b91c1c';$('billingMsg').textContent=e.message}
+};
 $('clientForm').onsubmit=async e=>{
   e.preventDefault();$('msg').textContent='Salvando…';$('msg').style.color='#475569';
   const id=$('clientId').value;
