@@ -46,6 +46,10 @@ try{
       body{font-weight:400!important;letter-spacing:0!important}
       label,.muted,.hint,.toolbar,.finance-toolbar{font-weight:400!important}
       .btn,.tab,.section-title,th{font-weight:500!important}
+      .tab{border:1px solid #dbe4ee!important;border-radius:14px!important;padding:11px 18px!important;background:linear-gradient(180deg,#ffffff,#f8fafc)!important;color:#334155!important;box-shadow:0 3px 10px #0f172a0d!important;transition:.18s ease!important}
+      .tab:hover{transform:translateY(-1px)!important;box-shadow:0 6px 16px #0f172a18!important;border-color:#bfdbfe!important}
+      .tab.active{background:linear-gradient(135deg,#0f5fb8,#0057a8)!important;color:#fff!important;border-color:#0057a8!important;box-shadow:0 6px 16px #0057a833!important}
+
       h1,h2,h3,strong,.os,.kpi strong{font-weight:600!important}
       input,select,textarea{font-weight:400!important}
       </style>`;
