@@ -49,6 +49,12 @@ try{
       .tab{border:1px solid #dbe4ee!important;border-radius:14px!important;padding:11px 18px!important;background:linear-gradient(180deg,#ffffff,#f8fafc)!important;color:#334155!important;box-shadow:0 3px 10px #0f172a0d!important;transition:.18s ease!important}
       .tab:hover{transform:translateY(-1px)!important;box-shadow:0 6px 16px #0f172a18!important;border-color:#bfdbfe!important}
       .tab.active{background:linear-gradient(135deg,#0f5fb8,#0057a8)!important;color:#fff!important;border-color:#0057a8!important;box-shadow:0 6px 16px #0057a833!important}
+      .tab.coletas-main-tab{background:linear-gradient(135deg,#0f6ecf,#0057a8)!important;color:#fff!important;border-color:#0057a8!important;box-shadow:0 5px 14px #0057a82e!important}
+      .tab.coletas-main-tab:hover{background:linear-gradient(135deg,#0878e4,#0063bd)!important}
+      .tab.financeiro-main-tab{background:linear-gradient(135deg,#22a35a,#15803d)!important;color:#fff!important;border-color:#15803d!important;box-shadow:0 5px 14px #15803d2e!important}
+      .tab.financeiro-main-tab:hover{background:linear-gradient(135deg,#27b765,#168b43)!important}
+      .tab.coletas-main-tab.active{box-shadow:0 0 0 3px #93c5fd,0 6px 16px #0057a833!important}
+      .tab.financeiro-main-tab.active{box-shadow:0 0 0 3px #86efac,0 6px 16px #15803d33!important}
 
       h1,h2,h3,strong,.os,.kpi strong{font-weight:600!important}
       input,select,textarea{font-weight:400!important}
@@ -493,7 +499,24 @@ try{
           return res;
         };
 
+        function estilizarTabsPrincipais(){
+          document.querySelectorAll('.tab').forEach(btn=>{
+            const label=String(btn.textContent||'').trim().toLocaleLowerCase('pt-BR');
+            if((label==='coletas'||label==='coleta'||label==='operacional')&&!btn.dataset.emojiStyled){
+              btn.classList.add('coletas-main-tab');
+              btn.textContent='🚚 '+(label==='operacional'?'Coletas':btn.textContent.trim());
+              btn.dataset.emojiStyled='1';
+            }else if(label==='financeiro'&&!btn.dataset.emojiStyled){
+              btn.classList.add('financeiro-main-tab');
+              btn.textContent='💰 Financeiro';
+              btn.dataset.emojiStyled='1';
+            }
+          });
+        }
+
         document.addEventListener('DOMContentLoaded',()=>{
+          estilizarTabsPrincipais();
+          setTimeout(estilizarTabsPrincipais,250);
           garantirCamposFormulario();
           const tbody=document.getElementById('tbodyFinanceiro');
           if(tbody){
