@@ -823,13 +823,21 @@ function financeSetMonthCurrent(){
 function financeSetToday(){
   const d=iso(new Date());if($('#financeFrom'))$('#financeFrom').value=d;if($('#financeTo'))$('#financeTo').value=d;financeRender()
 }
+async function financeLoadFresh(){
+  // Atualização independente da rotina global. Evita perder o clique quando refreshData já está em andamento.
+  const rows=await load('lancamentos');
+  S.ops=Array.isArray(rows)?rows:[];
+  S.opsUpdatedAt=Date.now();
+  try{filters()}catch(e){}
+  financeRender();
+  return S.ops
+}
 async function financeRefreshNow(){
   const btn=$('#financeRefreshNow'),info=$('#financeInfo');
   if(btn){btn.disabled=true;btn.textContent='Atualizando…'}
   if(info)info.textContent='Buscando os lançamentos mais recentes no Google Sheets…';
   try{
-    await refreshData(false);
-    financeRender();
+    await financeLoadFresh();
   }catch(e){
     if(info)info.textContent='Falha ao atualizar: '+(e.message||e)
   }finally{
@@ -841,13 +849,20 @@ function setupFinanceDashboard(){
   const t=new Date();
   if($('#financeFrom')&&!$('#financeFrom').value)$('#financeFrom').value=iso(t);
   if($('#financeTo')&&!$('#financeTo').value)$('#financeTo').value=iso(t);
-  if($('#financeApply'))$('#financeApply').onclick=async()=>{await refreshData(false);financeRender()};
+  if($('#financeApply'))$('#financeApply').onclick=async()=>{await financeLoadFresh()};
   if($('#financeRefreshNow'))$('#financeRefreshNow').onclick=financeRefreshNow;
-  if($('#financeMonth'))$('#financeMonth').onclick=async()=>{financeSetMonthCurrent();await refreshData(false);financeRender()};
-  if($('#financeToday'))$('#financeToday').onclick=async()=>{financeSetToday();await refreshData(false);financeRender()};
+  if($('#financeMonth'))$('#financeMonth').onclick=async()=>{financeSetMonthCurrent();await financeLoadFresh()};
+  if($('#financeToday'))$('#financeToday').onclick=async()=>{financeSetToday();await financeLoadFresh()};
   if($('#financeExportPdf'))$('#financeExportPdf').onclick=financeExportPdf;
   if($('#financeFrom'))$('#financeFrom').onchange=financeRender;
-  if($('#financeTo'))$('#financeTo').onchange=financeRender
+  if($('#financeTo'))$('#financeTo').onchange=financeRender;
+
+  // Mantém Resultado por Motorista fresco mesmo se a atualização geral estiver ocupada.
+  setInterval(()=>{
+    if(document.hidden)return;
+    const active=$('.section.active')?.id;
+    if(active==='dashboard' || active==='dashboards')financeLoadFresh().catch(e=>console.warn('Resultado por motorista:',e))
+  },15000)
 }
 
 
