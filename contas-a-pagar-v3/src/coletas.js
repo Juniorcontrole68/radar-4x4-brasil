@@ -111,12 +111,10 @@ try{
         };
         const moedaPalavras=/frete|valor|lucro|receita|custo|ped[aá]gio|adiantamento|tarifa|total\s*(?:r\$|financeiro|recebido|pago)|faturamento|pagamento/i;
         function formatarMoedasDaTela(root=document){
-          // Tabelas: identifica as colunas monetárias pelo cabeçalho e aplica R$ em todas as linhas.
           root.querySelectorAll('table').forEach(table=>{
             const ths=[...table.querySelectorAll('thead th')];
             if(!ths.length)return;
             const moneyIdx=ths.map((th,i)=>moedaPalavras.test(String(th.textContent||''))?i:-1).filter(i=>i>=0);
-            if(!moneyIdx.length)return;
             table.querySelectorAll('tbody tr').forEach(tr=>{
               moneyIdx.forEach(i=>{
                 const td=tr.cells?.[i];
@@ -126,19 +124,6 @@ try{
                 const n=numeroLocal(txt.replace(/^R\$\s*/,''));
                 if(n!==null)td.textContent=fmtBRL(n);
               });
-            });
-          });
-
-          // Cards/KPIs/resumos: usa o texto do próprio card para saber se o número é monetário.
-          root.querySelectorAll('.kpi,.card,.finance-card,.summary-card,.stat-card').forEach(card=>{
-            if(!moedaPalavras.test(String(card.textContent||'')))return;
-            card.querySelectorAll('.value,strong,b,[data-value]').forEach(el=>{
-              if(el.closest('table')||el.querySelector('input,select,button,a'))return;
-              const txt=String(el.textContent||'').trim();
-              if(!txt||/^R\$\s/.test(txt)||/%$/.test(txt)||txt==='—'||txt==='-')return;
-              if(!/^-?[\d.]+(?:,\d+)?$|^-?\d+(?:\.\d+)?$/.test(txt.replace(/\s/g,'')))return;
-              const n=numeroLocal(txt);
-              if(n!==null)el.textContent=fmtBRL(n);
             });
           });
         }
@@ -344,8 +329,8 @@ try{
             if(!coleta) return;
             moneyCols.forEach(m=>{if(m.idx>=0&&tr.cells&&tr.cells[m.idx])tr.cells[m.idx].textContent=fmtBRL(coleta[m.key])});
 
-            // Mostra a data da coleta sem criar nova coluna, preservando o layout financeiro.
-            if(tr.cells?.[0]&&!tr.cells[0].querySelector('[data-coleta-date]')){
+            // Data da coleta vem do campo Carregamento da área Operacional, sem alterar as colunas Financeiro.
+            if(tr.cells?.[1]&&!tr.cells[1].querySelector('[data-coleta-date]')){
               const rawData=String(coleta.data_carregamento||coleta.carregamento||coleta.data_coleta||'').slice(0,10);
               const dataTxt=/^\d{4}-\d{2}-\d{2}$/.test(rawData)?rawData.split('-').reverse().join('/'):'—';
               const dataEl=document.createElement('div');
@@ -353,8 +338,9 @@ try{
               dataEl.className='muted';
               dataEl.style.marginTop='4px';
               dataEl.innerHTML='<strong>📅 Data da coleta:</strong> '+escLocal(dataTxt);
-              tr.cells[0].appendChild(dataEl);
+              tr.cells[1].appendChild(dataEl);
             }
+
             if(tr.dataset.recebidoDecorado==='1') return;
             tr.dataset.recebidoDecorado='1';
 
@@ -644,9 +630,6 @@ try{
           [300,700,1400].forEach(ms=>setTimeout(garantirCardLucroPeriodo,ms));
           document.addEventListener('change',e=>{if(e.target?.matches?.('input[type="date"],select'))setTimeout(garantirCardLucroPeriodo,100)},true);
           document.addEventListener('click',e=>{if(e.target?.closest?.('button'))setTimeout(garantirCardLucroPeriodo,180)},true);
-          setTimeout(()=>formatarMoedasDaTela(document),350);
-          const moneyObserver=new MutationObserver(()=>{clearTimeout(window.__moneyFmtTimer);window.__moneyFmtTimer=setTimeout(()=>formatarMoedasDaTela(document),80)});
-          moneyObserver.observe(document.body,{childList:true,subtree:true,characterData:true});
         });
       })();
       <\/script>`;
