@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
 const { PDFDocument } = require('pdf-lib');
+const pdfParse = require('pdf-parse');
 
 if (process.env.DATABASE_URL) {
   try {
