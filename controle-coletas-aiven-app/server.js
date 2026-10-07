@@ -2273,10 +2273,21 @@ async function start() {
           const scope=body.scope==='all'?'all':'inbox';
           const pdfMode=body.mode==='city'?'city':'tubes';
           const requestedHost=String(body.host||'auto');
+          const emailDomain=(email.split('@')[1]||'').toLowerCase();
+          const providerHosts={
+            'gmail.com':['imap.gmail.com'],
+            'googlemail.com':['imap.gmail.com'],
+            'outlook.com':['outlook.office365.com'],
+            'hotmail.com':['outlook.office365.com'],
+            'live.com':['outlook.office365.com'],
+            'yahoo.com':['imap.mail.yahoo.com'],
+            'yahoo.com.br':['imap.mail.yahoo.com']
+          };
+          const allowedHosts=['imap.titan.email','imap0101.titan.email','imap.gmail.com','outlook.office365.com','imap.mail.yahoo.com'];
           const hostCandidates=requestedHost==='auto'
-            ? ['imap.titan.email','imap0101.titan.email']
-            : ([requestedHost].filter(h=>['imap.titan.email','imap0101.titan.email'].includes(h)));
-          if(!hostCandidates.length)hostCandidates.push('imap.titan.email');
+            ? (providerHosts[emailDomain]||['imap.titan.email','imap0101.titan.email'])
+            : ([requestedHost].filter(h=>allowedHosts.includes(h)));
+          if(!hostCandidates.length)hostCandidates.push(...(providerHosts[emailDomain]||['imap.titan.email','imap0101.titan.email']));
           const from=String(body.from||''),to=String(body.to||'');
           if(!email||!password)return sendJson(res,400,{ok:false,error:'Informe o e-mail e a senha do Titan.'});
           if(!/^\d{4}-\d{2}-\d{2}$/.test(from)||!/^\d{4}-\d{2}-\d{2}$/.test(to))return sendJson(res,400,{ok:false,error:'Informe um período válido.'});
@@ -2311,7 +2322,8 @@ async function start() {
             const raw=String(lastConnectError?.message||'').toLowerCase();
             const authFail=lastConnectError?.authenticationFailed||raw.includes('auth')||raw.includes('password')||raw.includes('login');
             if(authFail){
-              const e=new Error('O Titan recusou o login IMAP. Se a senha abre o webmail, verifique se a conta usa 2FA; nesse caso é necessário usar uma senha de aplicativo. Também confirme se o e-mail digitado é o endereço completo da caixa.');
+              const provider=emailDomain==='gmail.com'||emailDomain==='googlemail.com'?'Gmail':(emailDomain.includes('outlook')||emailDomain==='hotmail.com'||emailDomain==='live.com'?'Microsoft':(emailDomain.includes('yahoo')?'Yahoo':'Titan'));
+              const e=new Error(provider+' recusou o login IMAP. Para Gmail, Microsoft ou Yahoo, normalmente é necessário usar uma senha de aplicativo quando a conta tem verificação em duas etapas. Confirme também o endereço completo do e-mail.');
               e.status=401;throw e;
             }
             const e=new Error('Não foi possível conectar ao servidor IMAP do Titan. Tente novamente em alguns instantes.');
@@ -2480,7 +2492,7 @@ async function start() {
           const raw=String(e?.message||'');
           const authLike=e?.authenticationFailed||/auth|password|login|credentials|senha/i.test(raw);
           const msg=authLike
-            ? 'O Titan recusou o login IMAP. Se sua senha normal funciona no webmail, verifique se o 2FA está ativado e use uma senha de aplicativo. Confirme também o endereço completo do e-mail.'
+            ? 'O servidor de e-mail recusou o login IMAP. Se estiver usando Gmail, Microsoft, Yahoo ou Titan com 2FA, use uma senha de aplicativo e confirme o endereço completo do e-mail.'
             : (raw||'Falha ao unificar PDFs.');
           return sendJson(res,e.status||(authLike?401:500),{ok:false,error:msg});
         }finally{
