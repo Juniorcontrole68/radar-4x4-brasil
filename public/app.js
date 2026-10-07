@@ -76,6 +76,7 @@ const PERMISSION_OPTIONS=[
   ['lotacao','Lotação • Coletas e Financeiro'],
   ['frota','Frota • Veículos, manutenção e combustível'],
   ['contas_pagar','Contas a Pagar'],
+  ['pdf_notas','PDF • Separador de Notas'],
   ['dashboard','Dashboard principal'],
   ['ssw_saidas','SSW • Saídas x Baixas'],
   ['evolucao','Evolução e previsão por motorista'],
@@ -104,7 +105,7 @@ function hasPerm(p){return !!(AUTH&&(AUTH.is_admin||AUTH.permissions?.includes('
 function hasAnyPerm(list){return list.some(hasPerm)}
 function tabAllowed(tab){
   const map={
-    dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao','roteirizador-teste':'roteirizador','roteirizador-v02':'roteirizador',rastreamento:'tracking',lotacao:'lotacao',frota:'frota',
+    dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao','roteirizador-teste':'roteirizador','roteirizador-v02':'roteirizador',rastreamento:'tracking',lotacao:'lotacao',frota:'frota','pdf-notas':'pdf_notas',
     agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes',
     'ssw-motoristas':'ssw_saidas','motoristas-evolucao':'evolucao',
     'ssw-atrasos':'ssw_atrasos','ssw-remetentes':'remetentes',
@@ -150,7 +151,8 @@ function applyPermissions(){
     'Entregas por Cliente Remetente':'remetentes',
     'Comparativo de Clientes Remetentes':'remetentes_comparativo',
     'SSW • CT-es Atrasados':'ssw_atrasos',
-    'SSW / BI2':'bi2'
+    'SSW / BI2':'bi2',
+    'PDF • Separador de Notas':'pdf_notas'
   };
   document.querySelectorAll('#dashboards .dash-card').forEach(card=>{
     const title=card.querySelector('h3')?.textContent.trim()||'';
@@ -4524,3 +4526,76 @@ if($('#routeTopBtn'))$('#routeTopBtn').onclick=()=>{if(hasPerm('roteirizador'))o
 if($('#usersTopBtn'))$('#usersTopBtn').onclick=()=>{if(AUTH?.is_admin)openTab('usuarios')};
 if($('#logoutBtn'))$('#logoutBtn').onclick=async()=>{try{await fetch('/api/auth/logout',{method:'POST'})}catch{}setDashboardSessionToken('');location.reload()};
 if(DASH_EMBEDDED)bootstrapEmbeddedAuth();else bootstrapAuth();
+
+
+/* PDF • Separador de Notas */
+function pdfNotasParseWeight(txt){
+  const s=String(txt||'').replace(/\s+/g,' ');
+  const m=s.match(/PESO\s*BRUTO\s*([0-9.]+,[0-9]{2,3}|[0-9]+(?:[.,][0-9]+)?)/i);
+  if(!m)return null;
+  const v=Number(m[1].replace(/\./g,'').replace(',','.'));
+  return Number.isFinite(v)?v:null;
+}
+function pdfNotasNfe(txt){
+  const s=String(txt||'').replace(/\s+/g,' ');
+  const m=s.match(/N[º°]?\s*[:\-]?\s*(\d{1,3}(?:\.\d{3}){1,3})/i);
+  return m?m[1]:'';
+}
+async function setupPdfNotas(){
+  const input=document.querySelector('#pdfNotasFile');
+  if(!input||input.dataset.ready==='1')return;
+  input.dataset.ready='1';
+  const info=document.querySelector('#pdfNotasInfo');
+  const tbody=document.querySelector('#pdfNotasBody');
+  const stat=document.querySelector('#pdfNotasStats');
+  let srcBytes=null, pages=[];
+  const setInfo=(t)=>{if(info)info.textContent=t};
+  const render=()=>{
+    if(stat){
+      const notas=pages.filter(p=>p.isNote), tubo=notas.filter(p=>p.hasTube), acima=tubo.filter(p=>p.weight!==null&&p.weight>100), semAbaixo=notas.filter(p=>!p.hasTube&&p.weight!==null&&p.weight<100);
+      stat.innerHTML='<b>'+notas.length+'</b> notas fiscais • <b>'+tubo.length+'</b> com TUBO • <b>'+acima.length+'</b> com TUBO e >100 kg • <b>'+semAbaixo.length+'</b> sem TUBO e <100 kg';
+    }
+    if(tbody)tbody.innerHTML=pages.filter(p=>p.isNote).map(p=>'<tr><td>'+p.page+'</td><td>'+safe(p.nfe||'—')+'</td><td>'+(p.hasTube?'Sim':'Não')+'</td><td>'+(p.weight===null?'—':p.weight.toLocaleString('pt-BR',{minimumFractionDigits:3,maximumFractionDigits:3})+' kg')+'</td></tr>').join('');
+  };
+  async function analyze(file){
+    if(!window.pdfjsLib)throw new Error('Leitor de PDF não carregou.');
+    srcBytes=new Uint8Array(await file.arrayBuffer());
+    const pdf=await window.pdfjsLib.getDocument({data:srcBytes.slice()}).promise;
+    pages=[];
+    for(let n=1;n<=pdf.numPages;n++){
+      setInfo('Lendo página '+n+' de '+pdf.numPages+'…');
+      const page=await pdf.getPage(n), tc=await page.getTextContent();
+      const txt=tc.items.map(x=>x.str).join(' ').replace(/\s+/g,' ').trim();
+      const isNote=/NOTA\s+FISCAL/i.test(txt)&&/PESO\s*BRUTO/i.test(txt);
+      pages.push({page:n,text:txt,isNote,hasTube:/\bTUBO\b/i.test(txt),weight:pdfNotasParseWeight(txt),nfe:pdfNotasNfe(txt)});
+    }
+    render(); setInfo('PDF analisado. Escolha abaixo qual grupo deseja gerar.');
+  }
+  input.addEventListener('change',async()=>{
+    const f=input.files?.[0]; if(!f)return;
+    try{setInfo('Abrindo PDF…');await analyze(f)}
+    catch(e){setInfo('Erro: '+(e.message||e))}
+  });
+  async function exportGroup(kind){
+    try{
+      if(!srcBytes)throw new Error('Selecione um PDF primeiro.');
+      if(!window.PDFLib)throw new Error('Gerador de PDF não carregou.');
+      let selected=[];
+      const notes=pages.filter(p=>p.isNote);
+      if(kind==='tubo')selected=notes.filter(p=>p.hasTube);
+      if(kind==='tubo100')selected=notes.filter(p=>p.hasTube&&p.weight!==null&&p.weight>100);
+      if(kind==='semtubo100')selected=notes.filter(p=>!p.hasTube&&p.weight!==null&&p.weight<100);
+      if(!selected.length)throw new Error('Nenhuma nota encontrada para este filtro.');
+      setInfo('Gerando PDF com '+selected.length+' nota(s)…');
+      const src=await window.PDFLib.PDFDocument.load(srcBytes.slice()), out=await window.PDFLib.PDFDocument.create();
+      const idx=selected.map(p=>p.page-1), copied=await out.copyPages(src,idx); copied.forEach(p=>out.addPage(p));
+      const bytes=await out.save(), blob=new Blob([bytes],{type:'application/pdf'}), url=URL.createObjectURL(blob);
+      const link=document.createElement('a');link.href=url;
+      const names={tubo:'notas_com_tubo.pdf',tubo100:'notas_com_tubo_acima_100kg.pdf',semtubo100:'notas_sem_tubo_abaixo_100kg.pdf'};
+      link.download=names[kind]||'notas_filtradas.pdf';document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
+      setInfo('PDF gerado com '+selected.length+' nota(s).');
+    }catch(e){setInfo('Erro: '+(e.message||e))}
+  }
+  document.querySelectorAll('[data-pdf-filter]').forEach(b=>b.addEventListener('click',()=>exportGroup(b.dataset.pdfFilter)));
+}
+document.addEventListener('DOMContentLoaded',()=>setupPdfNotas());
