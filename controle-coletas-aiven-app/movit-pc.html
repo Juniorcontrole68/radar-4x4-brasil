@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MOVIT PC • Teste</title>
+<link rel="preconnect" href="https://unpkg.com">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root{--navy:#17142f;--blue:#2f73e8;--green:#63ca43;--bg:#f3f6fa;--line:#dfe6ee;--text:#1e293b;--muted:#64748b;--danger:#be185d}
+*{box-sizing:border-box}body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--text)}
+header{height:64px;background:var(--navy);color:#fff;display:flex;align-items:center;padding:0 22px;gap:14px}
+.logo{width:38px;height:38px;border-radius:11px;background:var(--green);display:grid;place-items:center;font-weight:900;color:var(--navy)}
+header h1{font-size:19px;margin:0}header small{opacity:.7}.wrap{display:grid;grid-template-columns:410px 1fr;min-height:calc(100vh - 64px)}
+.side{padding:18px;border-right:1px solid var(--line);background:#fff;overflow:auto}.main{padding:18px;display:flex;flex-direction:column;gap:14px}
+.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:0 3px 16px rgba(15,23,42,.04)}
+label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:10px 0 5px}
+.row{display:flex;gap:8px}.row>*{min-width:0}
+input,select,button{font:inherit;border-radius:11px;border:1px solid var(--line);padding:10px 12px}
+input,select{width:100%;background:#fff}button{cursor:pointer;font-weight:700;background:#fff}button.primary{background:var(--blue);border-color:var(--blue);color:#fff}button.green{background:var(--green);border-color:var(--green);color:#10230a}button:disabled{opacity:.5;cursor:not-allowed}
+#map{height:58vh;min-height:430px;border-radius:16px;border:1px solid var(--line)}
+.actions{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.summary{font-size:18px;font-weight:800;color:var(--navy)}
+.status{font-size:13px;color:var(--muted);min-height:20px}.stop{border:1px solid var(--line);border-radius:12px;padding:10px;margin-top:8px;display:grid;grid-template-columns:34px 1fr auto;gap:9px;align-items:start}
+.num{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:#eef3ff;color:var(--blue);font-weight:800}.stop b{font-size:13px}.stop small{display:block;color:var(--muted);margin-top:3px}.stop button{padding:4px 8px;color:var(--danger)}
+.badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#fff5e8;color:#9a5600;font-size:11px;font-weight:700;margin-top:5px}
+.modal{position:fixed;inset:0;background:rgba(15,23,42,.48);display:none;align-items:center;justify-content:center;padding:20px;z-index:9999}.modal.on{display:flex}
+.modalbox{width:min(700px,96vw);max-height:80vh;overflow:auto;background:#fff;border-radius:18px;padding:16px}.modalbox h3{margin:0 0 12px}
+.choice{display:block;width:100%;text-align:left;margin:7px 0;background:#fff}.choice:hover{background:#f5f8ff}
+.result{white-space:pre-wrap;font-size:13px;line-height:1.45}.hint{font-size:12px;color:var(--muted);margin-top:8px}
+@media(max-width:950px){.wrap{grid-template-columns:1fr}.side{border-right:0}.actions{grid-template-columns:1fr 1fr}#map{height:50vh}}
+</style>
+</head>
+<body>
+<header><div class="logo">M</div><div><h1>MOVIT • Versão PC</h1><small>Ambiente de teste no navegador</small></div></header>
+<div class="wrap">
+<section class="side">
+  <div class="card">
+    <div class="summary" id="summary">Monte sua rota</div>
+    <div class="status" id="status">Adicione o ponto de partida e as entregas.</div>
+  </div>
+
+  <div class="card">
+    <label>Ponto de partida</label>
+    <div class="row"><input id="startInput" placeholder="Rua, número, cidade"><button id="startBtn" class="primary">Buscar</button></div>
+    <div class="hint" id="startLabel">Nenhum ponto definido.</div>
+
+    <label>Adicionar entrega</label>
+    <div class="row"><input id="stopInput" placeholder="Rua, número, cidade"><button id="stopBtn" class="primary">Adicionar</button></div>
+
+    <label>Veículo</label>
+    <div class="row">
+      <select id="vehicle"><option>Carro</option><option>Van / Furgão</option><option>VUC</option><option>3/4</option><option>Toco</option><option selected>Truck</option><option>Carreta</option></select>
+      <select id="axles"><option>1 eixo</option><option>2 eixos</option><option>3 eixos</option><option selected>4 eixos</option><option>5 eixos</option><option>6 eixos</option><option>7 eixos</option><option>8 eixos</option><option>9 eixos</option></select>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:600"><input id="returnStart" type="checkbox" style="width:auto"> Retornar ao ponto de partida</label>
+  </div>
+
+  <div class="card">
+    <b>Paradas</b>
+    <div id="stops"></div>
+  </div>
+
+  <button id="optimize" class="green" style="width:100%;padding:13px">Otimizar rota</button>
+</section>
+
+<main class="main">
+  <div id="map"></div>
+  <div class="actions">
+    <button id="tolls">🛣 Pedágios</button>
+    <button id="fuel">⛽ Postos</button>
+    <button id="restrictions">⚠ Restrições</button>
+    <button id="google">↗ Abrir no Google Maps</button>
+  </div>
+  <div class="card"><b>Resultado</b><div id="result" class="result">Use os botões acima para consultar a rota.</div></div>
+</main>
+</div>
+
+<div class="modal" id="modal"><div class="modalbox"><h3 id="modalTitle">Escolha o endereço</h3><div id="choices"></div><button onclick="closeModal()">Cancelar</button></div></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+let start=null,stops=[],lastPlan=null,layers=[];
+const map=L.map('map').setView([-22.9,-47.1],9);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+
+function setStatus(s){$('status').textContent=s}
+function esc(s){return String(s||'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]))}
+async function api(url,opt={}){const r=await fetch(url,opt);const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Falha na consulta');return j}
+function vehicleProfile(){return {type:$('vehicle').value,axles:$('axles').selectedIndex+1}}
+function closeModal(){$('modal').classList.remove('on')}
+window.closeModal=closeModal;
+
+async function searchAddress(raw,kind){
+  raw=raw.trim(); if(raw.length<4)return setStatus('Informe ao menos o nome da rua.');
+  setStatus('Procurando endereços no Brasil…');
+  try{
+    const j=await api('/api/public-router/geocode?all=1&q='+encodeURIComponent(raw));
+    const rows=j.rows||[]; if(!rows.length)throw new Error('Endereço não encontrado.');
+    $('modalTitle').textContent=kind==='start'?'Escolha o ponto de partida':'Escolha a entrega';
+    const box=$('choices');box.innerHTML='';
+    rows.forEach((p,i)=>{
+      const b=document.createElement('button');b.className='choice';
+      b.innerHTML='<b>'+esc(p.road||p.label||raw)+'</b><br><small>'+esc([p.city,p.state].filter(Boolean).join(' • '))+'</small>';
+      b.onclick=()=>{
+        const s={lat:+p.lat,lon:+p.lon,original:raw,label:p.label||raw,resolved:p.label||raw,approximate:!!p.approximate,precision:p.precision||''};
+        if(kind==='start'){start=s;$('startLabel').textContent=s.resolved;$('startInput').value='';}
+        else{stops.push(s);$('stopInput').value='';}
+        lastPlan=null; closeModal(); renderStops();renderMap();setStatus('Endereço adicionado.');
+      };
+      box.appendChild(b);
+    });
+    $('modal').classList.add('on');
+  }catch(e){setStatus(e.message)}
+}
+$('startBtn').onclick=()=>searchAddress($('startInput').value,'start');
+$('stopBtn').onclick=()=>searchAddress($('stopInput').value,'stop');
+$('startInput').onkeydown=e=>{if(e.key==='Enter')$('startBtn').click()};
+$('stopInput').onkeydown=e=>{if(e.key==='Enter')$('stopBtn').click()};
+
+function renderStops(){
+  const box=$('stops');box.innerHTML='';
+  if(!stops.length){box.innerHTML='<div class="hint">Nenhuma entrega adicionada.</div>';return}
+  stops.forEach((s,i)=>{
+    const d=document.createElement('div');d.className='stop';
+    d.innerHTML='<div class="num">'+(i+1)+'</div><div><b>'+esc(s.resolved)+'</b>'+(s.approximate?'<span class="badge">Localização aproximada</span>':'')+'</div><button>×</button>';
+    d.querySelector('button').onclick=()=>{stops.splice(i,1);lastPlan=null;renderStops();renderMap()};
+    box.appendChild(d);
+  });
+}
+function clearLayers(){layers.forEach(x=>map.removeLayer(x));layers=[]}
+function renderMap(){
+  clearLayers();const pts=[];
+  if(start){const m=L.marker([start.lat,start.lon]).addTo(map).bindPopup('Saída: '+esc(start.resolved));layers.push(m);pts.push([start.lat,start.lon])}
+  stops.forEach((s,i)=>{const m=L.marker([s.lat,s.lon]).addTo(map).bindPopup((i+1)+'. '+esc(s.resolved));layers.push(m);pts.push([s.lat,s.lon])});
+  if(lastPlan&&lastPlan.geometry&&lastPlan.geometry.coordinates){
+    const ll=lastPlan.geometry.coordinates.map(x=>[x[1],x[0]]);
+    const line=L.polyline(ll,{weight:5,opacity:.85}).addTo(map);layers.push(line);ll.forEach(x=>pts.push(x));
+  }
+  if(pts.length)map.fitBounds(L.latLngBounds(pts),{padding:[30,30]});
+}
+function km(m){return (m/1000).toLocaleString('pt-BR',{maximumFractionDigits:1})+' km'}
+function time(s){const min=Math.round(s/60);return min>=60?Math.floor(min/60)+'h '+min%60+'min':min+' min'}
+
+$('optimize').onclick=async()=>{
+  if(!start)return setStatus('Defina o ponto de partida.');
+  if(stops.length<1)return setStatus('Adicione ao menos uma entrega.');
+  const btn=$('optimize');btn.disabled=true;setStatus('Calculando a melhor rota…');
+  try{
+    const body={start,stops,returnToStart:$('returnStart').checked,avoidTolls:[]};
+    const j=await api('/api/public-router/optimize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    lastPlan=j;
+    const points=j.points||[],order=j.order||[],ordered=[];
+    order.forEach(idx=>{if(points[idx])ordered.push(points[idx])});
+    if(ordered.length)stops=ordered;
+    $('summary').textContent=time(j.durationSeconds||0)+' • '+km(j.distanceMeters||0)+' • '+stops.length+' entrega(s)';
+    renderStops();renderMap();setStatus('Rota otimizada.');
+  }catch(e){setStatus(e.message)}finally{btn.disabled=false}
+};
+
+function requirePlan(){if(!lastPlan||!lastPlan.geometry){setStatus('Otimize a rota primeiro.');return false}return true}
+$('tolls').onclick=async()=>{
+  if(!requirePlan())return;setStatus('Calculando pedágios…');
+  try{
+    const locations=[start,...stops].map(p=>p.lat+','+p.lon);if($('returnStart').checked)locations.push(start.lat+','+start.lon);
+    const j=await api('/api/public-router/tolls',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({geometry:lastPlan.geometry,vehicle:vehicleProfile(),locations})});
+    const rows=j.rows||[];let out='PEDÁGIOS • '+(j.provider||'base pública')+'\n';
+    if(!rows.length)out+='Nenhuma praça encontrada.';
+    rows.forEach((p,i)=>out+='\n'+(i+1)+'. '+(p.name||'Pedágio')+(p.operator?' • '+p.operator:'')+(p.road?' • '+p.road:'')+'\n   '+(Number.isFinite(p.amount)?'R$ '+Number(p.amount).toLocaleString('pt-BR',{minimumFractionDigits:2}):'Tarifa não disponível'));
+    if(Number.isFinite(j.total))out+='\n\nTOTAL: R$ '+Number(j.total).toLocaleString('pt-BR',{minimumFractionDigits:2});
+    $('result').textContent=out;setStatus((j.count||0)+' pedágio(s) encontrado(s).');
+  }catch(e){setStatus(e.message)}
+};
+$('restrictions').onclick=async()=>{
+  if(!start)return setStatus('Defina uma rota primeiro.');setStatus('Verificando restrições…');
+  try{
+    const j=await api('/api/public-router/truck-restrictions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({vehicle:vehicleProfile(),points:[start,...stops]})});
+    let out='RESTRIÇÕES\n';if(!(j.alerts||[]).length)out+='Nenhuma restrição cadastrada encontrada.';
+    (j.alerts||[]).forEach((a,i)=>out+='\n'+(i+1)+'. '+a.title+'\n   '+(a.street||a.city||'')+'\n   '+(a.schedule||'')+'\n   '+(a.detail||''));
+    $('result').textContent=out;setStatus((j.count||0)+' alerta(s).');
+  }catch(e){setStatus(e.message)}
+};
+$('fuel').onclick=()=>{
+  if(!navigator.geolocation)return setStatus('Navegador sem acesso à localização.');
+  setStatus('Obtendo localização atual…');
+  navigator.geolocation.getCurrentPosition(async pos=>{
+    try{
+      const body={lat:pos.coords.latitude,lon:pos.coords.longitude,geometry:lastPlan?.geometry||null};
+      const j=await api('/api/public-router/fuel-stations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      let out='POSTOS\n';if(!(j.rows||[]).length)out+='Nenhum posto encontrado próximo.';
+      (j.rows||[]).forEach((p,i)=>out+='\n'+(i+1)+'. '+p.name+'\n   '+(Number.isFinite(p.aheadMeters)?km(p.aheadMeters)+' à frente':km(p.distanceMeters||p.directMeters||0)));
+      $('result').textContent=out;setStatus((j.rows||[]).length+' posto(s) encontrado(s).');
+    }catch(e){setStatus(e.message)}
+  },()=>setStatus('Permita o acesso à localização no navegador.'));
+};
+$('google').onclick=()=>{
+  if(!start||!stops.length)return setStatus('Monte a rota primeiro.');
+  const dest=stops[stops.length-1],mid=stops.slice(0,-1);
+  const origin=start.approximate?(start.original||start.resolved):(start.lat+','+start.lon);
+  const destination=dest.approximate?(dest.original||dest.resolved):(dest.lat+','+dest.lon);
+  const wp=mid.map(s=>s.approximate?(s.original||s.resolved):(s.lat+','+s.lon)).join('|');
+  let u='https://www.google.com/maps/dir/?api=1&origin='+encodeURIComponent(origin)+'&destination='+encodeURIComponent(destination)+'&travelmode=driving';
+  if(wp)u+='&waypoints='+encodeURIComponent(wp);
+  window.open(u,'_blank');
+};
+renderStops();
+</script>
+</body></html>
