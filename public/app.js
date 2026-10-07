@@ -4613,8 +4613,8 @@ async function setupPdfNotas(){
   const parseNfe=txt=>{const s=String(txt||'').replace(/\s+/g,' ');for(const re of [/NF-?E\s*(?:N[º°O.]*)?\s*[:\-]?\s*(\d{1,3}(?:\.\d{3}){1,3}|\d{5,12})/i,/N[º°]\s*[:\-]?\s*(\d{1,3}(?:\.\d{3}){1,3}|\d{5,12})/i]){const m=s.match(re);if(m)return m[1]}return''};
   const render=()=>{
     const notes=pages.filter(p=>p.isNote),withTube=notes.filter(p=>p.hasTube),withoutTube=notes.filter(p=>!p.hasTube);
-    if(stat)stat.innerHTML='<b>'+notes.length+'</b> nota(s) fiscal(is) • <b>'+withTube.length+'</b> com TUBO • <b>'+withoutTube.length+'</b> sem TUBO';
-    if(tbody)tbody.innerHTML=notes.length?notes.map(p=>'<tr><td>'+safe(p.fileName)+'</td><td>'+p.page+'</td><td>'+safe(p.nfe||'—')+'</td><td>'+(p.hasTube?'Sim':'Não')+'</td><td><b>'+(p.hasTube?'Com tubos':'Sem tubos')+'</b></td></tr>').join(''):'<tr><td colspan="5" class="muted">Nenhuma nota fiscal identificada.</td></tr>';
+    if(stat)stat.innerHTML='<b>'+notes.length+'</b> nota(s) fiscal(is) • <b>'+withTube.length+'</b> com TUBO primeiro • <b>'+withoutTube.length+'</b> sem TUBO depois';
+    if(tbody)tbody.innerHTML=notes.length?notes.sort((a,b)=>Number(b.hasTube)-Number(a.hasTube)||a.sourceIndex-b.sourceIndex||a.page-b.page).map(p=>'<tr><td>'+safe(p.fileName)+'</td><td>'+p.page+'</td><td>'+safe(p.nfe||'—')+'</td><td>'+(p.hasTube?'Sim':'Não')+'</td><td><b>'+(p.hasTube?'1 • Com tubos':'2 • Sem tubos')+'</b></td></tr>').join(''):'<tr><td colspan="5" class="muted">Nenhuma nota fiscal identificada.</td></tr>';
   };
   const clearDownloads=()=>{downloadUrls.forEach(u=>URL.revokeObjectURL(u));downloadUrls=[];if(downloads){downloads.innerHTML='';downloads.style.display='none'}};
   async function analyze(files){
@@ -4630,20 +4630,21 @@ async function setupPdfNotas(){
         pages.push({sourceIndex:fi,fileName:file.name,page:n,text:txt,isNote,hasTube:hasTube(txt),nfe:parseNfe(txt)})
       }
     }
-    render();setInfo('Análise concluída. Clique em “Separar notas por tubos”.');
+    render();setInfo('Análise concluída. Clique em “Ordenar PDF por tubos”.');
   }
   input.addEventListener('change',async()=>{
     const files=[...(input.files||[])].filter(f=>/\.pdf$/i.test(f.name)||f.type==='application/pdf');
     if(!files.length)return;
     try{setInfo('Abrindo '+files.length+' PDF(s)…');await analyze(files)}catch(e){setInfo('Erro: '+(e.message||e))}
   });
-  async function buildPdf(selected,name){
+  async function buildOrderedPdf(selected,name){
     if(!selected.length)return null;
-    const out=await window.PDFLib.PDFDocument.create(),bySource=new Map();
-    selected.forEach(p=>{if(!bySource.has(p.sourceIndex))bySource.set(p.sourceIndex,[]);bySource.get(p.sourceIndex).push(p)});
-    for(const [sourceIndex,items] of [...bySource.entries()].sort((a,b)=>a[0]-b[0])){
-      const src=await window.PDFLib.PDFDocument.load(sources[sourceIndex].bytes.slice()),idx=items.sort((a,b)=>a.page-b.page).map(p=>p.page-1),copied=await out.copyPages(src,idx);
-      copied.forEach(p=>out.addPage(p))
+    const out=await window.PDFLib.PDFDocument.create();
+    const ordered=[...selected].sort((a,b)=>Number(b.hasTube)-Number(a.hasTube)||a.sourceIndex-b.sourceIndex||a.page-b.page);
+    for(const p of ordered){
+      const src=await window.PDFLib.PDFDocument.load(sources[p.sourceIndex].bytes.slice());
+      const [copied]=await out.copyPages(src,[p.page-1]);
+      out.addPage(copied);
     }
     return{name,bytes:await out.save(),count:selected.length}
   }
@@ -4653,7 +4654,7 @@ async function setupPdfNotas(){
     downloadUrls.push(url);
     return '<a class="primary" style="display:inline-block;text-decoration:none;margin:4px 8px 4px 0" href="'+url+'" download="'+safe(item.name)+'">'+safe(label)+' • '+nf(item.count)+' nota(s)</a>';
   }
-  async function generateByTube(){
+  async function generateOrdered(){
     try{
       const currentFiles=[...(input.files||[])].filter(f=>/\.pdf$/i.test(f.name)||f.type==='application/pdf');
       if(!currentFiles.length)throw new Error('Selecione os PDFs dos e-mails primeiro.');
@@ -4661,23 +4662,18 @@ async function setupPdfNotas(){
       await analyze(currentFiles);
       const notes=pages.filter(p=>p.isNote);
       if(!notes.length)throw new Error('Nenhuma nota fiscal foi identificada nos PDFs selecionados.');
-      const withTube=notes.filter(p=>p.hasTube),withoutTube=notes.filter(p=>!p.hasTube);
-      setInfo('Separando notas com tubos das notas sem tubos…');
+      const withTube=notes.filter(p=>p.hasTube).length,withoutTube=notes.length-withTube;
+      setInfo('Ordenando o PDF: notas com tubos primeiro e notas sem tubos depois…');
       clearDownloads();
-      const outputs=await Promise.all([
-        buildPdf(withTube,'01_notas_com_tubos.pdf'),
-        buildPdf(withoutTube,'02_notas_sem_tubos.pdf')
-      ]);
+      const output=await buildOrderedPdf(notes,'notas_ordenadas_tubos_primeiro.pdf');
       if(downloads){
         downloads.style.display='block';
-        downloads.innerHTML='<div style="font-weight:700;margin-bottom:6px">Arquivos separados e prontos para baixar:</div>'+
-          (outputs[0]?makeDownloadLink(outputs[0],'1 • Notas com tubos'):'<span class="muted">Arquivo 1: sem notas com tubos.</span> ')+
-          (outputs[1]?makeDownloadLink(outputs[1],'2 • Notas sem tubos'):'<span class="muted">Arquivo 2: sem notas sem tubos.</span>');
+        downloads.innerHTML='<div style="font-weight:700;margin-bottom:6px">PDF ordenado pronto para baixar:</div>'+makeDownloadLink(output,'Baixar PDF ordenado');
       }
-      setInfo('Separação concluída: '+withTube.length+' nota(s) com tubos • '+withoutTube.length+' nota(s) sem tubos.');
+      setInfo('Ordenação concluída: '+withTube+' nota(s) com tubos primeiro • '+withoutTube+' nota(s) sem tubos depois.');
     }catch(e){setInfo('Erro: '+(e.message||e))}
   }
   const mergeBtn=document.querySelector('#pdfNotasMerge3');
-  if(mergeBtn)mergeBtn.addEventListener('click',generateByTube);
+  if(mergeBtn)mergeBtn.addEventListener('click',generateOrdered);
 }
 document.addEventListener('DOMContentLoaded',()=>setupPdfNotas());
