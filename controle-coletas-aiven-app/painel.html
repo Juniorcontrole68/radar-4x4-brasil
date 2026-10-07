@@ -211,8 +211,15 @@ document.querySelectorAll('.tab').forEach(btn=>{
 });
 const pdfQuickBtn=document.getElementById('pdfQuickBtn');
 pdfQuickBtn.addEventListener('click',()=>{
-  const btn=document.querySelector('.tab[data-module="pdf-unificador"]');
-  if(btn)abrirModulo(btn);
+  if(!AUTH)return;
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  frame.dataset.module='pdf-unificador';
+  moduleLoading.classList.add('show');
+  frame.src='/pdf-unificador?embed=1&refresh='+Date.now();
+  moduleName.textContent='PDF';
+  duplicateBtn.style.display='none';
+  deleteBtn.style.display='none';
+  try{history.replaceState(null,'','#pdf-unificador')}catch(e){}
 });
 
 
