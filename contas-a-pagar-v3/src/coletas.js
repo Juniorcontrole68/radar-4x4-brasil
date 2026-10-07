@@ -318,6 +318,9 @@ try{
           const table=tbody.closest('table');
           const headRow=table?.querySelector('thead tr');
           if(headRow && !headRow.querySelector('[data-recebido-head]')){
+            const th0=document.createElement('th');
+            th0.textContent='Data da coleta';
+            th0.dataset.coletaDataHead='1';
             const th1=document.createElement('th');
             th1.textContent='Recebido';
             th1.dataset.recebidoHead='1';
@@ -328,7 +331,7 @@ try{
             th3.textContent='Prev. pagamento da fatura';
             th3.dataset.recebidoHead='1';
             th3.dataset.previsaoHead='1';
-            headRow.append(th1,th2,th3);
+            headRow.append(th0,th1,th2,th3);
           }
 
           const moneyCols=[
@@ -345,6 +348,17 @@ try{
             moneyCols.forEach(m=>{if(m.idx>=0&&tr.cells&&tr.cells[m.idx])tr.cells[m.idx].textContent=fmtBRL(coleta[m.key])});
             if(tr.dataset.recebidoDecorado==='1') return;
             tr.dataset.recebidoDecorado='1';
+
+            const tdColeta=document.createElement('td');
+            tdColeta.className='recebido-cell coleta-data-cell';
+            const coletaIso=String(coleta.data_carregamento||coleta.carregamento||coleta.data_coleta||'').slice(0,10);
+            if(/^\d{4}-\d{2}-\d{2}$/.test(coletaIso)){
+              const [ano,mes,dia]=coletaIso.split('-');
+              tdColeta.textContent=dia+'/'+mes+'/'+ano;
+              tdColeta.dataset.iso=coletaIso;
+            }else{
+              tdColeta.textContent='—';
+            }
 
             const tdCheck=document.createElement('td');
             tdCheck.className='recebido-cell';
@@ -406,7 +420,7 @@ try{
             tdCheck.appendChild(check);
             tdData.appendChild(date);
             tdPrev.appendChild(prev);
-            tr.append(tdCheck,tdData,tdPrev);
+            tr.append(tdColeta,tdCheck,tdData,tdPrev);
           });
         }
 
