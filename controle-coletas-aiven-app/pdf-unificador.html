@@ -24,7 +24,7 @@ details{margin-top:12px}summary{cursor:pointer;color:#334155;font-weight:650;fon
   <div class="head"><div class="icon">PDF</div><div><h1>Unificador PDF • Titan</h1><p>Busca as notas no Titan e gera um único PDF na ordem escolhida.</p></div></div>
   <div class="card">
     <div class="grid">
-      <label>E-mail Titan
+      <label>E-mail
         <input id="email" type="email" autocomplete="username" value="comercial@construlogbr.com.br">
       </label>
       <label>Senha / senha de aplicativo
@@ -56,8 +56,8 @@ details{margin-top:12px}summary{cursor:pointer;color:#334155;font-weight:650;fon
       <button id="runCity" class="secondary">Notas por Cidade</button>
       <button id="clear" class="secondary" type="button">Limpar senha</button>
     </div>
-    <div id="status" class="status">Informe o período e a conta Titan. Escolha “Notas por Tubos” ou “Notas por Cidade”. A senha é usada somente para esta consulta e não é armazenada.</div>
-    <div class="note">Limite de segurança: até 250 e-mails e 60 anexos PDF por consulta. “Notas por Tubos” coloca primeiro as notas com TUBO/TUBOS e depois as demais. “Notas por Cidade” agrupa todas as notas da mesma cidade destino. O arquivo final é gerado na hora e não fica salvo no servidor.<br><br><b>Importante:</b> se sua conta Titan usa verificação em duas etapas (2FA), use uma <b>senha de aplicativo</b> no lugar da senha normal do webmail.</div>
+    <div id="status" class="status">Informe o período e a conta de e-mail. Escolha “Notas por Tubos” ou “Notas por Cidade”. A senha é usada somente para esta consulta e não é armazenada.</div>
+    <div class="note">Limite de segurança: até 250 e-mails e 60 anexos PDF por consulta. “Notas por Tubos” coloca primeiro as notas com TUBO/TUBOS e depois as demais. “Notas por Cidade” agrupa todas as notas da mesma cidade destino. O arquivo final é gerado na hora e não fica salvo no servidor.<br><br><b>Importante:</b> se sua conta de e-mail usa verificação em duas etapas (2FA), use uma <b>senha de aplicativo</b> no lugar da senha normal do webmail.</div>
   </div>
 </div>
 <script>
@@ -75,7 +75,7 @@ async function runPdf(mode){
   if(!body.email||!body.password||!body.from||!body.to){$('status').className='status err';$('status').textContent='Preencha e-mail, senha e período.';return}
   $('runTubes').disabled=true;$('runCity').disabled=true;
   $('status').className='status';
-  $('status').textContent=mode==='city'?'Conectando ao Titan e agrupando as notas por cidade destino…':'Conectando ao Titan e colocando as notas com tubos primeiro…';
+  $('status').textContent=mode==='city'?'Conectando ao e-mail e agrupando as notas por cidade destino…':'Conectando ao e-mail e colocando as notas com tubos primeiro…';
   try{
     const r=await fetch('/api/painel/pdf-unificador',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(!r.ok){
