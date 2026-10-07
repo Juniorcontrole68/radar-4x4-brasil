@@ -641,14 +641,38 @@ function dashboardPerms(v) {
   return [];
 }
 function dashboardHas(user,perm){return !!(user&&(user.is_admin||user.permissions?.includes('*')||user.permissions?.includes(perm)))}
+async function dashboardUserContext(row){
+  let client=null,clientModules=[];
+  if(row?.client_id){
+    const cq=await pool.query("SELECT id::text,name,slug,status,plan,monthly_fee,due_day FROM movit_clients WHERE id=$1 LIMIT 1",[row.client_id]);
+    if(cq.rowCount){
+      client=cq.rows[0];
+      const mq=await pool.query("SELECT module_key FROM movit_client_modules WHERE client_id=$1 AND enabled=TRUE ORDER BY module_key",[row.client_id]);
+      clientModules=mq.rows.map(x=>String(x.module_key));
+    }
+  }
+  return {
+    id:String(row.id),username:row.username,is_admin:!!row.is_admin,active:!!row.active,
+    permissions:row.is_admin?['*']:dashboardPerms(row.permissions),
+    client_id:row.client_id==null?null:String(row.client_id),
+    is_platform_admin:!!row.is_platform_admin,
+    client,
+    client_modules:clientModules
+  };
+}
 async function dashboardSession(req, adminOnly=false) {
   const token=dashboardBearer(req);
   if(!token){const e=new Error('Sessão não informada.');e.status=401;throw e}
-  const r=await pool.query("SELECT u.id::text AS id,u.username,u.is_admin,u.active,u.permissions FROM dashboard_sessions s JOIN dashboard_users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>NOW() AND u.active=TRUE LIMIT 1",[dashboardTokenHash(token)]);
+  const r=await pool.query("SELECT u.id::text AS id,u.username,u.is_admin,u.active,u.permissions,u.client_id,u.is_platform_admin FROM dashboard_sessions s JOIN dashboard_users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>NOW() AND u.active=TRUE LIMIT 1",[dashboardTokenHash(token)]);
   if(!r.rowCount){const e=new Error('Sessão expirada ou inválida.');e.status=401;throw e}
   const row=r.rows[0];
   if(adminOnly&&!row.is_admin){const e=new Error('Acesso exclusivo do administrador.');e.status=403;throw e}
-  return {id:row.id,username:row.username,is_admin:!!row.is_admin,active:!!row.active,permissions:row.is_admin?['*']:dashboardPerms(row.permissions)};
+  return dashboardUserContext(row);
+}
+async function dashboardPlatformSession(req){
+  const user=await dashboardSession(req,true);
+  if(!user.is_platform_admin){const e=new Error('Acesso exclusivo da administração MOVIT.');e.status=403;throw e}
+  return user;
 }
 async function dashboardCreateSession(userId, days=14){
   const token=crypto.randomBytes(32).toString('hex');
@@ -1249,6 +1273,28 @@ async function start() {
     const initialModules=['lotacao','coletas','financeiro_lotacao','operacao','visao_geral','dashboards','agendamento','programacao','roteirizador','rastreio','frota','contas_pagar','usuarios'];
     for(const moduleKey of initialModules){
       await pool.query('INSERT INTO movit_client_modules(client_id,module_key,enabled) VALUES($1,$2,TRUE) ON CONFLICT(client_id,module_key) DO NOTHING',[construlogId,moduleKey]);
+    }
+  }
+  // Fase 1 multiempresa: vincula os usuários atuais ao cliente CONSTRULOG.
+  await pool.query('ALTER TABLE dashboard_users ADD COLUMN IF NOT EXISTS client_id BIGINT REFERENCES movit_clients(id)');
+  await pool.query('ALTER TABLE dashboard_users ADD COLUMN IF NOT EXISTS is_platform_admin BOOLEAN NOT NULL DEFAULT FALSE');
+  if(construlogId){
+    await pool.query('UPDATE dashboard_users SET client_id=$1 WHERE client_id IS NULL',[construlogId]);
+  }
+  // Administradores já existentes são considerados administradores MOVIT nesta migração inicial.
+  await pool.query('UPDATE dashboard_users SET is_platform_admin=TRUE WHERE is_admin=TRUE AND is_platform_admin=FALSE');
+
+  // Marca dados operacionais atuais como pertencentes à CONSTRULOG sem alterar ainda as consultas existentes.
+  if(construlogId){
+    const tenantTables=['bills','coletas','driver_tracking_devices','driver_tracking_assignments','driver_tracking_test_devices','driver_tracking_test_assignments','agendamento_teste'];
+    for(const tableName of tenantTables){
+      try{
+        await pool.query('ALTER TABLE '+tableName+' ADD COLUMN IF NOT EXISTS client_id BIGINT REFERENCES movit_clients(id)');
+        await pool.query('UPDATE '+tableName+' SET client_id=$1 WHERE client_id IS NULL',[construlogId]);
+        await pool.query('CREATE INDEX IF NOT EXISTS idx_'+tableName+'_client_id ON '+tableName+'(client_id)');
+      }catch(e){
+        console.warn('Migração multiempresa pendente para '+tableName+': '+e.message);
+      }
     }
   }
   const adminUser=String(process.env.DASHBOARD_INITIAL_ADMIN_USER||'Junior').trim();
@@ -2244,7 +2290,7 @@ async function start() {
           const username=String(body.username||'').trim();
           const password=String(body.password||'');
           if(!username||!password)return sendJson(res,400,{ok:false,error:'Informe usuário e senha.'});
-          const r=await pool.query('SELECT id::text AS id,username,password_salt,password_hash,is_admin,active,permissions FROM dashboard_users WHERE lower(username)=lower($1) LIMIT 1',[username]);
+          const r=await pool.query('SELECT id::text AS id,username,password_salt,password_hash,is_admin,active,permissions,client_id,is_platform_admin FROM dashboard_users WHERE lower(username)=lower($1) LIMIT 1',[username]);
           if(!r.rowCount||!r.rows[0].active||!dashboardVerifyPassword(password,r.rows[0].password_salt,r.rows[0].password_hash)){
             return sendJson(res,401,{ok:false,error:'Usuário ou senha inválidos.'});
           }
@@ -2254,7 +2300,8 @@ async function start() {
             'Cache-Control':'no-store',
             'Set-Cookie':dashboardSetCookie(token,sessionDays*24*60*60)
           });
-          return res.end(JSON.stringify({ok:true,user:{id:row.id,username:row.username,is_admin:!!row.is_admin,permissions:row.is_admin?['*']:dashboardPerms(row.permissions)}}));
+          const user=await dashboardUserContext(row);
+          return res.end(JSON.stringify({ok:true,user}));
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao entrar.'});}
       }
 
@@ -2315,15 +2362,15 @@ async function start() {
           if(!ticket)return sendJson(res,400,{ok:false,error:'Ticket não informado.'});
           const r=await pool.query("UPDATE dashboard_embed_tickets SET used_at=NOW() WHERE ticket_hash=$1 AND used_at IS NULL AND expires_at>NOW() RETURNING user_id",[dashboardTokenHash(ticket)]);
           if(!r.rowCount)return sendJson(res,401,{ok:false,error:'Ticket expirado ou já utilizado.'});
-          const ur=await pool.query('SELECT id::text AS id,username,is_admin,active,permissions FROM dashboard_users WHERE id=$1 AND active=TRUE LIMIT 1',[r.rows[0].user_id]);
+          const ur=await pool.query('SELECT id::text AS id,username,is_admin,active,permissions,client_id,is_platform_admin FROM dashboard_users WHERE id=$1 AND active=TRUE LIMIT 1',[r.rows[0].user_id]);
           if(!ur.rowCount)return sendJson(res,401,{ok:false,error:'Usuário inativo.'});
-          const row=ur.rows[0],token=await dashboardCreateSession(row.id);
-          return sendJson(res,200,{ok:true,token,user:{id:row.id,username:row.username,is_admin:!!row.is_admin,permissions:row.is_admin?['*']:dashboardPerms(row.permissions)}});
+          const row=ur.rows[0],token=await dashboardCreateSession(row.id),user=await dashboardUserContext(row);
+          return sendJson(res,200,{ok:true,token,user});
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao autorizar módulo.'});}
       }
       if (req.method === 'GET' && (u.pathname === '/movit-central' || u.pathname === '/movit-central/')) {
         try{
-          await dashboardSession(req,true);
+          await dashboardPlatformSession(req);
           return sendHtml(res,MOVIT_CENTRAL_PAGE);
         }catch(e){
           res.writeHead(302,{Location:'/?login=1','Cache-Control':'no-store'});
@@ -2333,7 +2380,7 @@ async function start() {
 
       if (req.method === 'GET' && u.pathname === '/api/movit-central/clients') {
         try{
-          await dashboardSession(req,true);
+          await dashboardPlatformSession(req);
           const mq=await pool.query("SELECT key,name,category FROM movit_modules WHERE active=TRUE ORDER BY category,name");
           const cq=await pool.query(`SELECT c.id::text,c.name,c.slug,c.document,c.email,c.phone,c.plan,c.monthly_fee,c.due_day,c.status,c.notes,c.created_at,c.updated_at,
             COALESCE((SELECT json_agg(cm.module_key ORDER BY cm.module_key) FROM movit_client_modules cm WHERE cm.client_id=c.id AND cm.enabled=TRUE),'[]'::json) AS modules
@@ -2344,7 +2391,7 @@ async function start() {
 
       if (req.method === 'POST' && u.pathname === '/api/movit-central/clients') {
         try{
-          await dashboardSession(req,true);
+          await dashboardPlatformSession(req);
           const body=await readJsonBodyLimited(req,128*1024);
           const name=String(body.name||'').trim().slice(0,160);
           const slug=String(body.slug||name).trim().toLowerCase().replace(/[^a-z0-9_-]+/g,'-').replace(/^-+|-+$/g,'').slice(0,100);
@@ -2370,7 +2417,7 @@ async function start() {
 
       if (req.method === 'GET' && u.pathname === '/api/movit-central/payments') {
         try{
-          await dashboardSession(req,true);
+          await dashboardPlatformSession(req);
           const q=await pool.query(`SELECT p.id::text,p.client_id::text,c.name AS client_name,p.reference_month,p.due_date,p.amount,p.status,p.paid_at,p.notes,p.created_at,p.updated_at
             FROM movit_payments p JOIN movit_clients c ON c.id=p.client_id
             ORDER BY p.reference_month DESC,lower(c.name),p.id DESC LIMIT 500`);
@@ -2380,7 +2427,7 @@ async function start() {
 
       if (req.method === 'POST' && u.pathname === '/api/movit-central/payments') {
         try{
-          await dashboardSession(req,true);
+          await dashboardPlatformSession(req);
           const body=await readJsonBodyLimited(req,64*1024);
           const clientId=String(body.client_id||'').trim();
           if(!/^\d+$/.test(clientId))return sendJson(res,400,{ok:false,error:'Cliente inválido.'});
@@ -2409,7 +2456,7 @@ async function start() {
       const movitPaymentMatch=u.pathname.match(/^\/api\/movit-central\/payments\/(\d+)$/);
       if (movitPaymentMatch && req.method === 'PATCH') {
         try{
-          await dashboardSession(req,true);
+          await dashboardPlatformSession(req);
           const id=movitPaymentMatch[1],body=await readJsonBodyLimited(req,64*1024);
           const status=['pending','paid','overdue','cancelled'].includes(body.status)?body.status:null;
           if(!status)return sendJson(res,400,{ok:false,error:'Status de pagamento inválido.'});
@@ -2422,7 +2469,7 @@ async function start() {
 
       if (req.method === 'POST' && u.pathname === '/api/movit-central/payments/recalculate-overdue') {
         try{
-          await dashboardSession(req,true);
+          await dashboardPlatformSession(req);
           const q=await pool.query("UPDATE movit_payments SET status='overdue',updated_at=NOW() WHERE status='pending' AND due_date<CURRENT_DATE RETURNING id");
           return sendJson(res,200,{ok:true,updated:q.rowCount});
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao atualizar vencimentos.'})}
@@ -2431,7 +2478,7 @@ async function start() {
       const movitClientMatch=u.pathname.match(/^\/api\/movit-central\/clients\/(\d+)$/);
       if (movitClientMatch && req.method === 'PATCH') {
         try{
-          await dashboardSession(req,true);
+          await dashboardPlatformSession(req);
           const id=movitClientMatch[1],body=await readJsonBodyLimited(req,128*1024);
           const name=String(body.name||'').trim().slice(0,160);
           const slug=String(body.slug||name).trim().toLowerCase().replace(/[^a-z0-9_-]+/g,'-').replace(/^-+|-+$/g,'').slice(0,100);
@@ -2834,15 +2881,17 @@ async function start() {
 
       if (req.method === 'GET' && u.pathname === '/api/painel/auth/users') {
         try {
-          await dashboardSession(req,true);
-          const r=await pool.query('SELECT id::text AS id,username,is_admin,active,permissions,created_at,updated_at FROM dashboard_users ORDER BY is_admin DESC,lower(username)');
+          const admin=await dashboardSession(req,true);
+          const r=admin.client_id
+            ? await pool.query('SELECT id::text AS id,username,is_admin,active,permissions,created_at,updated_at FROM dashboard_users WHERE client_id=$1 ORDER BY is_admin DESC,lower(username)',[admin.client_id])
+            : await pool.query('SELECT id::text AS id,username,is_admin,active,permissions,created_at,updated_at FROM dashboard_users ORDER BY is_admin DESC,lower(username)');
           return sendJson(res,200,{ok:true,rows:r.rows.map(x=>Object.assign({},x,{permissions:x.is_admin?['*']:dashboardPerms(x.permissions)}))});
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Não foi possível carregar os usuários.'});}
       }
 
       if (req.method === 'POST' && u.pathname === '/api/painel/auth/users') {
         try {
-          await dashboardSession(req,true);
+          const admin=await dashboardSession(req,true);
           const body=await readJsonBodyLimited(req,128*1024);
           const username=String(body.username||'').trim();
           const password=String(body.password||'');
@@ -2851,7 +2900,7 @@ async function start() {
           if(username.length<2)return sendJson(res,400,{ok:false,error:'Informe um nome de usuário.'});
           if(password.length<4)return sendJson(res,400,{ok:false,error:'A senha deve ter pelo menos 4 caracteres.'});
           const ph=dashboardHashPassword(password);
-          const r=await pool.query('INSERT INTO dashboard_users(username,password_salt,password_hash,is_admin,active,permissions,updated_at) VALUES($1,$2,$3,FALSE,$4,$5::jsonb,NOW()) RETURNING id::text AS id,username,is_admin,active,permissions,created_at,updated_at',[username,ph.salt,ph.hash,active,JSON.stringify(permissions)]);
+          const r=await pool.query('INSERT INTO dashboard_users(username,password_salt,password_hash,is_admin,active,permissions,client_id,is_platform_admin,updated_at) VALUES($1,$2,$3,FALSE,$4,$5::jsonb,$6,FALSE,NOW()) RETURNING id::text AS id,username,is_admin,active,permissions,created_at,updated_at',[username,ph.salt,ph.hash,active,JSON.stringify(permissions),admin.client_id]);
           const user=Object.assign({},r.rows[0],{permissions:dashboardPerms(r.rows[0].permissions)});
           return sendJson(res,201,{ok:true,user});
         } catch(e){
@@ -2866,7 +2915,9 @@ async function start() {
           const id=u.pathname.slice('/api/painel/auth/users/'.length);
           if(!/^[0-9]+$/.test(id))return sendJson(res,404,{ok:false,error:'Usuário não encontrado.'});
           const body=await readJsonBodyLimited(req,128*1024);
-          const current=await pool.query('SELECT id::text AS id,is_admin FROM dashboard_users WHERE id=$1 LIMIT 1',[id]);
+          const current=admin.client_id
+            ? await pool.query('SELECT id::text AS id,is_admin FROM dashboard_users WHERE id=$1 AND client_id=$2 LIMIT 1',[id,admin.client_id])
+            : await pool.query('SELECT id::text AS id,is_admin FROM dashboard_users WHERE id=$1 LIMIT 1',[id]);
           if(!current.rowCount)return sendJson(res,404,{ok:false,error:'Usuário não encontrado.'});
           const username=body.username==null?null:String(body.username).trim();
           const active=body.active==null?null:!!body.active;
