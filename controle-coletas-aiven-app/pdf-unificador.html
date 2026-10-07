@@ -21,7 +21,7 @@ details{margin-top:12px}summary{cursor:pointer;color:#334155;font-weight:650;fon
 </head>
 <body>
 <div class="wrap">
-  <div class="head"><div class="icon">PDF</div><div><h1>Unificador PDF • Titan</h1><p>Busca anexos PDF por remetente e período e gera um único arquivo.</p></div></div>
+  <div class="head"><div class="icon">PDF</div><div><h1>Unificador PDF • Titan</h1><p>Busca as notas no Titan e gera um único PDF na ordem escolhida.</p></div></div>
   <div class="card">
     <div class="grid">
       <label>E-mail Titan
@@ -52,11 +52,12 @@ details{margin-top:12px}summary{cursor:pointer;color:#334155;font-weight:650;fon
       </div>
     </details>
     <div class="actions">
-      <button id="run" class="primary">Buscar e unificar PDFs</button>
+      <button id="runTubes" class="primary">Notas por Tubos</button>
+      <button id="runCity" class="secondary">Notas por Cidade</button>
       <button id="clear" class="secondary" type="button">Limpar senha</button>
     </div>
-    <div id="status" class="status">Informe o período e a conta Titan. A senha é usada somente para esta consulta e não é armazenada.</div>
-    <div class="note">Limite de segurança: até 250 e-mails e 60 anexos PDF por consulta. O arquivo final é gerado na hora e não fica salvo no servidor.<br><br><b>Importante:</b> se sua conta Titan usa verificação em duas etapas (2FA), use uma <b>senha de aplicativo</b> no lugar da senha normal do webmail.</div>
+    <div id="status" class="status">Informe o período e a conta Titan. Escolha “Notas por Tubos” ou “Notas por Cidade”. A senha é usada somente para esta consulta e não é armazenada.</div>
+    <div class="note">Limite de segurança: até 250 e-mails e 60 anexos PDF por consulta. “Notas por Tubos” coloca primeiro as notas com TUBO/TUBOS e depois as demais. “Notas por Cidade” agrupa todas as notas da mesma cidade destino. O arquivo final é gerado na hora e não fica salvo no servidor.<br><br><b>Importante:</b> se sua conta Titan usa verificação em duas etapas (2FA), use uma <b>senha de aplicativo</b> no lugar da senha normal do webmail.</div>
   </div>
 </div>
 <script>
@@ -65,14 +66,16 @@ const today=new Date().toISOString().slice(0,10);
 $('to').value=today;
 const d=new Date();d.setDate(d.getDate()-7);$('from').value=d.toISOString().slice(0,10);
 $('clear').onclick=()=>{$('password').value='';$('password').focus()};
-$('run').onclick=async()=>{
+async function runPdf(mode){
   const body={
     email:$('email').value.trim(),password:$('password').value,
     sender:$('sender').value.trim(),scope:$('scope').value,
-    from:$('from').value,to:$('to').value,host:$('host').value
+    from:$('from').value,to:$('to').value,host:$('host').value,mode
   };
   if(!body.email||!body.password||!body.from||!body.to){$('status').className='status err';$('status').textContent='Preencha e-mail, senha e período.';return}
-  $('run').disabled=true;$('status').className='status';$('status').textContent='Conectando ao Titan e procurando PDFs…';
+  $('runTubes').disabled=true;$('runCity').disabled=true;
+  $('status').className='status';
+  $('status').textContent=mode==='city'?'Conectando ao Titan e agrupando as notas por cidade destino…':'Conectando ao Titan e colocando as notas com tubos primeiro…';
   try{
     const r=await fetch('/api/painel/pdf-unificador',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(!r.ok){
@@ -80,11 +83,18 @@ $('run').onclick=async()=>{
     }
     const blob=await r.blob();
     const count=r.headers.get('X-PDF-Count')||'';
-    const name=(r.headers.get('Content-Disposition')||'').match(/filename="([^"]+)"/)?.[1]||'PDFs-unificados.pdf';
+    const tubeCount=r.headers.get('X-Tube-Count')||'';
+    const cityCount=r.headers.get('X-City-Count')||'';
+    const name=(r.headers.get('Content-Disposition')||'').match(/filename="([^"]+)"/)?.[1]||(mode==='city'?'Notas-por-cidade.pdf':'Notas-por-tubos.pdf');
     const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
-    $('status').className='status ok';$('status').textContent='Concluído'+(count?' • '+count+' PDF(s) unido(s)':'')+'. O download foi iniciado.';
-  }catch(e){$('status').className='status err';$('status').textContent=e.message||'Erro ao unificar PDFs.'}
-  finally{$('run').disabled=false}
-};
+    $('status').className='status ok';
+    $('status').textContent=mode==='city'
+      ? 'Concluído'+(count?' • '+count+' nota(s)':'')+(cityCount?' • '+cityCount+' cidade(s) agrupada(s)':'')+'. O download foi iniciado.'
+      : 'Concluído'+(count?' • '+count+' nota(s)':'')+(tubeCount?' • '+tubeCount+' com tubos primeiro':'')+'. O download foi iniciado.';
+  }catch(e){$('status').className='status err';$('status').textContent=e.message||'Erro ao gerar o PDF.'}
+  finally{$('runTubes').disabled=false;$('runCity').disabled=false}
+}
+$('runTubes').onclick=()=>runPdf('tubes');
+$('runCity').onclick=()=>runPdf('city');
 </script>
 </body></html>
