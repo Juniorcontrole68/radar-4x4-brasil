@@ -218,7 +218,7 @@ async function loadDashboardUsers(){
   if(!AUTH?.is_admin)return;
   const box=document.querySelector('#userList');if(box)box.innerHTML='<div class="muted">Carregando usuários…</div>';
   try{
-    const r=await fetch('/api/auth/users',{cache:'no-store'}),j=await r.json();
+    const r=await fetch('/api/painel/auth/users',{cache:'no-store'}),j=await r.json();
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar usuários.');
     renderDashboardUsers(j.rows||[])
   }catch(e){if(box)box.innerHTML='<div class="muted">'+safe(e.message)+'</div>'}
@@ -242,7 +242,7 @@ function setupUserAdmin(){
     if(password)body.password=password;
     try{
       msg.style.color='#475569';msg.textContent='Salvando…';
-      const r=await fetch(id?('/api/auth/users/'+id):'/api/auth/users',{method:id?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const r=await fetch(id?('/api/painel/auth/users/'+id):'/api/painel/auth/users',{method:id?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível salvar o usuário.');
       msg.style.color='#15803d';msg.textContent='✓ Usuário salvo com sucesso.';
       resetUserForm();await loadDashboardUsers()
