@@ -51,7 +51,7 @@ const DASH_API_PREFIXES = [
   '/api/programacao-entregas','/api/programacao-simulacao','/api/evolucao-motoristas',
   '/api/agendamento-teste','/api/nf-materiais','/api/frota-state','/api/frota-maintenance-file',
   '/api/carregamentos-count','/api/carregamentos-finais','/api/coletas/status',
-  '/api/lotacao','/api/auth/'
+  '/api/lotacao'
 ];
 function isDashboardApiPath(pathname){
   return DASH_API_PREFIXES.some(p=>pathname===p||pathname.startsWith(p));
