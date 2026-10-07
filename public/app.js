@@ -4570,6 +4570,19 @@ function pdfNotasNfe(txt){
   const m=s.match(/N[º°]?\s*[:\-]?\s*(\d{1,3}(?:\.\d{3}){1,3})/i);
   return m?m[1]:'';
 }
+function pdfNotasPesoBruto(txt){
+  const s=String(txt||'').replace(/\s+/g,' ');
+  const toNum=v=>{const n=Number(String(v||'').replace(/\./g,'').replace(',','.'));return Number.isFinite(n)?n:null};
+  const h=s.match(/PESO\s*BRUTO\s+PESO\s*L[IÍ]QUIDO([\s\S]{0,220}?)(?:DADOS\s+DOS\s+PRODUTOS|DADOS\s+DO\s+PRODUTO|$)/i);
+  if(h){
+    const after=h[1].split(/VOLUME\s*\(S\)|VOLUMES?/i).slice(1).join(' ');
+    const vals=[...after.matchAll(/\b([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2,3}|[0-9]+,[0-9]{2,3})\b/g)].map(m=>toNum(m[1])).filter(v=>v!==null);
+    if(vals.length)return vals[0];
+  }
+  const d=s.match(/PESO\s*BRUTO\s*[:\-]?\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2,3}|[0-9]+,[0-9]{2,3})/i);
+  if(d)return toNum(d[1]);
+  return null
+}
 async function setupPdfNotas(){
   const input=document.querySelector('#pdfNotasFile');
   if(!input||input.dataset.ready==='1')return;
@@ -4594,7 +4607,7 @@ async function setupPdfNotas(){
   async function analyze(files){
     if(!window.pdfjsLib)throw new Error('Leitor de PDF não carregou.');
     clearDownloads();sources=[];pages=[];
-    for(let fi=0;fi<files.length;fi++){const file=files[fi],bytes=new Uint8Array(await file.arrayBuffer()),pdf=await window.pdfjsLib.getDocument({data:bytes.slice()}).promise;sources.push({name:file.name,bytes,numPages:pdf.numPages});for(let n=1;n<=pdf.numPages;n++){setInfo('Lendo '+file.name+' • página '+n+' de '+pdf.numPages+'…');const page=await pdf.getPage(n),tc=await page.getTextContent(),txt=tc.items.map(x=>x.str).join(' ').replace(/\s+/g,' ').trim(),s=normTxt(txt);const isNote=(/NOTA\s+FISCAL/.test(s)||/DANFE/.test(s)||/NF-?E/.test(s))&&/PESO\s*BRUTO/.test(s);pages.push({sourceIndex:fi,fileName:file.name,page:n,text:txt,isNote,hasSpecial:hasSpecial(txt),weight:parseWeight(txt),nfe:parseNfe(txt)})}}
+    for(let fi=0;fi<files.length;fi++){const file=files[fi],bytes=new Uint8Array(await file.arrayBuffer()),pdf=await window.pdfjsLib.getDocument({data:bytes.slice()}).promise;sources.push({name:file.name,bytes,numPages:pdf.numPages});for(let n=1;n<=pdf.numPages;n++){setInfo('Lendo '+file.name+' • página '+n+' de '+pdf.numPages+'…');const page=await pdf.getPage(n),tc=await page.getTextContent(),txt=tc.items.map(x=>x.str).join(' ').replace(/\s+/g,' ').trim(),s=normTxt(txt);const isNote=(/NOTA\s+FISCAL/.test(s)||/DANFE/.test(s)||/NF-?E/.test(s))&&/PESO\s*BRUTO/.test(s);pages.push({sourceIndex:fi,fileName:file.name,page:n,text:txt,isNote,hasSpecial:hasSpecial(txt),weight:pdfNotasPesoBruto(txt),nfe:parseNfe(txt)})}}
     render();setInfo('Análise concluída. Clique em “Unificar e gerar 3 arquivos”.');
   }
   input.addEventListener('change',async()=>{const files=[...(input.files||[])].filter(f=>/\.pdf$/i.test(f.name)||f.type==='application/pdf');if(!files.length)return;try{setInfo('Abrindo '+files.length+' PDF(s)…');await analyze(files)}catch(e){setInfo('Erro: '+(e.message||e))}});
