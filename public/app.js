@@ -4571,16 +4571,31 @@ function pdfNotasNfe(txt){
   return m?m[1]:'';
 }
 function pdfNotasPesoBruto(txt){
-  const s=String(txt||'').replace(/\s+/g,' ');
-  const toNum=v=>{const n=Number(String(v||'').replace(/\./g,'').replace(',','.'));return Number.isFinite(n)?n:null};
-  const h=s.match(/PESO\s*BRUTO\s+PESO\s*L[IÍ]QUIDO([\s\S]{0,220}?)(?:DADOS\s+DOS\s+PRODUTOS|DADOS\s+DO\s+PRODUTO|$)/i);
-  if(h){
-    const after=h[1].split(/VOLUME\s*\(S\)|VOLUMES?/i).slice(1).join(' ');
-    const vals=[...after.matchAll(/\b([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2,3}|[0-9]+,[0-9]{2,3})\b/g)].map(m=>toNum(m[1])).filter(v=>v!==null);
-    if(vals.length)return vals[0];
+  const raw=String(txt||'').replace(/\s+/g,' ');
+  const toNum=v=>{
+    const s=String(v||'').trim();
+    const normalized=s.includes(',')?s.replace(/\./g,'').replace(',','.'):(/\.\d{3}$/.test(s)?s:s.replace(/,/g,''));
+    const n=Number(normalized);
+    return Number.isFinite(n)?n:null
+  };
+
+  // Regra principal: no DANFE, o bloco QUANTIDADE/ESPÉCIE/MARCA/NUMERAÇÃO
+  // termina com PESO BRUTO e PESO LÍQUIDO. Pegamos os dois últimos valores
+  // decimais antes de DADOS DOS PRODUTOS e usamos o primeiro deles (bruto).
+  const start=raw.search(/QUANTIDADE\s+ESP[EÉ]CIE/i);
+  const end=raw.search(/DADOS\s+DOS\s+PRODUTOS|DADOS\s+DO\s+PRODUTO/i);
+  if(start>=0&&end>start){
+    const seg=raw.slice(start,end);
+    const vals=[...seg.matchAll(/\b(\d{1,3}(?:\.\d{3})*,\d{2,3}|\d+,\d{2,3}|\d+\.\d{2,3})\b/g)]
+      .map(m=>toNum(m[1])).filter(v=>v!==null);
+    if(vals.length>=2)return vals[vals.length-2];
+    if(vals.length===1)return vals[0];
   }
-  const d=s.match(/PESO\s*BRUTO\s*[:\-]?\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2,3}|[0-9]+,[0-9]{2,3})/i);
-  if(d)return toNum(d[1]);
+
+  // Fallback para layouts em que o valor vem logo após o rótulo.
+  const direct=raw.match(/PESO\s*BRUTO\s*[:\-]?\s*(\d{1,3}(?:\.\d{3})*,\d{2,3}|\d+,\d{2,3}|\d+\.\d{2,3})/i);
+  if(direct)return toNum(direct[1]);
+
   return null
 }
 async function setupPdfNotas(){
@@ -4594,7 +4609,7 @@ async function setupPdfNotas(){
   let sources=[],pages=[],downloadUrls=[];
   const setInfo=t=>{if(info)info.textContent=t};
   const normTxt=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').toUpperCase().trim();
-  const hasSpecial=txt=>{const s=normTxt(txt);return /\bTUBO(?:S)?\b/.test(s)||/\bCAIXA(?:S)?\s+D[ '\u2019]?AGUA\b/.test(s)||/\bCAIXA(?:S)?\s+DE\s+AGUA\b/.test(s)||/\bCAIXA(?:S)?\s+DAGUA\b/.test(s)};
+  const hasSpecial=txt=>{const s=normTxt(txt);return /\bTUBO(?:S)?\b/.test(s)||/\bCAIXA(?:S)?\s+D[ '\u2019]?AGUA\b/.test(s)||/\bCAIXA(?:S)?\s+DE\s+AGUA\b/.test(s)||/\bCAIXA(?:S)?\s+DAGUA\b/.test(s)||/\bCX\.?\s+D[ '\u2019]?AGUA\b/.test(s)||/\bCX\.?\s+DAGUA\b/.test(s)};
   const parseWeight=txt=>{const s=String(txt||'').replace(/\s+/g,' ');const pats=[/PESO\s*BRUTO\s*[:\-]?\s*([0-9.]+,[0-9]{1,3}|[0-9]+(?:[.,][0-9]+)?)/i,/PESO\s*BRUTO[^0-9]{0,25}([0-9.]+,[0-9]{1,3}|[0-9]+(?:[.,][0-9]+)?)/i];for(const re of pats){const m=s.match(re);if(m){const v=Number(m[1].replace(/\./g,'').replace(',','.'));if(Number.isFinite(v))return v}}return null};
   const parseNfe=txt=>{const s=String(txt||'').replace(/\s+/g,' ');for(const re of [/NF-?E\s*(?:N[º°O.]*)?\s*[:\-]?\s*(\d{1,3}(?:\.\d{3}){1,3}|\d{5,12})/i,/N[º°]\s*[:\-]?\s*(\d{1,3}(?:\.\d{3}){1,3}|\d{5,12})/i]){const m=s.match(re);if(m)return m[1]}return''};
   const categoryOf=p=>p.hasSpecial?1:(p.weight!==null&&p.weight>100?2:3);
@@ -4620,8 +4635,10 @@ async function setupPdfNotas(){
   }
   async function generateThree(){
     try{
-      if(!sources.length)throw new Error('Selecione os PDFs dos e-mails primeiro.');
+      const currentFiles=[...(input.files||[])].filter(f=>/\.pdf$/i.test(f.name)||f.type==='application/pdf');
+      if(!currentFiles.length)throw new Error('Selecione os PDFs dos e-mails primeiro.');
       if(!window.PDFLib)throw new Error('Gerador de PDF não carregou.');
+      await analyze(currentFiles);
       const notes=pages.filter(p=>p.isNote);
       if(!notes.length)throw new Error('Nenhuma nota fiscal foi identificada nos PDFs selecionados.');
       const g1=notes.filter(p=>categoryOf(p)===1),g2=notes.filter(p=>categoryOf(p)===2),g3=notes.filter(p=>categoryOf(p)===3);
