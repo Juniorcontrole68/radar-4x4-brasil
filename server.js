@@ -4173,7 +4173,22 @@ if(u.pathname==='/api/lotacao'&&req.method==='GET'){try{
   res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
-if(u.pathname==='/api/coletas/status'){try{if(!dashboardHasAny(authUser,['dashboard','operacional']))return dashboardDeny(res);const x=await fetchColetasStatus(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/carregamentos-finais'&&req.method==='GET'){try{if(!dashboardHas(authUser,'final_carregamento'))return dashboardDeny(res);
+if(u.pathname==='/api/coletas/status'){try{if(!dashboardHasAny(authUser,['dashboard','operacional']))return dashboardDeny(res);const x=await fetchColetasStatus(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/carregamentos-count'&&req.method==='GET'){try{
+  if(!dashboardHasAny(authUser,['dashboard','ajudantes','final_carregamento']))return dashboardDeny(res);
+  const data=String(u.searchParams.get('data')||'').trim();
+  const q=new URLSearchParams({limit:'100',tipo:'carregamento'});
+  if(data)q.set('data',data);
+  const x=await portalJson('/api/painel/carregamentos-finais?'+q.toString());
+  const rows=Array.isArray(x.rows)?x.rows:[];
+  const unique=new Set(rows.map(r=>String(r.vehicle_plate||r.placa||r.veiculo||r.motorista||r.id||'').trim()).filter(Boolean));
+  const total=unique.size||rows.length;
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:true,total,rows:rows.length}))
+}catch(e){
+  res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}
+if(u.pathname==='/api/carregamentos-finais'&&req.method==='GET'){try{if(!dashboardHas(authUser,'final_carregamento'))return dashboardDeny(res);
   const limit=Math.max(1,Math.min(100,Number(u.searchParams.get('limit')||30)));
   const q=new URLSearchParams({limit:String(limit)});
   const motorista=String(u.searchParams.get('motorista')||'').trim();
