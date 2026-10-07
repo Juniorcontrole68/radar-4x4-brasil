@@ -142,6 +142,68 @@ try{
             });
           });
         }
+        function dateIso(v){
+          const s=String(v||'').trim();
+          if(/^\d{4}-\d{2}-\d{2}$/.test(s))return s;
+          const m=s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+          return m?m[3]+'-'+m[2]+'-'+m[1]:''
+        }
+        function acharPeriodoFinanceiro(){
+          const inputs=[...document.querySelectorAll('input[type="date"]')].filter(x=>!x.closest('#modal'));
+          const tagged=inputs.map(el=>{
+            const ctx=(el.id+' '+el.name+' '+(el.closest('label')?.textContent||'')+' '+(el.parentElement?.textContent||'')).toLowerCase();
+            return {el,ctx,val:dateIso(el.value)}
+          }).filter(x=>x.val);
+          let ini=tagged.find(x=>/inicial|inicio|de\b|from|periodo.*de/.test(x.ctx));
+          let fim=tagged.find(x=>/final|fim|até|ate\b|to\b|periodo.*ate/.test(x.ctx));
+          if(!ini||!fim){
+            const vals=tagged.map(x=>x.val).sort();
+            if(vals.length>=2){ini={val:vals[0]};fim={val:vals[vals.length-1]}}
+          }
+          return {ini:ini?.val||'',fim:fim?.val||''}
+        }
+        function lucroDaColeta(c){
+          const direto=numeroLocal(c?.lucro);
+          if(direto!==null)return direto;
+          const recebido=numeroLocal(c?.frete_cobrado)||0;
+          const pago=numeroLocal(c?.frete_pago)||0;
+          const pedagio=numeroLocal(c?.pedagio)||0;
+          return recebido-(pago+pedagio)
+        }
+        function dataDaColeta(c){
+          return dateIso(c?.data_carregamento||c?.data_coleta||c?.created_at||c?.data||'')
+        }
+        async function garantirCardLucroPeriodo(){
+          const cards=[...document.querySelectorAll('.kpi,.card,.finance-card,.summary-card,.stat-card')];
+          const lucroMes=cards.find(x=>/lucro\s+do\s+m[eê]s/i.test(String(x.textContent||'')));
+          if(!lucroMes)return;
+          let card=document.getElementById('lucroPeriodoCard');
+          if(!card){
+            card=lucroMes.cloneNode(true);
+            card.id='lucroPeriodoCard';
+            card.querySelectorAll('[id]').forEach(el=>el.removeAttribute('id'));
+            const title=[...card.querySelectorAll('*')].find(el=>/lucro\s+do\s+m[eê]s/i.test(String(el.textContent||'')));
+            if(title)title.textContent=String(title.textContent||'').replace(/lucro\s+do\s+m[eê]s/i,'Lucro por período');
+            else card.insertAdjacentHTML('afterbegin','<div>Lucro por período</div>');
+            let value=card.querySelector('.value,strong,b,[data-value]');
+            if(!value){value=document.createElement('strong');card.appendChild(value)}
+            value.id='lucroPeriodoValor';value.textContent=fmtBRL(0);
+            lucroMes.insertAdjacentElement('afterend',card)
+          }
+          await carregarDados();
+          const {ini,fim}=acharPeriodoFinanceiro();
+          const total=dadosCache.reduce((s,c)=>{
+            const d=dataDaColeta(c);
+            if(ini&&d&&d<ini)return s;
+            if(fim&&d&&d>fim)return s;
+            if((ini||fim)&&!d)return s;
+            return s+lucroDaColeta(c)
+          },0);
+          const val=document.getElementById('lucroPeriodoValor');
+          if(val)val.textContent=fmtBRL(total);
+          const sub=card.querySelector('.sub,.muted,small');
+          if(sub)sub.textContent=ini&&fim?('Período: '+ini.split('-').reverse().join('/')+' a '+fim.split('-').reverse().join('/')):'Período selecionado';
+        }
         const normHead=v=>String(v||'').normalize('NFD').split('').filter(ch=>{const n=ch.charCodeAt(0);return n<768||n>879}).join('').toLowerCase().split('  ').join(' ').trim();
         function colIndex(headRow,terms){
           if(!headRow)return -1;
@@ -567,6 +629,9 @@ try{
             obsModal.observe(modal,{attributes:true,attributeFilter:['open']});
           }
           setTimeout(decorarFinanceiro,250);setTimeout(decorarOperacional,250);
+          [300,700,1400].forEach(ms=>setTimeout(garantirCardLucroPeriodo,ms));
+          document.addEventListener('change',e=>{if(e.target?.matches?.('input[type="date"],select'))setTimeout(garantirCardLucroPeriodo,100)},true);
+          document.addEventListener('click',e=>{if(e.target?.closest?.('button'))setTimeout(garantirCardLucroPeriodo,180)},true);
           setTimeout(()=>formatarMoedasDaTela(document),350);
           const moneyObserver=new MutationObserver(()=>{clearTimeout(window.__moneyFmtTimer);window.__moneyFmtTimer=setTimeout(()=>formatarMoedasDaTela(document),80)});
           moneyObserver.observe(document.body,{childList:true,subtree:true,characterData:true});
