@@ -34,7 +34,7 @@
 .tab.pdf-tab{padding:8px 10px;min-width:58px;font-size:12px}
 .open{color:#fff;text-decoration:none;border:1px solid #ffffff28;border-radius:9px;padding:9px 12px;font-size:13px}
 .bar{background:#fff;border-bottom:1px solid var(--border);padding:8px 16px;display:flex;gap:9px;align-items:center;font-size:13px;color:var(--muted)}
-.bar-user{font-weight:700;color:#334155}.bar-spacer{flex:1}.pdf-quick-btn{margin-left:0;border:0;border-radius:8px;background:#0f172a;color:#fff;padding:7px 10px;font-weight:700;font-size:12px;cursor:pointer}.pdf-quick-btn:hover{background:#1e293b}.bar-logout-btn{border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#0f172a;padding:7px 10px;font-weight:700;font-size:12px;cursor:pointer}.bar-logout-btn:hover{background:#f1f5f9}
+.bar-user{font-weight:700;color:#334155}.bar-spacer{flex:1}.license-alert{display:none;padding:8px 16px;font-size:12px;font-weight:750;border-bottom:1px solid #fde68a;background:#fffbeb;color:#92400e}.license-alert.show{display:block}.license-alert.blocked{background:#fef2f2;color:#991b1b;border-color:#fecaca}.pdf-quick-btn{margin-left:0;border:0;border-radius:8px;background:#0f172a;color:#fff;padding:7px 10px;font-weight:700;font-size:12px;cursor:pointer}.pdf-quick-btn:hover{background:#1e293b}.bar-logout-btn{border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#0f172a;padding:7px 10px;font-weight:700;font-size:12px;cursor:pointer}.bar-logout-btn:hover{background:#f1f5f9}
 .duplicate-btn{margin-left:0;border:0;border-radius:8px;background:#2563eb;color:#fff;padding:8px 12px;font-weight:600;cursor:pointer}.duplicate-btn:hover{background:#1d4ed8}.delete-btn{margin-left:0;border:0;border-radius:8px;background:#b91c1c;color:#fff;padding:8px 12px;font-weight:600;cursor:pointer}
 .delete-btn:hover{background:#991b1b}
 .modal{display:none;position:fixed;inset:0;z-index:50;background:#0f172acc;align-items:center;justify-content:center;padding:18px}
@@ -111,6 +111,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
     </div>
   </div>
   <div class="bar"><span class="dot"></span><span id="module">Lotação</span><span>• Banco Aiven conectado</span><span id="sessionUser" class="bar-user"></span><span class="bar-spacer"></span><button id="pdfQuickBtn" class="pdf-quick-btn" type="button">📄 PDF</button><button id="logoutBtn" class="bar-logout-btn" type="button">Sair</button><button id="duplicateColeta" class="duplicate-btn" type="button">⧉ Duplicar coleta</button><button id="deleteColeta" class="delete-btn" type="button">🗑 Excluir coleta</button></div>
+  <div id="licenseAlert" class="license-alert"></div>
   <div class="body"><div id="moduleLoading" class="module-loading">Abrindo módulo…</div><iframe id="frame" src="/lotacao?embed=1" data-module="lotacao" title="CONSTRULOG - Torre de Controle"></iframe></div>
 </div>
 
@@ -154,22 +155,26 @@ const deleteBtn=document.getElementById('deleteColeta'), deleteModal=document.ge
 let DELETE_COLETAS=[], DELETE_SELECTED=null;
 
 function hasPerm(p){return !!(AUTH&&(AUTH.is_admin||AUTH.permissions?.includes('*')||AUTH.permissions?.includes(p)))}
+function licensed(key){
+  if(!AUTH?.client_id)return true;
+  const mods=Array.isArray(AUTH.client_modules)?AUTH.client_modules:[];
+  return mods.includes(key);
+}
 function moduleAllowed(mod){
-  if(AUTH?.is_admin)return true;
-  if(mod==='coletas')return hasPerm('coletas');
-  if(mod==='financeiro'||mod==='financeiro-lotacao')return hasPerm('financeiro');
-  if(mod==='dashboard')return hasPerm('dashboard');
-  if(mod==='dashboards')return (AUTH?.permissions||[]).some(p=>!['coletas','contas_pagar','dashboard'].includes(p));
-  if(mod==='usuarios')return !!AUTH?.is_admin;
-  if(mod==='movit-central')return !!AUTH?.is_admin;
-  if(mod==='programacao')return hasPerm('programacao');
-  if(mod==='roteirizador-teste')return hasPerm('roteirizador')||AUTH?.is_admin;
-  if(mod==='roteirizador-v02')return hasPerm('roteirizador')||AUTH?.is_admin;
-  if(mod==='tracking')return hasPerm('tracking');
-  if(mod==='lotacao')return hasPerm('lotacao')||hasPerm('coletas')||hasPerm('financeiro');
-  if(mod==='agendamento-teste')return hasPerm('agendamentos')||hasPerm('dashboard');
-  if(mod==='contas')return hasPerm('contas_pagar');
-  if(mod==='frota')return !!AUTH;
+  if(!AUTH)return false;
+  if(mod==='movit-central')return !!AUTH.is_platform_admin;
+  if(mod==='coletas')return licensed('coletas')&&hasPerm('coletas');
+  if(mod==='financeiro'||mod==='financeiro-lotacao')return licensed('financeiro_lotacao')&&hasPerm('financeiro');
+  if(mod==='dashboard')return licensed('visao_geral')&&hasPerm('dashboard');
+  if(mod==='dashboards')return licensed('dashboards')&&(AUTH.is_admin||(AUTH.permissions||[]).some(p=>!['coletas','contas_pagar','dashboard'].includes(p)));
+  if(mod==='usuarios')return licensed('usuarios')&&!!AUTH.is_admin;
+  if(mod==='programacao')return licensed('programacao')&&hasPerm('programacao');
+  if(mod==='roteirizador-teste'||mod==='roteirizador-v02')return licensed('roteirizador')&&(hasPerm('roteirizador')||AUTH.is_admin);
+  if(mod==='tracking')return licensed('rastreio')&&hasPerm('tracking');
+  if(mod==='lotacao')return licensed('lotacao')&&(moduleAllowed('coletas')||moduleAllowed('financeiro-lotacao'));
+  if(mod==='agendamento-teste')return licensed('agendamento')&&(hasPerm('agendamentos')||hasPerm('dashboard'));
+  if(mod==='contas')return licensed('contas_pagar')&&hasPerm('contas_pagar');
+  if(mod==='frota')return licensed('frota');
   if(mod==='pdf-unificador')return !!AUTH;
   return false
 }
@@ -178,8 +183,18 @@ function applyModulePermissions(){
   const lotacaoOk=moduleAllowed('coletas')||moduleAllowed('financeiro-lotacao');
   const operacaoMods=['dashboard','dashboards','agendamento-teste','programacao','roteirizador-teste','roteirizador-v02','tracking'];
   document.querySelector('.group-card[data-group="lotacao"]')?.style.setProperty('display',lotacaoOk?'flex':'none');
-  document.querySelector('.group-card[data-group="operacao"]')?.style.setProperty('display',operacaoMods.some(moduleAllowed)?'flex':'none');
-  document.getElementById('sessionUser').textContent=AUTH?(AUTH.username+(AUTH.is_admin?' • Administrador':'')):'';
+  document.querySelector('.group-card[data-group="operacao"]')?.style.setProperty('display',licensed('operacao')&&operacaoMods.some(moduleAllowed)?'flex':'none');
+  const company=AUTH?.client?.name?(' • '+AUTH.client.name):'';
+  document.getElementById('sessionUser').textContent=AUTH?(AUTH.username+company+(AUTH.is_admin?' • Administrador':'')):'';
+  const alert=document.getElementById('licenseAlert');
+  if(alert){
+    const st=AUTH?.client?.status||'';
+    alert.className='license-alert';
+    alert.textContent='';
+    if(st==='overdue'){alert.classList.add('show');alert.textContent='Mensalidade vencida • A torre continua liberada durante a fase de implantação. Entre em contato com a MOVIT para regularização.'}
+    else if(st==='blocked'){alert.classList.add('show','blocked');alert.textContent='Licença marcada como bloqueada na MOVIT Central • Nesta fase de implantação o acesso ainda não será interrompido automaticamente.'}
+    else if(st==='trial'){alert.classList.add('show');alert.textContent='Licença em período de teste MOVIT.'}
+  }
 }
 async function refreshUserPermissions(){
   if(!AUTH)return;
