@@ -19,10 +19,18 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const sh=(cmd,timeout=90000)=>{try{return execSync(cmd,{encoding:'utf8',timeout,stdio:['ignore','pipe','pipe']}).trim()}catch(e){return 'ERRO: '+String((e.stderr||'')+' '+(e.message||'')).trim().slice(0,400)}};
 const adb=(a,t)=>sh('adb '+a,t);
 async function call(method,path,{body,cookie}={}){
-  const h={};if(body!==undefined)h['Content-Type']='application/json';if(cookie)h.Cookie=cookie;
-  const r=await fetch(B+path,{method,headers:h,body:body!==undefined?JSON.stringify(body):undefined});
-  const text=await r.text();let json=null;try{json=JSON.parse(text)}catch{}
-  return{status:r.status,json,text,setCookie:r.headers.get('set-cookie')||''}
+  // Uma conexão nova por chamada e até 4 tentativas: o roteiro passa minutos entre uma chamada
+  // e outra, e reaproveitar conexão antiga com o servidor dá "fetch failed" de vez em quando.
+  const h={Connection:'close'};if(body!==undefined)h['Content-Type']='application/json';if(cookie)h.Cookie=cookie;
+  let erro;
+  for(let i=0;i<4;i++){
+    try{
+      const r=await fetch(B+path,{method,headers:h,body:body!==undefined?JSON.stringify(body):undefined});
+      const text=await r.text();let json=null;try{json=JSON.parse(text)}catch{}
+      return{status:r.status,json,text,setCookie:r.headers.get('set-cookie')||''}
+    }catch(e){erro=e;await sleep(1500)}
+  }
+  throw new Error('servidor de teste não respondeu em '+path+': '+String(erro?.cause?.code||erro?.cause?.message||erro?.message||erro))
 }
 async function until(fn,ms,step=3000){
   const end=Date.now()+ms;let last;

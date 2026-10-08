@@ -81,4 +81,7 @@ jobs:
           script: node controle-coletas-aiven-app/tests/app-emulador.js
       - name: Log do servidor
         if: always()
-        run: tail -100 servidor.log || true
+        run: |
+          tail -100 servidor.log || true
+          curl -s -o /dev/null -w "servidor ainda responde: %{http_code}\n" http://127.0.0.1:10000/ || echo "::warning title=Servidor de teste::não responde mais no fim do teste"
+          echo "::notice title=Fim do log do servidor::$(tail -25 servidor.log | tr '\n' '|' | cut -c1-2500)"
