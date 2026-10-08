@@ -77,7 +77,11 @@ jobs:
           TRACKING_SYNC_SECONDS: '3600'
         run: |
           pkill -f "node server.js" || true
-          sleep 2
+          pkill -f "dashboard/server.js" || true
+          for i in $(seq 1 20); do
+            if ! curl -s -o /dev/null http://127.0.0.1:10000/ && ! curl -s -o /dev/null http://127.0.0.1:10001/health; then break; fi
+            sleep 1
+          done
           cd controle-coletas-aiven-app
           nohup node tests/apoio/ssw-falso.js > ../ssw-falso.log 2>&1 &
           export NODE_OPTIONS="--require $PWD/tests/apoio/sem-rede.js --require $PWD/tests/apoio/ssw-desvio.js"

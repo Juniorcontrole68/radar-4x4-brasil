@@ -133,6 +133,14 @@ function startUnifiedDashboardChild(){
   })
 }
 
+// Ao encerrar este processo, encerra também o dashboard interno. Sem isso ele ficava órfão,
+// segurando a porta interna, e o próximo início conversava com um dashboard antigo.
+function stopDashboardChild(){
+  try{if(DASH_CHILD&&!DASH_CHILD.killed){DASH_CHILD.removeAllListeners('exit');DASH_CHILD.kill()}}catch{}
+}
+process.on('exit',stopDashboardChild);
+for(const sig of ['SIGTERM','SIGINT'])process.on(sig,()=>{stopDashboardChild();process.exit(0)});
+
 function sendHtml(res, file) {
   res.writeHead(200, {
     'Content-Type': 'text/html; charset=utf-8',
