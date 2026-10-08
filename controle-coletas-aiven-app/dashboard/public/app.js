@@ -2495,6 +2495,7 @@ const TRACKING_DEVIATION_KM=3;
 function trackingNorm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim()}
 function trackingDisplayName(v){return driverDisplayName(v)||'Motorista'}
 function trackingAgeLabel(sec){
+  if(sec===null||sec===undefined||sec==='')return'—';
   const s=Number(sec);if(!Number.isFinite(s))return'—';
   if(s<60)return Math.max(0,Math.round(s))+' s';
   if(s<3600)return Math.round(s/60)+' min';
@@ -3609,10 +3610,11 @@ async function refreshTracking(){
       const inOperation=r.operation_active||(plate&&todayKeys.has('P|'+plate))||(driver&&todayKeys.has('D|'+driver));
       const pointToday=r.captured_at&&new Date(r.captured_at).toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'})===today;
       const heartbeatFresh=Number.isFinite(Number(r.device_age_seconds))&&Number(r.device_age_seconds)<=300;
-      const hasLastPosition=Number.isFinite(Number(r.latitude))&&Number.isFinite(Number(r.longitude));
-      // Motorista da operação do dia permanece no mapa com a última posição conhecida,
-      // mesmo que o GPS esteja atrasado. O status visual informa "sem sinal/GPS atrasado".
-      return (r.test_only||inOperation)&&(pointToday||heartbeatFresh||hasLastPosition);
+      const hasLastPosition=trackingHasPosition(r);
+      // Todo aparelho ativo vinculado a um motorista da operação do dia permanece
+      // associado ao motorista, mesmo sem GPS/heartbeat recente. Assim a tela mostra
+      // o celular aprovado e a sessão, em vez de substituir por um placeholder vazio.
+      return !!(r.test_only||inOperation);
     }).map(r=>({...r,operation_active:r.test_only?true:true}));
     // Mantém todos os motoristas da operação do dia no mapa. Quem ainda não tiver
     // GPS/aparelho ativo aparece com a rota planejada e status "Sem sinal", sem
