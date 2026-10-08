@@ -48,7 +48,7 @@ function tela(){
     // responding". Não é do aplicativo: fecha o aviso e lê de novo.
     if(!/isn't responding|não está respondendo/i.test(texto))break;
     adb('shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS');
-    adb('shell input keyevent KEYCODE_BACK');
+    if(i>=1)adb('shell input keyevent KEYCODE_ENTER');   // ainda aberto: confirma o botão em foco
     sh('sleep 4')
   }
   return texto
