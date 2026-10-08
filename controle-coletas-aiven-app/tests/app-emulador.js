@@ -39,9 +39,19 @@ async function until(fn,ms,step=3000){
 }
 const pid=()=>{const p=adb('shell pidof '+PKG);return /^\d+/.test(p)?p.split(/\s+/)[0]:''};
 function tela(){
-  adb('shell uiautomator dump /sdcard/tela.xml');
-  const xml=adb('shell cat /sdcard/tela.xml');
-  return [...xml.matchAll(/ text="([^"]+)"/g)].map(m=>m[1].replace(/&quot;/g,'"').replace(/&#10;/g,' ').replace(/&amp;/g,'&')).join(' ¦ ')
+  let texto='';
+  for(let i=0;i<4;i++){
+    adb('shell uiautomator dump /sdcard/tela.xml');
+    const xml=adb('shell cat /sdcard/tela.xml');
+    texto=[...xml.matchAll(/ text="([^"]+)"/g)].map(m=>m[1].replace(/&quot;/g,'"').replace(/&#10;/g,' ').replace(/&amp;/g,'&')).join(' ¦ ');
+    // O emulador, lento logo depois de ligar, às vezes cobre a tela com "Pixel Launcher isn't
+    // responding". Não é do aplicativo: fecha o aviso e lê de novo.
+    if(!/isn't responding|não está respondendo/i.test(texto))break;
+    adb('shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS');
+    adb('shell input keyevent KEYCODE_BACK');
+    sh('sleep 4')
+  }
+  return texto
 }
 let lat=-22.7000,lon=-47.3100;
 function andar(){lat-=0.0004;lon+=0.0002;return adb('emu geo fix '+lon.toFixed(5)+' '+lat.toFixed(5))}
