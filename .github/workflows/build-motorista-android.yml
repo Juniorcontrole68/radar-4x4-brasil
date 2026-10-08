@@ -94,7 +94,7 @@ jobs:
           p='controle-coletas-aiven-app/downloads/update.json'
           d=json.load(open(p))
           code=int(os.environ['CODE']); name=os.environ['NAME']
-          notes='Religa sozinho, diagnóstico para a central, fila de posições sem internet e tela de um passo só.'
+          notes='Religa sozinho, diagnóstico para a central, fila de posições sem internet, tela de um passo só e botão da rota do dia.'
           d.setdefault('teste',{}).update(versionCode=code,versionName=name+'-teste',notes=notes,assinaturaFixa=bool(os.environ.get('FIXA')))
           if os.environ.get('CANAL')=='normal':
               d.setdefault('normal',{}).update(versionCode=code,versionName=name,notes=notes,assinaturaFixa=bool(os.environ.get('FIXA')))
@@ -109,4 +109,11 @@ jobs:
           git add controle-coletas-aiven-app/downloads/CONSTRULOG-Motorista-NORMAL.apk controle-coletas-aiven-app/downloads/CONSTRULOG-Motorista-TESTE.apk controle-coletas-aiven-app/downloads/update.json
           if [ -f motorista-android-v2/assinatura/chave.p12.enc ]; then git add motorista-android-v2/assinatura/chave.p12.enc; fi
           git commit -m "Publica app motorista $NAME ($CANAL) [skip ci]" || exit 0
-          git push origin HEAD:controle-coletas-aiven
+          # Outro build (MOVIT) pode ter publicado no mesmo instante: reaplica por cima e tenta de novo.
+          for i in 1 2 3; do
+            git fetch origin controle-coletas-aiven
+            git rebase origin/controle-coletas-aiven
+            if git push origin HEAD:controle-coletas-aiven; then exit 0; fi
+            sleep 5
+          done
+          exit 1
