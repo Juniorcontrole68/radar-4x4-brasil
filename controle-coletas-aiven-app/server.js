@@ -3638,10 +3638,11 @@ async function start() {
               SELECT latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at
               FROM driver_tracking_points
               WHERE device_id=d.id
-                AND (captured_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+                AND captured_at >= NOW()-INTERVAL '7 days'
                 AND latitude BETWEEN -27.5 AND -18.0
                 AND longitude BETWEEN -52.5 AND -42.0
-              ORDER BY (s.id IS NOT NULL AND session_id=s.id) DESC,captured_at DESC LIMIT 1
+              ORDER BY ((captured_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date) DESC,
+                       (s.id IS NOT NULL AND session_id=s.id) DESC,captured_at DESC LIMIT 1
             ) p ON TRUE
             WHERE d.active=TRUE
             ORDER BY COALESCE(p.captured_at,d.last_seen_at) DESC NULLS LAST
@@ -3665,10 +3666,11 @@ async function start() {
               SELECT latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at
               FROM driver_tracking_points
               WHERE device_id=d.id
-                AND (captured_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+                AND captured_at >= NOW()-INTERVAL '7 days'
                 AND latitude BETWEEN -27.5 AND -18.0
                 AND longitude BETWEEN -52.5 AND -42.0
-              ORDER BY (s.id IS NOT NULL AND session_id=s.id) DESC,captured_at DESC LIMIT 1
+              ORDER BY ((captured_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date) DESC,
+                       (s.id IS NOT NULL AND session_id=s.id) DESC,captured_at DESC LIMIT 1
             ) p ON TRUE
             LEFT JOIN LATERAL (
               SELECT json_agg(json_build_object(
