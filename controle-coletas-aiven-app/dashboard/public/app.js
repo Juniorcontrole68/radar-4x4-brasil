@@ -3609,7 +3609,10 @@ async function refreshTracking(){
       const inOperation=r.operation_active||(plate&&todayKeys.has('P|'+plate))||(driver&&todayKeys.has('D|'+driver));
       const pointToday=r.captured_at&&new Date(r.captured_at).toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'})===today;
       const heartbeatFresh=Number.isFinite(Number(r.device_age_seconds))&&Number(r.device_age_seconds)<=300;
-      return (r.test_only||inOperation)&&(pointToday||heartbeatFresh);
+      const hasLastPosition=Number.isFinite(Number(r.latitude))&&Number.isFinite(Number(r.longitude));
+      // Motorista da operação do dia permanece no mapa com a última posição conhecida,
+      // mesmo que o GPS esteja atrasado. O status visual informa "sem sinal/GPS atrasado".
+      return (r.test_only||inOperation)&&(pointToday||heartbeatFresh||hasLastPosition);
     }).map(r=>({...r,operation_active:r.test_only?true:true}));
     // Mantém todos os motoristas da operação do dia no mapa. Quem ainda não tiver
     // GPS/aparelho ativo aparece com a rota planejada e status "Sem sinal", sem
