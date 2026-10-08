@@ -11,6 +11,18 @@ try{
       'Remetente *<input id="cliente" required placeholder="Nome do remetente" />'
     );
     html=html.replaceAll('Nome do Cliente da Entrega','Remetente');
+    try{
+      const probes=[];
+      for(const term of ['Editar','Programada','status']){
+        let pos=0,n=0;
+        while((pos=html.indexOf(term,pos))>=0&&n<12){
+          probes.push('COLETAS DOM PROBE '+term+' @'+pos+' :: '+html.slice(Math.max(0,pos-260),pos+520).replace(/\s+/g,' '));
+          pos+=term.length;n++;
+        }
+      }
+      probes.forEach(x=>console.log(x));
+    }catch(e){console.log('COLETAS DOM PROBE ERRO',e.message)}
+
     html=html.replaceAll('Cliente / Entrega','Remetente / Endereço');
     const mvStart='<div class="section-title">Motorista e veículo</div>\n      <div class="grid three">';
     if(html.includes(mvStart) && !html.includes('id="doc_motorista_file"')){
