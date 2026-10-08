@@ -3576,6 +3576,11 @@ function trackingDiagnose(row){
   if(!row.device_id)return{level:'bad',group:'noapp',title:'Sem aplicativo',detail:'Nenhum celular cadastrado para este motorista/placa. Envie o link: ele instala, informa nome e placa uma única vez e o pedido aparece aqui para você aprovar.',action:'invite'};
   if(row.never_connected)return{level:'bad',group:'stopped',title:'Aprovado, mas o celular ainda não conectou',detail:'O aparelho'+(row.device_name?' ('+row.device_name+')':'')+' foi liberado '+(trackingWhen(row.enrolled_at)||'')+' e não enviou nenhum sinal. O motorista só precisa abrir o aplicativo uma vez.',action:'notify',kind:'abrir'};
   if(String(row.session_status||'').toLowerCase()==='ended')return{level:'off',group:'off',title:'Rota finalizada',detail:'Entregas do romaneio concluídas'+(row.ended_at?' '+trackingWhen(row.ended_at):'')+'. O rastreio volta sozinho quando sair um novo romaneio.',action:hasPos?'map':''};
+  const newApp=!!(h&&row.app_version);
+  // Aplicativo novo, em repouso (sem romaneio na última checagem): com a tela apagada ele só
+  // confere a cada 5 a 10 minutos, então 15 minutos sem sinal ainda não é "parado".
+  if(newApp&&h.tracking===false&&Number.isFinite(devAge)&&devAge>300&&devAge<=900&&inOp)
+    return{level:'warn',group:'warn',title:'Celular em repouso • o rastreio começa em instantes',detail:'O aplicativo está instalado e respondeu há '+trackingAgeLabel(devAge)+'. Com a tela apagada ele confere novos romaneios a cada 5 a 10 minutos.',action:''};
   if(!Number.isFinite(devAge)||devAge>300){
     let cause='Aplicativo fechado, celular desligado ou sem internet.';
     if(bat!==null&&bat<=5&&h.charging!==true)cause='A bateria estava em '+bat+'% no último sinal: o celular provavelmente desligou.';
@@ -3586,6 +3591,7 @@ function trackingDiagnose(row){
   // Daqui para baixo o aplicativo está vivo (deu sinal nos últimos 5 minutos).
   if(h&&h.perm_location===false)return{level:'warn',group:'warn',title:'Aplicativo ligado, sem permissão de localização',detail:'O motorista precisa permitir a localização para o aplicativo ("Permitir o tempo todo").',action:'notify',kind:'perm'};
   if(h&&h.gps_on===false)return{level:'warn',group:'warn',title:'Aplicativo ligado, GPS do celular desligado',detail:'O celular está conectado, mas com a Localização (GPS) desligada.',action:'notify',kind:'gps'};
+  if(h&&h.service_running===false)return{level:'warn',group:'warn',title:'Aplicativo em modo reduzido',detail:'O Android bloqueou o rastreio em segundo plano neste celular'+(h.perm_background===false?' (a localização não está em "Permitir o tempo todo")':'')+'. Basta o motorista abrir o aplicativo uma vez.',action:'notify',kind:h.perm_background===false?'perm':'abrir'};
   const roms=trackingRomaneiosFor(row.driver_name,row.vehicle_plate);
   const hasRom=roms.length||(Array.isArray(row.romaneios)&&row.romaneios.length);
   if(!hasPos||(Number.isFinite(age)&&age>300)){
@@ -3593,6 +3599,13 @@ function trackingDiagnose(row){
     const fresh=!hasPos&&row.started_at&&(Date.now()-new Date(row.started_at).getTime()<4*60000);
     if(fresh)return{level:'warn',group:'warn',title:'Conectado • aguardando a primeira posição',detail:'O aplicativo acabou de conectar. A primeira posição costuma chegar em 1 a 2 minutos.',action:''};
     if(h&&h.perm_background===false)return{level:'warn',group:'warn',title:'Aplicativo ligado, sem posição do GPS',detail:'A localização está permitida só com o aplicativo aberto. Precisa ser "Permitir o tempo todo".',action:'notify',kind:'perm'};
+    // O aplicativo antigo só envia posição quando o caminhão anda: parado numa entrega, a última
+    // posição fica velha sem que haja problema. Só o aplicativo novo envia mesmo parado.
+    if(hasPos&&!newApp){
+      const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+      if(row.captured_at&&new Date(row.captured_at).toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'})===today)
+        return{level:'ok',group:'ok',title:'Rastreando • parado no mesmo lugar há '+trackingAgeLabel(age),detail:'Aplicativo ligado (sinal há '+trackingAgeLabel(devAge)+'). A versão atual do aplicativo só envia nova posição quando o veículo anda.',action:'map'}
+    }
     return{level:'warn',group:'warn',title:'Aplicativo ligado, sem posição do GPS'+(hasPos&&Number.isFinite(age)?' há '+trackingAgeLabel(age):''),detail:'O celular está conectado, mas não envia localização. Quase sempre é o GPS desligado ou a permissão de localização.',action:'notify',kind:'gps'}
   }
   const speed=Number(row.speed_mps),bits=['Posição há '+trackingAgeLabel(age)];
@@ -3602,6 +3615,7 @@ function trackingDiagnose(row){
   if(h&&h.perm_background===false)alerts.push('localização só com o app aberto');
   if(h&&h.battery_unrestricted===false)alerts.push('economia de bateria ativa (pode parar com a tela apagada)');
   if(bat!==null&&bat<15&&h.charging!==true)alerts.push('bateria baixa');
+  if(row.app_version)bits.push('app '+row.app_version);
   const detail=bits.join(' • ')+(alerts.length?' • Atenção: '+alerts.join('; ')+'.':'');
   if(st.key==='bad'&&st.distance!==null)return{level:'warn',group:'warn',title:'Rastreando • fora da rota ('+st.label.toLowerCase()+')',detail,action:'map'};
   if(Number.isFinite(age)&&age>120)return{level:'warn',group:'warn',title:'Rastreando • GPS atrasado',detail,action:'map'};

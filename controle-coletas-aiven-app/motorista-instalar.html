@@ -34,9 +34,19 @@ body{margin:0;font-family:Arial,sans-serif;background:#f5f7fa;color:#1f2937}
 </div></div>
 <script>
 const qs=new URLSearchParams(location.search),token=qs.get('i')||'';
+// ?canal=teste baixa a versão em teste; ?atualizar=1 é o link aberto pelo próprio aplicativo.
+if(qs.get('canal')==='teste'){
+ document.getElementById('download').href='/downloads/CONSTRULOG-Motorista-TESTE.apk';
+ document.getElementById('download').textContent='BAIXAR APP (VERSÃO NOVA EM TESTE)';
+}
 async function load(){
  const box=document.getElementById('content');
- if(!token){box.textContent='Convite inválido.';return}
+ if(!token){
+  box.innerHTML=qs.get('atualizar')
+   ?'<div class="ok">Atualização do aplicativo</div>Toque em <b>BAIXAR APP</b> e depois em <b>Instalar</b>. Seu cadastro continua o mesmo.'
+   :'<div class="ok">Instalação do aplicativo</div>Toque em <b>BAIXAR APP</b>, instale e abra o CONSTRULOG Motorista.';
+  return
+ }
  try{
   const r=await fetch('/api/tracking/invite?token='+encodeURIComponent(token),{cache:'no-store'});
   const j=await r.json();

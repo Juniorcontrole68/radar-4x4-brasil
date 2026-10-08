@@ -792,7 +792,7 @@ function trackingCleanHealth(h){
   const bool=k=>{if(typeof h[k]==='boolean')out[k]=h[k]};
   const num=(k,min,max)=>{const v=Number(h[k]);if(h[k]!==null&&h[k]!==undefined&&h[k]!==''&&Number.isFinite(v)&&v>=min&&v<=max)out[k]=v};
   const str=(k,n)=>{if(typeof h[k]==='string'&&h[k].trim())out[k]=h[k].trim().slice(0,n)};
-  ['perm_location','perm_background','perm_notifications','battery_unrestricted','gps_on','charging','power_save','tracking','exact_alarms'].forEach(bool);
+  ['perm_location','perm_background','perm_notifications','battery_unrestricted','gps_on','charging','power_save','tracking','exact_alarms','service_running'].forEach(bool);
   num('battery_pct',0,100);num('last_fix_age_s',0,864000);num('queued_points',0,100000);num('restarts',0,1000000);num('android_sdk',1,200);num('version_code',0,1000000);
   str('net',16);str('last_error',160);
   return Object.keys(out).length?out:null
