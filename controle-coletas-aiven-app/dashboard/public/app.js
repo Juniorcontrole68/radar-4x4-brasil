@@ -358,7 +358,24 @@ function bootstrapEmbeddedAuth(){
 
 const S={ops:[],sch:[],help:[],agCopy:[],ssw:null,remetentes:null,receita:null,coletas:null,lotacao:[],sswMotoristas:null},$=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const gd=o=>o['ENTREGUE']??o['Entregue']??o['Data']??o['  Data']??o['DATA']??'',g=(o,...k)=>{for(const x of k)if(o[x]!==undefined)return o[x];return''};
-const pd=s=>{if(!s)return null;const p=String(s).trim().split('/');if(p.length!==3)return null;const d=new Date(+p[2],+p[1]-1,+p[0]);return isNaN(d)?null:d};
+const pd=s=>{
+  if(s==null||s==='')return null;
+  if(s instanceof Date)return isNaN(s)?null:s;
+  if(typeof s==='number'&&Number.isFinite(s)){
+    // Datas seriais de Excel/Google Sheets.
+    const d=new Date(Date.UTC(1899,11,30)+s*86400000);
+    return isNaN(d)?null:new Date(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate());
+  }
+  const raw=String(s).trim();
+  let m=raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+.*)?$/);
+  if(m){const d=new Date(+m[3],+m[2]-1,+m[1]);return isNaN(d)?null:d}
+  m=raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s].*)?$/);
+  if(m){const d=new Date(+m[1],+m[2]-1,+m[3]);return isNaN(d)?null:d}
+  m=raw.match(/^(\d{1,2})-(\d{1,2})-(\d{4})(?:\s+.*)?$/);
+  if(m){const d=new Date(+m[3],+m[2]-1,+m[1]);return isNaN(d)?null:d}
+  const d=new Date(raw);
+  return isNaN(d)?null:d
+};
 const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 const num=v=>{if(v==null||v==='')return 0;let s=String(v).replace(/R\$/g,'').trim();if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');s=s.replace(/[^0-9.-]/g,'');return Number(s)||0};
 const brl=v=>v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}),nf=v=>Math.round(v).toLocaleString('pt-BR'),safe=s=>String(s??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
@@ -582,7 +599,7 @@ function setDashboardToday(){
   if($('#from'))$('#from').value=d;
   if($('#to'))$('#to').value=d;
 }
-function inper(d){const f=$('#from').value?new Date($('#from').value+'T00:00:00'):null,t=$('#to').value?new Date($('#to').value+'T23:59:59'):null;return(!f||!d||d>=f)&&(!t||!d||d<=t)}
+function inper(d){const f=$('#from').value?new Date($('#from').value+'T00:00:00'):null,t=$('#to').value?new Date($('#to').value+'T23:59:59'):null;if((f||t)&&!d)return false;return(!f||d>=f)&&(!t||d<=t)}
 function ops(){const d=$('#driver')?.value||'',b=$('#branch')?.value||'',rows=Array.isArray(S.ops)?S.ops:[];return rows.filter(o=>inper(pd(gd(o)))&&(!d||g(o,'Motorista')===d)&&(!b||g(o,'Filial')===b))}
 function help(){const rows=Array.isArray(S.help)?S.help:[];return rows.filter(o=>inper(pd(g(o,'Data'))))}
 function sch(){const rows=Array.isArray(S.sch)?S.sch:[];return rows.filter(o=>inper(pd(g(o,'DATA AGENDADA'))||pd(g(o,'DATA CONTATO'))))}
