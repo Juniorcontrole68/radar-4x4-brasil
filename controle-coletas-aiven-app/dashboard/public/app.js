@@ -3527,6 +3527,203 @@ function renderTrackingMap(rows){
   }
   setTimeout(()=>TRACKING_MAP.invalidateSize(),100)
 }
+// ===== Quadro "Motoristas de hoje": situação em linguagem simples + uma ação por linha =====
+let TRACKING_CONTACTS=new Map(),TRACKING_CONTACTS_AT=0,TRACKING_REQUEST_ROWS=[],TRACKING_CONTACT_EDIT=null,TRACKING_BOARD_ITEMS=[],TRACKING_BOARD_NOTE='';
+function trackingPhoneLabel(d){
+  const m=String(d||'').match(/^55(\d{2})(\d{4,5})(\d{4})$/);
+  return m?'('+m[1]+') '+m[2]+'-'+m[3]:String(d||'')
+}
+async function trackingLoadContacts(force=false){
+  if(!force&&TRACKING_CONTACTS_AT&&Date.now()-TRACKING_CONTACTS_AT<120000)return;
+  try{
+    const r=await fetch('/api/tracking/contacts?t='+Date.now(),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(r.ok&&j.ok&&Array.isArray(j.rows)){
+      TRACKING_CONTACTS=new Map(j.rows.map(x=>[String(x.driver_key||''),String(x.phone||'')]));
+      TRACKING_CONTACTS_AT=Date.now()
+    }
+  }catch(e){}
+}
+function trackingWhen(v){
+  const d=new Date(v);if(!v||!Number.isFinite(d.getTime()))return'';
+  const day=x=>x.toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+  const hm=d.toLocaleTimeString('pt-BR',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit'});
+  if(day(d)===day(new Date()))return'hoje às '+hm;
+  if(day(d)===day(new Date(Date.now()-86400000)))return'ontem às '+hm;
+  return'em '+d.toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit'})+' às '+hm
+}
+function trackingNotifiedStore(){
+  const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+  try{
+    const x=JSON.parse(localStorage.getItem('construlog_tracking_notified')||'null');
+    if(x&&x.date===today&&x.items&&typeof x.items==='object')return x
+  }catch(e){}
+  return{date:today,items:{}}
+}
+function trackingMarkNotified(key){
+  const x=trackingNotifiedStore();
+  x.items[key]=new Date().toLocaleTimeString('pt-BR',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit'});
+  try{localStorage.setItem('construlog_tracking_notified',JSON.stringify(x))}catch(e){}
+}
+function trackingDiagnose(row){
+  const st=trackingStatus(row);
+  const h=(row.health&&typeof row.health==='object')?row.health:null;
+  const devAge=Number(row.device_age_seconds),age=Number(row.age_seconds);
+  const inOp=row.operation_active!==false||!!row.test_only;
+  const bat=h&&h.battery_pct!==null&&h.battery_pct!==undefined&&Number.isFinite(Number(h.battery_pct))?Math.round(Number(h.battery_pct)):null;
+  const hasPos=trackingHasPosition(row);
+  if(row.test_only)return{level:hasPos?'ok':'warn',group:hasPos?'ok':'warn',title:st.label,detail:'Celular de teste (não é um motorista da operação).',action:hasPos?'map':''};
+  if(!row.device_id)return{level:'bad',group:'noapp',title:'Sem aplicativo',detail:'Nenhum celular cadastrado para este motorista/placa. Envie o link: ele instala, informa nome e placa uma única vez e o pedido aparece aqui para você aprovar.',action:'invite'};
+  if(row.never_connected)return{level:'bad',group:'stopped',title:'Aprovado, mas o celular ainda não conectou',detail:'O aparelho'+(row.device_name?' ('+row.device_name+')':'')+' foi liberado '+(trackingWhen(row.enrolled_at)||'')+' e não enviou nenhum sinal. O motorista só precisa abrir o aplicativo uma vez.',action:'notify',kind:'abrir'};
+  if(String(row.session_status||'').toLowerCase()==='ended')return{level:'off',group:'off',title:'Rota finalizada',detail:'Entregas do romaneio concluídas'+(row.ended_at?' '+trackingWhen(row.ended_at):'')+'. O rastreio volta sozinho quando sair um novo romaneio.',action:hasPos?'map':''};
+  if(!Number.isFinite(devAge)||devAge>300){
+    let cause='Aplicativo fechado, celular desligado ou sem internet.';
+    if(bat!==null&&bat<=5&&h.charging!==true)cause='A bateria estava em '+bat+'% no último sinal: o celular provavelmente desligou.';
+    else if(h&&h.battery_unrestricted===false)cause='A economia de bateria do celular não está liberada para o aplicativo, então o Android o fecha com a tela apagada.';
+    const base={title:'Aplicativo parado'+(Number.isFinite(devAge)?' há '+trackingAgeLabel(devAge):''),detail:(row.last_seen_at?'Último sinal '+trackingWhen(row.last_seen_at)+'. ':'')+cause,action:'notify',kind:'abrir'};
+    return inOp?{level:'bad',group:'stopped',...base}:{level:'off',group:'off',...base,title:'Sem romaneio hoje • '+base.title.toLowerCase()}
+  }
+  // Daqui para baixo o aplicativo está vivo (deu sinal nos últimos 5 minutos).
+  if(h&&h.perm_location===false)return{level:'warn',group:'warn',title:'Aplicativo ligado, sem permissão de localização',detail:'O motorista precisa permitir a localização para o aplicativo ("Permitir o tempo todo").',action:'notify',kind:'perm'};
+  if(h&&h.gps_on===false)return{level:'warn',group:'warn',title:'Aplicativo ligado, GPS do celular desligado',detail:'O celular está conectado, mas com a Localização (GPS) desligada.',action:'notify',kind:'gps'};
+  const roms=trackingRomaneiosFor(row.driver_name,row.vehicle_plate);
+  const hasRom=roms.length||(Array.isArray(row.romaneios)&&row.romaneios.length);
+  if(!hasPos||(Number.isFinite(age)&&age>300)){
+    if(!hasRom)return{level:'ok',group:'ok',title:'Aplicativo ligado • aguardando romaneio',detail:'Celular conectado. O GPS começa sozinho quando o romaneio do motorista aparecer.',action:''};
+    const fresh=!hasPos&&row.started_at&&(Date.now()-new Date(row.started_at).getTime()<4*60000);
+    if(fresh)return{level:'warn',group:'warn',title:'Conectado • aguardando a primeira posição',detail:'O aplicativo acabou de conectar. A primeira posição costuma chegar em 1 a 2 minutos.',action:''};
+    if(h&&h.perm_background===false)return{level:'warn',group:'warn',title:'Aplicativo ligado, sem posição do GPS',detail:'A localização está permitida só com o aplicativo aberto. Precisa ser "Permitir o tempo todo".',action:'notify',kind:'perm'};
+    return{level:'warn',group:'warn',title:'Aplicativo ligado, sem posição do GPS'+(hasPos&&Number.isFinite(age)?' há '+trackingAgeLabel(age):''),detail:'O celular está conectado, mas não envia localização. Quase sempre é o GPS desligado ou a permissão de localização.',action:'notify',kind:'gps'}
+  }
+  const speed=Number(row.speed_mps),bits=['Posição há '+trackingAgeLabel(age)];
+  if(Number.isFinite(speed)&&speed>=0)bits.push(Math.round(speed*3.6)+' km/h');
+  if(bat!==null)bits.push('bateria '+bat+'%'+(h.charging===true?' (carregando)':''));
+  const alerts=[];
+  if(h&&h.perm_background===false)alerts.push('localização só com o app aberto');
+  if(h&&h.battery_unrestricted===false)alerts.push('economia de bateria ativa (pode parar com a tela apagada)');
+  if(bat!==null&&bat<15&&h.charging!==true)alerts.push('bateria baixa');
+  const detail=bits.join(' • ')+(alerts.length?' • Atenção: '+alerts.join('; ')+'.':'');
+  if(st.key==='bad'&&st.distance!==null)return{level:'warn',group:'warn',title:'Rastreando • fora da rota ('+st.label.toLowerCase()+')',detail,action:'map'};
+  if(Number.isFinite(age)&&age>120)return{level:'warn',group:'warn',title:'Rastreando • GPS atrasado',detail,action:'map'};
+  return{level:'ok',group:'ok',title:st.key==='ok'?'Rastreando • na rota':'Rastreando',detail,action:'map'}
+}
+function trackingNotifyMessage(item){
+  const name=trackingFirstName(item.r.driver_name),kind=item.d.kind||'abrir';
+  const head='Olá, '+name+'! Aqui é da CONSTRULOG.\n\n';
+  if(kind==='gps')return head+'O aplicativo *CONSTRULOG Motorista* está ligado, mas sem localização.\n\nPor favor:\n1. Ligue a *Localização (GPS)* do celular.\n2. Abra o aplicativo CONSTRULOG Motorista.\n\nNão precisa preencher nada. Obrigado!';
+  if(kind==='perm')return head+'O aplicativo *CONSTRULOG Motorista* está sem permissão de localização.\n\nPor favor, abra o aplicativo, toque em *ABRIR CONFIGURAÇÕES DO APP* → Permissões → Localização → *Permitir o tempo todo*.\n\nObrigado!';
+  const since=item.r.last_seen_at&&!item.r.never_connected?' desde '+trackingWhen(item.r.last_seen_at).replace(/^(hoje|ontem|em) /,m=>m==='em '?'':m):'';
+  return head+'O rastreamento do seu celular está parado'+since+'.\n\nPor favor, abra o aplicativo *CONSTRULOG Motorista* e deixe o celular com internet. É só abrir, não precisa preencher nada.\n\nObrigado!'
+}
+function trackingBoardMsg(text,isErr=false){
+  const el=$('#trackingBoardMsg');if(!el)return;
+  el.textContent=text;el.classList.toggle('err',!!isErr);el.style.display=text?'block':'none';
+  clearTimeout(window.__trackingBoardMsgTimer);
+  if(text)window.__trackingBoardMsgTimer=setTimeout(()=>{el.style.display='none'},9000)
+}
+function trackingBoardRows(){
+  return Array.isArray(TRACKING_DATA)?TRACKING_DATA:[]
+}
+function renderTrackingBoard(rows,extraRows){
+  const table=$('#trackingBoardTable');if(!table)return;
+  const list=[...(Array.isArray(rows)?rows:[]),...(Array.isArray(extraRows)?extraRows:[])];
+  const pending=(TRACKING_REQUEST_ROWS||[]).filter(x=>String(x.status||'')==='pending');
+  const order={stopped:0,noapp:1,warn:2,ok:3,off:4};
+  const items=list.map(r=>({r,d:trackingDiagnose(r),key:trackingDriverKey(r.driver_name,r.vehicle_plate)}))
+    .sort((a,b)=>(order[a.d.group]??9)-(order[b.d.group]??9)||String(a.r.driver_name||'').localeCompare(String(b.r.driver_name||''),'pt-BR'));
+  TRACKING_BOARD_ITEMS=items;
+  const count=g=>items.filter(x=>x.d.group===g).length;
+  const chips=[];
+  if(pending.length)chips.push('<span class="tracking-chip new">📲 '+nf(pending.length)+' pedido(s) de acesso</span>');
+  chips.push('<span class="tracking-chip ok">🟢 '+nf(count('ok'))+' rastreando</span>');
+  if(count('warn'))chips.push('<span class="tracking-chip warn">🟡 '+nf(count('warn'))+' com atenção</span>');
+  if(count('stopped'))chips.push('<span class="tracking-chip bad">🔴 '+nf(count('stopped'))+' parado(s)</span>');
+  if(count('noapp'))chips.push('<span class="tracking-chip bad">⚪ '+nf(count('noapp'))+' sem aplicativo</span>');
+  if(count('off'))chips.push('<span class="tracking-chip">✔ '+nf(count('off'))+' finalizado(s)</span>');
+  const chipsEl=$('#trackingBoardChips');if(chipsEl)chipsEl.innerHTML=chips.join('');
+  const info=$('#trackingBoardInfo');
+  if(info)info.textContent=(TRACKING_BOARD_NOTE?TRACKING_BOARD_NOTE+' ':nf(items.length)+' motorista(s) com romaneio hoje. ')+'Atualizado às '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})+' • atualiza sozinho a cada '+TRACKING_AUTO_SECONDS+' s.';
+  const notified=trackingNotifiedStore().items;
+  const reqHtml=pending.map(x=>{
+    const when=trackingWhen(x.created_at);
+    const warn=x.has_live_device?'<div class="tb-detail"><b>Atenção:</b> este motorista já tem um celular funcionando agora. Aprove só se ele trocou de aparelho.</div>':'<div class="tb-detail">Confira nome e placa. Depois de aprovado, o celular começa a rastrear sozinho.</div>';
+    return '<tr class="tb-new"><td><div class="tb-name">'+safe(driverDisplayName(x.driver_name||'')||'Motorista')+'</div><div class="tb-sub">'+safe(x.vehicle_plate||'placa não informada')+' • '+safe(x.device_name||'Android')+'</div></td>'+
+      '<td><div class="tb-title new">📲 Novo aparelho pedindo acesso'+(when?' ('+safe(when)+')':'')+'</div>'+warn+'</td>'+
+      '<td><div class="tb-actions"><button type="button" class="tb-btn primary" data-tb-req="'+safe(x.id)+'" data-tb-decide="approve">Aprovar</button><button type="button" class="tb-btn" data-tb-req="'+safe(x.id)+'" data-tb-decide="reject">Recusar</button></div></td></tr>'
+  }).join('');
+  const rowHtml=items.map((it,i)=>{
+    const r=it.r,d=it.d;
+    const roms=trackingRomaneiosFor(r.driver_name,r.vehicle_plate);
+    const romList=roms.length?roms:(Array.isArray(r.romaneios)?r.romaneios.map(String):[]);
+    const op=trackingDriverOperationRow(r.driver_name,r.vehicle_plate);
+    const entregas=Number(op?.entregas||op?.total||0);
+    const sub=[r.vehicle_plate||'sem placa',romList.length?'Rom. '+romList.join(', '):'',entregas?nf(entregas)+' entrega(s)':''].filter(Boolean).join(' • ');
+    const ckey=trackingNorm(r.driver_name),phone=TRACKING_CONTACTS.get(ckey)||'';
+    let phoneHtml;
+    if(TRACKING_CONTACT_EDIT&&TRACKING_CONTACT_EDIT.key===ckey){
+      phoneHtml='<div class="tb-phone-edit"><input type="tel" data-tb-phone-input="'+i+'" placeholder="DDD + número" value="'+safe(TRACKING_CONTACT_EDIT.value||'')+'"><button type="button" class="tb-btn primary" data-tb-act="phone-save" data-tb-i="'+i+'">Salvar</button><button type="button" class="tb-btn" data-tb-act="phone-cancel" data-tb-i="'+i+'">Cancelar</button></div>'
+    }else if(r.test_only){
+      phoneHtml=''
+    }else{
+      phoneHtml='<div class="tb-sub">'+(phone?'📱 '+safe(trackingPhoneLabel(phone))+' · ':'')+'<button type="button" class="tb-link" data-tb-act="phone-edit" data-tb-i="'+i+'">'+(phone?'alterar':'＋ informar WhatsApp do motorista')+'</button></div>'
+    }
+    const actions=[];
+    if(d.action==='notify')actions.push('<button type="button" class="tb-btn wa" data-tb-act="notify" data-tb-i="'+i+'">💬 Avisar no WhatsApp</button>');
+    if(d.action==='invite')actions.push('<button type="button" class="tb-btn wa" data-tb-act="invite" data-tb-i="'+i+'">💬 Enviar link do aplicativo</button>');
+    if(d.action==='map'||(trackingHasPosition(r)&&d.action!=='map'))actions.push('<button type="button" class="tb-btn" data-tb-act="map" data-tb-i="'+i+'">🗺️ Ver no mapa</button>');
+    const told=notified[it.key]?'<div class="tb-sub">Avisado às '+safe(notified[it.key])+'</div>':'';
+    return '<tr class="tb-'+safe(d.level)+'"><td><div class="tb-name">'+safe(r.driver_name||'—')+'</div><div class="tb-sub">'+safe(sub)+'</div>'+phoneHtml+'</td>'+
+      '<td><div class="tb-title '+safe(d.level)+'">'+safe(d.title)+'</div><div class="tb-detail">'+safe(d.detail||'')+'</div></td>'+
+      '<td><div class="tb-actions">'+(actions.join('')||'<span class="muted">Nada a fazer</span>')+'</div>'+told+'</td></tr>'
+  }).join('');
+  const empty=!reqHtml&&!rowHtml?'<tr><td colspan="3" class="muted">Nenhum motorista com romaneio identificado hoje ainda. Assim que o romaneio sair no SSW, o motorista aparece aqui sozinho.</td></tr>':'';
+  table.innerHTML='<thead><tr><th>Motorista</th><th>Situação</th><th>O que fazer</th></tr></thead><tbody>'+reqHtml+rowHtml+empty+'</tbody>';
+  if(TRACKING_CONTACT_EDIT){
+    const input=table.querySelector('[data-tb-phone-input]');
+    if(input&&document.activeElement!==input){input.focus();const n=input.value.length;try{input.setSelectionRange(n,n)}catch(e){}}
+  }
+}
+function trackingBoardRerender(){
+  renderTrackingBoard(window.__trackingBoardRows||[],[])
+}
+async function trackingBoardSavePhone(item,value){
+  try{
+    const r=await fetch('/api/tracking/contacts',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({driver_name:item.r.driver_name,phone:value})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao salvar telefone.');
+    const key=trackingNorm(item.r.driver_name);
+    if(j.phone)TRACKING_CONTACTS.set(key,j.phone);else TRACKING_CONTACTS.delete(key);
+    TRACKING_CONTACT_EDIT=null;
+    trackingBoardMsg(j.phone?'WhatsApp de '+item.r.driver_name+' salvo: '+trackingPhoneLabel(j.phone)+'.':'Telefone removido.');
+  }catch(e){trackingBoardMsg(e.message,true)}
+  trackingBoardRerender()
+}
+async function trackingBoardClick(e){
+  const dec=e.target?.closest?.('[data-tb-decide]');
+  if(dec){trackingDecideRequest(String(dec.dataset.tbReq||''),String(dec.dataset.tbDecide||''),dec);return}
+  const b=e.target?.closest?.('[data-tb-act]');if(!b)return;
+  const item=TRACKING_BOARD_ITEMS[Number(b.dataset.tbI)];if(!item)return;
+  const act=b.dataset.tbAct,ckey=trackingNorm(item.r.driver_name),phone=TRACKING_CONTACTS.get(ckey)||'';
+  if(act==='map'){
+    const el=$('#trackingMap');if(el)el.scrollIntoView({behavior:'smooth',block:'center'});
+    trackingFocusDriver(item.key);return
+  }
+  if(act==='phone-edit'){TRACKING_CONTACT_EDIT={key:ckey,value:phone?trackingPhoneLabel(phone):''};trackingBoardRerender();return}
+  if(act==='phone-cancel'){TRACKING_CONTACT_EDIT=null;trackingBoardRerender();return}
+  if(act==='phone-save'){b.disabled=true;await trackingBoardSavePhone(item,String(TRACKING_CONTACT_EDIT?.value||''));return}
+  if(act==='notify'){
+    window.open('https://wa.me/'+phone+'?text='+encodeURIComponent(trackingNotifyMessage(item)),'_blank','noopener');
+    trackingMarkNotified(item.key);
+    trackingBoardMsg(phone?'Mensagem pronta no WhatsApp de '+item.r.driver_name+'. É só enviar.':'Mensagem pronta. Escolha o contato do motorista no WhatsApp. Dica: informe o WhatsApp dele aqui no quadro para ir direto na próxima vez.');
+    trackingBoardRerender();return
+  }
+  if(act==='invite'){
+    const op=trackingDriverOperationRow(item.r.driver_name,item.r.vehicle_plate);
+    if(!op){trackingBoardMsg('Não encontrei o romaneio deste motorista para gerar o link.',true);return}
+    await trackingSendAssignment(op,b,phone||'-');
+    trackingMarkNotified(item.key);trackingBoardRerender()
+  }
+}
 function renderTracking(rows){
   TRACKING_DATA=rows||[];
   const statuses=TRACKING_DATA.map(r=>({r,s:trackingStatus(r)}));
@@ -3609,6 +3806,7 @@ async function refreshTracking(){
       TRACKING_LOGICAL_ROUTES.set(trackingDriverKey(r.driver_name,r.vehicle_plate),plan);
     });
     const operationRows=Array.isArray(TRACKING_DRIVER_ROWS)?TRACKING_DRIVER_ROWS:[];
+    TRACKING_REQUEST_ROWS=(requestRes.ok&&requests.ok&&Array.isArray(requests.rows))?requests.rows:[];
     const approvedDevices=(requestRes.ok&&requests.ok&&Array.isArray(requests.rows)?requests.rows:[])
       .filter(x=>String(x.status||'').toLowerCase()==='approved');
     const findApprovedDevice=(driver,plate)=>{
@@ -3687,6 +3885,23 @@ async function refreshTracking(){
     });
     const mergedRows=[...currentRows,...operationPlaceholders];
     renderTracking(mergedRows);
+    // Quadro "Motoristas de hoje". Sem a lista de romaneios (SSW fora do ar ou ainda cedo),
+    // mostra os celulares que deram sinal hoje para a tela nunca ficar vazia.
+    let boardRows=mergedRows;
+    TRACKING_BOARD_NOTE='';
+    if(!operationRows.length){
+      boardRows=liveRows.filter(r=>{
+        if(r.test_only)return true;
+        const seen=r.last_seen_at&&new Date(r.last_seen_at).toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'})===today;
+        return !!(r.session_id||seen)
+      }).map(r=>({...r,operation_active:false}));
+      TRACKING_BOARD_NOTE=(driverRes.ok&&drivers.ok)
+        ?'Nenhum romaneio do dia no SSW ainda. Mostrando os celulares que deram sinal hoje.'
+        :'Não consegui ler os romaneios do dia agora (tentando de novo sozinho). Mostrando os celulares que deram sinal hoje.'
+    }
+    window.__trackingBoardRows=boardRows;
+    await trackingLoadContacts();
+    renderTrackingBoard(boardRows,[]);
     trackingRefreshLogicalAnalysis(mergedRows,today).catch(()=>{});
 
     // A geometria das rotas é mais pesada. Ela é atualizada em separado para
@@ -3774,11 +3989,13 @@ async function trackingDecideRequest(id,action,button=null){
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||('Falha ao '+verb+' aparelho.'));
     if(info)info.textContent=action==='approve'?'Aparelho aprovado. O celular será liberado automaticamente.':'Solicitação recusada.';
+    trackingBoardMsg(action==='approve'?'Aparelho aprovado. O celular começa a rastrear sozinho em até 1 minuto.':'Pedido recusado.');
     await refreshTrackingRequests();
     TRACKING_NEXT_REFRESH=0;
     refreshTracking().catch(()=>{})
   }catch(e){
     if(info)info.textContent='Erro ao '+verb+' aparelho: '+e.message;
+    trackingBoardMsg('Erro ao '+verb+' aparelho: '+e.message,true);
     if(button){button.disabled=false;button.textContent=action==='approve'?'Aprovar':'Recusar'}
   }
 }
@@ -3814,12 +4031,13 @@ function renderTrackingAssignments(){
   })
 }
 
-async function trackingSendAssignment(row,button=null){
+async function trackingSendAssignment(row,button=null,phone=''){
   if(!row)return;
   const driver=driverDisplayName(row.motorista||''),plate=String(row.veiculo||'').trim().toUpperCase();
   const roms=(Array.isArray(row.romaneios)?row.romaneios:[row.romaneio]).map(v=>String(v||'').trim()).filter(Boolean);
   const info=$('#trackingAssignmentsInfo');
   if(!driver||!plate||!roms.length){if(info)info.textContent='Motorista, placa ou romaneio incompletos.';return}
+  const buttonLabel=button?button.textContent:'';
   if(button){button.disabled=true;button.textContent='Gerando link…'}
   try{
     const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
@@ -3830,14 +4048,22 @@ async function trackingSendAssignment(row,button=null){
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao associar romaneio.');
     const message='CONSTRULOG Motorista\n\nMotorista: '+driver+'\nPlaca: '+plate+'\nRomaneio(s): '+roms.join(', ')+'\n\nInstale ou abra o aplicativo por este link:\n'+j.install_url+'\n\nNo primeiro acesso, informe seu nome e a placa apenas uma vez. Depois, os próximos romaneios serão identificados automaticamente pela placa.';
     if(info)info.textContent='Romaneio '+roms.join(', ')+' associado à placa '+plate+'. Link pronto para envio.';
+    if(phone){
+      // Chamado pelo quadro: abre direto o WhatsApp (do motorista, quando o telefone está salvo).
+      const digits=String(phone).replace(/\D/g,'');
+      window.open('https://wa.me/'+digits+'?text='+encodeURIComponent(message),'_blank','noopener');
+      trackingBoardMsg(digits?'Link pronto no WhatsApp de '+driver+'. É só enviar.':'Link pronto. Escolha o contato do motorista no WhatsApp.');
+      return
+    }
     if(navigator.share){
       try{await navigator.share({title:'CONSTRULOG Motorista',text:message});return}catch(e){if(e?.name==='AbortError')return}
     }
     window.open('https://wa.me/?text='+encodeURIComponent(message),'_blank','noopener')
   }catch(e){
-    if(info)info.textContent='Erro ao preparar envio: '+e.message
+    if(info)info.textContent='Erro ao preparar envio: '+e.message;
+    if(phone)trackingBoardMsg('Erro ao preparar o link: '+e.message,true)
   }finally{
-    if(button){button.disabled=false;button.textContent='💬 Reenviar link'}
+    if(button){button.disabled=false;button.textContent=buttonLabel||'💬 Reenviar link'}
   }
 }
 window.trackingSendAssignment=trackingSendAssignment;
@@ -3893,6 +4119,18 @@ function setupTracking(){
   if($('#trackingRouteCompareDriver'))$('#trackingRouteCompareDriver').onchange=trackingRenderAnalysis;
   if($('#trackingGenerateCode'))$('#trackingGenerateCode').onclick=generateTrackingCode;
   if($('#trackingRequestsRefresh'))$('#trackingRequestsRefresh').onclick=refreshTrackingRequests;
+  if($('#trackingBoardRefresh'))$('#trackingBoardRefresh').onclick=()=>{TRACKING_NEXT_REFRESH=0;refreshTracking()};
+  const boardTable=$('#trackingBoardTable');
+  if(boardTable){
+    boardTable.onclick=trackingBoardClick;
+    boardTable.oninput=e=>{if(e.target?.matches?.('[data-tb-phone-input]')&&TRACKING_CONTACT_EDIT)TRACKING_CONTACT_EDIT.value=e.target.value};
+    boardTable.onkeydown=e=>{
+      if(!e.target?.matches?.('[data-tb-phone-input]'))return;
+      const item=TRACKING_BOARD_ITEMS[Number(e.target.dataset.tbPhoneInput)];
+      if(e.key==='Enter'&&item){e.preventDefault();trackingBoardSavePhone(item,e.target.value)}
+      if(e.key==='Escape'){TRACKING_CONTACT_EDIT=null;trackingBoardRerender()}
+    }
+  }
   if($('#trackingAssignmentsRefresh'))$('#trackingAssignmentsRefresh').onclick=()=>{TRACKING_NEXT_REFRESH=0;refreshTracking()};
   const reqTable=$('#trackingRequestsTable');
   if(reqTable)reqTable.onclick=e=>{

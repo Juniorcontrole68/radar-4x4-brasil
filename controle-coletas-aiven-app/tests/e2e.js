@@ -67,6 +67,75 @@ async function call(method,path,{body,cookie,bearer,headers}={}){
   r=await ponto(); const s2=r.json?.session_id; check('2º romaneio: posição aceita em sessão nova (antes: 409 o dia todo)',r.status===200&&!!s2&&s2!==s1,r.status+' '+r.text.slice(0,120));
   r=await call('POST','/api/tracking/heartbeat',{bearer:dev,body:{session_id:s2}}); check('heartbeat confirma a sessão nova',r.json?.session_id===s2,r.text.slice(0,120));
   r=await call('GET','/api/painel/tracking/live?light=1',{cookie}); const live=r.json?.rows?.[0]; check('mapa ao vivo mostra o motorista em rota com o 2º romaneio',r.status===200&&live?.session_status==='active'&&JSON.stringify(live?.romaneios)==='["AMR000002"]',r.text.slice(0,200));
+
+  console.log('D. Celular do motorista: recuperação automática e diagnóstico');
+  // Acesso direto ao banco só para simular a passagem do tempo (aparelho parado, aparelho antigo).
+  let db=null;
+  try{const {Pool}=require('pg');if(process.env.DATABASE_URL){db=new Pool({connectionString:process.env.DATABASE_URL});await db.query('SELECT 1')}}catch(e){db=null}
+  const hb=(bearer,body={})=>call('POST','/api/tracking/heartbeat',{bearer,body});
+  r=await hb(dev,{session_id:'999999999'}); check('heartbeat com sessão vencida continua valendo como sinal de vida (antes: 409)',r.status===200&&r.json?.session_id===s2,r.status+' '+r.text.slice(0,120));
+  r=await hb(dev,{app_version:'1.1.0',health:{battery_pct:63,charging:false,gps_on:false,perm_location:true,perm_background:false,battery_unrestricted:false,version_code:11,lixo:'<script>',net:'cell'}});
+  check('heartbeat aceita o diagnóstico do aplicativo e devolve a versão publicada',r.status===200&&Number(r.json?.latest_version_code)>0&&/\.apk$/.test(String(r.json?.apk_url||'')),r.text.slice(0,200));
+  r=await call('GET','/api/painel/tracking/live?light=1',{cookie}); let lv=r.json?.rows?.find(x=>x.vehicle_plate==='ABC1D23');
+  check('central recebe o diagnóstico (GPS desligado, bateria 63%, versão 1.1.0) sem campos estranhos',lv?.app_version==='1.1.0'&&lv?.health?.gps_on===false&&lv?.health?.battery_pct===63&&lv?.health?.lixo===undefined&&lv?.never_connected===false,JSON.stringify(lv||{}).slice(0,300));
+
+  // Pedido antigo aprovado por engano: o aparelho que está funcionando não pode ser derrubado.
+  r=await call('POST','/api/tracking/register-request',{body:{driver_name:'Motorista Teste',vehicle_plate:'ABC1D23',device_name:'Aparelho de Teste 2'}});
+  const rq2=r.json?.request_token; check('2º pedido do mesmo motorista/placa com outro aparelho fica pendente',r.status===201&&r.json?.status==='pending',r.text.slice(0,120));
+  r=await call('GET','/api/painel/tracking/requests',{cookie}); const pend=r.json?.rows?.find(x=>x.status==='pending'&&x.vehicle_plate==='ABC1D23');
+  check('central vê o pedido com o aviso "já tem um celular funcionando"',!!pend&&pend.has_live_device===true,r.text.slice(0,200));
+  r=await call('POST','/api/painel/tracking/requests/'+pend.id+'/approve',{cookie,body:{}}); check('central aprova o 2º aparelho',r.json?.status==='approved',r.text.slice(0,120));
+  r=await hb(dev); check('  aparelho antigo continua enviando (antes: 401 para sempre, sem aviso)',r.status===200,r.status+' '+r.text.slice(0,120));
+  r=await call('GET','/api/painel/tracking/live?light=1',{cookie}); lv=r.json?.rows?.find(x=>x.vehicle_plate==='ABC1D23');
+  check('  mapa segue mostrando o aparelho que está vivo, não o que nunca conectou',lv?.device_name==='Aparelho de Teste'&&lv?.never_connected===false,JSON.stringify(lv||{}).slice(0,200));
+  r=await call('GET','/api/tracking/register-status?request_token='+rq2); const dev2=r.json?.token; check('2º aparelho recebe a credencial',!!dev2);
+  if(db){
+    await db.query("UPDATE driver_tracking_devices SET active=FALSE WHERE device_name='Aparelho de Teste'");
+    r=await hb(dev); check('aparelho desativado volta a valer sozinho quando o substituto nunca conectou',r.status===200,r.status+' '+r.text.slice(0,120));
+    // O 2º aparelho conecta de verdade: o antigo cede a vez.
+    r=await hb(dev2,{app_version:'1.1.0'}); check('2º aparelho conecta',r.status===200,r.status+' '+r.text.slice(0,120));
+    r=await hb(dev); check('  com o novo funcionando, o aparelho antigo é recusado (401)',r.status===401,r.status+' '+r.text.slice(0,120));
+    r=await call('GET','/api/tracking/assignment/current',{bearer:dev}); check('  ...e continua recusado nas outras chamadas',r.status===401,r.status+' '+r.text.slice(0,120));
+    // O novo fica parado (celular desligado): o antigo, se ainda estiver rodando, reassume.
+    await db.query("UPDATE driver_tracking_devices SET last_seen_at=NOW()-INTERVAL '30 minutes' WHERE device_name='Aparelho de Teste 2'");
+    r=await hb(dev); check('  se o novo parar por mais de 10 minutos, o antigo reassume sozinho',r.status===200,r.status+' '+r.text.slice(0,120));
+    await db.query("UPDATE driver_tracking_devices SET last_seen_at=NOW()-INTERVAL '30 minutes' WHERE device_name='Aparelho de Teste'");
+  }else console.log('  (sem acesso direto ao banco: testes de passagem de tempo pulados)');
+  r=await hb(dev2,{app_version:'1.1.0',health:{gps_on:true,perm_location:true,perm_background:true,battery_unrestricted:true,battery_pct:80}}); check('2º aparelho segue ativo',r.status===200,r.status+' '+r.text.slice(0,120));
+
+  // Fila do aplicativo: posições guardadas sem internet chegam em lote, sem duplicar.
+  const t0=Date.now()-20*60000,pt=(i,extra={})=>({latitude:-22.70-i*0.001,longitude:-47.31,accuracy_m:9,battery_pct:77,captured_at:new Date(t0+i*15000).toISOString(),...extra});
+  r=await call('POST','/api/tracking/points',{bearer:dev2,body:{points:[pt(1),pt(2),pt(3),pt(4,{latitude:10,longitude:10}),pt(5,{captured_at:'2020-01-01T00:00:00Z'})]}});
+  check('lote de posições: grava 3, ignora a fora da área e a antiga',r.status===200&&r.json?.saved===3&&r.json?.ignored===2,r.status+' '+r.text.slice(0,160));
+  r=await call('POST','/api/tracking/points',{bearer:dev2,body:{points:[pt(1),pt(2),pt(3),pt(6)]}});
+  check('reenvio do mesmo lote não duplica (grava só a posição nova)',r.status===200&&r.json?.saved===1&&r.json?.ignored===3,r.status+' '+r.text.slice(0,160));
+  r=await call('POST','/api/tracking/points',{body:{points:[pt(7)]}}); check('lote sem credencial -> 401',r.status===401,'veio '+r.status);
+
+  // Aprovado que nunca conectou não aparece mais como "Em rota".
+  r=await call('POST','/api/tracking/register-request',{body:{driver_name:'Motorista Fantasma',vehicle_plate:'XYZ9Z99',device_name:'Aparelho Fantasma'}});
+  r=await call('GET','/api/painel/tracking/requests',{cookie}); const ghost=r.json?.rows?.find(x=>x.status==='pending'&&x.vehicle_plate==='XYZ9Z99');
+  check('pedido de motorista novo aparece sem o aviso de celular funcionando',!!ghost&&ghost.has_live_device===false,r.text.slice(0,200));
+  r=await call('POST','/api/painel/tracking/requests/'+ghost.id+'/approve',{cookie,body:{}});
+  r=await call('GET','/api/painel/tracking/live?light=1',{cookie}); lv=r.json?.rows?.find(x=>x.vehicle_plate==='XYZ9Z99');
+  check('aprovado que não conectou: sem sessão "Em rota" e marcado como nunca conectou',!!lv&&lv.session_id===null&&lv.never_connected===true&&lv.map_active===false,JSON.stringify(lv||{}).slice(0,240));
+  r=await call('GET','/api/painel/tracking/requests',{cookie}); const ghostOk=r.json?.rows?.find(x=>x.vehicle_plate==='XYZ9Z99');
+  check('lista de pedidos marca o aprovado que ainda não conectou',ghostOk?.status==='approved'&&ghostOk?.never_connected===true,JSON.stringify(ghostOk||{}).slice(0,200));
+
+  // Pedido pendente antigo de quem já tem aprovação mais nova não volta para a fila.
+  if(db){
+    await db.query("INSERT INTO driver_tracking_requests(request_token_hash,driver_name,vehicle_plate,device_name,status,created_at) VALUES('hash-antigo-teste','Motorista Teste','ABC1D23','Aparelho velho','pending',NOW()-INTERVAL '3 days')");
+    r=await call('GET','/api/painel/tracking/requests',{cookie});
+    check('pedido pendente antigo de motorista já aprovado não aparece para aprovar',!r.json?.rows?.some(x=>x.device_name==='Aparelho velho'),r.text.slice(0,200));
+  }
+
+  // Telefone do motorista (para o botão "Avisar no WhatsApp" ir direto no contato).
+  r=await call('GET','/api/painel/tracking/contacts'); check('telefones sem login -> 401',r.status===401,'veio '+r.status);
+  r=await call('PUT','/api/tracking/contacts',{cookie,body:{driver_name:'Motorista Tésté',phone:'(19) 99999-8888'}}); check('salva o WhatsApp do motorista pelo dashboard',r.status===200&&r.json?.phone==='5519999998888'&&r.json?.driver_key==='MOTORISTA TESTE',r.status+' '+r.text.slice(0,160));
+  r=await call('PUT','/api/tracking/contacts',{cookie,body:{driver_name:'Motorista Teste',phone:'12345'}}); check('telefone inválido é recusado (400)',r.status===400,r.status+' '+r.text.slice(0,120));
+  r=await call('GET','/api/tracking/contacts',{cookie}); check('lista de telefones traz o motorista',r.status===200&&r.json?.rows?.length===1&&r.json.rows[0].phone==='5519999998888',r.text.slice(0,160));
+  r=await call('PUT','/api/tracking/contacts',{cookie,body:{driver_name:'Motorista Teste',phone:''}}); r=await call('GET','/api/tracking/contacts',{cookie}); check('telefone em branco remove o contato',r.json?.rows?.length===0,r.text.slice(0,120));
+  r=await call('GET','/dashboard',{cookie}); check('tela de rastreio traz o quadro "Motoristas de hoje"',r.status===200&&r.text.includes('id="trackingBoardTable"')&&r.text.includes('id="trackingSupport"'),'status '+r.status);
+  if(db)await db.end();
   console.log('\nResultado: '+pass+' OK, '+fail+' falha(s)');
   process.exit(fail?1:0);
 })().catch(e=>{console.error('ERRO NO TESTE',e);process.exit(2)});

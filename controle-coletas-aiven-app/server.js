@@ -84,7 +84,7 @@ const DASH_API_PREFIXES = [
 // login de usuário e respondia 401 "Não autenticado" ao aplicativo (GPS parado).
 const LOCAL_TRACKING_PATHS = new Set([
   '/api/tracking/app-update','/api/tracking/assignment/current','/api/tracking/enroll',
-  '/api/tracking/heartbeat','/api/tracking/invite','/api/tracking/point',
+  '/api/tracking/heartbeat','/api/tracking/invite','/api/tracking/point','/api/tracking/points',
   '/api/tracking/register-request','/api/tracking/register-status',
   '/api/tracking/session/start','/api/tracking/session/stop','/api/tracking/test-invite',
   '/api/tracking/test/point','/api/tracking/test/start','/api/tracking/test/status'
@@ -748,15 +748,70 @@ function trackingBearer(req){
   const m=String(req.headers.authorization||'').match(/^Bearer\s+(.+)$/i);
   return m?m[1].trim():'';
 }
+// Um aparelho "vivo" é o que deu sinal nos últimos 10 minutos DEPOIS de ter sido criado.
+// A aprovação grava last_seen_at igual a enrolled_at (mesma transação), então last_seen_at
+// maior que enrolled_at é a prova de que o celular conectou de verdade pelo menos uma vez.
+const TRACKING_SIBLING_ALIVE_SQL=`
+  SELECT 1 FROM driver_tracking_devices o
+  WHERE o.active=TRUE AND o.id<>$1
+    AND lower(trim(o.driver_name))=lower(trim($2))
+    AND upper(trim(COALESCE(o.vehicle_plate,'')))=upper(trim(COALESCE($3,'')))
+    AND o.last_seen_at>=NOW()-INTERVAL '10 minutes'
+    AND o.last_seen_at>o.enrolled_at`;
 async function trackingDeviceFromReq(req){
   const token=trackingBearer(req);
   if(!token){const e=new Error('Dispositivo não autenticado.');e.status=401;throw e}
   const q=await pool.query(
-    "SELECT id::text AS id, driver_name, vehicle_plate, active FROM driver_tracking_devices WHERE token_hash=$1 AND active=TRUE LIMIT 1",
+    "SELECT id::text AS id, driver_name, vehicle_plate, active, enrolled_at FROM driver_tracking_devices WHERE token_hash=$1 LIMIT 1",
     [dashboardTokenHash(token)]
   );
   if(!q.rowCount){const e=new Error('Dispositivo não autorizado.');e.status=401;throw e}
-  return q.rows[0]
+  const dev=q.rows[0];
+  if(!dev.active){
+    // O aparelho só fica inativo quando outra aprovação do mesmo motorista/placa o substitui.
+    // Se o substituto nunca conectou (pedido antigo aprovado por engano, celular que não
+    // buscou a nova credencial), este aparelho volta a valer sozinho em vez de ficar mudo.
+    const sib=await pool.query(TRACKING_SIBLING_ALIVE_SQL+' LIMIT 1',[dev.id,dev.driver_name,dev.vehicle_plate||'']);
+    if(sib.rowCount){const e=new Error('Dispositivo substituído por outro aparelho.');e.status=401;throw e}
+    await pool.query('UPDATE driver_tracking_devices SET active=TRUE,reactivated_at=NOW() WHERE id=$1',[dev.id]);
+    dev.active=true;
+    console.log('TRACKING AUTO-REATIVACAO: '+JSON.stringify({deviceId:dev.id,driver:dev.driver_name,plate:dev.vehicle_plate||''}));
+  }
+  return dev
+}
+// Quando dois aparelhos do mesmo motorista/placa estão ativos e vivos, vale o mais novo.
+async function trackingYieldToNewerDevice(dev){
+  const newer=await pool.query(TRACKING_SIBLING_ALIVE_SQL+' AND o.enrolled_at>$4 LIMIT 1',[dev.id,dev.driver_name,dev.vehicle_plate||'',dev.enrolled_at]);
+  if(!newer.rowCount)return false;
+  await pool.query('UPDATE driver_tracking_devices SET active=FALSE WHERE id=$1',[dev.id]);
+  return true
+}
+function trackingCleanHealth(h){
+  if(!h||typeof h!=='object'||Array.isArray(h))return null;
+  const out={};
+  const bool=k=>{if(typeof h[k]==='boolean')out[k]=h[k]};
+  const num=(k,min,max)=>{const v=Number(h[k]);if(h[k]!==null&&h[k]!==undefined&&h[k]!==''&&Number.isFinite(v)&&v>=min&&v<=max)out[k]=v};
+  const str=(k,n)=>{if(typeof h[k]==='string'&&h[k].trim())out[k]=h[k].trim().slice(0,n)};
+  ['perm_location','perm_background','perm_notifications','battery_unrestricted','gps_on','charging','power_save','tracking','exact_alarms'].forEach(bool);
+  num('battery_pct',0,100);num('last_fix_age_s',0,864000);num('queued_points',0,100000);num('restarts',0,1000000);num('android_sdk',1,200);num('version_code',0,1000000);
+  str('net',16);str('last_error',160);
+  return Object.keys(out).length?out:null
+}
+function trackingPhoneDigits(v){
+  let d=String(v||'').replace(/\D/g,'');
+  if(d.startsWith('0'))d=d.replace(/^0+/,'');
+  if(d.length===10||d.length===11)d='55'+d;
+  return d.length>=12&&d.length<=13?d:''
+}
+function trackingContactKey(v){
+  return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim()
+}
+function trackingLatestApp(){
+  try{
+    const item=(JSON.parse(fs.readFileSync(DRIVER_UPDATE_FILE,'utf8'))||{}).normal||{};
+    const code=Number(item.versionCode||0);
+    return code>0?{latest_version_code:code,latest_version_name:String(item.versionName||''),apk_url:DRIVER_PUBLIC_BASE+String(item.url||'')}:{}
+  }catch(e){return {}}
 }
 function trackingCode(){
   return String(Math.floor(100000+Math.random()*900000))
@@ -1174,6 +1229,21 @@ async function start() {
     )
   `);
   await pool.query('CREATE INDEX IF NOT EXISTS idx_tracking_devices_driver ON driver_tracking_devices (lower(driver_name))');
+  // Diagnóstico enviado pelo próprio aplicativo (versão, permissões, GPS, bateria) e
+  // registro de quando um aparelho substituído voltou a valer sozinho.
+  await pool.query("ALTER TABLE driver_tracking_devices ADD COLUMN IF NOT EXISTS app_version TEXT");
+  await pool.query("ALTER TABLE driver_tracking_devices ADD COLUMN IF NOT EXISTS health JSONB");
+  await pool.query("ALTER TABLE driver_tracking_devices ADD COLUMN IF NOT EXISTS health_at TIMESTAMPTZ");
+  await pool.query("ALTER TABLE driver_tracking_devices ADD COLUMN IF NOT EXISTS reactivated_at TIMESTAMPTZ");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS driver_tracking_contacts (
+      driver_key TEXT PRIMARY KEY,
+      driver_name TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by BIGINT
+    )
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS driver_tracking_requests (
       id BIGSERIAL PRIMARY KEY,
@@ -1216,6 +1286,7 @@ async function start() {
       FROM driver_tracking_devices
       WHERE active=TRUE
         AND enrolled_at >= NOW()-INTERVAL '1 day'
+        AND last_seen_at > enrolled_at
       ORDER BY lower(trim(driver_name)), upper(trim(COALESCE(vehicle_plate,''))), enrolled_at DESC, id DESC
     ) latest ON latest.id=d.id
     WHERE NOT EXISTS (
@@ -3447,24 +3518,25 @@ async function start() {
       if (req.method === 'POST' && u.pathname === '/api/tracking/heartbeat') {
         try {
           const device=await trackingDeviceFromReq(req);
+          if(await trackingYieldToNewerDevice(device))return sendJson(res,401,{ok:false,error:'Dispositivo substituído por outro aparelho.'});
           const body=await readJsonBodyLimited(req,16*1024);
-          const sessionId=String(body.session_id||'').trim();
-          let effectiveSessionId=sessionId;
-          if(sessionId){
-            const sess=await pool.query("SELECT id::text AS id FROM driver_tracking_sessions WHERE id::text=$1 AND device_id=$2 AND status='active' LIMIT 1",[sessionId,device.id]);
-            if(!sess.rowCount){
-              const active=await pool.query("SELECT id::text AS id FROM driver_tracking_sessions WHERE device_id=$1 AND status='active' ORDER BY started_at DESC LIMIT 1",[device.id]);
-              effectiveSessionId=active.rows[0]?.id||'';
-              if(!effectiveSessionId)return sendJson(res,409,{ok:false,error:'Sessão de rota não está ativa.'});
-            }
-          }else{
-            effectiveSessionId=await trackingEnsureTodaySession(device.id);
-          }
-          if(!effectiveSessionId&&!sessionId){
-            effectiveSessionId=await trackingEnsureTodaySession(device.id);
-          }
-          await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
-          return sendJson(res,200,{ok:true,session_id:effectiveSessionId||null,server_time:new Date().toISOString()})
+          const health=trackingCleanHealth(body.health);
+          const appVersion=typeof body.app_version==='string'?body.app_version.trim().slice(0,40):'';
+          // A sessão válida é sempre a de HOJE (abre ou reaproveita). O sinal de vida é registrado
+          // de qualquer forma: antes, uma sessão vencida fazia o servidor recusar o aviso e o
+          // motorista aparecia como "sem sinal" mesmo com o aplicativo funcionando; e uma sessão
+          // de ontem ainda aberta continuava recebendo as posições de hoje.
+          const effectiveSessionId=await trackingEnsureTodaySession(device.id);
+          await pool.query(
+            `UPDATE driver_tracking_devices
+             SET last_seen_at=NOW(),
+                 app_version=COALESCE(NULLIF($2,''),app_version),
+                 health=COALESCE($3::jsonb,health),
+                 health_at=CASE WHEN $3::jsonb IS NULL THEN health_at ELSE NOW() END
+             WHERE id=$1`,
+            [device.id,appVersion,health?JSON.stringify(health):null]
+          );
+          return sendJson(res,200,{ok:true,session_id:effectiveSessionId||null,server_time:new Date().toISOString(),...trackingLatestApp()})
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao confirmar comunicação do dispositivo.'})}
       }
 
@@ -3483,13 +3555,17 @@ async function start() {
           if(!Number.isFinite(captured.getTime()))return sendJson(res,400,{ok:false,error:'Data/hora inválida.'});
           let effectiveSessionId=sessionId;
           if(sessionId){
-            const sess=await pool.query("SELECT id::text AS id FROM driver_tracking_sessions WHERE id::text=$1 AND device_id=$2 AND status='active' LIMIT 1",[sessionId,device.id]);
+            // Só vale sessão ativa e aberta HOJE; a de ontem é trocada pela de hoje logo abaixo.
+            const sess=await pool.query("SELECT id::text AS id FROM driver_tracking_sessions WHERE id::text=$1 AND device_id=$2 AND status='active' AND (started_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date LIMIT 1",[sessionId,device.id]);
             if(!sess.rowCount)effectiveSessionId='';
           }
           if(!effectiveSessionId){
             effectiveSessionId=await trackingEnsureTodaySession(device.id);
           }
-          if(!effectiveSessionId)return sendJson(res,409,{ok:false,error:'Sessão de rota foi encerrada hoje. Inicie uma nova rota para voltar ao mapa.'});
+          if(!effectiveSessionId){
+            await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
+            return sendJson(res,409,{ok:false,error:'Sessão de rota foi encerrada hoje. Inicie uma nova rota para voltar ao mapa.'});
+          }
           await pool.query(
             "INSERT INTO driver_tracking_points(session_id,device_id,latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
             [effectiveSessionId,device.id,lat,lon,Number.isFinite(Number(body.accuracy_m))?Number(body.accuracy_m):null,Number.isFinite(Number(body.speed_mps))?Number(body.speed_mps):null,Number.isFinite(Number(body.bearing_deg))?Number(body.bearing_deg):null,Number.isFinite(Number(body.battery_pct))?Number(body.battery_pct):null,captured.toISOString()]
@@ -3499,12 +3575,89 @@ async function start() {
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao registrar posição.'})}
       }
 
+      if (req.method === 'POST' && u.pathname === '/api/tracking/points') {
+        try {
+          const device=await trackingDeviceFromReq(req);
+          const body=await readJsonBodyLimited(req,512*1024);
+          const list=(Array.isArray(body.points)?body.points:[]).slice(0,300);
+          if(!list.length)return sendJson(res,400,{ok:false,error:'Nenhuma posição enviada.'});
+          const sessionId=await trackingEnsureTodaySession(device.id);
+          if(!sessionId){
+            await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
+            return sendJson(res,409,{ok:false,error:'Sessão de rota foi encerrada hoje.'});
+          }
+          let saved=0,ignored=0;
+          const now=Date.now();
+          for(const p of list){
+            const lat=Number(p&&p.latitude),lon=Number(p&&p.longitude),captured=new Date(p&&p.captured_at);
+            const t=captured.getTime();
+            // Só entra o que é do período recente: a fila serve para cobrir trechos sem internet,
+            // não para regravar dias anteriores.
+            if(!Number.isFinite(lat)||!Number.isFinite(lon)||!Number.isFinite(t)||t>now+5*60*1000||t<now-18*3600*1000||!trackingPointPlausible(lat,lon)){ignored++;continue}
+            const n=k=>Number.isFinite(Number(p[k]))&&p[k]!==null&&p[k]!==''?Number(p[k]):null;
+            const r=await pool.query(
+              `INSERT INTO driver_tracking_points(session_id,device_id,latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at)
+               SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::timestamptz
+               WHERE NOT EXISTS (SELECT 1 FROM driver_tracking_points WHERE device_id=$2 AND captured_at=$9::timestamptz)`,
+              [sessionId,device.id,lat,lon,n('accuracy_m'),n('speed_mps'),n('bearing_deg'),n('battery_pct'),captured.toISOString()]
+            );
+            if(r.rowCount)saved++;else ignored++;
+          }
+          await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
+          return sendJson(res,200,{ok:true,session_id:sessionId,saved,ignored})
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao registrar posições.'})}
+      }
+
+      if (req.method === 'GET' && u.pathname === '/api/painel/tracking/contacts') {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const q=await pool.query('SELECT driver_key,driver_name,phone,updated_at FROM driver_tracking_contacts ORDER BY driver_name LIMIT 1000');
+          return sendJson(res,200,{ok:true,rows:q.rows});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar telefones.'})}
+      }
+
+      if (req.method === 'PUT' && u.pathname === '/api/painel/tracking/contacts') {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const body=await readJsonBodyLimited(req,16*1024);
+          const driver=String(body.driver_name||'').trim().replace(/\s+/g,' ').slice(0,120),key=trackingContactKey(driver);
+          if(key.length<2)return sendJson(res,400,{ok:false,error:'Motorista inválido.'});
+          const raw=String(body.phone||'').trim();
+          if(!raw){
+            await pool.query('DELETE FROM driver_tracking_contacts WHERE driver_key=$1',[key]);
+            return sendJson(res,200,{ok:true,driver_key:key,phone:''});
+          }
+          const phone=trackingPhoneDigits(raw);
+          if(!phone)return sendJson(res,400,{ok:false,error:'Telefone inválido. Informe DDD + número, por exemplo 19 99999-9999.'});
+          await pool.query(
+            `INSERT INTO driver_tracking_contacts(driver_key,driver_name,phone,updated_by) VALUES($1,$2,$3,$4)
+             ON CONFLICT (driver_key) DO UPDATE SET driver_name=EXCLUDED.driver_name,phone=EXCLUDED.phone,updated_at=NOW(),updated_by=EXCLUDED.updated_by`,
+            [key,driver,phone,user.id]
+          );
+          return sendJson(res,200,{ok:true,driver_key:key,phone});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao salvar telefone.'})}
+      }
+
       if (req.method === 'GET' && u.pathname === '/api/painel/tracking/requests') {
         try {
           const user=await dashboardSession(req,false);
           if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
           const q=await pool.query(`
-            SELECT id::text AS id,driver_name,vehicle_plate,device_name,status,created_at,decided_at
+            SELECT x.id::text AS id,x.driver_name,x.vehicle_plate,x.device_name,x.status,x.created_at,x.decided_at,
+                   (x.status='approved' AND d.id IS NOT NULL AND d.last_seen_at<=d.enrolled_at) AS never_connected,
+                   EXISTS(
+                     SELECT 1 FROM driver_tracking_devices l
+                     WHERE l.active=TRUE
+                       AND l.last_seen_at>=NOW()-INTERVAL '10 minutes'
+                       AND l.last_seen_at>l.enrolled_at
+                       AND l.id IS DISTINCT FROM x.approved_device_id
+                       AND (
+                         (COALESCE(x.vehicle_plate,'')<>'' AND upper(trim(COALESCE(l.vehicle_plate,'')))=upper(trim(x.vehicle_plate)))
+                         OR lower(trim(l.driver_name))=lower(trim(x.driver_name))
+                       )
+                   ) AS has_live_device
             FROM (
               SELECT r.*,
                      ROW_NUMBER() OVER (
@@ -3512,11 +3665,13 @@ async function start() {
                        ORDER BY created_at DESC,id DESC
                      ) AS rn
               FROM driver_tracking_requests r
-              WHERE status='pending'
-                 OR (created_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
             ) x
-            WHERE rn=1
-            ORDER BY (status='pending') DESC,created_at DESC
+            LEFT JOIN driver_tracking_devices d ON d.id=x.approved_device_id
+            WHERE x.rn=1
+              AND (x.status='pending'
+                   OR (x.created_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+                   OR (x.decided_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date)
+            ORDER BY (x.status='pending') DESC,x.created_at DESC
             LIMIT 100
           `);
           return sendJson(res,200,{ok:true,rows:q.rows});
@@ -3536,22 +3691,24 @@ async function start() {
             const row=rq.rows[0];
             if(row.status==='approved'){await client.query('COMMIT');return sendJson(res,200,{ok:true,status:'approved'})}
             const token=crypto.randomBytes(32).toString('hex');
+            // Aparelhos anteriores do mesmo motorista/placa que estão PARADOS são desativados.
+            // Quem está enviando sinal agora continua valendo: se o novo aparelho conectar de
+            // verdade, o antigo cede a vez sozinho no próximo sinal (trackingYieldToNewerDevice).
             await client.query(
               `UPDATE driver_tracking_devices
                SET active=FALSE
                WHERE active=TRUE
                  AND lower(trim(driver_name))=lower(trim($1))
-                 AND upper(trim(COALESCE(vehicle_plate,'')))=upper(trim(COALESCE($2,'')))`,
+                 AND upper(trim(COALESCE(vehicle_plate,'')))=upper(trim(COALESCE($2,'')))
+                 AND COALESCE(last_seen_at,enrolled_at)<NOW()-INTERVAL '10 minutes'`,
               [row.driver_name,row.vehicle_plate||'']
             );
             const dev=await client.query(
               "INSERT INTO driver_tracking_devices(token_hash,driver_name,vehicle_plate,device_name,last_seen_at) VALUES($1,$2,$3,$4,NOW()) RETURNING id::text AS id",
               [dashboardTokenHash(token),row.driver_name,row.vehicle_plate||'',row.device_name||'Android']
             );
-            await client.query(
-              "INSERT INTO driver_tracking_sessions(device_id,status) VALUES($1,'active')",
-              [dev.rows[0].id]
-            );
+            // A sessão do dia nasce no primeiro sinal do aplicativo (trackingEnsureTodaySession).
+            // Criá-la aqui fazia o motorista aparecer "Em rota" sem o celular ter conectado.
             await client.query(
               "UPDATE driver_tracking_requests SET status='approved',issued_token=$1,approved_device_id=$2,decided_at=NOW(),decided_by=$3 WHERE id=$4",
               [token,dev.rows[0].id,user.id,id]
@@ -3750,12 +3907,14 @@ async function start() {
           const light=String(u.searchParams.get('light')||'')==='1';
           const q=await pool.query(light?`
             SELECT d.id::text AS device_id,d.driver_name,d.vehicle_plate,d.device_name,d.last_seen_at,
+                   d.enrolled_at,d.app_version,d.health,d.health_at,
+                   (d.last_seen_at IS NULL OR d.last_seen_at<=d.enrolled_at) AS never_connected,
                    s.id::text AS session_id,s.started_at,s.ended_at,s.status AS session_status,
                    p.latitude,p.longitude,p.accuracy_m,p.speed_mps,p.bearing_deg,p.battery_pct,p.captured_at,
                    '[]'::json AS trail,
                    EXTRACT(EPOCH FROM (NOW()-p.captured_at))::int AS age_seconds,
                    EXTRACT(EPOCH FROM (NOW()-d.last_seen_at))::int AS device_age_seconds,
-                   (p.captured_at IS NOT NULL OR d.last_seen_at >= NOW()-INTERVAL '5 minutes') AS map_active
+                   (p.captured_at IS NOT NULL OR (d.last_seen_at >= NOW()-INTERVAL '5 minutes' AND d.last_seen_at>d.enrolled_at)) AS map_active
             FROM driver_tracking_devices d
             LEFT JOIN LATERAL (
               SELECT id,started_at,ended_at,status FROM driver_tracking_sessions
@@ -3778,12 +3937,14 @@ async function start() {
             LIMIT 300
           `:`
             SELECT d.id::text AS device_id,d.driver_name,d.vehicle_plate,d.device_name,d.last_seen_at,
+                   d.enrolled_at,d.app_version,d.health,d.health_at,
+                   (d.last_seen_at IS NULL OR d.last_seen_at<=d.enrolled_at) AS never_connected,
                    s.id::text AS session_id,s.started_at,s.ended_at,s.status AS session_status,
                    p.latitude,p.longitude,p.accuracy_m,p.speed_mps,p.bearing_deg,p.battery_pct,p.captured_at,
                    COALESCE(t.trail,'[]'::json) AS trail,
                    EXTRACT(EPOCH FROM (NOW()-p.captured_at))::int AS age_seconds,
                    EXTRACT(EPOCH FROM (NOW()-d.last_seen_at))::int AS device_age_seconds,
-                   (p.captured_at IS NOT NULL OR d.last_seen_at >= NOW()-INTERVAL '5 minutes') AS map_active
+                   (p.captured_at IS NOT NULL OR (d.last_seen_at >= NOW()-INTERVAL '5 minutes' AND d.last_seen_at>d.enrolled_at)) AS map_active
             FROM driver_tracking_devices d
             LEFT JOIN LATERAL (
               SELECT id,started_at,ended_at,status FROM driver_tracking_sessions
