@@ -3544,6 +3544,32 @@ async function trackingLoadContacts(force=false){
     }
   }catch(e){}
 }
+let TRACKING_APP_VERSIONS={normal:null,teste:null,at:0};
+async function trackingLoadAppVersions(){
+  if(TRACKING_APP_VERSIONS.at&&Date.now()-TRACKING_APP_VERSIONS.at<300000)return;
+  try{
+    const get=async canal=>{
+      const r=await fetch('/api/tracking/app-update?channel='+canal+'&version_code=0&t='+Date.now(),{cache:'no-store'});
+      const j=await r.json().catch(()=>({}));
+      return r.ok&&j.ok&&Number(j.latestVersionCode)>0?{code:Number(j.latestVersionCode),name:String(j.latestVersionName||'').replace(/-teste$/,'')}:null
+    };
+    const [normal,teste]=await Promise.all([get('normal'),get('teste')]);
+    TRACKING_APP_VERSIONS={normal,teste,at:Date.now()}
+  }catch(e){}
+}
+// Há uma versão mais nova publicada só para teste?
+function trackingTestVersion(){
+  const v=TRACKING_APP_VERSIONS;
+  return v.teste&&(!v.normal||v.teste.code>v.normal.code)?v.teste:null
+}
+function trackingInstallMessage(item,canal){
+  const name=trackingFirstName(item.r.driver_name),base=location.origin+'/motorista-instalar';
+  if(canal==='teste'){
+    const v=trackingTestVersion();
+    return 'Olá, '+name+'! Aqui é da CONSTRULOG.\n\nSaiu uma versão nova do aplicativo *CONSTRULOG Motorista*'+(v?' ('+v.name+')':'')+'.\n\n1. Desinstale o aplicativo CONSTRULOG Motorista que está no celular.\n2. Abra este link, baixe e instale:\n'+base+'?canal=teste\n3. Abra o aplicativo, informe seu nome e a placa e toque em *Permitir* nas perguntas. Na de localização, escolha *Permitir o tempo todo*.\n\nDepois disso não precisa mais abrir o aplicativo. Obrigado!'
+  }
+  return 'Olá, '+name+'! Aqui é da CONSTRULOG.\n\nInstale o aplicativo *CONSTRULOG Motorista* por este link:\n'+base+'\n\nDepois de instalar, abra o aplicativo e informe seu nome e a placa do veículo. É só na primeira vez. Se o aplicativo já estiver instalado, basta abri-lo.\n\nObrigado!'
+}
 function trackingWhen(v){
   const d=new Date(v);if(!v||!Number.isFinite(d.getTime()))return'';
   const day=x=>x.toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
@@ -3686,7 +3712,10 @@ function renderTrackingBoard(rows,extraRows){
     if(d.action==='invite')actions.push('<button type="button" class="tb-btn wa" data-tb-act="invite" data-tb-i="'+i+'">💬 Enviar link do aplicativo</button>');
     if(d.action==='map'||(trackingHasPosition(r)&&d.action!=='map'))actions.push('<button type="button" class="tb-btn" data-tb-act="map" data-tb-i="'+i+'">🗺️ Ver no mapa</button>');
     const told=notified[it.key]?'<div class="tb-sub">Avisado às '+safe(notified[it.key])+'</div>':'';
-    return '<tr class="tb-'+safe(d.level)+'"><td><div class="tb-name">'+safe(r.driver_name||'—')+'</div><div class="tb-sub">'+safe(sub)+'</div>'+phoneHtml+'</td>'+
+    const tv=trackingTestVersion();
+    const linkBtns=r.test_only?'':'<button type="button" class="tb-btn tb-mini" title="Enviar o link de instalação do aplicativo pelo WhatsApp" data-tb-act="link" data-tb-i="'+i+'">🔗 Enviar link</button>'+
+      (tv?'<button type="button" class="tb-btn tb-mini" title="Enviar o link da versão nova, ainda em teste" data-tb-act="link-teste" data-tb-i="'+i+'">🧪 Link da versão nova'+(tv.name?' '+safe(tv.name):'')+'</button>':'');
+    return '<tr class="tb-'+safe(d.level)+'"><td><div class="tb-namerow"><span class="tb-name">'+safe(r.driver_name||'—')+'</span>'+linkBtns+'</div><div class="tb-sub">'+safe(sub)+'</div>'+phoneHtml+'</td>'+
       '<td><div class="tb-title '+safe(d.level)+'">'+safe(d.title)+'</div><div class="tb-detail">'+safe(d.detail||'')+'</div></td>'+
       '<td><div class="tb-actions">'+(actions.join('')||'<span class="muted">Nada a fazer</span>')+'</div>'+told+'</td></tr>'
   }).join('');
@@ -3725,6 +3754,12 @@ async function trackingBoardClick(e){
   if(act==='phone-edit'){TRACKING_CONTACT_EDIT={key:ckey,value:phone?trackingPhoneLabel(phone):''};trackingBoardRerender();return}
   if(act==='phone-cancel'){TRACKING_CONTACT_EDIT=null;trackingBoardRerender();return}
   if(act==='phone-save'){b.disabled=true;await trackingBoardSavePhone(item,String(TRACKING_CONTACT_EDIT?.value||''));return}
+  if(act==='link'||act==='link-teste'){
+    const canal=act==='link-teste'?'teste':'normal';
+    window.open('https://wa.me/'+phone+'?text='+encodeURIComponent(trackingInstallMessage(item,canal)),'_blank','noopener');
+    trackingBoardMsg((canal==='teste'?'Link da versão nova':'Link do aplicativo')+(phone?' pronto no WhatsApp de '+item.r.driver_name+'. É só enviar.':' pronto. Escolha o contato do motorista no WhatsApp.'));
+    return
+  }
   if(act==='notify'){
     window.open('https://wa.me/'+phone+'?text='+encodeURIComponent(trackingNotifyMessage(item)),'_blank','noopener');
     trackingMarkNotified(item.key);
@@ -3914,7 +3949,7 @@ async function refreshTracking(){
         :'Não consegui ler os romaneios do dia agora (tentando de novo sozinho). Mostrando os celulares que deram sinal hoje.'
     }
     window.__trackingBoardRows=boardRows;
-    await trackingLoadContacts();
+    await Promise.all([trackingLoadContacts(),trackingLoadAppVersions()]);
     renderTrackingBoard(boardRows,[]);
     trackingRefreshLogicalAnalysis(mergedRows,today).catch(()=>{});
 
