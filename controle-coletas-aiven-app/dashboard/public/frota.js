@@ -75,7 +75,7 @@ function render(){
  q('#fleetKpiActive').textContent=db.vehicles.filter(x=>x.status==='Ativo').length;
  q('#fleetKpiFuel').textContent=money(fuelTotal);
  q('#fleetKpiMaint').textContent=money(maintTotal);
- q('#fleetKpiDocs').textContent=db.documents.filter(x=>x.expiry&&x.expiry<new Date().toISOString().slice(0,10)).length;
+ q('#fleetKpiDocs').textContent=db.documents.filter(x=>x.expiry&&x.expiry<new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'})).length;
  q('#fleetVehicleBody').innerHTML=db.vehicles.map(x=>'<tr><td>'+esc(x.plate)+'</td><td>'+esc(x.brand)+'</td><td>'+esc(x.model)+'</td><td>'+esc(x.type)+'</td><td>'+esc(x.km)+'</td><td>'+esc(x.driver)+'</td><td>'+esc(x.status)+'</td><td>'+rowDel('vehicles',x.id)+'</td></tr>').join('')||'<tr><td colspan="8" class="muted">Nenhum veículo cadastrado.</td></tr>';
  const vopt=opts(db.vehicles,'plate',x=>x.plate+' • '+x.model), popt=opts(db.people,'name',x=>x.name+' • '+x.role);
  ['#fleetFuelVehicle','#fleetMaintVehicle','#fleetTireVehicle','#fleetDocVehicle','#fleetCheckVehicle'].forEach(s=>{if(q(s))q(s).innerHTML=vopt});

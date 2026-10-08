@@ -41,7 +41,32 @@ const MOVIT_CENTRAL_PAGE = path.join(__dirname, 'movit-central.html');
 const ACCOUNTS_INDEX = path.join(__dirname, '..', 'contas-a-pagar-v3', 'public', 'index.html');
 const DRIVER_DOWNLOADS = path.join(__dirname, 'downloads');
 const DRIVER_UPDATE_FILE = path.join(DRIVER_DOWNLOADS, 'update.json');
-const DRIVER_PUBLIC_BASE = 'https://controle-coletas-jr.onrender.com';
+// Endereço público usado em convites, links de rota e atualização do app.
+// No ambiente de teste, defina PUBLIC_BASE_URL para não gerar links da produção.
+const DRIVER_PUBLIC_BASE = String(process.env.PUBLIC_BASE_URL || 'https://controle-coletas-jr.onrender.com').replace(/\/+$/, '');
+
+// Modo teste: TEST_MODE=1 desliga importações e sondas que falam com sistemas reais.
+const TEST_MODE = /^(1|true|sim|yes)$/i.test(String(process.env.TEST_MODE || '').trim());
+if (TEST_MODE) {
+  // Trava de segurança: o teste nunca pode ligar no banco de produção por engano.
+  let dbName = '';
+  try { dbName = decodeURIComponent(new URL(process.env.DATABASE_URL || '').pathname.replace(/^\//, '')); } catch {}
+  if (!/test/i.test(dbName)) {
+    console.error('TEST_MODE ativo, mas o nome do banco ("' + dbName + '") não contém "teste". Inicialização recusada.');
+    process.exit(1);
+  }
+  console.log('*** AMBIENTE DE TESTE (TEST_MODE) *** banco: ' + dbName);
+}
+
+// Chave interna, nova a cada inicialização, conhecida só por este processo e pelo
+// dashboard que ele inicia. Identifica as chamadas servidor-a-servidor do dashboard.
+const INTERNAL_KEY = crypto.randomBytes(32).toString('hex');
+
+// "Hoje" no fuso de São Paulo (AAAA-MM-DD). Nunca usar toISOString() para isso:
+// em UTC o dia vira às 21h de Brasília.
+function spToday(d = new Date()) {
+  return d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+}
 
 const DASH_INTERNAL_PORT = Number(process.env.DASH_INTERNAL_PORT || 10001);
 const DASH_INTERNAL_HOST = '127.0.0.1';
@@ -54,7 +79,18 @@ const DASH_API_PREFIXES = [
   '/api/carregamentos-count','/api/carregamentos-finais','/api/coletas/status',
   '/api/lotacao'
 ];
+// Rotas de rastreio atendidas AQUI: são as que o app do motorista e as páginas de teste usam,
+// com token do aparelho ou sem login. Precisam ficar fora do repasse ao dashboard: ele exige
+// login de usuário e respondia 401 "Não autenticado" ao aplicativo (GPS parado).
+const LOCAL_TRACKING_PATHS = new Set([
+  '/api/tracking/app-update','/api/tracking/assignment/current','/api/tracking/enroll',
+  '/api/tracking/heartbeat','/api/tracking/invite','/api/tracking/point',
+  '/api/tracking/register-request','/api/tracking/register-status',
+  '/api/tracking/session/start','/api/tracking/session/stop','/api/tracking/test-invite',
+  '/api/tracking/test/point','/api/tracking/test/start','/api/tracking/test/status'
+]);
 function isDashboardApiPath(pathname){
+  if(LOCAL_TRACKING_PATHS.has(pathname))return false;
   return DASH_API_PREFIXES.some(p=>pathname===p||pathname.startsWith(p));
 }
 function proxyDashboard(req,res,targetPath){
@@ -85,7 +121,8 @@ function startUnifiedDashboardChild(){
     env:{
       ...process.env,
       PORT:String(DASH_INTERNAL_PORT),
-      COLETAS_PORTAL_URL:'http://127.0.0.1:'+String(PORT)
+      COLETAS_PORTAL_URL:'http://127.0.0.1:'+String(PORT),
+      DASH_INTERNAL_KEY:INTERNAL_KEY
     },
     stdio:['ignore','inherit','inherit']
   });
@@ -101,6 +138,11 @@ function sendHtml(res, file) {
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store'
   });
+  if (TEST_MODE) {
+    // Faixa fixa para ninguém confundir o teste com a produção.
+    const banner = '<div style="position:sticky;top:0;z-index:99999;background:#b45309;color:#fff;font:600 13px Segoe UI,Arial,sans-serif;text-align:center;padding:6px 10px">AMBIENTE DE TESTE — dados fictícios, integrações desligadas</div>';
+    return res.end(fs.readFileSync(file, 'utf8').replace(/<body([^>]*)>/i, m => m + banner));
+  }
   res.end(fs.readFileSync(file));
 }
 
@@ -668,6 +710,18 @@ async function dashboardSession(req, adminOnly=false) {
   const row=r.rows[0];
   if(adminOnly&&!row.is_admin){const e=new Error('Acesso exclusivo do administrador.');e.status=403;throw e}
   return dashboardUserContext(row);
+}
+// Chamada interna do dashboard (mesma máquina), identificada pela chave gerada na inicialização.
+function isInternalCall(req){
+  const given=Buffer.from(String(req.headers['x-internal-key']||''));
+  const expected=Buffer.from(INTERNAL_KEY);
+  return given.length===expected.length&&crypto.timingSafeEqual(given,expected);
+}
+// Aceita sessão de usuário OU chamada interna do dashboard. Sem nenhuma das duas: 401.
+// O dashboard já conferiu a permissão do usuário antes de fazer a chamada interna.
+async function sessionOrInternal(req){
+  if(isInternalCall(req))return {id:null,username:'(dashboard interno)',is_admin:true,active:true,permissions:['*'],client_id:null,is_platform_admin:false,client:null,client_modules:[],internal:true};
+  return dashboardSession(req,false);
 }
 async function dashboardPlatformSession(req){
   const user=await dashboardSession(req,true);
@@ -1307,7 +1361,9 @@ async function start() {
       console.log('Administrador inicial do dashboard criado: '+adminUser);
     }
   }
-  await migrateLegacyBillsIfNeeded();
+  // No modo teste não importa nada do sistema antigo (traria contas reais para o banco de teste).
+  if (!TEST_MODE) await migrateLegacyBillsIfNeeded();
+  else console.log('TEST_MODE: importação do sistema antigo de contas desativada.');
   startUnifiedDashboardChild();
   
 
@@ -1421,7 +1477,7 @@ async function start() {
           await pool.query("INSERT INTO router_shared_routes(share_token,title,driver_name,event_date,route_data) VALUES($1,$2,$3,$4::date,$5::jsonb)",[
             token,title,driver,eventDate||null,JSON.stringify(routeData)
           ]);
-          const base='https://controle-coletas-jr.onrender.com';
+          const base=DRIVER_PUBLIC_BASE;
           return sendJson(res,201,{ok:true,token,title,shareUrl:base+'/movit/rota/'+token,appUrl:'movit://route/'+token})
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao compartilhar rota.'})}
       }
@@ -2436,7 +2492,7 @@ async function start() {
           const c=cq.rows[0];
           let ref=String(body.reference_month||'').trim();
           if(!/^\d{4}-\d{2}$/.test(ref)){
-            const now=new Date();ref=now.getUTCFullYear()+'-'+String(now.getUTCMonth()+1).padStart(2,'0');
+            ref=spToday().slice(0,7);
           }
           const refDate=ref+'-01';
           const [yy,mm]=ref.split('-').map(Number);
@@ -2470,7 +2526,7 @@ async function start() {
       if (req.method === 'POST' && u.pathname === '/api/movit-central/payments/recalculate-overdue') {
         try{
           await dashboardPlatformSession(req);
-          const q=await pool.query("UPDATE movit_payments SET status='overdue',updated_at=NOW() WHERE status='pending' AND due_date<CURRENT_DATE RETURNING id");
+          const q=await pool.query("UPDATE movit_payments SET status='overdue',updated_at=NOW() WHERE status='pending' AND due_date<(NOW() AT TIME ZONE 'America/Sao_Paulo')::date RETURNING id");
           return sendJson(res,200,{ok:true,updated:q.rowCount});
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao atualizar vencimentos.'})}
       }
@@ -2945,7 +3001,7 @@ async function start() {
 
       if (req.method === 'GET' && u.pathname === '/api/painel/motoristas-veiculos') {
         try {
-          const user=await dashboardSession(req,false);
+          const user=await sessionOrInternal(req);
           const r = user.client_id ? await pool.query(`
             SELECT DISTINCT ON (upper(trim(placa)))
               upper(trim(placa)) AS placa,
@@ -3079,6 +3135,7 @@ async function start() {
 
       if (req.method === 'GET' && u.pathname === '/api/painel/coletas-status-resumo') {
         try {
+          await sessionOrInternal(req);
           const from = String(u.searchParams.get('from') || '').trim();
           const to = String(u.searchParams.get('to') || '').trim();
           const params = [];
@@ -3100,7 +3157,7 @@ async function start() {
           row.pendentes = Number(row.programadas || 0) + Number(row.carregando || 0) + Number(row.em_transito || 0);
           return sendJson(res, 200, { ok: true, from: from || null, to: to || null, ...row });
         } catch (e) {
-          return sendJson(res, 500, { ok: false, error: e.message || 'Não foi possível resumir as coletas.' });
+          return sendJson(res, e.status || 500, { ok: false, error: e.message || 'Não foi possível resumir as coletas.' });
         }
       }
 
@@ -3335,8 +3392,25 @@ async function start() {
           "SELECT id::text AS id,status FROM driver_tracking_sessions WHERE device_id=$1 AND (started_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date ORDER BY started_at DESC LIMIT 1",
           [deviceId]
         );
-        // Se a rota foi encerrada explicitamente hoje, não reabre automaticamente.
-        if(today.rowCount&&today.rows[0].status==='ended')return '';
+        // Se a rota foi encerrada hoje, só reabre quando existe um romaneio ativo para
+        // este motorista/placa. O encerramento desativa a associação, então uma associação
+        // ativa aqui é sempre posterior a ele (novo romaneio no mesmo dia).
+        if(today.rowCount&&today.rows[0].status==='ended'){
+          const assigned=await pool.query(
+            `SELECT 1
+             FROM driver_tracking_assignments a
+             JOIN driver_tracking_devices d ON d.id=$1
+             WHERE a.active=TRUE
+               AND a.work_date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+               AND (
+                 (COALESCE(a.vehicle_plate,'')<>'' AND upper(trim(a.vehicle_plate))=upper(trim(COALESCE(d.vehicle_plate,''))))
+                 OR lower(trim(a.driver_name))=lower(trim(d.driver_name))
+               )
+             LIMIT 1`,
+            [deviceId]
+          );
+          if(!assigned.rowCount)return '';
+        }
         const q=await pool.query("INSERT INTO driver_tracking_sessions(device_id,status) VALUES($1,'active') RETURNING id::text AS id",[deviceId]);
         return q.rows[0]?.id||'';
       }
@@ -3515,7 +3589,7 @@ async function start() {
 
       if (req.method === 'POST' && u.pathname === '/api/painel/tracking/assignment') {
         try {
-          const user=await dashboardSession(req,false);
+          const user=await sessionOrInternal(req);
           if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
           const body=await readJsonBodyLimited(req,64*1024);
           const driver=String(body.driver_name||'').trim().replace(/\s+/g,' ').slice(0,120);
@@ -3535,14 +3609,18 @@ async function start() {
                    AND (upper(trim(COALESCE(vehicle_plate,'')))=upper(trim($2)) OR lower(trim(driver_name))=lower(trim($3)))`,
                 [workDate,plate,driver]
               );
-              await client.query(
-                `UPDATE driver_tracking_sessions s
-                 SET status='ended',ended_at=COALESCE(ended_at,NOW())
-                 FROM driver_tracking_devices d
-                 WHERE s.device_id=d.id AND s.status='active'
-                   AND (upper(trim(COALESCE(d.vehicle_plate,'')))=upper(trim($1)) OR lower(trim(d.driver_name))=lower(trim($2)))`,
-                [plate,driver]
-              );
+              // Só encerra sessões de GPS quando o pedido é para HOJE. Um pedido referente a
+              // outra data (ex.: consulta de dia anterior) não pode derrubar o rastreio em curso.
+              if(workDate===spToday()){
+                await client.query(
+                  `UPDATE driver_tracking_sessions s
+                   SET status='ended',ended_at=COALESCE(ended_at,NOW())
+                   FROM driver_tracking_devices d
+                   WHERE s.device_id=d.id AND s.status='active'
+                     AND (upper(trim(COALESCE(d.vehicle_plate,'')))=upper(trim($1)) OR lower(trim(d.driver_name))=lower(trim($2)))`,
+                  [plate,driver]
+                );
+              }
               await client.query('COMMIT');
             }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
             console.log('TRACKING AUTO STOP: '+JSON.stringify({driver,plate,workDate,reason:String(body.reason||'rota_concluida')}));
@@ -3882,6 +3960,7 @@ async function start() {
 
       if (req.method === 'GET' && u.pathname === '/api/painel/nf-materiais') {
         try {
+          await sessionOrInternal(req);
           const special = String(u.searchParams.get('special') || '').trim() === '1';
           const limit = Math.max(1, Math.min(3000, Number(u.searchParams.get('limit') || 1500)));
           const where = special ? "WHERE classificacao <> 'normal'" : '';
@@ -3892,12 +3971,13 @@ async function start() {
           );
           return sendJson(res, 200, { ok: true, rows: qr.rows, count: qr.rows.length });
         } catch (e) {
-          return sendJson(res, 500, { ok: false, error: e.message || 'Não foi possível consultar a classificação das notas.' });
+          return sendJson(res, e.status || 500, { ok: false, error: e.message || 'Não foi possível consultar a classificação das notas.' });
         }
       }
 
       if (req.method === 'POST' && u.pathname === '/api/painel/nf-materiais/import') {
         try {
+          await sessionOrInternal(req);
           const body = await readJsonBodyLimited(req, 4 * 1024 * 1024);
           const rows = Array.isArray(body.rows) ? body.rows.slice(0, 1000) : [];
           if (!rows.length) return sendJson(res, 400, { ok: false, error: 'Nenhuma nota foi enviada para importação.' });
@@ -3938,6 +4018,7 @@ async function start() {
 
       if (req.method === 'GET' && u.pathname === '/api/painel/carregamentos-finais') {
         try {
+          await sessionOrInternal(req);
           const limit = Math.max(1, Math.min(100, Number(u.searchParams.get('limit') || 30)));
           const motorista = String(u.searchParams.get('motorista') || '').trim();
           const data = String(u.searchParams.get('data') || '').trim();
@@ -3975,13 +4056,14 @@ async function start() {
           const qr = await pool.query(sql, params);
           return sendJson(res, 200, { ok: true, motorista: motorista || null, data: data || null, tipo: tipo || null, rows: qr.rows });
         } catch (e) {
-          return sendJson(res, 500, { ok: false, error: e.message || 'Não foi possível carregar os registros de carga e descarga.' });
+          return sendJson(res, e.status || 500, { ok: false, error: e.message || 'Não foi possível carregar os registros de carga e descarga.' });
         }
       }
 
       const carregamentoFotoMatch = u.pathname.match(/^\/api\/painel\/carregamentos-finais\/(\d+)\/foto(?:\/(\d))?$/);
       if (req.method === 'GET' && carregamentoFotoMatch) {
         try {
+          await sessionOrInternal(req);
           const slot=Math.max(1,Math.min(4,Number(carregamentoFotoMatch[2]||1)));
           const photoCol=slot===1?'foto':'foto'+slot;
           const mimeCol=slot===1?'foto_mime':'foto'+slot+'_mime';
@@ -3998,13 +4080,14 @@ async function start() {
           });
           return res.end(row.foto);
         } catch (e) {
-          return sendJson(res, 500, { ok: false, error: e.message || 'Não foi possível carregar a foto.' });
+          return sendJson(res, e.status || 500, { ok: false, error: e.message || 'Não foi possível carregar a foto.' });
         }
       }
 
       const avariaFotoMatch = u.pathname.match(/^\/api\/painel\/carregamentos-finais\/(\d+)\/avaria\/(\d+)$/);
       if (req.method === 'GET' && avariaFotoMatch) {
         try {
+          await sessionOrInternal(req);
           const ordem=Math.max(1,Math.min(10,Number(avariaFotoMatch[2]||1)));
           const r=await pool.query(
             'SELECT foto, foto_mime FROM carregamentos_avarias WHERE carregamento_id=$1 AND ordem=$2 LIMIT 1',
@@ -4019,13 +4102,14 @@ async function start() {
           });
           return res.end(row.foto);
         } catch(e) {
-          return sendJson(res,500,{ok:false,error:e.message||'Não foi possível carregar a foto de avaria.'});
+          return sendJson(res,e.status||500,{ok:false,error:e.message||'Não foi possível carregar a foto de avaria.'});
         }
       }
 
       const carregamentoColetaDevMatch = u.pathname.match(/^\/api\/painel\/carregamentos-finais\/(\d+)\/coleta-devolucao$/);
       if (req.method === 'PATCH' && carregamentoColetaDevMatch) {
         try {
+          await sessionOrInternal(req);
           const body=await readJsonBodyLimited(req, 3 * 1024 * 1024);
           const conferente=String(body.conferente_coleta_devolucao||'').trim();
           const captured=new Date(body.capturada_em||Date.now());
@@ -4047,6 +4131,7 @@ async function start() {
 
       if (req.method === 'POST' && u.pathname === '/api/painel/carregamentos-finais') {
         try {
+          await sessionOrInternal(req);
           const body = await readJsonBodyLimited(req, 14 * 1024 * 1024);
           const tipo = String(body.tipo || 'carregamento').trim().toLowerCase();
           const conferente = String(body.conferente || '').trim();
@@ -4140,7 +4225,7 @@ async function start() {
         const body = await readJsonBody(req);
         const recebido = body.recebido === true || body.recebido === 'true' || body.recebido === 1 || body.recebido === '1';
         let dataRecebimento = body.data_recebimento ? String(body.data_recebimento).slice(0,10) : null;
-        if (recebido && !dataRecebimento) dataRecebimento = new Date().toISOString().slice(0,10);
+        if (recebido && !dataRecebimento) dataRecebimento = spToday();
         if (!recebido) dataRecebimento = null;
 
         const result = user.client_id ? await pool.query(
@@ -4191,7 +4276,7 @@ async function start() {
         return sendJson(res, 200, { ok: true, id: result.rows[0].id });
       }
 
-      if (u.pathname.startsWith('/api/') && !u.pathname.startsWith('/api/painel/')) {
+      if ((u.pathname.startsWith('/api/') && !u.pathname.startsWith('/api/painel/')) || u.pathname.startsWith('/coletas/api/')) {
         try {
           const user=await dashboardSession(req,false);
           const p=u.pathname;
@@ -4205,8 +4290,11 @@ async function start() {
       }
       return handler(req, res);
     } catch (e) {
+      if (e && Number(e.status) >= 400 && Number(e.status) < 500 && !res.headersSent) {
+        return sendJson(res, Number(e.status), { ok: false, error: e.message || 'Requisição não autorizada.' });
+      }
       console.error(e);
-      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('Erro interno');
     }
   }).listen(PORT, '0.0.0.0', () => {

@@ -6,6 +6,15 @@ try{
   if(fm){
     let html=zlib.gunzipSync(Buffer.from(fm[1],'base64')).toString('utf8');
 
+    // Datas no fuso de São Paulo: em UTC o dia (e o mês) viravam às 21h de Brasília.
+    {
+      const utcMonth="function currentMonth(){ return new Date().toISOString().slice(0,7); }";
+      const utcToday="function today(){ return new Date().toISOString().slice(0,10); }";
+      if(!html.includes(utcMonth)||!html.includes(utcToday))console.error('Ajuste de fuso do módulo de coletas: trecho original não encontrado.');
+      html=html.replace(utcMonth,"function currentMonth(){ return today().slice(0,7); }");
+      html=html.replace(utcToday,"function today(){ return new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}); }");
+    }
+
     html=html.replace(
       'Cliente *<input id="cliente" required placeholder="Nome do cliente" />',
       'Remetente *<input id="cliente" required placeholder="Nome do remetente" />'
@@ -14,12 +23,12 @@ try{
 
     html=html.replaceAll('Cliente / Entrega','Remetente / Endereço');
     html=html.replace(
-      '<td><span class="badge \${statusClass(c.status)}">\${esc(c.status||\\'Programada\\')}</span></td>',
-      '<td><button type="button" class="badge \${statusClass(c.status)}" style="border:0;cursor:pointer;font:inherit" title="Clique para alterar o status" onclick="editStatusInline(\${c.id},this)">\${esc(c.status||\\'Programada\\')}</button></td>'
+      '<td><span class="badge \${statusClass(c.status)}">\${esc(c.status||\'Programada\')}</span></td>',
+      '<td><button type="button" class="badge \${statusClass(c.status)}" style="border:0;cursor:pointer;font:inherit" title="Clique para alterar o status" onclick="editStatusInline(\${c.id},this)">\${esc(c.status||\'Programada\')}</button></td>'
     );
 
     html=html.replace(
-      "const statusClass = (s='') => s==='Entregue'?'entregue':s==='Em trânsito'?'transito':s==='Cancelada'?'cancelada':''; function toast",
+      "const statusClass = (s='') => s==='Entregue'?'entregue':s==='Em trânsito'?'transito':s==='Cancelada'?'cancelada':'';",
       "const statusClass = (s='') => s==='Entregue'?'entregue':s==='Em trânsito'?'transito':s==='Cancelada'?'cancelada':''; "+
       "window.editStatusInline=(id,el)=>{"+
       "if(!el||el.dataset.editing==='1')return;el.dataset.editing='1';"+
@@ -32,7 +41,7 @@ try{
       "let done=false;const restore=()=>{if(done)return;done=true;render();};"+
       "sel.addEventListener('change',async()=>{const novo=sel.value;sel.disabled=true;try{const r=await fetch('/api/painel/coletas-status/'+encodeURIComponent(id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:novo})});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Não foi possível atualizar o status.');c.status=novo;toast('Status atualizado: '+novo);render();}catch(e){alert(e.message);render();}});"+
       "sel.addEventListener('blur',()=>setTimeout(restore,120));"+
-      "}; function toast"
+      "};"
     );
 
     const mvStart='<div class="section-title">Motorista e veículo</div>\n      <div class="grid three">';
@@ -87,7 +96,9 @@ try{
 
 
     if(!html.includes('financeiro-recebimento-addon')){
-      const recebimentoAddon=`<style id="financeiro-recebimento-addon">
+      // String.raw: o conteúdo abaixo é enviado ao navegador exatamente como está escrito (as barras
+      // invertidas das expressões regulares não podem ser interpretadas aqui).
+      const recebimentoAddon=String.raw`<style id="financeiro-recebimento-addon">
       .recebido-cell{text-align:center;white-space:nowrap}
       .recebido-check{width:18px;height:18px;accent-color:#16a34a;vertical-align:middle}
       .recebido-date{min-width:145px}
@@ -109,8 +120,7 @@ try{
         const API_STATUS='/api/painel/coletas-financeiro/';
         const API_PREVISAO='/api/painel/coletas-previsao/';
         const API_DESTINATARIO='/api/painel/coletas-destinatario/';
-        const API_COLETA_STATUS='/api/painel/coletas-status/';
-        const today=()=>new Date().toISOString().slice(0,10);
+        const today=()=>new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
         const originalFetch=window.fetch.bind(window);
         const escLocal=(v)=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
         function numeroLocal(v){
@@ -277,108 +287,6 @@ try{
           return r.json();
         }
 
-        async function salvarColetaStatus(id,status){
-          const r=await originalFetch(API_COLETA_STATUS+encodeURIComponent(id),{
-            method:'PATCH',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({status})
-          });
-          if(!r.ok){
-            const e=await r.json().catch(()=>({}));
-            throw new Error(e.error||'Não foi possível atualizar o status da coleta.');
-          }
-          return r.json();
-        }
-
-        const COLETA_STATUS_OPCOES=['Programada','Em trânsito','Coletada','Entregue'];
-
-        function marcarBotoesStatusClicaveis(){
-          const tbody=document.getElementById('tbodyOperacional');
-          if(!tbody)return;
-          [...tbody.querySelectorAll('*')].forEach(el=>{
-            if(el.closest('select')||el.tagName==='OPTION')return;
-            const txt=String(el.textContent||'').trim();
-            if(!COLETA_STATUS_OPCOES.some(st=>st.toLocaleLowerCase('pt-BR')===txt.toLocaleLowerCase('pt-BR')))return;
-            if(el.children.length)return;
-            el.dataset.statusColetaClickable='1';
-            el.style.cursor='pointer';
-            el.title='Clique para alterar o status';
-          });
-        }
-
-        function statusTextoExato(el){
-          if(!el)return'';
-          return String(el.textContent||'').replace(/\s+/g,' ').trim();
-        }
-
-        function acharColetaPeloElemento(el){
-          if(!el)return null;
-          let node=el;
-          for(let depth=0;node&&depth<8;depth++,node=node.parentElement){
-            const txt=String(node.textContent||'').replace(/\s+/g,' ').trim();
-            const found=dadosCache.find(co=>{
-              const os=String(co.os_numero||co.id||'').trim();
-              const id=String(co.id||'').trim();
-              return (os&&txt.includes(os))||(id&&txt.includes('#'+id));
-            });
-            if(found)return found;
-          }
-          return null;
-        }
-
-        async function abrirSeletorNoBotaoStatus(el){
-          if(!el||el.dataset.statusEditing==='1')return;
-          const tr=el.closest('tr');
-          const coleta=(tr?acharPorLinha(tr):null)||acharColetaPeloElemento(el);
-          if(!coleta)return;
-          el.dataset.statusEditing='1';
-
-          const original=el.cloneNode(true);
-          const sel=document.createElement('select');
-          sel.dataset.coletaStatusPopup='1';
-          sel.style.minWidth=Math.max(110,el.getBoundingClientRect().width||0)+'px';
-          sel.style.padding='6px 28px 6px 12px';
-          sel.style.border='1px solid #cbd5e1';
-          sel.style.borderRadius='999px';
-          sel.style.background='#fff';
-          sel.style.font='inherit';
-          sel.style.fontWeight='700';
-          sel.style.cursor='pointer';
-          COLETA_STATUS_OPCOES.forEach(st=>{
-            const o=document.createElement('option');o.value=st;o.textContent=st;sel.appendChild(o)
-          });
-          const atual=String(coleta.status||el.textContent||'Programada').trim();
-          const match=[...sel.options].find(o=>o.value.toLocaleLowerCase('pt-BR')===atual.toLocaleLowerCase('pt-BR'));
-          sel.value=match?match.value:'Programada';
-
-          let finished=false;
-          const restore=(value)=>{
-            if(finished)return;finished=true;
-            const badge=original.cloneNode(true);
-            badge.textContent=value||atual;
-            badge.dataset.statusColetaClickable='1';
-            badge.style.cursor='pointer';
-            badge.title='Clique para alterar o status';
-            sel.replaceWith(badge);
-          };
-
-          sel.addEventListener('change',async()=>{
-            const escolhido=sel.value;
-            sel.disabled=true;
-            try{
-              await salvarColetaStatus(coleta.id,escolhido);
-              coleta.status=escolhido;
-              restore(escolhido);
-            }catch(e){
-              alert(e.message);
-              restore(atual);
-            }
-          });
-          sel.addEventListener('blur',()=>setTimeout(()=>{if(!finished)restore(atual)},100));
-          el.replaceWith(sel);
-          setTimeout(()=>{try{sel.focus();sel.showPicker?.()}catch(e){}},0);
-        }
-
         async function decorarOperacional(){
           const tbody=document.getElementById('tbodyOperacional');
           if(!tbody) return;
@@ -392,40 +300,10 @@ try{
           }
 
           const pesoIdx=colIndex(headRow,['peso']);
-          const statusIdx=colIndex(headRow,['status']);
           [...tbody.querySelectorAll('tr')].forEach(tr=>{
             const coleta=acharPorLinha(tr);
             if(!coleta || !tr.cells || tr.cells.length<2) return;
             if(pesoIdx>=0&&tr.cells[pesoIdx])tr.cells[pesoIdx].textContent=fmtKg(coleta.peso_total);
-
-            if(statusIdx>=0&&tr.cells[statusIdx]&&!tr.cells[statusIdx].querySelector('select[data-coleta-status]')){
-              const td=tr.cells[statusIdx];
-              const sel=document.createElement('select');
-              sel.dataset.coletaStatus='1';
-              sel.style.minWidth='130px';
-              sel.style.padding='7px 9px';
-              sel.style.border='1px solid #cbd5e1';
-              sel.style.borderRadius='8px';
-              sel.style.background='#fff';
-              ['Programada','Em trânsito','Coletada','Entregue'].forEach(st=>{
-                const opt=document.createElement('option');opt.value=st;opt.textContent=st;sel.appendChild(opt)
-              });
-              const current=String(coleta.status||'').trim().toLocaleLowerCase('pt-BR');
-              const match=[...sel.options].find(o=>o.value.toLocaleLowerCase('pt-BR')===current);
-              sel.value=match?match.value:'Programada';
-              sel.addEventListener('change',async()=>{
-                const anterior=coleta.status||'Programada';
-                sel.disabled=true;
-                try{
-                  await salvarColetaStatus(coleta.id,sel.value);
-                  coleta.status=sel.value;
-                }catch(e){
-                  sel.value=anterior;
-                  alert(e.message);
-                }finally{sel.disabled=false}
-              });
-              td.textContent='';td.appendChild(sel);
-            }
 
             const signature=[
               coleta.os_numero||coleta.id||'',
@@ -732,7 +610,7 @@ try{
           try{
             const url=typeof input==='string'?input:(input?.url||'');
             const method=String(init?.method||'GET').toUpperCase();
-            if(res.ok && /^\\/coletas\\/api\\/coletas(?:\\/\\d+)?$/.test(url) && (method==='POST'||method==='PUT')){
+            if(res.ok && /^\/coletas\/api\/coletas(?:\/\d+)?$/.test(url) && (method==='POST'||method==='PUT')){
               const data=await res.clone().json();
               const check=document.getElementById('recebido_financeiro');
               const date=document.getElementById('data_recebimento_financeiro');
@@ -773,37 +651,10 @@ try{
             const obs=new MutationObserver(()=>setTimeout(decorarFinanceiro,30));
             obs.observe(tbody,{childList:true,subtree:true});
           }
-          if(!window.__coletaStatusGlobalClick){
-            window.__coletaStatusGlobalClick=true;
-            document.addEventListener('click',e=>{
-              let el=e.target;
-              for(let i=0;el&&i<4;i++,el=el.parentElement){
-                const txt=statusTextoExato(el);
-                if(COLETA_STATUS_OPCOES.some(st=>st.toLocaleLowerCase('pt-BR')===txt.toLocaleLowerCase('pt-BR'))){
-                  const container=el.closest('tr')||el.parentElement?.parentElement||el.parentElement;
-                  const hasEditar=container && [...container.querySelectorAll?.('button,a')||[]].some(x=>/editar/i.test(String(x.textContent||'')));
-                  if(hasEditar||acharColetaPeloElemento(el)){
-                    e.preventDefault();e.stopPropagation();
-                    abrirSeletorNoBotaoStatus(el);
-                    return;
-                  }
-                }
-              }
-            },true);
-          }
-
           const tbodyOp=document.getElementById('tbodyOperacional');
           if(tbodyOp){
-            const refreshStatus=()=>setTimeout(()=>{decorarOperacional();marcarBotoesStatusClicaveis()},30);
-            const obsOp=new MutationObserver(refreshStatus);
+            const obsOp=new MutationObserver(()=>setTimeout(decorarOperacional,30));
             obsOp.observe(tbodyOp,{childList:true,subtree:true});
-            tbodyOp.addEventListener('click',e=>{
-              const alvo=e.target?.closest?.('[data-status-coleta-clickable="1"]');
-              if(!alvo)return;
-              e.preventDefault();e.stopPropagation();
-              abrirSeletorNoBotaoStatus(alvo);
-            },true);
-            setTimeout(marcarBotoesStatusClicaveis,300);
           }
           const modal=document.getElementById('modal');
           if(modal){
@@ -816,7 +667,7 @@ try{
           document.addEventListener('click',e=>{if(e.target?.closest?.('button'))setTimeout(garantirCardLucroPeriodo,180)},true);
         });
       })();
-      <\/script>`;
+      </script>`;
 
       const documentoAddon=String.raw`<style id="documentos-coleta-addon">
       .doc-field{grid-column:1/-1;border:1px dashed #94a3b8;border-radius:12px;padding:12px;background:#fff}

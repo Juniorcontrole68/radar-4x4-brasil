@@ -1,0 +1,70 @@
+name: Testes do servidor (modo teste)
+
+# Roda nas branches de trabalho e em pull requests. Não roda na branch de produção
+# e não publica nada: só sobe o servidor em TEST_MODE com um banco vazio e testa.
+on:
+  push:
+    branches-ignore: [controle-coletas-aiven]
+    paths:
+      - 'controle-coletas-aiven-app/**'
+      - 'contas-a-pagar-v3/**'
+      - '.github/workflows/testes.yml'
+  pull_request:
+    paths:
+      - 'controle-coletas-aiven-app/**'
+      - 'contas-a-pagar-v3/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: teste
+          POSTGRES_PASSWORD: teste
+          POSTGRES_DB: construlog_teste
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U teste -d construlog_teste"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_MODE: '1'
+      DATABASE_URL: postgresql://teste:teste@127.0.0.1:5432/construlog_teste
+      PGSSLMODE: disable
+      PORT: '10000'
+      DASH_INTERNAL_PORT: '10001'
+      PUBLIC_BASE_URL: http://127.0.0.1:10000
+      DASHBOARD_INITIAL_ADMIN_USER: admin_teste
+      DASHBOARD_INITIAL_ADMIN_PASSWORD: senha-de-teste-123
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Instalar dependências (igual ao Render)
+        run: cd controle-coletas-aiven-app && npm install --omit=dev
+      - name: Verificar sintaxe
+        run: |
+          node --check controle-coletas-aiven-app/server.js
+          node --check controle-coletas-aiven-app/dashboard/server.js
+          node --check contas-a-pagar-v3/src/coletas.js
+      - name: Subir o servidor em modo teste
+        run: |
+          cd controle-coletas-aiven-app
+          nohup npm start > ../servidor.log 2>&1 &
+          for i in $(seq 1 60); do
+            sleep 1
+            if curl -fs -o /dev/null http://127.0.0.1:10001/health && curl -fs -o /dev/null http://127.0.0.1:10000/; then echo "no ar em ${i}s"; exit 0; fi
+          done
+          echo "Servidor não subiu"; cat ../servidor.log; exit 1
+      - name: Testes ponta a ponta
+        run: node controle-coletas-aiven-app/tests/e2e.js
+      - name: Log do servidor
+        if: always()
+        run: cat servidor.log || true

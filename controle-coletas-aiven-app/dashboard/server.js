@@ -1,7 +1,17 @@
 const http=require('http'),https=require('https'),fs=require('fs'),path=require('path'),net=require('net'),dns=require('dns').promises,{spawn}=require('child_process'),crypto=require('crypto');
 const {URL}=require('url');
 const PORT=process.env.PORT||3000;
-const ID=process.env.SPREADSHEET_ID||'1miU5AW514LbRk5UsXYsVgXL1JTj_ZJgafRmBDF-tzWU';
+// Modo teste: TEST_MODE=1 desliga sondas, rotinas e a planilha real.
+const TEST_MODE=/^(1|true|sim|yes)$/i.test(String(process.env.TEST_MODE||'').trim());
+// No modo teste a planilha só é lida se SPREADSHEET_ID for informado (cópia com dados fictícios).
+const ID=String(process.env.SPREADSHEET_ID||'').trim()||(TEST_MODE?'':'1miU5AW514LbRk5UsXYsVgXL1JTj_ZJgafRmBDF-tzWU');
+// Chave das chamadas servidor-a-servidor, entregue pelo server.js ao iniciar este processo.
+const INTERNAL_KEY=String(process.env.DASH_INTERNAL_KEY||'');
+function internalHeaders(extra={}){
+  const h={'User-Agent':'CONSTRULOG-Dashboard/1.0','Cache-Control':'no-cache',...extra};
+  if(INTERNAL_KEY)h['X-Internal-Key']=INTERNAL_KEY;
+  return h
+}
 const GIDS={lancamentos:824972758,agendamentos:1232883750,ajudantes:438556395};
 const SHEET_NAMES={agendamentos:'Cópia de AGENDAMENTOS',agendamentos_copia:'Cópia de AGENDAMENTOS'};
 const PUB=path.join(__dirname,'public');
@@ -34,7 +44,7 @@ let SSW101_CTRC_CACHE=new Map();
 const SSW101_DETAIL_CACHE=new Map();
 async function fetchMotoristasVeiculos(){
   const u=new URL('/api/painel/motoristas-veiculos',COLETAS_PORTAL_URL);
-  const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Dashboard/1.0','Cache-Control':'no-cache'},signal:AbortSignal.timeout(15000)});
+  const r=await fetch(u,{headers:internalHeaders(),signal:AbortSignal.timeout(15000)});
   const j=await r.json().catch(()=>({}));
   if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
   return j.rows||[];
@@ -43,7 +53,7 @@ async function fetchColetasStatus(from='',to=''){
   const u=new URL('/api/painel/coletas-status-resumo',COLETAS_PORTAL_URL);
   if(from)u.searchParams.set('from',from);
   if(to)u.searchParams.set('to',to);
-  const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Dashboard/1.0','Cache-Control':'no-cache'},signal:AbortSignal.timeout(15000)});
+  const r=await fetch(u,{headers:internalHeaders(),signal:AbortSignal.timeout(15000)});
   const j=await r.json().catch(()=>({}));
   if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
   return j;
@@ -62,7 +72,7 @@ async function readJsonLimited(req,maxBytes=2*1024*1024){
 }
 async function portalJson(pathname,{method='GET',body=null,timeout=45000}={}){
   const u=new URL(pathname,COLETAS_PORTAL_URL);
-  const headers={'User-Agent':'CONSTRULOG-Dashboard/1.0','Cache-Control':'no-cache'};
+  const headers=internalHeaders();
   let payload;
   if(body!==null){headers['Content-Type']='application/json';payload=JSON.stringify(body)}
   let lastErr=null;
@@ -2064,7 +2074,7 @@ function brDateToIso(v){
   return y+'-'+m[2]+'-'+m[1];
 }
 async function buildBi2Baixas(date=''){
-  const target=date||new Date().toISOString().slice(0,10);
+  const target=date||spDateISO();
   let rep;
   try{rep=await fetchBi2ReportFolder(17,bi2CompactDate(target),bi2Auth().pasta)}
   catch(e){rep=await fetchBi2ReportFolder(17,'',bi2Auth().pasta)}
@@ -4042,7 +4052,9 @@ async function inspectBi2ApiDoc(){try{const html=await fetchRaw('https://ssw.inf
 async function inspectBi2Help(){try{const html=await fetchRaw('https://sistema.ssw.inf.br/ajuda/ssw2229.htm');const links=[...html.matchAll(/href\s*=\s*["']([^"']+)["']/gi)].map(m=>m[1]).filter(x=>/bi2|webapi|api|bi/i.test(x));return{ok:true,links:[...new Set(links)].slice(0,50)}}catch(e){return{ok:false,error:String(e.message||e)}}}
 function fetchText(url,n=0){return new Promise((ok,no)=>{if(n>5)return no(new Error('Muitos redirecionamentos'));const q=https.get(url,{headers:{'User-Agent':'Mozilla/5.0','Accept':'text/csv,text/plain,*/*','Cache-Control':'no-cache','Pragma':'no-cache'}},r=>{if([301,302,303,307,308].includes(r.statusCode)&&r.headers.location){r.resume();return ok(fetchText(new URL(r.headers.location,url).toString(),n+1))}let b='';r.setEncoding('utf8');r.on('data',c=>b+=c);r.on('end',()=>{if(r.statusCode<200||r.statusCode>=300)return no(new Error('Google Sheets respondeu '+r.statusCode));if(/<html|<!doctype/i.test(b.slice(0,300)))return no(new Error('Google retornou HTML em vez dos dados'));ok(b.replace(/^\uFEFF/,''))})});q.setTimeout(25000,()=>q.destroy(new Error('Tempo esgotado ao consultar Google Sheets')));q.on('error',no)})}
 function csv(t){const a=[];let r=[],f='',q=false;for(let i=0;i<t.length;i++){const c=t[i];if(q){if(c==='"'&&t[i+1]==='"'){f+='"';i++}else if(c==='"')q=false;else f+=c}else{if(c==='"')q=true;else if(c===','){r.push(f);f=''}else if(c==='\n'){r.push(f.replace(/\r$/,''));a.push(r);r=[];f=''}else f+=c}}if(f.length||r.length){r.push(f.replace(/\r$/,''));a.push(r)}if(!a.length)return[];const h=a.shift().map((x,i)=>(x||('COL_'+(i+1))).trim());return a.filter(x=>x.some(v=>String(v).trim())).map(x=>Object.fromEntries(h.map((k,i)=>[k,x[i]??''])))}
+function sheetDisabledError(){return Object.assign(new Error('Planilha desativada neste ambiente (defina SPREADSHEET_ID com uma cópia de teste).'),{status:503})}
 async function rows(gid){
+  if(!ID)throw sheetDisabledError();
   let e;const cb=Date.now();
   // O endpoint /export do Google pode manter uma cópia em cache por alguns minutos.
   // Priorizamos gviz com reqId único e consulta explícita; /export fica como contingência.
@@ -4066,6 +4078,7 @@ async function rows(gid){
   throw e
 }
 async function rowsByName(sheetName){
+  if(!ID)throw sheetDisabledError();
   let e;const cb=Date.now(),sheet=encodeURIComponent(sheetName);
   const urls=[
     `https://docs.google.com/spreadsheets/d/${ID}/gviz/tq?tqx=out:csv;reqId:${cb}&sheet=${sheet}&tq=select%20*&headers=1&cacheBust=${cb}`,
@@ -4079,6 +4092,158 @@ async function rowsByName(sheetName){
     }catch(err){e=err}
   }
   throw e
+}
+// Lista de motoristas/romaneios do dia (opção 38 + operação), usada pelo roteirizador,
+// pelo rastreamento e pela rotina automática de GPS.
+async function buildRoteirizadorLista(date){
+  let romRows=[],operation=null;
+  if(date===spDateISO()){
+    const quick=await Promise.allSettled([fetchSsw38QuickPrefix('AMR'),fetchSsw38QuickPrefix('TBT')]);
+    for(const q of quick)if(q.status==='fulfilled')romRows.push(...(q.value?.rows||[]));
+    const cacheKey='online|'+date+'|'+date,hit=SSW_DRIVER_CACHE.get(cacheKey);
+    if(hit?.value)operation=hit.value;
+    else if(SSW_DRIVER_LAST?.key===cacheKey)operation=SSW_DRIVER_LAST.value;
+    ensureSswMotoristasRefresh(date,date).catch(()=>{});
+  }else{
+    try{operation=await getSswMotoristasFast(date,date)}catch{}
+  }
+  if(!romRows.length)romRows=operation?.romaneios38||[];
+
+  const byKey=new Map(),normKey=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
+  const add=(x,origem)=>{
+    const motorista=String(x.motorista||'').trim(),veiculo=String(x.veiculo||'').trim();
+    if(!motorista)return;
+    const key=normKey(motorista)+'|'+normKey(veiculo);
+    if(!byKey.has(key))byKey.set(key,{motorista,veiculo,romaneios:[],entregas:0,origens:new Set()});
+    const item=byKey.get(key);
+    const roms=Array.isArray(x.romaneios)?x.romaneios:[x.romaneio].filter(Boolean);
+    for(const rom of roms){const v=String(rom||'').trim();if(v&&!item.romaneios.includes(v))item.romaneios.push(v)}
+    item.entregas=Math.max(item.entregas,Number(x.qtdeCtrcs||x.total||x.saidas||x.entregas||0));
+    item.origens.add(origem)
+  };
+
+  for(const x of romRows)add(x,'romaneio');
+  for(const x of (operation?.motoristas38||[]))add(x,'romaneio');
+  for(const x of (operation?.motoristas||[]))add(x,'manifesto');
+
+  // Complementa com CT-es que efetivamente saíram/foram baixados no dia.
+  // Esses registros representam operação em curso/concluída mesmo quando o romaneio
+  // já não aparece na consulta rápida da opção 38.
+  const opGroups=new Map();
+  for(const r of (operation?.rows||[])){
+    if(!(r.saida||r.entregue))continue;
+    const motorista=String(r.motorista||'').trim(),veiculo=String(r.veiculo||'').trim();
+    if(!motorista)continue;
+    const key=normKey(motorista)+'|'+normKey(veiculo);
+    if(!opGroups.has(key))opGroups.set(key,{motorista,veiculo,romaneios:[],saidas:0});
+    const g=opGroups.get(key);g.saidas++;
+    const rom=String(r.romaneio||'').trim();if(rom&&!g.romaneios.includes(rom))g.romaneios.push(rom)
+  }
+  for(const g of opGroups.values())add(g,'manifesto');
+
+  const progressRows=operation?.motoristas38||[];
+  const progressFor=(motorista,veiculo)=>{
+    const dk=normKey(motorista||''),pk=normPlate(veiculo||'');
+    return progressRows.find(g=>pk&&normPlate(g.veiculo||'')===pk)
+      ||progressRows.find(g=>dk&&normKey(g.motorista||'')===dk)
+      ||progressRows.find(g=>{
+        const gd=normKey(g.motorista||'');
+        return dk&&gd&&(gd.includes(dk)||dk.includes(gd))
+      })||null
+  };
+  const clean=[...byKey.values()].map(x=>{
+    const pg=progressFor(x.motorista,x.veiculo),total=Number(pg?.total||x.entregas||0),
+      entregues=Number(pg?.entregues||0),pendentes=Number(pg?.pendentes||0),ocorrencias=Number(pg?.ocorrencias||0);
+    return{
+      romaneio:x.romaneios[0]||'',
+      romaneios:x.romaneios,
+      motorista:x.motorista,
+      veiculo:x.veiculo,
+      entregas:x.entregas||total,
+      total,entregues,pendentes,ocorrencias,
+      concluido:!!pg&&total>0&&pendentes===0&&(entregues+ocorrencias)>=total,
+      origem:x.origens.has('romaneio')&&x.origens.has('manifesto')?'romaneio_manifesto':(x.origens.has('romaneio')?'romaneio':'manifesto'),
+      manifesto:x.origens.has('manifesto')
+    }
+  }).sort((a,b)=>String(a.motorista).localeCompare(String(b.motorista),'pt-BR')||String(a.veiculo).localeCompare(String(b.veiculo),'pt-BR'));
+  return clean
+}
+// Vincula automaticamente cada romaneio ao celular/placa já cadastrado.
+// Quando a última entrega é baixada no SSW, encerra a associação e a sessão GPS.
+// Um novo romaneio reativa o rastreio automaticamente.
+// Roda pela rotina do servidor (trackingSyncTick) e também quando alguém abre a tela;
+// as duas origens compartilham o mesmo controle de repetição (TRACKING_AUTO_ASSIGN_CACHE).
+let TRACKING_SYNC_INFLIGHT=null;
+function syncTrackingAssignments(clean,date){
+  if(TRACKING_SYNC_INFLIGHT)return TRACKING_SYNC_INFLIGHT;
+  TRACKING_SYNC_INFLIGHT=(async()=>{
+  const now=Date.now(),autoAssigned=[];
+  for(const x of clean){
+    const roms=(Array.isArray(x.romaneios)?x.romaneios:[]).map(v=>String(v||'').trim()).filter(Boolean);
+    const driver=String(x.motorista||'').trim(),plate=String(x.veiculo||'').trim().toUpperCase();
+    if(!driver||!plate)continue;
+
+    if(x.concluido){
+      const stopKey='STOP|'+date+'|'+plate+'|'+roms.slice().sort().join(',');
+      const lastStop=TRACKING_AUTO_ASSIGN_CACHE.get(stopKey)||0;
+      if(now-lastStop<10*60*1000){
+        autoAssigned.push({motorista:driver,veiculo:plate,romaneios:roms,status:'stopped'});
+        continue
+      }
+      try{
+        await portalJson('/api/painel/tracking/assignment',{
+          method:'POST',
+          body:{driver_name:driver,vehicle_plate:plate,romaneios:roms,work_date:date,stop:true,active:false,reason:'ultima_entrega_baixada'},
+          timeout:15000
+        });
+        TRACKING_AUTO_ASSIGN_CACHE.set(stopKey,Date.now());
+        autoAssigned.push({motorista:driver,veiculo:plate,romaneios:roms,status:'stopped'})
+      }catch(e){
+        console.log('TRACKING AUTO STOP '+plate+' '+roms.join(',')+': '+String(e.message||e));
+        autoAssigned.push({motorista:driver,veiculo:plate,romaneios:roms,status:'stop_error',error:String(e.message||e)})
+      }
+      continue
+    }
+
+    if(!roms.length)continue;
+    const assignKey=date+'|'+plate+'|'+roms.slice().sort().join(',');
+    const last=TRACKING_AUTO_ASSIGN_CACHE.get(assignKey)||0;
+    if(now-last<6*60*60*1000){autoAssigned.push({motorista:driver,veiculo:plate,romaneios:roms,status:'already_synced'});continue}
+    try{
+      const a=await portalJson('/api/painel/tracking/assignment',{
+        method:'POST',
+        body:{driver_name:driver,vehicle_plate:plate,romaneios:roms,work_date:date,auto_start:true,source:'ssw_romaneio'},
+        timeout:15000
+      });
+      TRACKING_AUTO_ASSIGN_CACHE.set(assignKey,Date.now());
+      autoAssigned.push({motorista:driver,veiculo:plate,romaneios:roms,status:'synced',install_url:a?.install_url||''})
+    }catch(e){
+      console.log('TRACKING AUTO ASSIGN '+plate+' '+roms.join(',')+': '+String(e.message||e));
+      autoAssigned.push({motorista:driver,veiculo:plate,romaneios:roms,status:'error',error:String(e.message||e)})
+    }
+  }
+  // limpa chaves antigas para o cache não crescer indefinidamente
+  for(const [k,t] of TRACKING_AUTO_ASSIGN_CACHE)if(now-t>36*60*60*1000)TRACKING_AUTO_ASSIGN_CACHE.delete(k);
+  return autoAssigned
+  })().finally(()=>{TRACKING_SYNC_INFLIGHT=null});
+  return TRACKING_SYNC_INFLIGHT
+}
+// Rotina do servidor: mantém o ciclo do GPS mesmo sem ninguém com a tela aberta.
+const TRACKING_SYNC_SECONDS=Math.max(60,Number(process.env.TRACKING_SYNC_SECONDS||180)||180);
+let TRACKING_SYNC_LAST={at:null,ok:null,error:'',rows:0};
+async function trackingSyncTick(){
+  if(TEST_MODE||!INTERNAL_KEY||!internalSswConfigured())return;
+  const hour=Number(new Intl.DateTimeFormat('en-GB',{timeZone:'America/Sao_Paulo',hour:'2-digit',hourCycle:'h23'}).format(new Date()));
+  if(hour<5||hour>=22)return; // fora do horário de operação não consulta o SSW
+  const date=spDateISO();
+  try{
+    const clean=await buildRoteirizadorLista(date);
+    const out=await syncTrackingAssignments(clean,date);
+    TRACKING_SYNC_LAST={at:new Date().toISOString(),ok:true,error:'',rows:out.length}
+  }catch(e){
+    TRACKING_SYNC_LAST={at:new Date().toISOString(),ok:false,error:String(e.message||e),rows:0};
+    console.log('TRACKING SYNC ERRO: '+String(e.message||e))
+  }
 }
 http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.pathname==='/health'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:true}))}if(req.method==='GET'&&u.pathname==='/'&&u.searchParams.get('ticket')){try{
   const ticket=String(u.searchParams.get('ticket')||'').trim();
@@ -4166,7 +4331,7 @@ if(u.pathname==='/api/lotacao'&&req.method==='GET'){try{
   const q=new URLSearchParams();
   const from=String(u.searchParams.get('from')||'').trim(),to=String(u.searchParams.get('to')||'').trim();
   if(from)q.set('from',from);if(to)q.set('to',to);
-  const x=await portalJson('/api/painel/coletas-resumo?'+q.toString());
+  const x=await portalAuth('/api/painel/coletas-resumo?'+q.toString(),{token:authUser.token,timeout:45000});
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){
@@ -4227,7 +4392,7 @@ if(u.pathname==='/api/carregamentos-finais'&&req.method==='POST'){try{if(!dashbo
 const carregamentoAvaria=u.pathname.match(/^\/api\/carregamentos-finais\/(\d+)\/avaria\/(\d+)$/);
 if(carregamentoAvaria&&req.method==='GET'){try{if(!dashboardHas(authUser,'final_carregamento'))return dashboardDeny(res);
   const ru=new URL('/api/painel/carregamentos-finais/'+carregamentoAvaria[1]+'/avaria/'+carregamentoAvaria[2],COLETAS_PORTAL_URL);
-  const rr=await fetch(ru,{headers:{'User-Agent':'CONSTRULOG-Dashboard/1.0'},signal:AbortSignal.timeout(20000)});
+  const rr=await fetch(ru,{headers:internalHeaders(),signal:AbortSignal.timeout(20000)});
   if(!rr.ok)throw Object.assign(new Error('Foto de avaria não encontrada.'),{status:rr.status});
   const buf=Buffer.from(await rr.arrayBuffer());
   res.writeHead(200,{'Content-Type':rr.headers.get('content-type')||'image/jpeg','Content-Length':buf.length,'Cache-Control':'private, max-age=3600'});
@@ -4240,7 +4405,7 @@ const carregamentoFoto=u.pathname.match(/^\/api\/carregamentos-finais\/(\d+)\/fo
 if(carregamentoFoto&&req.method==='GET'){try{if(!dashboardHas(authUser,'final_carregamento'))return dashboardDeny(res);
   const slot=carregamentoFoto[2]||'';
   const ru=new URL('/api/painel/carregamentos-finais/'+carregamentoFoto[1]+'/foto'+(slot?'/'+slot:''),COLETAS_PORTAL_URL);
-  const rr=await fetch(ru,{headers:{'User-Agent':'CONSTRULOG-Dashboard/1.0'},signal:AbortSignal.timeout(20000)});
+  const rr=await fetch(ru,{headers:internalHeaders(),signal:AbortSignal.timeout(20000)});
   if(!rr.ok)throw Object.assign(new Error('Foto não encontrada.'),{status:rr.status});
   const buf=Buffer.from(await rr.arrayBuffer());
   res.writeHead(200,{'Content-Type':rr.headers.get('content-type')||'image/jpeg','Content-Length':buf.length,'Cache-Control':'private, max-age=3600'});
@@ -4628,128 +4793,13 @@ if(u.pathname==='/api/evolucao-motoristas'&&req.method==='GET'){try{
 if(u.pathname==='/api/roteirizador/lista'){try{
   if(!dashboardHasAny(authUser,['dashboard','roteirizador','ssw_saidas','evolucao','tracking']))return dashboardDeny(res);
   const date=u.searchParams.get('date')||spDateISO();
-  let romRows=[],operation=null;
-  if(date===spDateISO()){
-    const quick=await Promise.allSettled([fetchSsw38QuickPrefix('AMR'),fetchSsw38QuickPrefix('TBT')]);
-    for(const q of quick)if(q.status==='fulfilled')romRows.push(...(q.value?.rows||[]));
-    const cacheKey='online|'+date+'|'+date,hit=SSW_DRIVER_CACHE.get(cacheKey);
-    if(hit?.value)operation=hit.value;
-    else if(SSW_DRIVER_LAST?.key===cacheKey)operation=SSW_DRIVER_LAST.value;
-    ensureSswMotoristasRefresh(date,date).catch(()=>{});
-  }else{
-    try{operation=await getSswMotoristasFast(date,date)}catch{}
-  }
-  if(!romRows.length)romRows=operation?.romaneios38||[];
-
-  const byKey=new Map(),normKey=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
-  const add=(x,origem)=>{
-    const motorista=String(x.motorista||'').trim(),veiculo=String(x.veiculo||'').trim();
-    if(!motorista)return;
-    const key=normKey(motorista)+'|'+normKey(veiculo);
-    if(!byKey.has(key))byKey.set(key,{motorista,veiculo,romaneios:[],entregas:0,origens:new Set()});
-    const item=byKey.get(key);
-    const roms=Array.isArray(x.romaneios)?x.romaneios:[x.romaneio].filter(Boolean);
-    for(const rom of roms){const v=String(rom||'').trim();if(v&&!item.romaneios.includes(v))item.romaneios.push(v)}
-    item.entregas=Math.max(item.entregas,Number(x.qtdeCtrcs||x.total||x.saidas||x.entregas||0));
-    item.origens.add(origem)
-  };
-
-  for(const x of romRows)add(x,'romaneio');
-  for(const x of (operation?.motoristas38||[]))add(x,'romaneio');
-  for(const x of (operation?.motoristas||[]))add(x,'manifesto');
-
-  // Complementa com CT-es que efetivamente saíram/foram baixados no dia.
-  // Esses registros representam operação em curso/concluída mesmo quando o romaneio
-  // já não aparece na consulta rápida da opção 38.
-  const opGroups=new Map();
-  for(const r of (operation?.rows||[])){
-    if(!(r.saida||r.entregue))continue;
-    const motorista=String(r.motorista||'').trim(),veiculo=String(r.veiculo||'').trim();
-    if(!motorista)continue;
-    const key=normKey(motorista)+'|'+normKey(veiculo);
-    if(!opGroups.has(key))opGroups.set(key,{motorista,veiculo,romaneios:[],saidas:0});
-    const g=opGroups.get(key);g.saidas++;
-    const rom=String(r.romaneio||'').trim();if(rom&&!g.romaneios.includes(rom))g.romaneios.push(rom)
-  }
-  for(const g of opGroups.values())add(g,'manifesto');
-
-  const progressRows=operation?.motoristas38||[];
-  const progressFor=(motorista,veiculo)=>{
-    const dk=normKey(motorista||''),pk=normPlate(veiculo||'');
-    return progressRows.find(g=>pk&&normPlate(g.veiculo||'')===pk)
-      ||progressRows.find(g=>dk&&normKey(g.motorista||'')===dk)
-      ||progressRows.find(g=>{
-        const gd=normKey(g.motorista||'');
-        return dk&&gd&&(gd.includes(dk)||dk.includes(gd))
-      })||null
-  };
-  const clean=[...byKey.values()].map(x=>{
-    const pg=progressFor(x.motorista,x.veiculo),total=Number(pg?.total||x.entregas||0),
-      entregues=Number(pg?.entregues||0),pendentes=Number(pg?.pendentes||0),ocorrencias=Number(pg?.ocorrencias||0);
-    return{
-      romaneio:x.romaneios[0]||'',
-      romaneios:x.romaneios,
-      motorista:x.motorista,
-      veiculo:x.veiculo,
-      entregas:x.entregas||total,
-      total,entregues,pendentes,ocorrencias,
-      concluido:!!pg&&total>0&&pendentes===0&&(entregues+ocorrencias)>=total,
-      origem:x.origens.has('romaneio')&&x.origens.has('manifesto')?'romaneio_manifesto':(x.origens.has('romaneio')?'romaneio':'manifesto'),
-      manifesto:x.origens.has('manifesto')
-    }
-  }).sort((a,b)=>String(a.motorista).localeCompare(String(b.motorista),'pt-BR')||String(a.veiculo).localeCompare(String(b.veiculo),'pt-BR'));
-  // Vincula automaticamente cada romaneio ao celular/placa já cadastrado.
-  // Quando a última entrega é baixada no SSW, encerra a associação e a sessão GPS.
-  // Um novo romaneio reativa o rastreio automaticamente.
-  const now=Date.now(),autoAssigned=[];
-  for(const x of clean){
-    const roms=(Array.isArray(x.romaneios)?x.romaneios:[]).map(v=>String(v||'').trim()).filter(Boolean);
-    const driver=String(x.motorista||'').trim(),plate=String(x.veiculo||'').trim().toUpperCase();
-    if(!driver||!plate)continue;
-
-    if(x.concluido){
-      const stopKey='STOP|'+date+'|'+plate+'|'+roms.slice().sort().join(',');
-      const lastStop=TRACKING_AUTO_ASSIGN_CACHE.get(stopKey)||0;
-      if(now-lastStop<10*60*1000){
-        autoAssigned.push({motorista:driver,veiculo:plate,romaneios:roms,status:'stopped'});
-        continue
-      }
-      try{
-        await portalAuth('/api/painel/tracking/assignment',{
-          method:'POST',
-          body:{driver_name:driver,vehicle_plate:plate,romaneios:roms,work_date:date,stop:true,active:false,reason:'ultima_entrega_baixada'},
-          token:authUser.token,timeout:15000
-        });
-        TRACKING_AUTO_ASSIGN_CACHE.set(stopKey,Date.now());
-        autoAssigned.push({motorista:driver,veiculo:plate,romaneios:roms,status:'stopped'})
-      }catch(e){
-        console.log('TRACKING AUTO STOP '+plate+' '+roms.join(',')+': '+String(e.message||e));
-        autoAssigned.push({motorista:driver,veiculo:plate,romaneios:roms,status:'stop_error',error:String(e.message||e)})
-      }
-      continue
-    }
-
-    if(!roms.length)continue;
-    const assignKey=date+'|'+plate+'|'+roms.slice().sort().join(',');
-    const last=TRACKING_AUTO_ASSIGN_CACHE.get(assignKey)||0;
-    if(now-last<6*60*60*1000){autoAssigned.push({motorista:driver,veiculo:plate,romaneios:roms,status:'already_synced'});continue}
-    try{
-      const a=await portalAuth('/api/painel/tracking/assignment',{
-        method:'POST',
-        body:{driver_name:driver,vehicle_plate:plate,romaneios:roms,work_date:date,auto_start:true,source:'ssw_romaneio'},
-        token:authUser.token,timeout:15000
-      });
-      TRACKING_AUTO_ASSIGN_CACHE.set(assignKey,Date.now());
-      autoAssigned.push({motorista:driver,veiculo:plate,romaneios:roms,status:'synced',install_url:a?.install_url||''})
-    }catch(e){
-      console.log('TRACKING AUTO ASSIGN '+plate+' '+roms.join(',')+': '+String(e.message||e));
-      autoAssigned.push({motorista:driver,veiculo:plate,romaneios:roms,status:'error',error:String(e.message||e)})
-    }
-  }
-  // limpa chaves antigas para o cache não crescer indefinidamente
-  for(const [k,t] of TRACKING_AUTO_ASSIGN_CACHE)if(now-t>36*60*60*1000)TRACKING_AUTO_ASSIGN_CACHE.delete(k);
+  const clean=await buildRoteirizadorLista(date);
+  // O rastreio automático só vale para HOJE. Consultar outra data apenas lista os romaneios
+  // e nunca cria nem encerra associação/sessão de GPS.
+  const isToday=date===spDateISO();
+  const autoAssigned=isToday?await syncTrackingAssignments(clean,date):[];
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
-  return res.end(JSON.stringify({ok:true,date,baseAddress:ROUTE_BASE_ADDRESS,baseLat:ROUTE_BASE_FALLBACK.lat,baseLon:ROUTE_BASE_FALLBACK.lon,rows:clean,romaneios:clean.filter(x=>x.romaneios.length).length,manifestos:clean.filter(x=>x.manifesto).length,trackingAuto:true,trackingAssignments:autoAssigned}))
+  return res.end(JSON.stringify({ok:true,date,baseAddress:ROUTE_BASE_ADDRESS,baseLat:ROUTE_BASE_FALLBACK.lat,baseLon:ROUTE_BASE_FALLBACK.lon,rows:clean,romaneios:clean.filter(x=>x.romaneios.length).length,manifestos:clean.filter(x=>x.manifesto).length,trackingAuto:isToday,trackingAssignments:autoAssigned}))
 }catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/roteirizador/endereco'){try{
   if(!dashboardHasAny(authUser,['dashboard','roteirizador']))return dashboardDeny(res);
@@ -4876,7 +4926,10 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
   }catch(e){}
 }
 let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.join(PUB,p));if(!p.startsWith(PUB)){res.writeHead(403);return res.end()}fs.readFile(p,(e,d)=>{if(e){res.writeHead(404);return res.end('Not found')}const ext=path.extname(p);res.writeHead(200,{'Content-Type':ext==='.js'?'application/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate','Pragma':'no-cache','Expires':'0'});res.end(d)})}catch(e){res.writeHead(500);res.end(e.message)}}).listen(PORT,'0.0.0.0',()=>{
-  console.log('CONSTRULOG em '+PORT);probeSswAbrirScripts().then(x=>console.log('SSW abrir probe isolado: '+JSON.stringify(x))).catch(()=>{});
+  console.log('CONSTRULOG em '+PORT+(TEST_MODE?' *** AMBIENTE DE TESTE ***':''));
+  if(TEST_MODE){console.log('TEST_MODE: sondas de inicialização, monitores BI2 e rotina de GPS desativados.');return}
+  setInterval(()=>{trackingSyncTick()},TRACKING_SYNC_SECONDS*1000);
+  probeSswAbrirScripts().then(x=>console.log('SSW abrir probe isolado: '+JSON.stringify(x))).catch(()=>{});
   setTimeout(async()=>{try{
     const p=await fetchSswPendingDeliveries();
     const row=(p.rows||[]).find(x=>normNf(x.nf));
@@ -4888,7 +4941,7 @@ let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.jo
   refreshBi2State().catch(e=>console.error('BI2 SFTP monitor ERRO: '+e.message));
   refreshBi2ApiState().catch(e=>console.error('BI2 WebAPI monitor ERRO: '+e.message));
   buildBi2Receita().then(x=>console.log('VALIDACAO RECEITA SSW: '+JSON.stringify({ok:x.ok,fonte:x.sourceCode,periodo:x.periodo,total:x.totalFaturamento,clientes:x.totalClientes,ctes:x.totalRegistros,somerlog:(x.clientes||[]).find(y=>y.cliente==='Somerlog')||null,error:x.error||''}))).catch(e=>console.log('VALIDACAO RECEITA SSW ERRO: '+String(e.message||e)));
-  (async()=>{try{const rep=await fetchBi2ReportFolder(17,'',bi2Auth().pasta),p=parseBi2Csv(rep.text),today=new Date().toISOString().slice(0,10),todayRows=(p.rows||[]).filter(r=>brDateToIso(pickField(r,'DATA ENTREGA','ENTREGA','DT ENTREGA'))===today);console.log('VALIDACAO BI2 17: '+JSON.stringify({arquivo:(p.rows||[]).length,hoje:todayRows.length,headers:p.headers.slice(0,25)}))}catch(e){console.log('VALIDACAO BI2 17 ERRO: '+String(e.message||e))}})();
+  (async()=>{try{const rep=await fetchBi2ReportFolder(17,'',bi2Auth().pasta),p=parseBi2Csv(rep.text),today=spDateISO(),todayRows=(p.rows||[]).filter(r=>brDateToIso(pickField(r,'DATA ENTREGA','ENTREGA','DT ENTREGA'))===today);console.log('VALIDACAO BI2 17: '+JSON.stringify({arquivo:(p.rows||[]).length,hoje:todayRows.length,headers:p.headers.slice(0,25)}))}catch(e){console.log('VALIDACAO BI2 17 ERRO: '+String(e.message||e))}})();
   setInterval(refreshBi2State,15*60*1000);
   setInterval(refreshBi2ApiState,60*1000);
   if(internalSswConfigured())setTimeout(()=>{const d=spDateISO();ensureSswMotoristasRefresh(d,d).then(x=>console.log('VALIDACAO MOTORISTAS STARTUP: '+JSON.stringify({total:x.totalRomaneado,entregues:x.entregues38,pendentes:x.pendentes38,ocorrencias:x.ocorrencias38,baixasBi2:x.baixasBi2,candidatos:x.candidatos,trackingOk:x.trackingOk,motoristas:(x.motoristas38||[]).map(m=>({motorista:m.motorista,total:m.total,entregues:m.entregues,pendentes:m.pendentes,ocorrencias:m.ocorrencias}))}))).catch(e=>console.log('VALIDACAO MOTORISTAS STARTUP ERRO: '+String(e.message||e)))},2500);
