@@ -48,6 +48,7 @@ public class MainActivity extends Activity {
     private LinearLayout.LayoutParams mapParams;
     private Button modeDayButton,modeFreeButton,refreshDayButton,startRouteButton,editStopsButton;
     private boolean dayLoading=false,dayReloadWanted=false;
+    private int dayBuildingTries=0;
     private long dayLoadedAt=0L;
 
     @Override public void onCreate(Bundle b){
@@ -178,6 +179,14 @@ public class MainActivity extends Activity {
                     // O vínculo mudou enquanto esta consulta estava a caminho: vale a nova.
                     if(dayReloadWanted||!token.equals(prefs.getString("company_token",""))){dayReloadWanted=false;dayLoadedAt=0L;loadDay(true);return;}
                     if(!dayMode())return;
+                    if(j.optBoolean("building",false)){
+                        // A empresa ainda está montando a rota (leitura do romaneio): mantém o que já
+                        // está na tela e consulta de novo sozinho, por até uns 3 minutos.
+                        status.setText(j.optString("message","Montando a rota de hoje…"));
+                        if(dayBuildingTries++<14)new Handler(Looper.getMainLooper()).postDelayed(()->{if(dayMode())loadDay(false);},12000);
+                        return;
+                    }
+                    dayBuildingTries=0;
                     try{
                         stops.clear();stops.addAll(list);
                         start=j.optJSONObject("start");

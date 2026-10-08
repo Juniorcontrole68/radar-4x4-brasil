@@ -562,7 +562,7 @@ async function routePublicGeometry(points,order,returnToStart=true,avoidPoints=[
 
 
 // ---------- MOVIT: rota do dia do motorista da empresa ----------
-const MOVIT_DAY_CACHE=new Map();
+const MOVIT_DAY_CACHE=new Map(),MOVIT_DAY_BUILDING=new Map();
 function movitAddressText(p){
   const rua=[String(p.endereco||'').trim(),String(p.numero||'').trim()].filter(Boolean).join(', ');
   const cidade=[String(p.cidade||'').trim(),String(p.uf||'').trim()].filter(Boolean).join(' - ');
@@ -1636,10 +1636,24 @@ async function start() {
           // Resposta vazia vale só 20 s, para a rota aparecer logo depois que o romaneio sai.
           const ttl=hit&&!hit.value.stops.length?20000:(fresh?30000:180000);
           if(hit&&hit.value.date===spToday()&&Date.now()-hit.at<ttl)return sendJson(res,200,hit.value);
-          const value=await movitBuildDay(link);
-          MOVIT_DAY_CACHE.set(link.id,{at:Date.now(),value});
-          if(MOVIT_DAY_CACHE.size>500)MOVIT_DAY_CACHE.delete(MOVIT_DAY_CACHE.keys().next().value);
+          // Montar a rota a partir do SSW pode levar mais de um minuto. Uma montagem por motorista
+          // de cada vez; se passar de 20 s, o aplicativo recebe "montando" e consulta de novo.
+          let building=MOVIT_DAY_BUILDING.get(link.id);
+          if(!building){
+            building=movitBuildDay(link).then(v=>{
+              MOVIT_DAY_CACHE.set(link.id,{at:Date.now(),value:v});
+              if(MOVIT_DAY_CACHE.size>500)MOVIT_DAY_CACHE.delete(MOVIT_DAY_CACHE.keys().next().value);
+              return v
+            }).finally(()=>MOVIT_DAY_BUILDING.delete(link.id));
+            building.catch(()=>{});
+            MOVIT_DAY_BUILDING.set(link.id,building);
+          }
           pool.query('UPDATE router_company_links SET last_used_at=NOW() WHERE id=$1',[link.id]).catch(()=>{});
+          let timer;
+          const value=await Promise.race([building,new Promise(r=>{timer=setTimeout(()=>r(null),20000)})]);
+          clearTimeout(timer);
+          if(!value)return sendJson(res,200,{ok:true,date:spToday(),driver_name:link.driver_name,vehicle_plate:link.vehicle_plate||'',company:'CONSTRULOG',
+            romaneios:[],source:'',stops:[],start:null,building:true,message:'Montando a rota de hoje. Ela aparece aqui em instantes.'});
           return sendJson(res,200,value);
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar a rota do dia.'})}
       }
