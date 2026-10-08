@@ -86,6 +86,7 @@ try{
         const API_STATUS='/api/painel/coletas-financeiro/';
         const API_PREVISAO='/api/painel/coletas-previsao/';
         const API_DESTINATARIO='/api/painel/coletas-destinatario/';
+        const API_COLETA_STATUS='/api/painel/coletas-status/';
         const today=()=>new Date().toISOString().slice(0,10);
         const originalFetch=window.fetch.bind(window);
         const escLocal=(v)=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
@@ -253,6 +254,19 @@ try{
           return r.json();
         }
 
+        async function salvarColetaStatus(id,status){
+          const r=await originalFetch(API_COLETA_STATUS+encodeURIComponent(id),{
+            method:'PATCH',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({status})
+          });
+          if(!r.ok){
+            const e=await r.json().catch(()=>({}));
+            throw new Error(e.error||'Não foi possível atualizar o status da coleta.');
+          }
+          return r.json();
+        }
+
         async function decorarOperacional(){
           const tbody=document.getElementById('tbodyOperacional');
           if(!tbody) return;
@@ -266,10 +280,41 @@ try{
           }
 
           const pesoIdx=colIndex(headRow,['peso']);
+          const statusIdx=colIndex(headRow,['status']);
           [...tbody.querySelectorAll('tr')].forEach(tr=>{
             const coleta=acharPorLinha(tr);
             if(!coleta || !tr.cells || tr.cells.length<2) return;
             if(pesoIdx>=0&&tr.cells[pesoIdx])tr.cells[pesoIdx].textContent=fmtKg(coleta.peso_total);
+
+            if(statusIdx>=0&&tr.cells[statusIdx]&&!tr.cells[statusIdx].querySelector('select[data-coleta-status]')){
+              const td=tr.cells[statusIdx];
+              const sel=document.createElement('select');
+              sel.dataset.coletaStatus='1';
+              sel.style.minWidth='130px';
+              sel.style.padding='7px 9px';
+              sel.style.border='1px solid #cbd5e1';
+              sel.style.borderRadius='8px';
+              sel.style.background='#fff';
+              ['Programada','Em trânsito','Coletada','Entregue'].forEach(st=>{
+                const opt=document.createElement('option');opt.value=st;opt.textContent=st;sel.appendChild(opt)
+              });
+              const current=String(coleta.status||'').trim().toLocaleLowerCase('pt-BR');
+              const match=[...sel.options].find(o=>o.value.toLocaleLowerCase('pt-BR')===current);
+              sel.value=match?match.value:'Programada';
+              sel.addEventListener('change',async()=>{
+                const anterior=coleta.status||'Programada';
+                sel.disabled=true;
+                try{
+                  await salvarColetaStatus(coleta.id,sel.value);
+                  coleta.status=sel.value;
+                }catch(e){
+                  sel.value=anterior;
+                  alert(e.message);
+                }finally{sel.disabled=false}
+              });
+              td.textContent='';td.appendChild(sel);
+            }
+
             const signature=[
               coleta.os_numero||coleta.id||'',
               coleta.cliente||'',
