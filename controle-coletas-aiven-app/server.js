@@ -3110,7 +3110,10 @@ async function start() {
           if(!(user.is_admin||dashboardHas(user,'agendamentos')||dashboardHas(user,'dashboard')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
           const nf=String(u.searchParams.get('nf')||'').replace(/\D/g,'').replace(/^0+(?=\d)/,'');
           const params=[],where=[];
-          if(user.client_id){params.push(user.client_id);where.push('client_id=
+          if(user.client_id){params.push(user.client_id);where.push('client_id=$'+params.length)}
+          if(nf){params.push(nf);where.push('nf=$'+params.length)}
+          const limit=Math.max(1,Math.min(500,Number(u.searchParams.get('limit')||100)));
+          params.push(limit);
           const sql='SELECT id::text AS id,nf,ctrc,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,criado_em,atualizado_em FROM agendamento_teste ' +
             (where.length?('WHERE '+where.join(' AND ')+' '):'') + 'ORDER BY criado_em DESC LIMIT $'+params.length;
           const q=await pool.query(sql,params);
