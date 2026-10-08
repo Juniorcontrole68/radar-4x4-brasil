@@ -53,6 +53,16 @@ function tela(){
   }
   return texto
 }
+// Toca no elemento da tela cujo texto contém o trecho informado.
+function toque(trecho){
+  adb('shell uiautomator dump /sdcard/tela.xml');
+  const xml=adb('shell cat /sdcard/tela.xml');
+  const m=xml.match(new RegExp('text="[^"]*'+trecho.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'[^"]*"[^>]*bounds="\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]"'));
+  if(!m)return false;
+  adb('shell input tap '+Math.round((+m[1]+ +m[3])/2)+' '+Math.round((+m[2]+ +m[4])/2));
+  return true
+}
+const naFrente=()=>adb('shell dumpsys activity activities').split('\n').filter(l=>/ResumedActivity|mResumedActivity/.test(l)).join(' ');
 let lat=-22.7000,lon=-47.3100;
 function andar(){lat-=0.0004;lon+=0.0002;return adb('emu geo fix '+lon.toFixed(5)+' '+lat.toFixed(5))}
 function ficar(){return adb('emu geo fix '+lon.toFixed(5)+' '+lat.toFixed(5))}
@@ -96,7 +106,7 @@ function ficar(){return adb('emu geo fix '+lon.toFixed(5)+' '+lat.toFixed(5))}
   }
   const h=dev?.health||{};
   nota('Diagnóstico enviado pelo app: versão '+dev?.app_version+' '+JSON.stringify(h));
-  check('aplicativo envia versão e diagnóstico do celular',dev?.app_version==='1.1.0'&&h.perm_location===true&&h.gps_on===true&&typeof h.battery_pct==='number'&&h.version_code===11,JSON.stringify(dev||{}).slice(0,400));
+  check('aplicativo envia versão e diagnóstico do celular',/^1\.\d+\.\d+$/.test(String(dev?.app_version||''))&&h.perm_location===true&&h.gps_on===true&&typeof h.battery_pct==='number'&&h.version_code>=12,JSON.stringify(dev||{}).slice(0,400));
   check('diagnóstico: serviço de pé, localização "o tempo todo" e bateria liberada',h.service_running===true&&h.perm_background===true&&h.battery_unrestricted===true,JSON.stringify(h));
 
   console.log('3. Romaneio liga o GPS sozinho');
@@ -188,6 +198,43 @@ function ficar(){return adb('emu geo fix '+lon.toFixed(5)+' '+lat.toFixed(5))}
   check('tela principal mostra "Tudo certo" e nenhum passo pendente',t2.includes('Tudo certo')&&!t2.includes('Falta'),t2.slice(0,400));
   const crash=adb('logcat -d -b crash').split('\n').filter(l=>l.includes(PKG)||/FATAL EXCEPTION/.test(l));
   check('nenhum travamento do aplicativo durante todo o teste',crash.length===0,crash.slice(0,6).join(' | ').slice(0,700));
+  console.log('10. MOVIT: rota do dia aberta pelo aplicativo do motorista');
+  const MOVIT=process.env.MOVIT_APK||'roteirizador-v02-android/app/build/outputs/apk/internal/debug/app-internal-debug.apk',MPKG='br.com.movit.rotas.teste';
+  const minst=adb('install -r -g '+MOVIT,180000);
+  check('MOVIT instala',/Success/.test(minst),minst.slice(-300));
+  adb('logcat -b crash -c');
+  const hojeSp=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+  r=await call('POST','/api/public-router/export-construlog',{body:{romaneio:'EMU000001',driver_name:DRIVER,event_date:hojeSp,title:'Rota do emulador',route_data:{returnToStart:true,distanceMeters:64200,
+    start:{lat:-22.69552,lon:-47.307,label:'Base Americana'},
+    stops:[{lat:-22.7410,lon:-47.3310,label:'CLIENTE ALFA',destinatario:'CLIENTE ALFA',resolved:'Rua Um, 10, Americana - SP',nf:'1001',entregue:true,baixaAt:'08:40'},
+           {lat:-22.8200,lon:-47.2700,label:'CLIENTE BETA',destinatario:'CLIENTE BETA',resolved:'Av. Dois, 200, Sumaré - SP',nf:'1002'},
+           {lat:-22.9050,lon:-47.0610,label:'CLIENTE GAMA',destinatario:'CLIENTE GAMA',resolved:'Rua Três, 30, Campinas - SP',nf:'1003'}]}}});
+  check('central tem a rota do romaneio de hoje',r.status===200&&r.json?.ok===true,r.status+' '+r.text.slice(0,160));
+  adb('shell am start -n '+PKG+'/.MainActivity');await sleep(4000);
+  const tMot=tela();
+  check('app do motorista mostra o botão "ABRIR ROTA DE HOJE"',tMot.includes('ABRIR ROTA DE HOJE'),tMot.slice(0,300));
+  toque('ABRIR ROTA DE HOJE');
+  const abriu=await until(async()=>naFrente().includes(MPKG),30000,2000);
+  check('um toque no botão abre o MOVIT',!!abriu,naFrente().slice(0,200));
+  const tDia=await until(async()=>{const t=tela();return t.includes('CLIENTE ALFA')?t:null},60000,4000)||tela();
+  nota('MOVIT, rota do dia: '+tDia.slice(0,700));
+  check('MOVIT mostra as entregas do dia na ordem, com cliente, endereço e nota (sem digitar nada)',tDia.includes('CLIENTE ALFA')&&tDia.includes('CLIENTE BETA')&&tDia.includes('CLIENTE GAMA')&&tDia.includes('Av. Dois, 200')&&tDia.includes('NF 1002')&&tDia.indexOf('CLIENTE ALFA')<tDia.indexOf('CLIENTE GAMA'),tDia.slice(0,500));
+  check('entrega já baixada aparece como entregue e o resumo conta',tDia.includes('NF 1001 • Entregue 08:40')&&tDia.includes('3 entregas • 1 já entregue'),tDia.slice(0,500));
+  check('tela identifica a rota de hoje e a placa, com os dois modos',tDia.includes('Rota de hoje • '+PLATE)&&tDia.includes('Rota do dia')&&tDia.includes('Rota livre')&&tDia.includes('Ir para a próxima entrega'),tDia.slice(0,500));
+  const vinc=(await db.query("SELECT COUNT(*)::int AS n FROM router_company_links WHERE active=TRUE AND token_hash IS NOT NULL AND vehicle_plate=$1",[PLATE])).rows[0].n;
+  check('vínculo criado sem cadastro nem aprovação extra',vinc===1,'vínculos ativos='+vinc);
+  toque('Rota livre');await sleep(2500);
+  const tLivre=tela();
+  check('Rota livre abre vazia, com a busca de endereço (as entregas da empresa não se misturam)',tLivre.includes('Nenhuma parada adicionada ainda.')&&tLivre.includes('Adicionar')&&!tLivre.includes('CLIENTE ALFA'),tLivre.slice(0,400));
+  toque('Rota do dia');await sleep(2500);
+  check('voltar para Rota do dia mostra as entregas de novo',tela().includes('CLIENTE BETA'));
+  adb('shell am force-stop '+MPKG);await sleep(1500);
+  adb('shell am start -n '+MPKG+'/br.com.movit.rotas.MainActivity');
+  const tVolta=await until(async()=>{const t=tela();return t.includes('CLIENTE ALFA')?t:null},40000,4000)||tela();
+  check('fechar e abrir o MOVIT sozinho: a rota do dia continua lá',tVolta.includes('CLIENTE ALFA')&&tVolta.includes('Rota de hoje • '+PLATE),tVolta.slice(0,400));
+  const crashMovit=adb('logcat -d -b crash').split('\n').filter(l=>l.includes('movit')||/FATAL EXCEPTION/.test(l));
+  check('nenhum travamento do MOVIT',crashMovit.length===0,crashMovit.slice(0,6).join(' | ').slice(0,700));
+
   const fim=await aparelho();
   nota('Resultado: '+pass+' OK, '+fail+' falha(s). Pontos gravados: '+(await pontos()).n+'. Reinícios do serviço: '+(fim?.health?.restarts)+'. '+resumo.join(' ; '));
   await db.end();

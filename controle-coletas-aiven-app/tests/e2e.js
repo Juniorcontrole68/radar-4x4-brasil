@@ -135,6 +135,32 @@ async function call(method,path,{body,cookie,bearer,headers}={}){
   r=await call('GET','/api/tracking/contacts',{cookie}); check('lista de telefones traz o motorista',r.status===200&&r.json?.rows?.length===1&&r.json.rows[0].phone==='5519999998888',r.text.slice(0,160));
   r=await call('PUT','/api/tracking/contacts',{cookie,body:{driver_name:'Motorista Teste',phone:''}}); r=await call('GET','/api/tracking/contacts',{cookie}); check('telefone em branco remove o contato',r.json?.rows?.length===0,r.text.slice(0,120));
   r=await call('GET','/dashboard',{cookie}); check('tela de rastreio traz o quadro "Motoristas de hoje"',r.status===200&&r.text.includes('id="trackingBoardTable"')&&r.text.includes('id="trackingSupport"'),'status '+r.status);
+
+  console.log('E. MOVIT: rota do dia do motorista da empresa');
+  r=await call('POST','/api/tracking/movit-link',{body:{}}); check('pedir vínculo sem credencial do aparelho -> 401',r.status===401,'veio '+r.status);
+  r=await call('POST','/api/tracking/movit-link',{bearer:dev2,body:{}}); const code=r.json?.code;
+  check('app do motorista recebe um código de uso único e o link do MOVIT',r.status===201&&/^[a-f0-9]{24}$/.test(code||'')&&r.json?.app_url==='movit://empresa/'+code,r.status+' '+r.text.slice(0,160));
+  r=await call('POST','/api/router-app/company/claim',{body:{code:'0'.repeat(24)}}); check('código inexistente é recusado (404)',r.status===404,'veio '+r.status);
+  r=await call('GET','/api/router-app/company/today'); check('rota do dia sem vínculo -> 401',r.status===401,'veio '+r.status);
+  r=await call('POST','/api/router-app/company/claim',{body:{code}}); const ctk=r.json?.company_token;
+  check('MOVIT troca o código pelo vínculo com motorista e placa',r.status===200&&!!ctk&&r.json?.driver_name==='Motorista Teste'&&r.json?.vehicle_plate==='ABC1D23',r.status+' '+r.text.slice(0,200));
+  r=await call('POST','/api/router-app/company/claim',{body:{code}}); check('o mesmo código não vale duas vezes',r.status===404,'veio '+r.status);
+  r=await call('GET','/api/router-app/company/today',{bearer:ctk});
+  check('sem rota disponível: resposta vazia com explicação, sem erro',r.status===200&&r.json?.ok===true&&Array.isArray(r.json.stops)&&r.json.stops.length===0&&!!r.json.message&&JSON.stringify(r.json.romaneios)==='["AMR000002"]',r.status+' '+r.text.slice(0,260));
+  // A operação exporta a rota do romaneio (como o MOVIT/central já fazem): ela vira a rota do dia.
+  const paradas=[{lat:-22.74,lon:-47.33,label:'CLIENTE A',resolved:'Rua Um, 10, Americana - SP',destinatario:'CLIENTE A',nf:'1001'},{lat:-22.90,lon:-47.06,label:'CLIENTE B',resolved:'Av. Dois, 200, Campinas - SP',destinatario:'CLIENTE B',nf:'1002',entregue:true},{lat:'x',lon:1,label:'sem coordenada'}];
+  r=await call('POST','/api/public-router/export-construlog',{body:{romaneio:'AMR000002',driver_name:'Motorista Teste',event_date:spHoje,title:'Rota teste',route_data:{stops:paradas,start:{lat:-22.69552,lon:-47.307,label:'Base'},returnToStart:true,distanceMeters:81234}}});
+  check('rota do romaneio exportada',r.status===200&&r.json?.ok===true,r.status+' '+r.text.slice(0,160));
+  await new Promise(z=>setTimeout(z,300));
+  r=await call('GET','/api/router-app/company/today?fresh=1',{bearer:ctk});
+  if(r.json&&!r.json.stops?.length){await new Promise(z=>setTimeout(z,21000));r=await call('GET','/api/router-app/company/today?fresh=1',{bearer:ctk})}
+  const dia=r.json||{};
+  check('rota do dia traz as paradas na ordem, com cliente, nota e o que já foi entregue',dia.source==='movit'&&dia.stops?.length===2&&dia.stops[0].destinatario==='CLIENTE A'&&dia.stops[0].seq===1&&dia.stops[1].nf==='1002'&&dia.stops[1].entregue===true&&dia.start?.label==='Base'&&dia.distanceMeters===81234,r.text.slice(0,400));
+  // Novo vínculo do mesmo aparelho substitui o anterior (celular trocado ou MOVIT reinstalado).
+  r=await call('POST','/api/tracking/movit-link',{bearer:dev2,body:{}}); const code2=r.json?.code;
+  r=await call('POST','/api/router-app/company/claim',{body:{code:code2}}); const ctk2=r.json?.company_token;
+  r=await call('GET','/api/router-app/company/today',{bearer:ctk}); check('vínculo antigo deixa de valer quando um novo é criado',r.status===401,'veio '+r.status);
+  r=await call('GET','/api/router-app/company/today',{bearer:ctk2}); check('vínculo novo recebe a mesma rota',r.status===200&&r.json?.stops?.length===2,r.status+' '+r.text.slice(0,120));
   if(db)await db.end();
   console.log('\nResultado: '+pass+' OK, '+fail+' falha(s)');
   process.exit(fail?1:0);

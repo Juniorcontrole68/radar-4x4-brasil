@@ -84,7 +84,7 @@ const DASH_API_PREFIXES = [
 // login de usuário e respondia 401 "Não autenticado" ao aplicativo (GPS parado).
 const LOCAL_TRACKING_PATHS = new Set([
   '/api/tracking/app-update','/api/tracking/assignment/current','/api/tracking/enroll',
-  '/api/tracking/heartbeat','/api/tracking/invite','/api/tracking/point','/api/tracking/points',
+  '/api/tracking/heartbeat','/api/tracking/invite','/api/tracking/movit-link','/api/tracking/point','/api/tracking/points',
   '/api/tracking/register-request','/api/tracking/register-status',
   '/api/tracking/session/start','/api/tracking/session/stop','/api/tracking/test-invite',
   '/api/tracking/test/point','/api/tracking/test/start','/api/tracking/test/status'
@@ -560,6 +560,121 @@ async function routePublicGeometry(points,order,returnToStart=true,avoidPoints=[
   throw Object.assign(new Error('O serviço de rotas está temporariamente indisponível. Tente novamente em alguns segundos.'),{status:503})
 }
 
+
+// ---------- MOVIT: rota do dia do motorista da empresa ----------
+const MOVIT_DAY_CACHE=new Map();
+function movitAddressText(p){
+  const rua=[String(p.endereco||'').trim(),String(p.numero||'').trim()].filter(Boolean).join(', ');
+  const cidade=[String(p.cidade||'').trim(),String(p.uf||'').trim()].filter(Boolean).join(' - ');
+  return [rua,String(p.bairro||'').trim(),cidade].filter(Boolean).join(', ')
+}
+// Converte uma parada do planejamento (romaneio lido do SSW) para o formato do MOVIT.
+function movitStopFromPlan(p,seq){
+  const destinatario=String(p.destinatario||p.cliente||'').trim();
+  const address=movitAddressText(p);
+  const exact=String(p.precision||'')==='ssw-coordenada';
+  const hasStreet=!!String(p.endereco||'').trim();
+  return{
+    seq,lat:Number(p.lat),lon:Number(p.lon),
+    label:destinatario||String(p.label||'Entrega '+seq),
+    resolved:address||String(p.displayName||p.label||''),
+    // Sem coordenada exata do SSW, o aplicativo de navegação recebe o endereço escrito:
+    // ele acha o número da casa melhor do que a posição aproximada do nosso mapa.
+    original:hasStreet?address+', Brasil':'',
+    approximate:!exact,precision:String(p.precision||''),
+    destinatario,nf:String(p.nf||''),ctrc:String(p.ctrc||''),
+    cidade:String(p.cidade||''),uf:String(p.uf||''),bairro:String(p.bairro||''),cep:String(p.cep||''),
+    romaneio:String(p.sourceRomaneio||''),
+    entregue:!!p.entregue,baixaAt:String(p.baixaAt||'')
+  }
+}
+function movitDayFromPlan(plan){
+  const points=Array.isArray(plan?.points)?plan.points:[];
+  const order=Array.isArray(plan?.optimizedOrder)&&plan.optimizedOrder.length?plan.optimizedOrder:points.map((_,i)=>i).slice(1);
+  const stops=[];
+  for(const idx of order){
+    const p=points[idx];
+    if(!p||!Number.isFinite(Number(p.lat))||!Number.isFinite(Number(p.lon))||p.precision==='base'||p.precision==='fixed-end')continue;
+    stops.push(movitStopFromPlan(p,stops.length+1))
+  }
+  const base=points[0]&&Number.isFinite(Number(points[0].lat))?{lat:Number(points[0].lat),lon:Number(points[0].lon),label:String(points[0].label||plan.baseAddress||'Base'),resolved:String(points[0].address||points[0].label||plan.baseAddress||'Base')}:null;
+  return{
+    stops,start:base,returnToStart:true,
+    geometry:plan?.outboundGeometry||plan?.geometry||null,
+    distanceMeters:Number(plan?.geometryDistanceMeters||plan?.optimizedDistanceMeters||0)||0,
+    durationSeconds:Number(plan?.durationSeconds||0)||0,
+    romaneios:Array.isArray(plan?.romaneios)&&plan.romaneios.length?plan.romaneios.map(String):String(plan?.romaneio||'').split('+').map(x=>x.trim()).filter(Boolean),
+    approximate:!!plan?.approximate
+  }
+}
+async function movitCompanyLinkFromReq(req){
+  const token=routerBearer(req);
+  if(!token){const e=new Error('Este celular não está vinculado à empresa.');e.status=401;throw e}
+  const q=await pool.query(
+    "SELECT id::text AS id,driver_name,vehicle_plate FROM router_company_links WHERE token_hash=$1 AND active=TRUE LIMIT 1",
+    [dashboardTokenHash(token)]
+  );
+  if(!q.rowCount){const e=new Error('Vínculo com a empresa não encontrado. Abra a rota pelo aplicativo CONSTRULOG Motorista.');e.status=401;throw e}
+  return q.rows[0]
+}
+async function movitBuildDay(link){
+  const today=spToday();
+  const out={ok:true,date:today,driver_name:link.driver_name,vehicle_plate:link.vehicle_plate||'',company:'CONSTRULOG',
+    romaneios:[],source:'',stops:[],start:null,returnToStart:true,geometry:null,distanceMeters:0,durationSeconds:0,message:'',updated_at:new Date().toISOString()};
+  const a=await pool.query(
+    `SELECT romaneios FROM driver_tracking_assignments
+     WHERE active=TRUE AND work_date=$1::date
+       AND (lower(trim(driver_name))=lower(trim($2))
+            OR (COALESCE($3,'')<>'' AND upper(trim(COALESCE(vehicle_plate,'')))=upper(trim($3))))
+     ORDER BY updated_at DESC,id DESC LIMIT 1`,
+    [today,link.driver_name,link.vehicle_plate||'']
+  );
+  const roms=a.rowCount&&Array.isArray(a.rows[0].romaneios)?a.rows[0].romaneios.map(String):[];
+  out.romaneios=roms;
+  // 1) Rota que a operação já montou/ajustou e exportou para este romaneio tem prioridade.
+  const mr=await pool.query(
+    `SELECT romaneio,title,route_data,updated_at FROM movit_romaneio_routes
+     WHERE event_date=$1::date AND (romaneio=ANY($2::text[]) OR lower(trim(driver_name))=lower(trim($3)))
+     ORDER BY (romaneio=ANY($2::text[])) DESC,updated_at DESC LIMIT 1`,
+    [today,roms,link.driver_name]
+  );
+  if(mr.rowCount){
+    const d=mr.rows[0].route_data||{},list=Array.isArray(d.stops)?d.stops:[];
+    const stops=list.filter(x=>Number.isFinite(Number(x?.lat))&&Number.isFinite(Number(x?.lon))).map((x,i)=>({
+      ...x,seq:i+1,lat:Number(x.lat),lon:Number(x.lon),
+      label:String(x.destinatario||x.label||x.resolved||'Parada '+(i+1)),resolved:String(x.resolved||x.label||''),
+      destinatario:String(x.destinatario||''),nf:String(x.nf||''),entregue:!!x.entregue
+    }));
+    if(stops.length){
+      const st=d.start&&Number.isFinite(Number(d.start.lat))&&Number.isFinite(Number(d.start.lon))?d.start:null;
+      Object.assign(out,{source:'movit',stops,start:st,returnToStart:d.returnToStart!==false,geometry:d.geometry||null,
+        distanceMeters:Number(d.distanceMeters||0)||0,durationSeconds:Number(d.durationSeconds||0)||0});
+      if(!out.romaneios.length&&mr.rows[0].romaneio)out.romaneios=[String(mr.rows[0].romaneio)];
+      return out
+    }
+  }
+  // 2) Romaneio do dia lido do SSW pelo dashboard (mesma rota planejada do Mapa ao Vivo).
+  try{
+    const qs=new URLSearchParams({date:today,driver:link.driver_name,plate:link.vehicle_plate||''});
+    const r=await fetch('http://'+DASH_INTERNAL_HOST+':'+DASH_INTERNAL_PORT+'/api/tracking/planned-route?'+qs.toString(),{
+      headers:{'X-Internal-Key':INTERNAL_KEY,'Accept':'application/json'},signal:AbortSignal.timeout(90000)
+    });
+    const j=await r.json().catch(()=>({}));
+    if(r.ok&&j.ok){
+      const day=movitDayFromPlan(j);
+      Object.assign(out,day,{source:'ssw'});
+      if(!out.stops.length)out.message='O romaneio de hoje foi encontrado, mas nenhuma entrega pôde ser localizada no mapa.';
+      return out
+    }
+    out.message=r.status===404?'Ainda não há romaneio para você hoje. Assim que sair, a rota aparece aqui.'
+      :'Não consegui carregar a rota agora. Toque em Atualizar em alguns instantes.';
+    out.pending=r.status!==404
+  }catch(e){
+    out.message='Não consegui carregar a rota agora. Toque em Atualizar em alguns instantes.';
+    out.pending=true
+  }
+  return out
+}
 
 function routerBearer(req){
   const m=String(req.headers.authorization||'').match(/^Bearer\s+(.+)$/i);
@@ -1235,6 +1350,23 @@ async function start() {
   await pool.query("ALTER TABLE driver_tracking_devices ADD COLUMN IF NOT EXISTS health JSONB");
   await pool.query("ALTER TABLE driver_tracking_devices ADD COLUMN IF NOT EXISTS health_at TIMESTAMPTZ");
   await pool.query("ALTER TABLE driver_tracking_devices ADD COLUMN IF NOT EXISTS reactivated_at TIMESTAMPTZ");
+  // Vínculo do MOVIT com um motorista da empresa. Nasce de um código de uso único pedido pelo
+  // aplicativo CONSTRULOG Motorista (que já foi liberado pela central), então o MOVIT não
+  // precisa de cadastro nem de aprovação própria para receber a rota do dia.
+  await pool.query(`CREATE TABLE IF NOT EXISTS router_company_links (
+    id BIGSERIAL PRIMARY KEY,
+    code_hash TEXT UNIQUE,
+    code_expires_at TIMESTAMPTZ,
+    token_hash TEXT UNIQUE,
+    device_id BIGINT REFERENCES driver_tracking_devices(id) ON DELETE CASCADE,
+    driver_name TEXT NOT NULL,
+    vehicle_plate TEXT,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    claimed_at TIMESTAMPTZ,
+    last_used_at TIMESTAMPTZ
+  )`);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_router_company_links_device ON router_company_links(device_id)');
   await pool.query(`
     CREATE TABLE IF NOT EXISTS driver_tracking_contacts (
       driver_key TEXT PRIMARY KEY,
@@ -1457,6 +1589,59 @@ async function start() {
       }
       if(isDashboardApiPath(u.pathname)){
         return proxyDashboard(req,res,u.pathname+(u.search||''))
+      }
+
+      // Aplicativo CONSTRULOG Motorista pede um código de uso único para abrir o MOVIT já
+      // identificado como este motorista/placa (o aparelho já foi liberado pela central).
+      if (u.pathname === '/api/tracking/movit-link' && req.method === 'POST') {
+        try{
+          const device=await trackingDeviceFromReq(req);
+          const code=crypto.randomBytes(12).toString('hex');
+          await pool.query("DELETE FROM router_company_links WHERE token_hash IS NULL AND (code_expires_at<NOW() OR device_id=$1)",[device.id]);
+          await pool.query(
+            "INSERT INTO router_company_links(code_hash,code_expires_at,device_id,driver_name,vehicle_plate) VALUES($1,NOW()+INTERVAL '10 minutes',$2,$3,$4)",
+            [dashboardTokenHash(code),device.id,device.driver_name,device.vehicle_plate||'']
+          );
+          return sendJson(res,201,{ok:true,code,app_url:'movit://empresa/'+code,download_url:DRIVER_PUBLIC_BASE+'/downloads/MOVIT.apk',expires_minutes:10});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao preparar a rota do dia.'})}
+      }
+
+      if (u.pathname === '/api/router-app/company/claim' && req.method === 'POST') {
+        try{
+          if(!publicRouteAllowed(req))return sendJson(res,429,{ok:false,error:'Muitas tentativas. Aguarde um minuto.'});
+          const body=await readJsonBodyLimited(req,16*1024);
+          const code=String(body.code||'').trim().toLowerCase();
+          if(!/^[a-f0-9]{24}$/.test(code))return sendJson(res,400,{ok:false,error:'Código inválido.'});
+          const token=crypto.randomBytes(32).toString('hex');
+          const q=await pool.query(
+            `UPDATE router_company_links
+             SET token_hash=$2,code_hash=NULL,code_expires_at=NULL,claimed_at=NOW(),last_used_at=NOW()
+             WHERE code_hash=$1 AND token_hash IS NULL AND code_expires_at>NOW() AND active=TRUE
+             RETURNING id::text AS id,device_id,driver_name,vehicle_plate`,
+            [dashboardTokenHash(code),dashboardTokenHash(token)]
+          );
+          if(!q.rowCount)return sendJson(res,404,{ok:false,error:'Código vencido ou já usado. Abra de novo pelo aplicativo CONSTRULOG Motorista.'});
+          const row=q.rows[0];
+          // Um vínculo por aparelho de rastreio: o novo substitui os anteriores.
+          await pool.query("UPDATE router_company_links SET active=FALSE WHERE device_id=$1 AND id<>$2 AND active=TRUE",[row.device_id,row.id]);
+          return sendJson(res,200,{ok:true,company_token:token,company:'CONSTRULOG',driver_name:row.driver_name,vehicle_plate:row.vehicle_plate||''});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao vincular o aplicativo.'})}
+      }
+
+      if (u.pathname === '/api/router-app/company/today' && req.method === 'GET') {
+        try{
+          const link=await movitCompanyLinkFromReq(req);
+          const hit=MOVIT_DAY_CACHE.get(link.id),fresh=u.searchParams.get('fresh')==='1';
+          // A rota do SSW é cara de montar: reaproveita por 3 minutos (30 s quando o motorista pede).
+          // Resposta vazia vale só 20 s, para a rota aparecer logo depois que o romaneio sai.
+          const ttl=hit&&!hit.value.stops.length?20000:(fresh?30000:180000);
+          if(hit&&hit.value.date===spToday()&&Date.now()-hit.at<ttl)return sendJson(res,200,hit.value);
+          const value=await movitBuildDay(link);
+          MOVIT_DAY_CACHE.set(link.id,{at:Date.now(),value});
+          if(MOVIT_DAY_CACHE.size>500)MOVIT_DAY_CACHE.delete(MOVIT_DAY_CACHE.keys().next().value);
+          pool.query('UPDATE router_company_links SET last_used_at=NOW() WHERE id=$1',[link.id]).catch(()=>{});
+          return sendJson(res,200,value);
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar a rota do dia.'})}
       }
 
       if (u.pathname === '/api/router-app/register' && req.method === 'POST') {

@@ -6,7 +6,7 @@ import java.net.*;
 import java.nio.charset.StandardCharsets;
 
 public final class Api {
-    public static final String BASE="https://controle-coletas-jr.onrender.com";
+    public static final String BASE=BuildConfig.API_BASE;
     private Api(){}
 
     public static JSONObject get(String path)throws Exception{return request("GET",path,null,null);}

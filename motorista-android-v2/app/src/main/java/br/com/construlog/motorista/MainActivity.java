@@ -38,7 +38,7 @@ public class MainActivity extends Activity {
     private TextView big,sub,foot;
     private LinearLayout steps,form;
     private EditText driver,plate;
-    private Button activate,update;
+    private Button activate,update,route;
     private final Handler ui=new Handler(Looper.getMainLooper());
     private final ScheduledExecutorService exec=Executors.newSingleThreadScheduledExecutor();
     private volatile boolean polling=false,registering=false,resumed=false;
@@ -152,6 +152,11 @@ public class MainActivity extends Activity {
         steps=new LinearLayout(this);steps.setOrientation(LinearLayout.VERTICAL);
         root.addView(steps,block(6));
 
+        route=button("🗺️  ABRIR ROTA DE HOJE",Color.rgb(22,20,47));
+        route.setOnClickListener(v->openTodayRoute());
+        route.setVisibility(View.GONE);
+        root.addView(route,block(14));
+
         update=button("ATUALIZAR APLICATIVO",Color.rgb(0,87,168));
         update.setOnClickListener(v->openUrl(Notifier.updateUrl()));
         update.setVisibility(View.GONE);
@@ -235,6 +240,7 @@ public class MainActivity extends Activity {
             }
         }
 
+        route.setVisibility(hasToken&&!lost?View.VISIBLE:View.GONE);
         boolean newer=Prefs.latestCode(this)>BuildConfig.VERSION_CODE;
         update.setVisibility(newer?View.VISIBLE:View.GONE);
         String who=Prefs.driver(this),pl=Prefs.plate(this);
@@ -309,6 +315,31 @@ public class MainActivity extends Activity {
             if(granted)ui.postDelayed(this::guideNext,400);
             else guiding=false;
         }
+    }
+
+    // ---------------------------------------------------------------- rota do dia (aplicativo MOVIT)
+
+    /** Abre o MOVIT já identificado como este motorista, com as entregas do romaneio de hoje. */
+    private void openTodayRoute(){
+        route.setEnabled(false);route.setText("ABRINDO A ROTA…");
+        exec.execute(()->{
+            String appUrl="",download="";String error="";
+            try{
+                JSONObject j=Api.request("POST","/api/tracking/movit-link",new JSONObject(),Prefs.token(this));
+                appUrl=j.optString("app_url","");download=j.optString("download_url","");
+            }catch(Exception e){error=e.getMessage()==null?"sem conexão":e.getMessage();}
+            final String fa=appUrl,fd=download,fe=error;
+            ui.post(()->{
+                route.setEnabled(true);route.setText("🗺️  ABRIR ROTA DE HOJE");
+                if(fa.isEmpty()){Toast.makeText(this,"Não foi possível abrir a rota: "+fe,Toast.LENGTH_LONG).show();return;}
+                try{
+                    startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(fa)));
+                }catch(Exception notInstalled){
+                    Toast.makeText(this,"Instale o aplicativo MOVIT para ver a rota. Depois toque de novo neste botão.",Toast.LENGTH_LONG).show();
+                    if(!fd.isEmpty())openUrl(fd);
+                }
+            });
+        });
     }
 
     // ---------------------------------------------------------------- ativação

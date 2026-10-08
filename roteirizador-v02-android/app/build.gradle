@@ -1,5 +1,9 @@
 plugins { id 'com.android.application' }
 
+// Endereço do servidor. Só o teste automático (emulador) troca este valor.
+def apiBase = (project.findProperty('apiBase') ?: 'https://controle-coletas-jr.onrender.com').toString()
+def testHooks = (project.findProperty('testHooks') ?: 'false').toString() == 'true'
+
 android {
     namespace 'br.com.movit.rotas'
     compileSdk 36
@@ -7,8 +11,10 @@ android {
     defaultConfig {
         minSdk 26
         targetSdk 36
-        versionCode 9
-        versionName '1.0.8'
+        versionCode 10
+        versionName '1.1.0'
+        buildConfigField 'String', 'API_BASE', '"' + apiBase + '"'
+        manifestPlaceholders = [cleartext: testHooks.toString()]
     }
 
     buildFeatures {

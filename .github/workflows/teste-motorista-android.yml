@@ -1,4 +1,4 @@
-name: Teste do aplicativo do motorista (emulador)
+name: Teste dos aplicativos (emulador)
 
 # Compila o aplicativo e o exercita num Android emulado contra o servidor em modo teste.
 # Não publica nada e não roda na branch de produção.
@@ -7,6 +7,7 @@ on:
     branches-ignore: [controle-coletas-aiven]
     paths:
       - 'motorista-android-v2/**'
+      - 'roteirizador-v02-android/**'
       - 'controle-coletas-aiven-app/tests/app-emulador.js'
       - '.github/workflows/teste-motorista-android.yml'
   workflow_dispatch:
@@ -49,12 +50,21 @@ jobs:
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: '8.13'
+      - name: Garantir Android SDK 36 (MOVIT)
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0"
       - name: Compilar o aplicativo apontando para o servidor de teste
         run: |
           gradle -p motorista-android-v2 :app:assembleDebug --no-daemon -PapiBase=http://10.0.2.2:10000 -PtestHooks=true 2> erros-compilacao.txt || {
             grep -E "error:|FAILED|What went wrong" -A3 erros-compilacao.txt | head -60 | while IFS= read -r l; do echo "::error title=Compilação::$l"; done
             cat erros-compilacao.txt; exit 1; }
+      - name: Compilar o MOVIT apontando para o servidor de teste
+        run: |
+          gradle -p roteirizador-v02-android :app:assembleInternalDebug --no-daemon -PapiBase=http://10.0.2.2:10000 -PtestHooks=true 2> erros-movit.txt || {
+            grep -E "error:|FAILED|What went wrong" -A3 erros-movit.txt | head -60 | while IFS= read -r l; do echo "::error title=Compilação MOVIT::$l"; done
+            cat erros-movit.txt; exit 1; }
       - name: Subir o servidor em modo teste
         run: |
           cd controle-coletas-aiven-app && npm install --omit=dev

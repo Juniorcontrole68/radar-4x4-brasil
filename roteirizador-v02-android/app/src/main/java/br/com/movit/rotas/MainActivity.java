@@ -40,12 +40,203 @@ public class MainActivity extends Activity {
     private boolean testTrackingActive=false;
     private AlertDialog fuelDialog,tollDialog,restrictionDialog;
     private boolean fuelRequestRunning=false,tollRequestRunning=false,restrictionRequestRunning=false;
+    // Dois modos no mesmo app: "dia" = entregas do romaneio enviadas pela empresa; "livre" = o
+    // motorista monta a rota que quiser. Cada modo guarda as suas paradas separadamente.
+    private static final String MODE_DAY="dia",MODE_FREE="livre";
+    private String mode=MODE_FREE;
+    private LinearLayout modeBar,searchRowView,startRowView,shareRowView;
+    private Button modeDayButton,modeFreeButton,refreshDayButton,startRouteButton,editStopsButton;
+    private boolean dayLoading=false,dayReloadWanted=false;
+    private long dayLoadedAt=0L;
 
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
         prefs=getSharedPreferences("rv2_account",MODE_PRIVATE);
         if(!prefs.contains("current_return_start"))prefs.edit().putBoolean("current_return_start",true).apply();
-        buildUi();renderList();renderMap(null);refreshAccount();refreshStartPointUi();handleSharedRouteIntent(getIntent());
+        mode=companyLinked()&&MODE_DAY.equals(prefs.getString("mode",MODE_FREE))?MODE_DAY:MODE_FREE;
+        buildUi();loadState();applyMode();renderList();renderMap(lastPlan);refreshAccount();refreshStartPointUi();handleSharedRouteIntent(getIntent());
+    }
+
+    @Override protected void onResume(){
+        super.onResume();
+        // Rota do dia: ao voltar para o app, confere se há entregas novas ou baixadas.
+        if(MODE_DAY.equals(mode)&&companyLinked()&&System.currentTimeMillis()-dayLoadedAt>120000L)loadDay(false);
+    }
+
+    // ---------------------------------------------------------------- modos e estado guardado
+
+    private boolean companyLinked(){return !prefs.getString("company_token","").isEmpty();}
+    private boolean dayMode(){return MODE_DAY.equals(mode);}
+
+    /** Guarda as paradas do modo atual para não perder a rota quando o app é fechado. */
+    private void persistState(){
+        try{
+            JSONObject st=new JSONObject();JSONArray arr=new JSONArray();
+            for(JSONObject x:stops)arr.put(x);
+            st.put("stops",arr);
+            if(start!=null)st.put("start",start);
+            st.put("returnToStart",prefs.getBoolean("current_return_start",false));
+            st.put("name",prefs.getString("current_route_name","Nova rota"));
+            if(lastPlan!=null&&dayMode()){   // o traçado da rota livre é refeito ao otimizar
+                JSONObject pl=new JSONObject();
+                if(lastPlan.optJSONObject("geometry")!=null)pl.put("geometry",lastPlan.optJSONObject("geometry"));
+                pl.put("distanceMeters",lastPlan.optDouble("distanceMeters",0));
+                pl.put("durationSeconds",lastPlan.optDouble("durationSeconds",0));
+                if(pl.toString().length()<400000)st.put("plan",pl);
+            }
+            prefs.edit().putString("state_"+mode,st.toString()).apply();
+        }catch(Exception ignored){}
+    }
+
+    private void loadState(){
+        stops.clear();start=null;lastPlan=null;
+        try{
+            String raw=prefs.getString("state_"+mode,"");
+            if(raw.isEmpty())return;
+            JSONObject st=new JSONObject(raw);
+            JSONArray arr=st.optJSONArray("stops");
+            if(arr!=null)for(int i=0;i<arr.length();i++)stops.add(arr.getJSONObject(i));
+            start=st.optJSONObject("start");
+            lastPlan=dayMode()?st.optJSONObject("plan"):null;
+            prefs.edit().putBoolean("current_return_start",st.optBoolean("returnToStart",false))
+                .putString("current_route_name",st.optString("name","Nova rota")).apply();
+        }catch(Exception ignored){}
+    }
+
+    private void switchMode(String next){
+        if(next.equals(mode))return;
+        if(MODE_DAY.equals(next)&&!companyLinked())return;
+        persistState();
+        mode=next;
+        prefs.edit().putString("mode",mode).apply();
+        loadState();
+        applyMode();
+        renderList();renderMap(lastPlan);refreshStartPointUi();
+        if(dayMode()){
+            if(stops.isEmpty()||System.currentTimeMillis()-dayLoadedAt>120000L)loadDay(false);
+            else status.setText("Rota do dia. Toque em Atualizar para conferir novas entregas.");
+        }else status.setText("Rota livre: digite ou fale o endereço. Rua e cidade já são suficientes.");
+    }
+
+    /** Mostra só o que faz sentido em cada modo. */
+    private void applyMode(){
+        final int NAVY=Color.rgb(22,20,47),MUTED=Color.rgb(91,105,135),LINE=Color.rgb(225,231,241);
+        boolean day=dayMode(),linked=companyLinked();
+        if(modeBar!=null)modeBar.setVisibility(linked?View.VISIBLE:View.GONE);
+        if(modeDayButton!=null){
+            modeDayButton.setBackground(day?bg(NAVY,14):strokedBg(Color.WHITE,LINE,14));modeDayButton.setTextColor(day?Color.WHITE:MUTED);
+            modeFreeButton.setBackground(!day?bg(NAVY,14):strokedBg(Color.WHITE,LINE,14));modeFreeButton.setTextColor(!day?Color.WHITE:MUTED);
+        }
+        int free=day?View.GONE:View.VISIBLE;
+        if(searchRowView!=null)searchRowView.setVisibility(free);
+        if(startRowView!=null)startRowView.setVisibility(free);
+        if(returnStartHome!=null){
+            returnStartHome.setVisibility(free);
+            boolean wanted=prefs.getBoolean("current_return_start",false);
+            if(!day&&returnStartHome.isChecked()!=wanted)returnStartHome.setChecked(wanted);
+        }
+        if(shareRowView!=null)shareRowView.setVisibility(free);
+        if(optimizeButton!=null)optimizeButton.setVisibility(free);
+        if(editStopsButton!=null)editStopsButton.setVisibility(free);
+        if(refreshDayButton!=null)refreshDayButton.setVisibility(day?View.VISIBLE:View.GONE);
+        if(startRouteButton!=null)startRouteButton.setText(day?"Ir para a próxima entrega":"Iniciar rota");
+        if(routeTitle!=null){
+            if(day){
+                String who=prefs.getString("company_driver",""),plate=prefs.getString("company_plate","");
+                routeTitle.setText("Rota de hoje"+(plate.isEmpty()?"":" • "+plate));
+                if(!who.isEmpty()&&status!=null&&stops.isEmpty())status.setText("Olá, "+who.split(" ")[0]+". Buscando as entregas de hoje…");
+            }else routeTitle.setText(prefs.getString("current_route_name","Nova rota"));
+        }
+    }
+
+    private void daySummary(){
+        if(summary==null)return;
+        int done=0;for(JSONObject x:stops)if(x.optBoolean("entregue",false))done++;
+        String km=lastPlan!=null&&lastPlan.optDouble("distanceMeters",0)>0?" • "+fmtKm(lastPlan.optDouble("distanceMeters",0)):"";
+        summary.setText(stops.size()+" entrega"+(stops.size()==1?"":"s")+" • "+done+" já entregue"+(done==1?"":"s")+km);
+    }
+
+    /** Busca na empresa as entregas do romaneio de hoje, já na ordem de rota. */
+    private void loadDay(final boolean askedByUser){
+        if(!companyLinked())return;
+        if(dayLoading){dayReloadWanted=dayReloadWanted||askedByUser;return;}
+        dayLoading=true;
+        if(askedByUser||stops.isEmpty())status.setText("Buscando as entregas de hoje…");
+        if(refreshDayButton!=null){refreshDayButton.setEnabled(false);refreshDayButton.setText("Atualizando…");}
+        final String token=prefs.getString("company_token","");
+        exec.execute(()->{
+            try{
+                final JSONObject j=Api.getAuth("/api/router-app/company/today"+(askedByUser?"?fresh=1":""),token);
+                final ArrayList<JSONObject> list=new ArrayList<>();
+                JSONArray arr=j.optJSONArray("stops");
+                if(arr!=null)for(int i=0;i<arr.length();i++)list.add(arr.getJSONObject(i));
+                runOnUiThread(()->{
+                    dayLoading=false;dayLoadedAt=System.currentTimeMillis();
+                    if(refreshDayButton!=null){refreshDayButton.setEnabled(true);refreshDayButton.setText("🔄 Atualizar entregas");}
+                    // O vínculo mudou enquanto esta consulta estava a caminho: vale a nova.
+                    if(dayReloadWanted||!token.equals(prefs.getString("company_token",""))){dayReloadWanted=false;dayLoadedAt=0L;loadDay(true);return;}
+                    if(!dayMode())return;
+                    try{
+                        stops.clear();stops.addAll(list);
+                        start=j.optJSONObject("start");
+                        JSONObject pl=new JSONObject();
+                        if(j.optJSONObject("geometry")!=null)pl.put("geometry",j.optJSONObject("geometry"));
+                        pl.put("distanceMeters",j.optDouble("distanceMeters",0));
+                        pl.put("durationSeconds",j.optDouble("durationSeconds",0));
+                        lastPlan=pl;
+                        prefs.edit().putBoolean("current_return_start",j.optBoolean("returnToStart",true)).apply();
+                    }catch(Exception ignored){}
+                    renderList();renderMap(lastPlan);
+                    String msg=j.optString("message","");
+                    if(stops.isEmpty())status.setText(msg.isEmpty()?"Ainda não há entregas para você hoje.":msg);
+                    else{
+                        JSONArray roms=j.optJSONArray("romaneios");
+                        String rom=roms!=null&&roms.length()>0?" • Romaneio "+roms.optString(0)+(roms.length()>1?" +"+(roms.length()-1):""):"";
+                        status.setText("Entregas de hoje na melhor ordem"+rom+". Toque em uma parada para navegar.");
+                    }
+                });
+            }catch(final Exception e){
+                runOnUiThread(()->{
+                    dayLoading=false;
+                    if(refreshDayButton!=null){refreshDayButton.setEnabled(true);refreshDayButton.setText("🔄 Atualizar entregas");}
+                    String m=String.valueOf(e.getMessage());
+                    if(dayReloadWanted||!token.equals(prefs.getString("company_token",""))){dayReloadWanted=false;dayLoadedAt=0L;loadDay(true);return;}
+                    if(m.contains("Vínculo")||m.contains("vinculado")){
+                        // A empresa não reconhece mais este vínculo: volta para a rota livre.
+                        prefs.edit().remove("company_token").apply();
+                        mode=MODE_FREE;prefs.edit().putString("mode",mode).apply();
+                        loadState();applyMode();renderList();renderMap(lastPlan);
+                        status.setText("O vínculo com a empresa venceu. Abra a rota de novo pelo aplicativo CONSTRULOG Motorista.");
+                    }else if(dayMode())status.setText("Sem conexão para atualizar. Mostrando a última rota recebida.");
+                });
+            }
+        });
+    }
+
+    /** movit://empresa/<código>: aberto pelo app da empresa; vincula o celular e mostra a rota do dia. */
+    private void claimCompanyCode(final String code){
+        status.setText("Conectando com a empresa…");
+        exec.execute(()->{
+            try{
+                JSONObject b=new JSONObject();b.put("code",code);
+                final JSONObject j=Api.post("/api/router-app/company/claim",b);
+                prefs.edit().putString("company_token",j.getString("company_token"))
+                    .putString("company_name",j.optString("company","Empresa"))
+                    .putString("company_driver",j.optString("driver_name",""))
+                    .putString("company_plate",j.optString("vehicle_plate","")).apply();
+                runOnUiThread(()->{
+                    if(!dayMode()){persistState();mode=MODE_DAY;prefs.edit().putString("mode",mode).apply();loadState();}
+                    applyMode();renderList();renderMap(lastPlan);
+                    dayLoadedAt=0L;loadDay(true);
+                });
+            }catch(final Exception e){
+                runOnUiThread(()->{
+                    // Código já usado: se o celular já está vinculado, basta abrir a rota do dia.
+                    if(companyLinked()){switchMode(MODE_DAY);if(dayMode())loadDay(true);}
+                    else status.setText("Não foi possível conectar com a empresa: "+e.getMessage());
+                });
+            }
+        });
     }
 
     @Override protected void onNewIntent(Intent intent){
@@ -112,6 +303,14 @@ public class MainActivity extends Activity {
         top.addView(settings,new LinearLayout.LayoutParams(dp(48),dp(48)));
         page.addView(top);
 
+        // Rota do dia × Rota livre (só aparece para quem está vinculado a uma empresa)
+        modeBar=new LinearLayout(this);modeBar.setOrientation(LinearLayout.HORIZONTAL);modeBar.setPadding(dp(12),dp(2),dp(12),dp(8));modeBar.setBackgroundColor(Color.WHITE);
+        modeDayButton=pill("📦 Rota do dia",NAVY,Color.WHITE);modeDayButton.setTextSize(14);modeDayButton.setOnClickListener(v->switchMode(MODE_DAY));
+        modeFreeButton=pill("✏️ Rota livre",Color.WHITE,MUTED);modeFreeButton.setTextSize(14);modeFreeButton.setOnClickListener(v->switchMode(MODE_FREE));
+        modeBar.addView(modeDayButton,new LinearLayout.LayoutParams(0,dp(44),1));
+        LinearLayout.LayoutParams mfp=new LinearLayout.LayoutParams(0,dp(44),1);mfp.setMargins(dp(8),0,0,0);modeBar.addView(modeFreeButton,mfp);
+        page.addView(modeBar);
+
         ScrollView outer=new ScrollView(this);outer.setFillViewport(true);
         LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(dp(12),0,dp(12),dp(18));
         outer.addView(root,new ScrollView.LayoutParams(-1,-2));page.addView(outer,new LinearLayout.LayoutParams(-1,0,1));
@@ -132,6 +331,7 @@ public class MainActivity extends Activity {
         Button add=pill("Adicionar",BLUE,Color.WHITE);add.setTextSize(13);add.setOnClickListener(v->addAddress(address.getText().toString()));
         LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(dp(96),dp(50));ap.setMargins(dp(6),0,0,0);searchRow.addView(add,ap);
         root.addView(searchRow);
+        searchRowView=searchRow;
 
         status=label("Digite ou fale o endereço. Rua e cidade já são suficientes.",12,MUTED,false);status.setPadding(dp(4),dp(7),dp(4),dp(4));root.addView(status);
 
@@ -148,7 +348,14 @@ public class MainActivity extends Activity {
         Button changeStart=pill("Alterar",Color.WHITE,BLUE);changeStart.setBackground(strokedBg(Color.WHITE,LINE,12));changeStart.setOnClickListener(v->showStartPicker());
         LinearLayout.LayoutParams csp=new LinearLayout.LayoutParams(dp(88),dp(42));csp.setMargins(dp(8),0,0,0);startRow.addView(changeStart,csp);
         info.addView(startRow);
+        startRowView=startRow;
         gap(info,8);
+
+        refreshDayButton=pill("🔄 Atualizar entregas",Color.rgb(236,253,245),Color.rgb(6,95,70));
+        refreshDayButton.setBackground(strokedBg(Color.rgb(236,253,245),Color.rgb(110,231,183),14));
+        refreshDayButton.setOnClickListener(v->loadDay(true));
+        LinearLayout.LayoutParams rdp=new LinearLayout.LayoutParams(-1,dp(48));rdp.setMargins(0,0,0,dp(8));
+        info.addView(refreshDayButton,rdp);
 
         returnStartHome=new Switch(this);
         returnStartHome.setText("Terminar no mesmo local de início");
@@ -197,6 +404,7 @@ public class MainActivity extends Activity {
         shareRow.addView(share,new LinearLayout.LayoutParams(0,dp(48),1));
         LinearLayout.LayoutParams svp=new LinearLayout.LayoutParams(dp(96),dp(48));svp.setMargins(dp(8),0,0,0);shareRow.addView(save,svp);
         info.addView(shareRow);
+        shareRowView=shareRow;
         root.addView(info);
 
         gap(root,10);
@@ -207,6 +415,7 @@ public class MainActivity extends Activity {
         TextView stopsTitle=label("Paradas",17,TEXT,true);stHead.addView(stopsTitle,new LinearLayout.LayoutParams(0,-2,1));
         Button edit=pill("Editar",Color.WHITE,BLUE);edit.setBackground(strokedBg(Color.WHITE,LINE,12));edit.setOnClickListener(v->status.setText("Use ↑ para mover e × para excluir uma parada."));
         stHead.addView(edit,new LinearLayout.LayoutParams(dp(82),dp(42)));stopsCard.addView(stHead);
+        editStopsButton=edit;
         list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);list.setPadding(0,dp(6),0,0);stopsCard.addView(list,new LinearLayout.LayoutParams(-1,-2));
         root.addView(stopsCard);
 
@@ -215,7 +424,8 @@ public class MainActivity extends Activity {
         // Barra inferior de ação
         LinearLayout bottom=card(10);bottom.setOrientation(LinearLayout.HORIZONTAL);bottom.setGravity(Gravity.CENTER_VERTICAL);
         optimizeButton=pill("Otimizar rota",Color.WHITE,NAVY);optimizeButton.setTextSize(14);optimizeButton.setBackground(strokedBg(Color.WHITE,LINE,14));optimizeButton.setOnClickListener(v->optimize());
-        Button startBtn=pill("Iniciar rota",BLUE,Color.WHITE);startBtn.setTextSize(14);startBtn.setOnClickListener(v->{if(lastPlan==null)optimize();else navigateFirst();});
+        Button startBtn=pill("Iniciar rota",BLUE,Color.WHITE);startBtn.setTextSize(14);startBtn.setOnClickListener(v->{if(dayMode()||lastPlan!=null)navigateFirst();else optimize();});
+        startRouteButton=startBtn;
         bottom.addView(optimizeButton,new LinearLayout.LayoutParams(0,dp(56),1f));
         LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(0,dp(56),1f);sp.setMargins(dp(10),0,0,0);bottom.addView(startBtn,sp);
         root.addView(bottom);
@@ -259,11 +469,13 @@ public class MainActivity extends Activity {
         LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(20),dp(6),dp(20),0);
         TextView t=label("Criar rota",22,TEXT,true);box.addView(t);
 
-        TextView nlab=label("Nome do motorista",13,MUTED,false);nlab.setPadding(0,dp(16),0,dp(4));box.addView(nlab);
+        TextView nlab=label("Nome da rota ou do motorista",13,MUTED,false);nlab.setPadding(0,dp(16),0,dp(4));box.addView(nlab);
         EditText driver=new EditText(this);driver.setHint("Ex.: Júlio");driver.setText(prefs.getString("current_driver_name",""));box.addView(driver);
 
-        TextView rlab=label("Número do romaneio CONSTRULOG",13,MUTED,false);rlab.setPadding(0,dp(12),0,dp(4));box.addView(rlab);
+        // O romaneio só existe para quem é da empresa; na versão da loja o campo não aparece.
+        TextView rlab=label("Número do romaneio (opcional)",13,MUTED,false);rlab.setPadding(0,dp(12),0,dp(4));box.addView(rlab);
         EditText romaneio=new EditText(this);romaneio.setHint("Ex.: TBT12345");romaneio.setText(prefs.getString("current_romaneio",""));romaneio.setSingleLine(true);box.addView(romaneio);
+        if(BuildConfig.PLAY_STORE_BUILD&&!companyLinked()){rlab.setVisibility(View.GONE);romaneio.setVisibility(View.GONE);romaneio.setText("");}
 
         TextView dlab=label("Data do evento",13,MUTED,false);dlab.setPadding(0,dp(14),0,dp(4));box.addView(dlab);
         RadioGroup rg=new RadioGroup(this);rg.setOrientation(RadioGroup.VERTICAL);
@@ -293,8 +505,8 @@ public class MainActivity extends Activity {
         d.setOnShowListener(x->d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             String driverName=driver.getText().toString().trim();
             String romaneioNumber=romaneio.getText().toString().trim();
-            if(driverName.isEmpty()){status.setText("Informe o nome do motorista.");return;}
-            if(romaneioNumber.isEmpty()){status.setText("Informe o número do romaneio CONSTRULOG.");return;}
+            if(dayMode())switchMode(MODE_FREE);
+            if(driverName.isEmpty())driverName="Minha rota";
             String eventDate=new java.text.SimpleDateFormat("yyyy-MM-dd",Locale.getDefault()).format(selected.getTime());
             String eventDateBr=new java.text.SimpleDateFormat("dd/MM/yyyy",Locale.getDefault()).format(selected.getTime());
             String routeName=driverName+" "+eventDateBr;
@@ -712,7 +924,7 @@ public class MainActivity extends Activity {
         final String driver=prefs.getString("current_driver_name","Motorista");
         final String romaneio=prefs.getString("current_romaneio","");
         final String eventDateIso=prefs.getString("current_event_date",new java.text.SimpleDateFormat("yyyy-MM-dd",Locale.getDefault()).format(new Date()));
-        if(romaneio.trim().isEmpty()){status.setText("Associe um romaneio CONSTRULOG antes de exportar.");return;}
+        final boolean hasRomaneio=!romaneio.trim().isEmpty();
         String dateBr=eventDateIso;
         try{
             Date parsed=new java.text.SimpleDateFormat("yyyy-MM-dd",Locale.getDefault()).parse(eventDateIso);
@@ -720,17 +932,20 @@ public class MainActivity extends Activity {
         }catch(Exception ignored){}
         final String eventDateBr=dateBr;
         final String title=driver+" "+eventDateBr;
-        status.setText("Exportando rota para a CONSTRULOG…");
+        status.setText(hasRomaneio?"Exportando rota para a CONSTRULOG…":"Preparando o link da rota…");
         exec.execute(()->{
             try{
-                JSONObject exportBody=new JSONObject();
-                exportBody.put("romaneio",romaneio);
-                exportBody.put("driver_name",driver);
-                exportBody.put("event_date",eventDateIso);
-                exportBody.put("title",title);
-                exportBody.put("route_data",currentRouteData());
-                JSONObject exported=Api.post("/api/public-router/export-construlog",exportBody);
-                if(!exported.optBoolean("ok",false))throw new Exception(exported.optString("error","Falha ao enviar rota à CONSTRULOG."));
+                JSONObject exported=new JSONObject();
+                if(hasRomaneio){
+                    JSONObject exportBody=new JSONObject();
+                    exportBody.put("romaneio",romaneio);
+                    exportBody.put("driver_name",driver);
+                    exportBody.put("event_date",eventDateIso);
+                    exportBody.put("title",title);
+                    exportBody.put("route_data",currentRouteData());
+                    exported=Api.post("/api/public-router/export-construlog",exportBody);
+                    if(!exported.optBoolean("ok",false))throw new Exception(exported.optString("error","Falha ao enviar rota à CONSTRULOG."));
+                }
 
                 JSONObject body=new JSONObject();
                 body.put("driver_name",driver);
@@ -739,11 +954,11 @@ public class MainActivity extends Activity {
                 body.put("route_data",currentRouteData());
                 JSONObject j=Api.post("/api/public-router/share",body);
                 final String link=j.getString("shareUrl");
-                final String msg="Rota MOVIT - "+driver+" - "+eventDateBr+" - Romaneio "+romaneio+"\n"+link;
+                final String msg="Rota MOVIT - "+driver+" - "+eventDateBr+(hasRomaneio?" - Romaneio "+romaneio:"")+"\n"+link;
                 final boolean linked=exported.optBoolean("linked_to_tracking",false);
                 runOnUiThread(()->{
                     showShareOptions(title,msg,link);
-                    status.setText(linked?"Rota exportada e associada ao rastreamento CONSTRULOG.":"Rota exportada para a CONSTRULOG e pronta para compartilhar.");
+                    status.setText(!hasRomaneio?"Link da rota pronto para compartilhar.":(linked?"Rota exportada e associada ao rastreamento CONSTRULOG.":"Rota exportada para a CONSTRULOG e pronta para compartilhar."));
                 });
             }catch(Exception e){runOnUiThread(()->status.setText("Exportar: "+e.getMessage()));}
         });
@@ -783,9 +998,17 @@ public class MainActivity extends Activity {
     private void handleSharedRouteIntent(Intent intent){
         if(intent==null||intent.getData()==null)return;
         Uri data=intent.getData();
-        if(!"movit".equalsIgnoreCase(data.getScheme())||!"route".equalsIgnoreCase(data.getHost()))return;
+        if(!"movit".equalsIgnoreCase(data.getScheme()))return;
+        if("empresa".equalsIgnoreCase(data.getHost())){
+            String code=data.getLastPathSegment();
+            intent.setData(null);   // não repete o vínculo se a tela for recriada
+            if(code!=null&&code.matches("[a-fA-F0-9]{24}"))claimCompanyCode(code.toLowerCase(Locale.US));
+            return;
+        }
+        if(!"route".equalsIgnoreCase(data.getHost()))return;
         String token=data.getLastPathSegment();
         if(token==null||token.length()<10)return;
+        if(dayMode())switchMode(MODE_FREE);   // rota recebida por link abre na rota livre
         status.setText("Abrindo rota compartilhada…");
         exec.execute(()->{
             try{
@@ -1162,9 +1385,12 @@ public class MainActivity extends Activity {
     private void renderList(){
         final int NAVY=Color.rgb(22,20,47),GREEN=Color.rgb(99,202,67),BLUE=Color.rgb(47,115,232),TEXT=Color.rgb(30,41,59),MUTED=Color.rgb(100,116,139),LINE=Color.rgb(226,232,240);
         list.removeAllViews();
-        if(lastPlan==null)summary.setText(stops.size()+" parada"+(stops.size()==1?"":"s"));
+        persistState();
+        final boolean day=dayMode();
+        if(day)daySummary();
+        else if(lastPlan==null)summary.setText(stops.size()+" parada"+(stops.size()==1?"":"s"));
         if(stops.isEmpty()){
-            TextView empty=label("Nenhuma parada adicionada ainda.",13,MUTED,false);empty.setGravity(Gravity.CENTER);empty.setPadding(dp(8),dp(18),dp(8),dp(18));list.addView(empty);return;
+            TextView empty=label(day?"As entregas do seu romaneio de hoje aparecem aqui.":"Nenhuma parada adicionada ainda.",13,MUTED,false);empty.setGravity(Gravity.CENTER);empty.setPadding(dp(8),dp(18),dp(8),dp(18));list.addView(empty);return;
         }
         for(int i=0;i<stops.size();i++){
             final int idx=i;JSONObject s=stops.get(i);
@@ -1172,18 +1398,36 @@ public class MainActivity extends Activity {
             if(i>0){LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(-1,-2);rp.setMargins(0,dp(8),0,0);row.setLayoutParams(rp);}
 
             LinearLayout top=new LinearLayout(this);top.setOrientation(LinearLayout.HORIZONTAL);top.setGravity(Gravity.CENTER_VERTICAL);
-            TextView num=label(String.valueOf(i+1),14,NAVY,true);num.setGravity(Gravity.CENTER);num.setBackground(bg(GREEN,50));top.addView(num,new LinearLayout.LayoutParams(dp(36),dp(36)));
+            final boolean delivered=day&&s.optBoolean("entregue",false);
+            TextView num=label(delivered?"✓":String.valueOf(i+1),14,delivered?Color.WHITE:NAVY,true);num.setGravity(Gravity.CENTER);num.setBackground(bg(delivered?Color.rgb(148,163,184):GREEN,50));top.addView(num,new LinearLayout.LayoutParams(dp(36),dp(36)));
+            if(delivered)row.setAlpha(.62f);
 
             LinearLayout info=new LinearLayout(this);info.setOrientation(LinearLayout.VERTICAL);info.setPadding(dp(10),0,dp(6),0);
             String confirmed=s.optString("resolved",s.optString("label","Parada"));
             String original=s.optString("original","");
+            if(day){
+                // Rota do dia: cliente em destaque, depois endereço, nota e situação.
+                TextView who=label(s.optString("label","Entrega "+(i+1)),15,TEXT,true);who.setMaxLines(2);info.addView(who);
+                if(!confirmed.isEmpty()&&!confirmed.equalsIgnoreCase(s.optString("label",""))){
+                    TextView ad=label(confirmed,13,MUTED,false);ad.setMaxLines(3);ad.setPadding(0,dp(2),0,0);info.addView(ad);
+                }
+                if(s.optBoolean("approximate",false)&&original.isEmpty()){
+                    TextView ap=label("Sem endereço no romaneio: posição aproximada (cidade)",11,Color.rgb(185,93,0),true);ap.setPadding(0,dp(2),0,0);info.addView(ap);
+                }
+                String nf=s.optString("nf",""),extra=nf.isEmpty()?"":"NF "+nf;
+                if(delivered)extra=(extra.isEmpty()?"":extra+" • ")+"Entregue"+(s.optString("baixaAt","").isEmpty()?"":" "+s.optString("baixaAt",""));
+                if(!extra.isEmpty()){
+                    TextView ex=label(extra,12,delivered?Color.rgb(21,128,61):MUTED,true);ex.setPadding(0,dp(3),0,0);info.addView(ex);
+                }
+            }else{
             TextView t=label(confirmed,14,TEXT,true);t.setMaxLines(3);
             info.addView(t);
-            if(s.optBoolean("approximate",false)){
+            }
+            if(!day&&s.optBoolean("approximate",false)){
                 TextView approx=label("Localização aproximada da rua/CEP",11,Color.rgb(185,93,0),true);
                 approx.setPadding(0,dp(2),0,0);info.addView(approx);
             }
-            if(!original.isEmpty()&&!original.equalsIgnoreCase(confirmed)){
+            if(!day&&!original.isEmpty()&&!original.equalsIgnoreCase(confirmed)){
                 TextView r=label("Digitado: "+original,11,MUTED,false);r.setMaxLines(2);r.setPadding(0,dp(2),0,0);info.addView(r);
             }
             top.addView(info,new LinearLayout.LayoutParams(0,-2,1));
@@ -1198,8 +1442,9 @@ public class MainActivity extends Activity {
                 }
                 lastPlan=null;refreshStartPointUi();renderList();renderMap(null);status.setText("Parada removida.");
             });
-            LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(dp(42),dp(42));bp.setMargins(dp(4),0,0,0);top.addView(up,bp);
-            LinearLayout.LayoutParams bp2=new LinearLayout.LayoutParams(dp(42),dp(42));bp2.setMargins(dp(4),0,0,0);top.addView(del,bp2);
+            // Na rota do dia a ordem e as paradas vêm da empresa: não há mover nem excluir.
+            LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(dp(42),dp(42));bp.setMargins(dp(4),0,0,0);if(!day)top.addView(up,bp);
+            LinearLayout.LayoutParams bp2=new LinearLayout.LayoutParams(dp(42),dp(42));bp2.setMargins(dp(4),0,0,0);if(!day)top.addView(del,bp2);
             row.addView(top);
 
             LinearLayout navRow=new LinearLayout(this);navRow.setOrientation(LinearLayout.HORIZONTAL);navRow.setPadding(dp(46),dp(8),0,0);
@@ -1252,10 +1497,16 @@ public class MainActivity extends Activity {
     }
 
     private void navigateFirst(){
-        if(stops.isEmpty()){status.setText("Nenhuma parada.");return;}
-        final JSONObject s=stops.get(0);
+        if(stops.isEmpty()){status.setText(dayMode()?"Ainda não há entregas para hoje.":"Nenhuma parada.");return;}
+        JSONObject next=stops.get(0);
+        if(dayMode()){
+            next=null;
+            for(JSONObject x:stops)if(!x.optBoolean("entregue",false)){next=x;break;}
+            if(next==null){status.setText("Todas as entregas de hoje já constam como entregues.");return;}
+        }
+        final JSONObject s=next;
         new AlertDialog.Builder(this)
-            .setTitle("Abrir próxima parada")
+            .setTitle(dayMode()?"Navegar até "+s.optString("label","a próxima entrega"):"Abrir próxima parada")
             .setItems(new String[]{"Google Maps","Waze"},(d,which)->{
                 if(which==0)openStopInMaps(s);else openStopInWaze(s);
             })
