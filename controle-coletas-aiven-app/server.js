@@ -3506,6 +3506,31 @@ async function start() {
           const workDate=/^\d{4}-\d{2}-\d{2}$/.test(String(body.work_date||''))?String(body.work_date):(new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}));
           if(driver.length<2)return sendJson(res,400,{ok:false,error:'Motorista inválido.'});
           if(plate.length<7)return sendJson(res,400,{ok:false,error:'Placa inválida.'});
+
+          if(body.stop===true||body.active===false){
+            const client=await pool.connect();
+            try{
+              await client.query('BEGIN');
+              await client.query(
+                `UPDATE driver_tracking_assignments SET active=FALSE,updated_at=NOW()
+                 WHERE work_date=$1::date AND active=TRUE
+                   AND (upper(trim(COALESCE(vehicle_plate,'')))=upper(trim($2)) OR lower(trim(driver_name))=lower(trim($3)))`,
+                [workDate,plate,driver]
+              );
+              await client.query(
+                `UPDATE driver_tracking_sessions s
+                 SET status='ended',ended_at=COALESCE(ended_at,NOW())
+                 FROM driver_tracking_devices d
+                 WHERE s.device_id=d.id AND s.status='active'
+                   AND (upper(trim(COALESCE(d.vehicle_plate,'')))=upper(trim($1)) OR lower(trim(d.driver_name))=lower(trim($2)))`,
+                [plate,driver]
+              );
+              await client.query('COMMIT');
+            }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+            console.log('TRACKING AUTO STOP: '+JSON.stringify({driver,plate,workDate,reason:String(body.reason||'rota_concluida')}));
+            return sendJson(res,200,{ok:true,stopped:true,driver_name:driver,vehicle_plate:plate,work_date:workDate});
+          }
+
           if(!romaneios.length)return sendJson(res,400,{ok:false,error:'Romaneio não informado.'});
           const invite=crypto.randomBytes(32).toString('hex');
           const client=await pool.connect();
