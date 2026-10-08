@@ -65,6 +65,29 @@ jobs:
           echo "Servidor não subiu"; cat ../servidor.log; exit 1
       - name: Testes ponta a ponta
         run: node controle-coletas-aiven-app/tests/e2e.js
+      - name: Leitores de valor e data da planilha
+        run: TZ=America/Sao_Paulo node controle-coletas-aiven-app/tests/leitores.js
+      - name: Sessão do SSW (contra um SSW de mentira, sem rede externa)
+        env:
+          TEST_MODE: ''
+          SSW_INTERNAL_DOMINIO: tst
+          SSW_INTERNAL_CPF: '00000000000'
+          SSW_INTERNAL_USUARIO: usuario
+          SSW_INTERNAL_SENHA: senha
+          TRACKING_SYNC_SECONDS: '3600'
+        run: |
+          pkill -f "node server.js" || true
+          sleep 2
+          cd controle-coletas-aiven-app
+          nohup node tests/apoio/ssw-falso.js > ../ssw-falso.log 2>&1 &
+          export NODE_OPTIONS="--require $PWD/tests/apoio/sem-rede.js --require $PWD/tests/apoio/ssw-desvio.js"
+          nohup node server.js > ../servidor-ssw.log 2>&1 &
+          unset NODE_OPTIONS
+          for i in $(seq 1 60); do
+            sleep 1
+            if curl -fs -o /dev/null http://127.0.0.1:10001/health && curl -fs -o /dev/null http://127.0.0.1:10000/; then echo "no ar em ${i}s"; break; fi
+          done
+          node tests/ssw-sessao.js
       - name: Log do servidor
         if: always()
-        run: cat servidor.log || true
+        run: cat servidor.log || true; echo ----; cat servidor-ssw.log || true

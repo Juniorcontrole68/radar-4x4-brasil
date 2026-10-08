@@ -152,6 +152,86 @@ function filterAjudantesForUser(rows,user){
   return [];
 }
 function internalSswConfigured(){return !!(process.env.SSW_INTERNAL_DOMINIO&&process.env.SSW_INTERNAL_CPF&&process.env.SSW_INTERNAL_USUARIO&&process.env.SSW_INTERNAL_SENHA)}
+// ===== Sessão interna do SSW reaproveitada =====
+// Antes, cada consulta fazia um login completo no SSW (milhares por dia com o mesmo CPF).
+// Agora cada fluxo guarda a própria sessão e só faz login de novo quando ela envelhece ou
+// quando a resposta vem vazia/com erro. Nesse caso refaz UMA vez com login novo, que é
+// exatamente o comportamento antigo: o pior caso é igual ao de antes.
+const SSW_UA='Mozilla/5.0 Chrome/120 Safari/537.36';
+const SSW_SESSION_MAX_AGE_MS=Math.max(60,Number(process.env.SSW_SESSION_MAX_AGE_SECONDS||1200)||1200)*1000;
+const SSW_EMPTY_TRUST_MS=5*60*1000;
+const SSW_SESSIONS=new Map();       // fluxo -> {jar,apply,cookie,at,uses,emptyOkUntil}
+const SSW_SESSION_QUEUE=new Map();  // fluxo -> promessa (um uso por vez em cada sessão)
+const SSW_LOGIN_STATS={since:new Date().toISOString(),logins:0,reused:0,retries:0,lastLogin:null,byFlow:{}};
+function sswFlowStat(key){return SSW_LOGIN_STATS.byFlow[key]??={logins:0,reused:0,retries:0}}
+async function sswLoginFresh(flow='avulso'){
+  if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
+  const jar=new Map();
+  const apply=headers=>{
+    const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);
+    for(const raw of list){
+      const pair=String(raw).split(';')[0],i=pair.indexOf('=');
+      if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())
+    }
+  };
+  const cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
+  let r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{
+    headers:{'User-Agent':SSW_UA},
+    redirect:'manual',signal:AbortSignal.timeout(15000)
+  });
+  apply(r.headers);
+  const body=new URLSearchParams({
+    act:'L',
+    f1:process.env.SSW_INTERNAL_DOMINIO||'',
+    f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),
+    f3:process.env.SSW_INTERNAL_USUARIO||'',
+    f4:process.env.SSW_INTERNAL_SENHA||''
+  });
+  r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{
+    method:'POST',
+    headers:{
+      'Content-Type':'application/x-www-form-urlencoded',
+      'User-Agent':SSW_UA,
+      'Referer':'https://sistema.ssw.inf.br/bin/ssw0422',
+      'Cookie':cookie()
+    },
+    body:body.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)
+  });
+  apply(r.headers);await r.text();
+  SSW_LOGIN_STATS.logins++;sswFlowStat(flow).logins++;SSW_LOGIN_STATS.lastLogin=new Date().toISOString();
+  if(!jar.has('token'))throw new Error('Login interno SSW não aceito');
+  return{jar,apply,cookie,at:Date.now(),uses:0,emptyOkUntil:0}
+}
+// Sessão expirada: o SSW devolve a tela de login (campo de senha) no lugar da tela pedida.
+// Lançar erro aqui faz o withSswSession refazer com login novo, sem enviar nada à tela de login.
+function sswAssertLoggedIn(html,prog=''){
+  if(/^ssw0422$/i.test(String(prog||''))||/<input\b[^>]*type=["']?password/i.test(String(html||'')))throw new Error('Sessão do SSW expirada')
+}
+// Executa fn(sessao) no fluxo `key`, um uso por vez. `empty(resultado)` diz se o resultado veio vazio.
+function withSswSession(key,fn,{empty=null}={}){
+  const prev=SSW_SESSION_QUEUE.get(key)||Promise.resolve();
+  const run=prev.then(async()=>{
+    let s=SSW_SESSIONS.get(key);
+    if(s&&Date.now()-s.at<SSW_SESSION_MAX_AGE_MS){
+      s.uses++;SSW_LOGIN_STATS.reused++;sswFlowStat(key).reused++;
+      try{
+        const out=await fn(s);
+        // Vazio só é aceito de uma sessão reaproveitada se um login novo confirmou o vazio há pouco.
+        if(!(empty&&empty(out))||Date.now()<s.emptyOkUntil)return out;
+      }catch(e){/* sessão pode ter expirado: refaz abaixo com login novo */}
+      SSW_SESSIONS.delete(key);SSW_LOGIN_STATS.retries++;sswFlowStat(key).retries++;
+    }
+    s=await sswLoginFresh(key);
+    SSW_SESSIONS.set(key,s);
+    try{
+      const out=await fn(s);
+      if(empty&&empty(out))s.emptyOkUntil=Date.now()+SSW_EMPTY_TRUST_MS;
+      return out
+    }catch(e){SSW_SESSIONS.delete(key);throw e}
+  });
+  SSW_SESSION_QUEUE.set(key,run.catch(()=>{}));
+  return run
+}
 async function testInternalSswLogin(){
   const jar=new Map();
   const apply=(headers)=>{
@@ -366,43 +446,11 @@ async function fetchSsw38RomaneioDetailDirect(romaneio,qtdeCtrcs=0,motorista='',
   if(hit&&Date.now()-hit.at<5*60*1000)return hit.value;
   if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
 
-  const jar=new Map();
-  const apply=headers=>{
-    const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);
-    for(const raw of list){
-      const pair=String(raw).split(';')[0],i=pair.indexOf('=');
-      if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())
-    }
-  };
-  const cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
-
-  let r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{
-    headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},
-    redirect:'manual',signal:AbortSignal.timeout(15000)
-  });
-  apply(r.headers);
-  const body=new URLSearchParams({
-    act:'L',
-    f1:process.env.SSW_INTERNAL_DOMINIO||'',
-    f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),
-    f3:process.env.SSW_INTERNAL_USUARIO||'',
-    f4:process.env.SSW_INTERNAL_SENHA||''
-  });
-  r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{
-    method:'POST',
-    headers:{
-      'Content-Type':'application/x-www-form-urlencoded',
-      'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36',
-      'Referer':'https://sistema.ssw.inf.br/bin/ssw0422',
-      'Cookie':cookie()
-    },
-    body:body.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)
-  });
-  apply(r.headers);await r.text();
-  if(!jar.has('token'))throw new Error('Login interno SSW não aceito');
-
   const x={romaneio:rom,qtdeCtrcs:Number(qtdeCtrcs||0),motorista,veiculo,ctrcs:[],ctrcNfs:[],ctrcMeta:[]};
-  x.ctrcs=await fetchRomaneioCtrcs38(x,jar,apply,cookie);
+  x.ctrcs=await withSswSession('op38detalhe',async({jar,apply,cookie})=>{
+    x.ctrcNfs=[];x.ctrcMeta=[];
+    return fetchRomaneioCtrcs38(x,jar,apply,cookie)
+  },{empty:list=>!(list&&list.length)});
   const value=x;
   SSW38_ROM_DETAIL_CACHE.set(rom,{at:Date.now(),value});
   console.log('SSW38 ROMANEIO DIRETO: '+JSON.stringify({
@@ -421,42 +469,8 @@ async function fetchSsw38QuickPrefix(prefix='AMR'){
   if(SSW38_PREFIX_INFLIGHT.has(prefix))return SSW38_PREFIX_INFLIGHT.get(prefix);
   const job=(async()=>{
     if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
-    const jar=new Map();
-    const apply=headers=>{
-      const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);
-      for(const raw of list){
-        const pair=String(raw).split(';')[0],i=pair.indexOf('=');
-        if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())
-      }
-    };
-    const cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
-
-    let r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{
-      headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},
-      redirect:'manual',signal:AbortSignal.timeout(15000)
-    });
-    apply(r.headers);
-
-    const body=new URLSearchParams({
-      act:'L',
-      f1:process.env.SSW_INTERNAL_DOMINIO||'',
-      f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),
-      f3:process.env.SSW_INTERNAL_USUARIO||'',
-      f4:process.env.SSW_INTERNAL_SENHA||''
-    });
-    r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{
-      method:'POST',
-      headers:{
-        'Content-Type':'application/x-www-form-urlencoded',
-        'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36',
-        'Referer':'https://sistema.ssw.inf.br/bin/ssw0422',
-        'Cookie':cookie()
-      },
-      body:body.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)
-    });
-    apply(r.headers);await r.text();
-    if(!jar.has('token'))throw new Error('Login interno SSW não aceito');
-
+    const p=await withSswSession('op38:'+prefix,async({apply,cookie})=>{
+    let r;
     r=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2='+encodeURIComponent(prefix)+'&f3=38',{
       headers:{
         'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36',
@@ -467,6 +481,7 @@ async function fetchSsw38QuickPrefix(prefix='AMR'){
     });
     apply(r.headers);
     const nav=await r.text(),prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0198';
+    sswAssertLoggedIn(nav,prog);
 
     r=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{
       headers:{
@@ -507,6 +522,8 @@ async function fetchSsw38QuickPrefix(prefix='AMR'){
     }
 
     p.rows=(p.rows||[]).filter(x=>String(x.romaneio||'').toUpperCase().startsWith(prefix));
+    return p
+    },{empty:x=>!(x&&x.rows&&x.rows.length)});
     // A opção 38 às vezes responde vazia durante atualização do SSW. Não deixa
     // uma leitura vazia apagar a última relação válida de motoristas/romaneios.
     if(!p.rows.length){
@@ -571,18 +588,11 @@ async function fetchSswPendingDeliveries(){
   if(SSW_PENDING_INFLIGHT)return SSW_PENDING_INFLIGHT;
   SSW_PENDING_INFLIGHT=(async()=>{
     if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
-    const jar=new Map();
-    const apply=headers=>{
-      const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);
-      for(const raw of list){const pair=String(raw).split(';')[0],i=pair.indexOf('=');if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())}
-    };
-    const cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
-    let r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
-    const login=new URLSearchParams({act:'L',f1:process.env.SSW_INTERNAL_DOMINIO||'',f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),f3:process.env.SSW_INTERNAL_USUARIO||'',f4:process.env.SSW_INTERNAL_SENHA||''});
-    r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/ssw0422','Cookie':cookie()},body:login.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);await r.text();
-    if(!jar.has('token'))throw new Error('Login interno SSW não aceito');
+    const rows=await withSswSession('op38pend',async({apply,cookie})=>{
+    let r;
     r=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2=AMR&f3=38',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
     const nav=await r.text(),prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0198';
+    sswAssertLoggedIn(nav,prog);
     r=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
     const html=await r.text(),params=deliveryProgramFormParams(html);
     let manifest=(parseSsw38Table(html).rows||[])[0]||null;
@@ -610,6 +620,8 @@ async function fetchSswPendingDeliveries(){
       })
     }
     if(!rows.length)throw new Error('O SSW não retornou entregas em aberto na opção 38.');
+    return rows
+    });
     const value={ok:true,source:'SSW opção 38 • Pendências',rows,total:rows.length,at:new Date().toISOString()};
     SSW_PENDING_CACHE={at:Date.now(),value};
     console.log('SSW38 PENDENCIAS PROGRAMAÇÃO: '+JSON.stringify({total:rows.length,cidades:new Set(rows.map(x=>x.cidade).filter(Boolean)).size,comPeso:rows.filter(x=>x.peso>0).length,comM3Direto:rows.filter(x=>x.m3>0).length}));
@@ -1303,17 +1315,9 @@ function deliveryProgramSpecialLines(text){
 }
 async function deliveryProgramCreateSsw101Session(){
   if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
-  const jar=new Map();
-  const apply=headers=>{
-    const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);
-    for(const raw of list){const pair=String(raw).split(';')[0],i=pair.indexOf('=');if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())}
-  };
-  const cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
-  const hdr=ref=>({'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':ref||'https://sistema.ssw.inf.br/bin/menu01'});
-  let rr=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
-  const login=new URLSearchParams({act:'L',f1:process.env.SSW_INTERNAL_DOMINIO||'',f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),f3:process.env.SSW_INTERNAL_USUARIO||'',f4:process.env.SSW_INTERNAL_SENHA||''});
-  rr=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{method:'POST',headers:{...hdr('https://sistema.ssw.inf.br/bin/ssw0422'),'Content-Type':'application/x-www-form-urlencoded'},body:login.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);await rr.text();
-  if(!jar.has('token'))throw new Error('Login interno SSW não aceito');
+  const {jar,apply,cookie}=await sswLoginFresh('op101prog');
+  const hdr=ref=>({'User-Agent':SSW_UA,'Cookie':cookie(),'Referer':ref||'https://sistema.ssw.inf.br/bin/menu01'});
+  let rr;
   rr=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2=AMR&f3=101',{headers:hdr(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
   const nav=await rr.text(),prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0053';
   rr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:hdr('https://sistema.ssw.inf.br/bin/menu01'),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
@@ -1555,13 +1559,8 @@ function parseSsw101Freight(html,nf=''){
 }
 async function ssw101Session(){
   if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
-  const jar=new Map();
-  const apply=headers=>{const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);for(const raw of list){const pair=String(raw).split(';')[0],i=pair.indexOf('=');if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())}};
-  const cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
-  let rr=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
-  const login=new URLSearchParams({act:'L',f1:process.env.SSW_INTERNAL_DOMINIO||'',f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),f3:process.env.SSW_INTERNAL_USUARIO||'',f4:process.env.SSW_INTERNAL_SENHA||''});
-  rr=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/ssw0422','Cookie':cookie()},body:login.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);await rr.text();
-  if(!jar.has('token'))throw new Error('Login interno SSW não aceito');
+  const {jar,apply,cookie}=await sswLoginFresh('op101');
+  let rr;
   rr=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2=AMR&f3=101',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
   const nav=await rr.text(),prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0053';
   rr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
@@ -1653,11 +1652,12 @@ async function fillFreightByNf(rows){
 }
 async function fetchSsw38Rows(){
   if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
-  const jar=new Map(),apply=headers=>{const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);for(const raw of list){const pair=String(raw).split(';')[0],i=pair.indexOf('=');if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())}},cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
-  let r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
-  const body=new URLSearchParams({act:'L',f1:process.env.SSW_INTERNAL_DOMINIO||'',f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),f3:process.env.SSW_INTERNAL_USUARIO||'',f4:process.env.SSW_INTERNAL_SENHA||''});
-  r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/ssw0422','Cookie':cookie()},body:body.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);await r.text();if(!jar.has('token'))throw new Error('Login interno SSW não aceito');
+  return withSswSession('op38rows',sess=>fetchSsw38RowsWithSession(sess),{empty:o=>!(o&&o.rows&&o.rows.length)})
+}
+async function fetchSsw38RowsWithSession({jar,apply,cookie}){
+  let r;
   r=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2=AMR&f3=38',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);const nav=await r.text();const prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0198';
+  sswAssertLoggedIn(nav,prog);
   r=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);const html=await r.text();
   const inputDefs=[...html.matchAll(/<input\b([^>]*)>/gi)].map(m=>{const a=m[1]||'';return{name:(a.match(/\bname=["']?([^"'\s>]+)/i)||[])[1]||'',id:(a.match(/\bid=["']?([^"'\s>]+)/i)||[])[1]||'',type:(a.match(/\btype=["']?([^"'\s>]+)/i)||[])[1]||'',max:(a.match(/\bmaxlength=["']?([^"'\s>]+)/i)||[])[1]||''}}).filter(x=>x.name||x.id);
   console.log('SSW38 inputs: '+JSON.stringify(inputDefs));
@@ -3768,15 +3768,9 @@ const SSW_RECEITA_CACHE={at:0,text:'',meta:null};
 async function fetchSswReceita73Text(){
   if(SSW_RECEITA_CACHE.text&&Date.now()-SSW_RECEITA_CACHE.at<5*60*1000)return{...SSW_RECEITA_CACHE.meta,text:SSW_RECEITA_CACHE.text};
   if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
-  const jar=new Map();
-  const apply=headers=>{const list=typeof headers.getSetCookie==='function'?headers.getSetCookie():(headers.get('set-cookie')?[headers.get('set-cookie')]:[]);for(const raw of list){const pair=String(raw).split(';')[0],i=pair.indexOf('=');if(i>0)jar.set(pair.slice(0,i).trim(),pair.slice(i+1).trim())}};
-  const cookie=()=>[...jar.entries()].map(([k,v])=>k+'='+v).join('; ');
-  const hdr=ref=>({'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':ref||'https://sistema.ssw.inf.br/bin/menu01'});
-  let r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
-  const login=new URLSearchParams({act:'L',f1:process.env.SSW_INTERNAL_DOMINIO||'',f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),f3:process.env.SSW_INTERNAL_USUARIO||'',f4:process.env.SSW_INTERNAL_SENHA||''});
-  r=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/ssw0422','Cookie':cookie()},body:login.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);await r.text();
-  if(!jar.has('token'))throw new Error('Login interno SSW não aceito');
-
+  const {text,payload}=await withSswSession('rel073',async({apply,cookie})=>{
+  const hdr=ref=>({'User-Agent':SSW_UA,'Cookie':cookie(),'Referer':ref||'https://sistema.ssw.inf.br/bin/menu01'});
+  let r;
   r=await fetch('https://sistema.ssw.inf.br/bin/ssw0082',{headers:hdr(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
   const listHtml=await r.text(),plain=htmlText38(listHtml);
   const pm=plain.match(/(\d+\|(?:ssw\d+\s*-\s*)?\d+\|M@\d+\|\d+\|M\|73\|[^|]*\|MONITORACAO DE CLIENTES[^0-9]*?)(?=\s+\d{3}\s+|$)/i);
@@ -3803,6 +3797,8 @@ async function fetchSswReceita73Text(){
   const buf=Buffer.from(await r.arrayBuffer());
   if(!r.ok||buf.length<100)throw new Error('Arquivo do relatório 073 retornou vazio');
   const text=buf.toString('latin1').replace(/\r/g,'');
+  return{text,payload}
+  });
   const meta={source:'SSW',sourceCode:73,sourceName:'073 - Monitoramento de Clientes',payload};
   SSW_RECEITA_CACHE.at=Date.now();SSW_RECEITA_CACHE.text=text;SSW_RECEITA_CACHE.meta=meta;
   return{...meta,text}
@@ -4790,6 +4786,12 @@ if(u.pathname==='/api/evolucao-motoristas'&&req.method==='GET'){try{
   res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
+if(u.pathname==='/api/ssw/sessoes'&&req.method==='GET'){
+  // Contador de logins no SSW desde a última inicialização (só administrador).
+  if(!authUser.is_admin)return dashboardDeny(res);
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:true,...SSW_LOGIN_STATS,sessoesAbertas:SSW_SESSIONS.size,validadeSegundos:SSW_SESSION_MAX_AGE_MS/1000,agora:new Date().toISOString()}))
+}
 if(u.pathname==='/api/roteirizador/lista'){try{
   if(!dashboardHasAny(authUser,['dashboard','roteirizador','ssw_saidas','evolucao','tracking']))return dashboardDeny(res);
   const date=u.searchParams.get('date')||spDateISO();
@@ -4929,6 +4931,7 @@ let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.jo
   console.log('CONSTRULOG em '+PORT+(TEST_MODE?' *** AMBIENTE DE TESTE ***':''));
   if(TEST_MODE){console.log('TEST_MODE: sondas de inicialização, monitores BI2 e rotina de GPS desativados.');return}
   setInterval(()=>{trackingSyncTick()},TRACKING_SYNC_SECONDS*1000);
+  setInterval(()=>{if(SSW_LOGIN_STATS.logins||SSW_LOGIN_STATS.reused)console.log('SSW SESSOES: '+JSON.stringify(SSW_LOGIN_STATS))},30*60*1000);
   probeSswAbrirScripts().then(x=>console.log('SSW abrir probe isolado: '+JSON.stringify(x))).catch(()=>{});
   setTimeout(async()=>{try{
     const p=await fetchSswPendingDeliveries();

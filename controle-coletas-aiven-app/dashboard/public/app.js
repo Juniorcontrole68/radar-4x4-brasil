@@ -365,25 +365,53 @@ const gd=o=>{
   return'';
 },g=(o,...k)=>{for(const x of k)if(o[x]!==undefined)return o[x];return''};
 const pd=s=>{
+  // Lê uma data da planilha (padrão brasileiro: dia/mês/ano). Devolve null quando não reconhece,
+  // em vez de adivinhar: uma data lida errado some do período sem ninguém perceber.
   if(s==null||s==='')return null;
   if(s instanceof Date)return isNaN(s)?null:s;
-  if(typeof s==='number'&&Number.isFinite(s)){
-    // Datas seriais de Excel/Google Sheets.
-    const d=new Date(Date.UTC(1899,11,30)+s*86400000);
+  const serial=n=>{
+    // Datas seriais de Excel/Google Sheets (dias desde 30/12/1899).
+    const d=new Date(Date.UTC(1899,11,30)+n*86400000);
     return isNaN(d)?null:new Date(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate());
-  }
+  };
+  const build=(y,m,d)=>{
+    y=+y;m=+m;d=+d;
+    if(y<100)y+=2000;
+    const dt=new Date(y,m-1,d);
+    // rejeita datas impossíveis (ex.: 31/02), que o JavaScript "corrigiria" para outro dia
+    return(dt.getFullYear()===y&&dt.getMonth()===m-1&&dt.getDate()===d)?dt:null;
+  };
+  if(typeof s==='number'&&Number.isFinite(s))return serial(s);
   const raw=String(s).trim();
-  let m=raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+.*)?$/);
-  if(m){const d=new Date(+m[3],+m[2]-1,+m[1]);return isNaN(d)?null:d}
+  // dia/mês/ano com barra, ponto ou hífen; ano com 2 ou 4 dígitos; hora opcional depois
+  let m=raw.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4}|\d{2})(?:\s+.*)?$/);
+  if(m)return build(m[3],m[2],m[1]);
+  // ano-mês-dia (formato ISO), com hora opcional
   m=raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s].*)?$/);
-  if(m){const d=new Date(+m[1],+m[2]-1,+m[3]);return isNaN(d)?null:d}
-  m=raw.match(/^(\d{1,2})-(\d{1,2})-(\d{4})(?:\s+.*)?$/);
-  if(m){const d=new Date(+m[3],+m[2]-1,+m[1]);return isNaN(d)?null:d}
-  const d=new Date(raw);
-  return isNaN(d)?null:d
+  if(m)return build(m[1],m[2],m[3]);
+  // número puro de 5 dígitos: data serial exportada sem formatação (1954 a 2119)
+  if(/^\d{5}$/.test(raw)&&+raw>=20000&&+raw<=80000)return serial(+raw);
+  // textos com nome de mês (ex.: "5 out 2026"); formatos só numéricos não reconhecidos ficam sem data
+  if(/[a-zA-Z]{3}/.test(raw)){const d=new Date(raw);return isNaN(d)?null:d}
+  return null
 };
 const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-const num=v=>{if(v==null||v==='')return 0;let s=String(v).replace(/R\$/g,'').trim();if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');s=s.replace(/[^0-9.-]/g,'');return Number(s)||0};
+const num=v=>{
+  // Lê um valor da planilha no padrão brasileiro: ponto é milhar, vírgula é decimal.
+  if(v==null||v==='')return 0;
+  if(typeof v==='number')return Number.isFinite(v)?v:0;
+  let s=String(v).replace(/R\$/gi,'').replace(/\s/g,'');
+  // negativo: sinal de menos (antes ou depois) ou valor entre parênteses, como nas planilhas contábeis
+  const neg=/^\(.*\)$/.test(s)||s.startsWith('-')||s.endsWith('-');
+  s=s.replace(/^[(\-]+|[)\-]+$/g,'');
+  if(s.includes('-'))return 0; // hífen no meio (ex.: "10-20") não é um valor
+  if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');
+  // sem vírgula: "1.500" e "1.234.567" são milhares (antes viravam 1,5 e 0)
+  else if(/^[1-9]\d{0,2}(\.\d{3})+$/.test(s))s=s.replace(/\./g,'');
+  s=s.replace(/[^0-9.]/g,'');
+  const n=Number(s);
+  return Number.isFinite(n)?(neg?-n:n):0
+};
 const brl=v=>v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}),nf=v=>Math.round(v).toLocaleString('pt-BR'),safe=s=>String(s??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
 function driverDisplayName(v){
   const raw=String(v||'').trim().toLocaleLowerCase('pt-BR');
@@ -751,7 +779,11 @@ function financeRender(){
   if(profitPctEl)profitPctEl.classList.toggle('finance-target-bad',tot.profitPct<55);
   if(driverPctEl)driverPctEl.classList.toggle('finance-target-bad',tot.costPct>45);
   const info=$('#financeInfo');
-  if(info){const at=S.opsUpdatedAt?new Date(S.opsUpdatedAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'—';info.textContent=nf(rows.length)+' lançamento(s) • '+nf(drivers.length)+' motorista(s) • período '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje')+' • fonte atualizada às '+at+' • base: ENTREGUE / Frete Mot Liq / Frete Vialog Liq'};
+  if(info){const at=S.opsUpdatedAt?new Date(S.opsUpdatedAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'—';
+    // Linhas com algo escrito na data, mas que não foi possível ler: ficam fora de qualquer período.
+    const semData=(S.ops||[]).filter(o=>{const v=gd(o);return String(v??'').trim()!==''&&!pd(v)});
+    if(semData.length&&window.__opsSemDataAviso!==semData.length){window.__opsSemDataAviso=semData.length;console.warn('Lançamentos com data não reconhecida:',semData.slice(0,10).map(o=>gd(o)))}
+    info.textContent=nf(rows.length)+' lançamento(s) • '+nf(drivers.length)+' motorista(s) • período '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje')+' • fonte atualizada às '+at+' • base: ENTREGUE / Frete Mot Liq / Frete Vialog Liq'+(semData.length?' • ATENÇÃO: '+nf(semData.length)+' lançamento(s) com data não reconhecida ficaram fora (ex.: "'+String(gd(semData[0])).slice(0,20)+'")':'')};
   const tableRows=drivers.map(x=>({
     motorista:x.motorista,pago:brl(x.paid),receber:brl(x.receive),lucro:brl(x.profit),
     lucroPct:x.profitPct.toFixed(1).replace('.',',')+'%',custoPct:x.costPct.toFixed(1).replace('.',',')+'%'
