@@ -283,10 +283,30 @@ try{
           });
         }
 
+        function statusTextoExato(el){
+          if(!el)return'';
+          return String(el.textContent||'').replace(/\s+/g,' ').trim();
+        }
+
+        function acharColetaPeloElemento(el){
+          if(!el)return null;
+          let node=el;
+          for(let depth=0;node&&depth<8;depth++,node=node.parentElement){
+            const txt=String(node.textContent||'').replace(/\s+/g,' ').trim();
+            const found=dadosCache.find(co=>{
+              const os=String(co.os_numero||co.id||'').trim();
+              const id=String(co.id||'').trim();
+              return (os&&txt.includes(os))||(id&&txt.includes('#'+id));
+            });
+            if(found)return found;
+          }
+          return null;
+        }
+
         async function abrirSeletorNoBotaoStatus(el){
           if(!el||el.dataset.statusEditing==='1')return;
           const tr=el.closest('tr');
-          const coleta=tr?acharPorLinha(tr):null;
+          const coleta=(tr?acharPorLinha(tr):null)||acharColetaPeloElemento(el);
           if(!coleta)return;
           el.dataset.statusEditing='1';
 
@@ -730,6 +750,25 @@ try{
             const obs=new MutationObserver(()=>setTimeout(decorarFinanceiro,30));
             obs.observe(tbody,{childList:true,subtree:true});
           }
+          if(!window.__coletaStatusGlobalClick){
+            window.__coletaStatusGlobalClick=true;
+            document.addEventListener('click',e=>{
+              let el=e.target;
+              for(let i=0;el&&i<4;i++,el=el.parentElement){
+                const txt=statusTextoExato(el);
+                if(COLETA_STATUS_OPCOES.some(st=>st.toLocaleLowerCase('pt-BR')===txt.toLocaleLowerCase('pt-BR'))){
+                  const container=el.closest('tr')||el.parentElement?.parentElement||el.parentElement;
+                  const hasEditar=container && [...container.querySelectorAll?.('button,a')||[]].some(x=>/editar/i.test(String(x.textContent||'')));
+                  if(hasEditar||acharColetaPeloElemento(el)){
+                    e.preventDefault();e.stopPropagation();
+                    abrirSeletorNoBotaoStatus(el);
+                    return;
+                  }
+                }
+              }
+            },true);
+          }
+
           const tbodyOp=document.getElementById('tbodyOperacional');
           if(tbodyOp){
             const refreshStatus=()=>setTimeout(()=>{decorarOperacional();marcarBotoesStatusClicaveis()},30);
