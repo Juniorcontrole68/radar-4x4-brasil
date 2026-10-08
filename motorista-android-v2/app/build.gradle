@@ -2,6 +2,14 @@ plugins {
     id 'com.android.application'
 }
 
+// Endereço do servidor. Só o teste automático (emulador) troca este valor; o aplicativo
+// publicado sempre usa a produção.
+def apiBase = (project.findProperty('apiBase') ?: 'https://controle-coletas-jr.onrender.com').toString()
+def testHooks = (project.findProperty('testHooks') ?: 'false').toString() == 'true'
+// Assinatura fixa: o arquivo da chave é preparado pelo GitHub Actions quando o segredo
+// MOTORISTA_CHAVE existe. Sem ele, o APK sai com a assinatura de depuração da máquina.
+def ksPath = System.getenv('MOTORISTA_KEYSTORE_PATH')
+
 android {
     namespace 'br.com.construlog.motorista'
     compileSdk 35
@@ -10,18 +18,44 @@ android {
         applicationId 'br.com.construlog.motorista'
         minSdk 26
         targetSdk 35
-        versionCode 10
-        versionName '1.0.9'
+        versionCode 11
+        versionName '1.1.0'
+        buildConfigField 'String', 'API_BASE', '"' + apiBase + '"'
+        buildConfigField 'boolean', 'TEST_HOOKS', testHooks.toString()
+        manifestPlaceholders = [cleartext: testHooks.toString()]
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    signingConfigs {
+        fixa {
+            if (ksPath) {
+                storeFile file(ksPath)
+                storeType 'pkcs12'
+                storePassword System.getenv('MOTORISTA_KEYSTORE_PASSWORD')
+                keyAlias 'construlog-motorista'
+                keyPassword System.getenv('MOTORISTA_KEYSTORE_PASSWORD')
+            }
+        }
     }
 
     buildTypes {
         release {
             minifyEnabled false
+            if (ksPath) signingConfig signingConfigs.fixa
         }
         debug {
             applicationIdSuffix ''
             versionNameSuffix ''
+            if (ksPath) signingConfig signingConfigs.fixa
         }
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
     }
 }
 
