@@ -1,14 +1,14 @@
 {
   "normal": {
-    "versionCode": 9,
-    "versionName": "1.0.8",
+    "versionCode": 10,
+    "versionName": "1.0.9",
     "url": "/downloads/CONSTRULOG-Motorista-NORMAL.apk",
-    "notes": "Nova versão do CONSTRULOG Motorista disponível."
+    "notes": "Correção do GPS em segundo plano, reinício automático e rastreamento por romaneio."
   },
   "teste": {
-    "versionCode": 9,
-    "versionName": "1.0.8-teste",
+    "versionCode": 10,
+    "versionName": "1.0.9-teste",
     "url": "/downloads/CONSTRULOG-Motorista-TESTE.apk",
-    "notes": "Nova versão TESTE do CONSTRULOG Motorista disponível."
+    "notes": "Teste 1.0.9 com novo serviço nativo de GPS."
   }
 }
