@@ -4048,6 +4048,29 @@ async function inspectBi2ApiDoc(){try{const html=await fetchRaw('https://ssw.inf
 async function inspectBi2Help(){try{const html=await fetchRaw('https://sistema.ssw.inf.br/ajuda/ssw2229.htm');const links=[...html.matchAll(/href\s*=\s*["']([^"']+)["']/gi)].map(m=>m[1]).filter(x=>/bi2|webapi|api|bi/i.test(x));return{ok:true,links:[...new Set(links)].slice(0,50)}}catch(e){return{ok:false,error:String(e.message||e)}}}
 function fetchText(url,n=0){return new Promise((ok,no)=>{if(n>5)return no(new Error('Muitos redirecionamentos'));const q=https.get(url,{headers:{'User-Agent':'Mozilla/5.0','Accept':'text/csv,text/plain,*/*','Cache-Control':'no-cache','Pragma':'no-cache'}},r=>{if([301,302,303,307,308].includes(r.statusCode)&&r.headers.location){r.resume();return ok(fetchText(new URL(r.headers.location,url).toString(),n+1))}let b='';r.setEncoding('utf8');r.on('data',c=>b+=c);r.on('end',()=>{if(r.statusCode<200||r.statusCode>=300)return no(new Error('Google Sheets respondeu '+r.statusCode));if(/<html|<!doctype/i.test(b.slice(0,300)))return no(new Error('Google retornou HTML em vez dos dados'));ok(b.replace(/^\uFEFF/,''))})});q.setTimeout(25000,()=>q.destroy(new Error('Tempo esgotado ao consultar Google Sheets')));q.on('error',no)})}
 function csv(t){const a=[];let r=[],f='',q=false;for(let i=0;i<t.length;i++){const c=t[i];if(q){if(c==='"'&&t[i+1]==='"'){f+='"';i++}else if(c==='"')q=false;else f+=c}else{if(c==='"')q=true;else if(c===','){r.push(f);f=''}else if(c==='\n'){r.push(f.replace(/\r$/,''));a.push(r);r=[];f=''}else f+=c}}if(f.length||r.length){r.push(f.replace(/\r$/,''));a.push(r)}if(!a.length)return[];const h=a.shift().map((x,i)=>(x||('COL_'+(i+1))).trim());return a.filter(x=>x.some(v=>String(v).trim())).map(x=>Object.fromEntries(h.map((k,i)=>[k,x[i]??''])))}
+// A aba de lançamentos é lida pelo TÍTULO das colunas. Se alguém digitar por cima do título da
+// coluna de data (aconteceu: a célula virou "06/"), nenhuma linha teria data e todos os painéis
+// por período ficariam vazios. Quando nenhum título conhecido existe, a coluna de data é
+// reconhecida pelo conteúdo e tratada como "Data"; o aviso segue junto para a tela.
+const LANC_DATE_HEADERS=['ENTREGUE','Entregue','DATA ENTREGA','Data Entrega','Data da Entrega','Data','  Data','DATA','DATA LANÇAMENTO','Data Lançamento','Data do Lançamento'];
+let LANC_DATE_HEADER_FOUND='';
+function fixLancamentosDateHeader(x){
+  LANC_DATE_HEADER_FOUND='';
+  if(!Array.isArray(x)||!x.length)return x;
+  const keys=Object.keys(x[0]);
+  if(keys.some(k=>LANC_DATE_HEADERS.includes(k)))return x;
+  const isDate=v=>/^\d{1,2}[\/.\-]\d{1,2}[\/.\-](\d{4}|\d{2})(\s.*)?$/.test(v)||/^\d{4}-\d{1,2}-\d{1,2}([T\s].*)?$/.test(v);
+  const sample=x.slice(0,300);
+  let best=null;
+  for(const k of keys){
+    let n=0,ok=0;
+    for(const r of sample){const v=String(r[k]??'').trim();if(!v)continue;n++;if(isDate(v))ok++}
+    if(n>=5&&ok/n>=0.8){best=k;break}
+  }
+  if(best===null)return x;
+  LANC_DATE_HEADER_FOUND=best;
+  return x.map(r=>{const o={};for(const [k,v] of Object.entries(r))o[k===best?'Data':k]=v;return o})
+}
 function sheetDisabledError(){return Object.assign(new Error('Planilha desativada neste ambiente (defina SPREADSHEET_ID com uma cópia de teste).'),{status:503})}
 async function rows(gid){
   if(!ID)throw sheetDisabledError();
@@ -4060,9 +4083,11 @@ async function rows(gid){
   ];
   for(const u of urls){
     try{
-      const x=csv(await fetchText(u));
+      let x=csv(await fetchText(u));
       if(x.length){
         if(gid===GIDS.lancamentos){
+          x=fixLancamentosDateHeader(x);
+          if(LANC_DATE_HEADER_FOUND!=='')console.log('SHEET operações: título da coluna de data não reconhecido ("'+LANC_DATE_HEADER_FOUND+'"); coluna identificada pelo conteúdo.');
           const dates=x.map(r=>String(r.ENTREGUE||r.Entregue||r['  Data']||r.Data||r.DATA||'').trim()).filter(Boolean);
           console.log('SHEET operações atualizado: '+JSON.stringify({rows:x.length,ultimaData:dates[dates.length-1]||'',fonte:u.includes('/gviz/')?'gviz':'export'}));
         }
@@ -4916,7 +4941,8 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
   if(n==='ajudantes'&&!dashboardHasAny(authUser,['dashboard','ajudantes','financeiro']))return dashboardDeny(res);
   const x=sheetName?await rowsByName(sheetName):await rows(gid),baseRows=n==='lancamentos'?filterLancamentosForUser(x,authUser):(n==='ajudantes'?filterAjudantesForUser(x,authUser):x),safeRows=n==='agendamentos'?baseRows.map(r=>({...r,NF:String(r.NF??'').trim()?r.NF:(r['2']??'')})):baseRows;
   res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});
-  return res.end(JSON.stringify({ok:true,rows:safeRows,count:safeRows.length}))
+  const warning=(n==='lancamentos'&&LANC_DATE_HEADER_FOUND!=='')?'O título da coluna de data na planilha de lançamentos está como "'+LANC_DATE_HEADER_FOUND+'" (o esperado é "Data"). A coluna foi reconhecida pelo conteúdo, mas corrija o título na planilha.':'';
+  return res.end(JSON.stringify(warning?{ok:true,rows:safeRows,count:safeRows.length,warning}:{ok:true,rows:safeRows,count:safeRows.length}))
 }catch(e){res.writeHead(502,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:false,error:e.message}))}}if(req.method==='GET'&&u.pathname==='/'&&u.searchParams.get('embed')==='1'){
   try{
     let html=fs.readFileSync(path.join(PUB,'index.html'),'utf8');
