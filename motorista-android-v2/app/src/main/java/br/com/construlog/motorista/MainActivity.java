@@ -371,6 +371,7 @@ public class MainActivity extends Activity {
         if(!BuildConfig.TEST_HOOKS||intent==null)return;
         String d=intent.getStringExtra("auto_driver"),p=intent.getStringExtra("auto_plate");
         if(d==null||p==null)return;
+        if(!Prefs.token(this).isEmpty()||!Prefs.requestToken(this).isEmpty())return;   // só no primeiro uso
         driver.setText(d);plate.setText(p);
         ui.postDelayed(this::register,500);
     }

@@ -137,7 +137,40 @@ function ficar(){return adb('emu geo fix '+lon.toFixed(5)+' '+lat.toFixed(5))}
   const noTrecho=(await db.query("SELECT COUNT(*)::int AS n FROM driver_tracking_points p JOIN driver_tracking_devices d ON d.id=p.device_id WHERE d.vehicle_plate=$1 AND captured_at>$2 AND captured_at<$3",[PLATE,tOff,tOn])).rows[0].n;
   check('quando a internet volta, as posições do trecho sem sinal são enviadas (antes: perdidas)',!!b2&&noTrecho>=3,'novas='+((await pontos()).n-b1)+' do trecho='+noTrecho);
 
-  console.log('7. Tela e estabilidade');
+  console.log('7. Celular desligado e ligado de novo');
+  adb('reboot');await sleep(8000);adb('wait-for-device',180000);
+  const ligou=await until(async()=>adb('shell getprop sys.boot_completed')==='1',240000,4000);
+  const tBoot=new Date();
+  check('emulador reiniciou',!!ligou,adb('shell getprop sys.boot_completed'));
+  const posBoot=await until(async()=>{const d=await aparelho();return d&&new Date(d.last_seen_at)>tBoot?d:null},180000,4000);
+  check('depois de desligar e ligar o celular, o rastreio volta sozinho (sem abrir o app)',!!posBoot&&posBoot.health?.service_running===true,JSON.stringify(await aparelho()).slice(0,300)+' pid='+pid());
+  const pb=await until(async()=>{andar();const x=await pontos();return x.ultimo&&new Date(x.ultimo)>tBoot?x:null},120000,3000);
+  check('...e as posições voltam a chegar',!!pb,JSON.stringify(await pontos()));
+
+  console.log('8. Permissões retiradas: o app não pode travar e a central precisa saber');
+  adb('logcat -b crash -c');
+  adb('shell pm revoke '+PKG+' android.permission.ACCESS_BACKGROUND_LOCATION');await sleep(3000);
+  let tPerm=new Date();
+  console.log('   vigia acionado:',adb('shell cmd jobscheduler run -f '+PKG+' 7002'));
+  const semFundo=await until(async()=>{const d=await aparelho();return d&&new Date(d.last_seen_at)>tPerm&&d.health?.perm_background===false?d:null},120000,4000);
+  nota('Sem "permitir o tempo todo": '+JSON.stringify(semFundo?.health||(await aparelho())?.health||{}));
+  check('sem "Permitir o tempo todo": o app continua dando sinal de vida e informa o que falta',!!semFundo,JSON.stringify(await aparelho()).slice(0,300));
+  adb('shell pm revoke '+PKG+' android.permission.ACCESS_FINE_LOCATION');adb('shell pm revoke '+PKG+' android.permission.ACCESS_COARSE_LOCATION');await sleep(3000);
+  tPerm=new Date();
+  console.log('   vigia acionado:',adb('shell cmd jobscheduler run -f '+PKG+' 7002'));
+  const semLoc=await until(async()=>{const d=await aparelho();return d&&new Date(d.last_seen_at)>tPerm&&d.health?.perm_location===false?d:null},120000,4000);
+  nota('Sem permissão de localização: '+JSON.stringify(semLoc?.health||(await aparelho())?.health||{}));
+  check('sem nenhuma permissão de localização: ainda avisa a central (modo reduzido), sem travar',!!semLoc&&semLoc.health?.service_running===false,JSON.stringify(await aparelho()).slice(0,300));
+  adb('shell am start -n '+PKG+'/.MainActivity');await sleep(5000);
+  const t3=tela();nota('Tela com permissão faltando: '+t3.slice(0,400));
+  check('tela mostra o passo que falta, com botão',t3.includes('Falta')&&t3.includes('PERMITIR LOCALIZAÇÃO'),t3.slice(0,300));
+  const crashPerm=adb('logcat -d -b crash').split('\n').filter(l=>l.includes(PKG)||/FATAL EXCEPTION/.test(l));
+  check('nenhum travamento com as permissões retiradas',crashPerm.length===0,crashPerm.slice(0,6).join(' | ').slice(0,700));
+  adb('shell input keyevent KEYCODE_HOME');
+  for(const perm of ['ACCESS_FINE_LOCATION','ACCESS_COARSE_LOCATION','ACCESS_BACKGROUND_LOCATION'])adb('shell pm grant '+PKG+' android.permission.'+perm);
+  await sleep(2000);
+
+  console.log('9. Tela e estabilidade');
   adb('shell am start -n '+PKG+'/.MainActivity');await sleep(5000);
   const t2=tela();nota('Tela com tudo certo: '+t2.slice(0,500));
   check('tela principal mostra "Tudo certo" e nenhum passo pendente',t2.includes('Tudo certo')&&!t2.includes('Falta'),t2.slice(0,400));
