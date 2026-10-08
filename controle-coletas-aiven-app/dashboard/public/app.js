@@ -357,7 +357,13 @@ function bootstrapEmbeddedAuth(){
 }
 
 const S={ops:[],sch:[],help:[],agCopy:[],ssw:null,remetentes:null,receita:null,coletas:null,lotacao:[],sswMotoristas:null},$=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
-const gd=o=>o['ENTREGUE']??o['Entregue']??o['Data']??o['  Data']??o['DATA']??'',g=(o,...k)=>{for(const x of k)if(o[x]!==undefined)return o[x];return''};
+const gd=o=>{
+  for(const k of ['ENTREGUE','Entregue','DATA ENTREGA','Data Entrega','Data da Entrega','Data','  Data','DATA','DATA LANÇAMENTO','Data Lançamento','Data do Lançamento']){
+    const v=o?.[k];
+    if(v!==undefined&&v!==null&&String(v).trim()!=='')return v;
+  }
+  return'';
+},g=(o,...k)=>{for(const x of k)if(o[x]!==undefined)return o[x];return''};
 const pd=s=>{
   if(s==null||s==='')return null;
   if(s instanceof Date)return isNaN(s)?null:s;
