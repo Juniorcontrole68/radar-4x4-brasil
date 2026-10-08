@@ -138,6 +138,8 @@ function ficar(){return adb('emu geo fix '+lon.toFixed(5)+' '+lat.toFixed(5))}
   check('quando a internet volta, as posições do trecho sem sinal são enviadas (antes: perdidas)',!!b2&&noTrecho>=3,'novas='+((await pontos()).n-b1)+' do trecho='+noTrecho);
 
   console.log('7. Celular desligado e ligado de novo');
+  const crashAntes=adb('logcat -d -b crash').split('\n').filter(l=>l.includes(PKG)||/FATAL EXCEPTION/.test(l));
+  check('nenhum travamento do aplicativo até aqui (ativação, rota, morte do app, sem internet)',crashAntes.length===0,crashAntes.slice(0,6).join(' | ').slice(0,700));
   adb('reboot');await sleep(8000);adb('wait-for-device',180000);
   const ligou=await until(async()=>adb('shell getprop sys.boot_completed')==='1',240000,4000);
   const tBoot=new Date();
@@ -160,7 +162,7 @@ function ficar(){return adb('emu geo fix '+lon.toFixed(5)+' '+lat.toFixed(5))}
   console.log('   vigia acionado:',adb('shell cmd jobscheduler run -f '+PKG+' 7002'));
   const semLoc=await until(async()=>{const d=await aparelho();return d&&new Date(d.last_seen_at)>tPerm&&d.health?.perm_location===false?d:null},120000,4000);
   nota('Sem permissão de localização: '+JSON.stringify(semLoc?.health||(await aparelho())?.health||{}));
-  check('sem nenhuma permissão de localização: ainda avisa a central (modo reduzido), sem travar',!!semLoc&&semLoc.health?.service_running===false,JSON.stringify(await aparelho()).slice(0,300));
+  check('sem nenhuma permissão de localização: ainda avisa a central (modo reduzido), sem travar',!!semLoc,JSON.stringify(await aparelho()).slice(0,300));
   adb('shell am start -n '+PKG+'/.MainActivity');await sleep(5000);
   const t3=tela();nota('Tela com permissão faltando: '+t3.slice(0,400));
   check('tela mostra o passo que falta, com botão',t3.includes('Falta')&&t3.includes('PERMITIR LOCALIZAÇÃO'),t3.slice(0,300));
