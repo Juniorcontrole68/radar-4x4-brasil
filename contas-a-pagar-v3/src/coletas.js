@@ -267,6 +267,75 @@ try{
           return r.json();
         }
 
+        const COLETA_STATUS_OPCOES=['Programada','Em trânsito','Coletada','Entregue'];
+
+        function marcarBotoesStatusClicaveis(){
+          const tbody=document.getElementById('tbodyOperacional');
+          if(!tbody)return;
+          [...tbody.querySelectorAll('*')].forEach(el=>{
+            if(el.closest('select')||el.tagName==='OPTION')return;
+            const txt=String(el.textContent||'').trim();
+            if(!COLETA_STATUS_OPCOES.some(st=>st.toLocaleLowerCase('pt-BR')===txt.toLocaleLowerCase('pt-BR')))return;
+            if(el.children.length)return;
+            el.dataset.statusColetaClickable='1';
+            el.style.cursor='pointer';
+            el.title='Clique para alterar o status';
+          });
+        }
+
+        async function abrirSeletorNoBotaoStatus(el){
+          if(!el||el.dataset.statusEditing==='1')return;
+          const tr=el.closest('tr');
+          const coleta=tr?acharPorLinha(tr):null;
+          if(!coleta)return;
+          el.dataset.statusEditing='1';
+
+          const original=el.cloneNode(true);
+          const sel=document.createElement('select');
+          sel.dataset.coletaStatusPopup='1';
+          sel.style.minWidth=Math.max(110,el.getBoundingClientRect().width||0)+'px';
+          sel.style.padding='6px 28px 6px 12px';
+          sel.style.border='1px solid #cbd5e1';
+          sel.style.borderRadius='999px';
+          sel.style.background='#fff';
+          sel.style.font='inherit';
+          sel.style.fontWeight='700';
+          sel.style.cursor='pointer';
+          COLETA_STATUS_OPCOES.forEach(st=>{
+            const o=document.createElement('option');o.value=st;o.textContent=st;sel.appendChild(o)
+          });
+          const atual=String(coleta.status||el.textContent||'Programada').trim();
+          const match=[...sel.options].find(o=>o.value.toLocaleLowerCase('pt-BR')===atual.toLocaleLowerCase('pt-BR'));
+          sel.value=match?match.value:'Programada';
+
+          let finished=false;
+          const restore=(value)=>{
+            if(finished)return;finished=true;
+            const badge=original.cloneNode(true);
+            badge.textContent=value||atual;
+            badge.dataset.statusColetaClickable='1';
+            badge.style.cursor='pointer';
+            badge.title='Clique para alterar o status';
+            sel.replaceWith(badge);
+          };
+
+          sel.addEventListener('change',async()=>{
+            const escolhido=sel.value;
+            sel.disabled=true;
+            try{
+              await salvarColetaStatus(coleta.id,escolhido);
+              coleta.status=escolhido;
+              restore(escolhido);
+            }catch(e){
+              alert(e.message);
+              restore(atual);
+            }
+          });
+          sel.addEventListener('blur',()=>setTimeout(()=>{if(!finished)restore(atual)},100));
+          el.replaceWith(sel);
+          setTimeout(()=>{try{sel.focus();sel.showPicker?.()}catch(e){}},0);
+        }
+
         async function decorarOperacional(){
           const tbody=document.getElementById('tbodyOperacional');
           if(!tbody) return;
@@ -663,8 +732,16 @@ try{
           }
           const tbodyOp=document.getElementById('tbodyOperacional');
           if(tbodyOp){
-            const obsOp=new MutationObserver(()=>setTimeout(decorarOperacional,30));
+            const refreshStatus=()=>setTimeout(()=>{decorarOperacional();marcarBotoesStatusClicaveis()},30);
+            const obsOp=new MutationObserver(refreshStatus);
             obsOp.observe(tbodyOp,{childList:true,subtree:true});
+            tbodyOp.addEventListener('click',e=>{
+              const alvo=e.target?.closest?.('[data-status-coleta-clickable="1"]');
+              if(!alvo)return;
+              e.preventDefault();e.stopPropagation();
+              abrirSeletorNoBotaoStatus(alvo);
+            },true);
+            setTimeout(marcarBotoesStatusClicaveis,300);
           }
           const modal=document.getElementById('modal');
           if(modal){
