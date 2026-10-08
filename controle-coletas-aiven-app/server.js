@@ -3781,6 +3781,7 @@ async function start() {
           const driver=String(u.searchParams.get('driver')||'').trim();
           if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return sendJson(res,400,{ok:false,error:'Data inválida.'});
           const raw=String(u.searchParams.get('raw')||'')==='1';
+          const plate=String(u.searchParams.get('plate')||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
           if(raw){
             const qr=await pool.query(`
               SELECT p.session_id::text AS session_id,d.driver_name,d.vehicle_plate,
@@ -3789,11 +3790,14 @@ async function start() {
               JOIN driver_tracking_devices d ON d.id=p.device_id
               WHERE p.captured_at >= ($1::date::timestamp AT TIME ZONE 'America/Sao_Paulo')
                 AND p.captured_at < (($1::date + 1)::timestamp AT TIME ZONE 'America/Sao_Paulo')
-                AND ($2='' OR lower(d.driver_name)=lower($2))
+                AND (
+                  ($3<>'' AND regexp_replace(upper(COALESCE(d.vehicle_plate,'')),'[^A-Z0-9]','','g')=$3)
+                  OR ($3='' AND ($2='' OR lower(trim(d.driver_name))=lower(trim($2))))
+                )
               ORDER BY p.captured_at ASC
               LIMIT 60000
-            `,[date,driver]);
-            return sendJson(res,200,{ok:true,date,driver:driver||'',raw:true,rows:qr.rows,points:qr.rows.length})
+            `,[date,driver,plate]);
+            return sendJson(res,200,{ok:true,date,driver:driver||'',plate:plate||'',raw:true,rows:qr.rows,points:qr.rows.length})
           }
           const q=await pool.query(`
             SELECT s.id::text AS session_id,d.driver_name,d.vehicle_plate,
@@ -3804,10 +3808,13 @@ async function start() {
             JOIN driver_tracking_devices d ON d.id=p.device_id
             WHERE p.captured_at >= ($1::date::timestamp AT TIME ZONE 'America/Sao_Paulo')
               AND p.captured_at < (($1::date + 1)::timestamp AT TIME ZONE 'America/Sao_Paulo')
-              AND ($2='' OR lower(d.driver_name)=lower($2))
+              AND (
+                ($3<>'' AND regexp_replace(upper(COALESCE(d.vehicle_plate,'')),'[^A-Z0-9]','','g')=$3)
+                OR ($3='' AND ($2='' OR lower(trim(d.driver_name))=lower(trim($2))))
+              )
             ORDER BY lower(d.driver_name),s.started_at,p.captured_at
             LIMIT 60000
-          `,[date,driver]);
+          `,[date,driver,plate]);
           const map=new Map();
           for(const r of q.rows){
             if(!map.has(r.session_id))map.set(r.session_id,{
