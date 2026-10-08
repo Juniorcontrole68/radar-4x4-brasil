@@ -4699,13 +4699,37 @@ if(u.pathname==='/api/roteirizador/lista'){try{
     }
   }).sort((a,b)=>String(a.motorista).localeCompare(String(b.motorista),'pt-BR')||String(a.veiculo).localeCompare(String(b.veiculo),'pt-BR'));
   // Vincula automaticamente cada romaneio ao celular/placa já cadastrado.
-  // O motorista só precisa autorizar o aparelho uma vez; novos romaneios do dia
-  // são associados sem clique no dashboard e sem envio manual de WhatsApp.
+  // Quando a última entrega é baixada no SSW, encerra a associação e a sessão GPS.
+  // Um novo romaneio reativa o rastreio automaticamente.
   const now=Date.now(),autoAssigned=[];
   for(const x of clean){
     const roms=(Array.isArray(x.romaneios)?x.romaneios:[]).map(v=>String(v||'').trim()).filter(Boolean);
     const driver=String(x.motorista||'').trim(),plate=String(x.veiculo||'').trim().toUpperCase();
-    if(!driver||!plate||!roms.length)continue;
+    if(!driver||!plate)continue;
+
+    if(x.concluido){
+      const stopKey='STOP|'+date+'|'+plate+'|'+roms.slice().sort().join(',');
+      const lastStop=TRACKING_AUTO_ASSIGN_CACHE.get(stopKey)||0;
+      if(now-lastStop<10*60*1000){
+        autoAssigned.push({motorista:driver,veiculo:plate,romaneios:roms,status:'stopped'});
+        continue
+      }
+      try{
+        await portalAuth('/api/painel/tracking/assignment',{
+          method:'POST',
+          body:{driver_name:driver,vehicle_plate:plate,romaneios:roms,work_date:date,stop:true,active:false,reason:'ultima_entrega_baixada'},
+          token:authUser.token,timeout:15000
+        });
+        TRACKING_AUTO_ASSIGN_CACHE.set(stopKey,Date.now());
+        autoAssigned.push({motorista:driver,veiculo:plate,romaneios:roms,status:'stopped'})
+      }catch(e){
+        console.log('TRACKING AUTO STOP '+plate+' '+roms.join(',')+': '+String(e.message||e));
+        autoAssigned.push({motorista:driver,veiculo:plate,romaneios:roms,status:'stop_error',error:String(e.message||e)})
+      }
+      continue
+    }
+
+    if(!roms.length)continue;
     const assignKey=date+'|'+plate+'|'+roms.slice().sort().join(',');
     const last=TRACKING_AUTO_ASSIGN_CACHE.get(assignKey)||0;
     if(now-last<6*60*60*1000){autoAssigned.push({motorista:driver,veiculo:plate,romaneios:roms,status:'already_synced'});continue}
