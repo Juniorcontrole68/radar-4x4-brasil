@@ -3138,6 +3138,24 @@ async function start() {
           return sendJson(res,201,{ok:true,row:q.rows[0]});
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao salvar agendamento de teste.'})}
       }
+      const coletaStatusMatch=u.pathname.match(/^\/api\/painel\/coletas-status\/(\d+)$/);
+      if (coletaStatusMatch && req.method === 'PATCH') {
+        try{
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'coletas')||dashboardHas(user,'lotacao')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const body=await readJsonBodyLimited(req,32*1024);
+          const allowed=['Programada','Em trânsito','Coletada','Entregue'];
+          const status=allowed.find(x=>x.toLocaleLowerCase('pt-BR')===String(body.status||'').trim().toLocaleLowerCase('pt-BR'));
+          if(!status)return sendJson(res,400,{ok:false,error:'Status inválido.'});
+          const params=[status,coletaStatusMatch[1]];
+          let where='id=$2';
+          if(user.client_id){params.push(user.client_id);where+=' AND client_id=$3'}
+          const q=await pool.query('UPDATE coletas SET status=$1,updated_at=NOW() WHERE '+where+' RETURNING id::text AS id,status',params);
+          if(!q.rowCount)return sendJson(res,404,{ok:false,error:'Coleta não encontrada.'});
+          return sendJson(res,200,{ok:true,row:q.rows[0]});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Não foi possível atualizar o status da coleta.'})}
+      }
+
       if (req.method === 'GET' && u.pathname === '/api/painel/coletas-resumo') {
         const user=await dashboardSession(req,false);
         const from=String(u.searchParams.get('from')||'').trim();
