@@ -62,6 +62,14 @@ function toque(trecho){
   adb('shell input tap '+Math.round((+m[1]+ +m[3])/2)+' '+Math.round((+m[2]+ +m[4])/2));
   return true
 }
+// Lê a tela inteira: o que está à vista e, rolando, o que está abaixo (o leitor só enxerga o visível).
+function telaToda(){
+  const partes=[tela()];
+  for(let i=0;i<2;i++){adb('shell input swipe 540 1700 540 700 400');sh('sleep 1');partes.push(tela())}
+  for(let i=0;i<3;i++)adb('shell input swipe 540 700 540 1900 200');
+  sh('sleep 1');
+  return partes.join(' ¦¦ ')
+}
 const naFrente=()=>adb('shell dumpsys activity activities').split('\n').filter(l=>/ResumedActivity|mResumedActivity/.test(l)).join(' ');
 let lat=-22.7000,lon=-47.3100;
 function andar(){lat-=0.0004;lon+=0.0002;return adb('emu geo fix '+lon.toFixed(5)+' '+lat.toFixed(5))}
@@ -216,7 +224,10 @@ function ficar(){return adb('emu geo fix '+lon.toFixed(5)+' '+lat.toFixed(5))}
   toque('ABRIR ROTA DE HOJE');
   const abriu=await until(async()=>naFrente().includes(MPKG),30000,2000);
   check('um toque no botão abre o MOVIT',!!abriu,naFrente().slice(0,200));
-  const tDia=await until(async()=>{const t=tela();return t.includes('CLIENTE ALFA')?t:null},60000,4000)||tela();
+  await until(async()=>tela().includes('3 entregas')?true:null,60000,3000);
+  const tDiaTopo=tela();
+  check('as primeiras entregas aparecem sem rolar a tela',tDiaTopo.includes('CLIENTE ALFA'),tDiaTopo.slice(0,500));
+  const tDia=telaToda();
   nota('MOVIT, rota do dia: '+tDia.slice(0,700));
   check('MOVIT mostra as entregas do dia na ordem, com cliente, endereço e nota (sem digitar nada)',tDia.includes('CLIENTE ALFA')&&tDia.includes('CLIENTE BETA')&&tDia.includes('CLIENTE GAMA')&&tDia.includes('Av. Dois, 200')&&tDia.includes('NF 1002')&&tDia.indexOf('CLIENTE ALFA')<tDia.indexOf('CLIENTE GAMA'),tDia.slice(0,500));
   check('entrega já baixada aparece como entregue e o resumo conta',tDia.includes('NF 1001 • Entregue 08:40')&&tDia.includes('3 entregas • 1 já entregue'),tDia.slice(0,500));
@@ -224,13 +235,14 @@ function ficar(){return adb('emu geo fix '+lon.toFixed(5)+' '+lat.toFixed(5))}
   const vinc=(await db.query("SELECT COUNT(*)::int AS n FROM router_company_links WHERE active=TRUE AND token_hash IS NOT NULL AND vehicle_plate=$1",[PLATE])).rows[0].n;
   check('vínculo criado sem cadastro nem aprovação extra',vinc===1,'vínculos ativos='+vinc);
   toque('Rota livre');await sleep(2500);
-  const tLivre=tela();
+  const tLivre=telaToda();
   check('Rota livre abre vazia, com a busca de endereço (as entregas da empresa não se misturam)',tLivre.includes('Nenhuma parada adicionada ainda.')&&tLivre.includes('Adicionar')&&!tLivre.includes('CLIENTE ALFA'),tLivre.slice(0,400));
   toque('Rota do dia');await sleep(2500);
-  check('voltar para Rota do dia mostra as entregas de novo',tela().includes('CLIENTE BETA'));
+  check('voltar para Rota do dia mostra as entregas de novo',telaToda().includes('CLIENTE BETA'));
   adb('shell am force-stop '+MPKG);await sleep(1500);
   adb('shell am start -n '+MPKG+'/br.com.movit.rotas.MainActivity');
-  const tVolta=await until(async()=>{const t=tela();return t.includes('CLIENTE ALFA')?t:null},40000,4000)||tela();
+  await until(async()=>tela().includes('3 entregas')?true:null,40000,3000);
+  const tVolta=telaToda();
   check('fechar e abrir o MOVIT sozinho: a rota do dia continua lá',tVolta.includes('CLIENTE ALFA')&&tVolta.includes('Rota de hoje • '+PLATE),tVolta.slice(0,400));
   const crashMovit=adb('logcat -d -b crash').split('\n').filter(l=>l.includes('movit')||/FATAL EXCEPTION/.test(l));
   check('nenhum travamento do MOVIT',crashMovit.length===0,crashMovit.slice(0,6).join(' | ').slice(0,700));

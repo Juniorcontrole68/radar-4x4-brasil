@@ -45,6 +45,7 @@ public class MainActivity extends Activity {
     private static final String MODE_DAY="dia",MODE_FREE="livre";
     private String mode=MODE_FREE;
     private LinearLayout modeBar,searchRowView,startRowView,shareRowView;
+    private LinearLayout.LayoutParams mapParams;
     private Button modeDayButton,modeFreeButton,refreshDayButton,startRouteButton,editStopsButton;
     private boolean dayLoading=false,dayReloadWanted=false;
     private long dayLoadedAt=0L;
@@ -127,6 +128,7 @@ public class MainActivity extends Activity {
             modeDayButton.setBackground(day?bg(NAVY,14):strokedBg(Color.WHITE,LINE,14));modeDayButton.setTextColor(day?Color.WHITE:MUTED);
             modeFreeButton.setBackground(!day?bg(NAVY,14):strokedBg(Color.WHITE,LINE,14));modeFreeButton.setTextColor(!day?Color.WHITE:MUTED);
         }
+        if(mapParams!=null&&map!=null){mapParams.height=dp(day?220:300);map.setLayoutParams(mapParams);}
         int free=day?View.GONE:View.VISIBLE;
         if(searchRowView!=null)searchRowView.setVisibility(free);
         if(startRowView!=null)startRowView.setVisibility(free);
@@ -192,7 +194,7 @@ public class MainActivity extends Activity {
                     else{
                         JSONArray roms=j.optJSONArray("romaneios");
                         String rom=roms!=null&&roms.length()>0?" • Romaneio "+roms.optString(0)+(roms.length()>1?" +"+(roms.length()-1):""):"";
-                        status.setText("Entregas de hoje na melhor ordem"+rom+". Toque em uma parada para navegar.");
+                        status.setText("Entregas de hoje na melhor ordem"+rom+".");
                     }
                 });
             }catch(final Exception e){
@@ -318,7 +320,8 @@ public class MainActivity extends Activity {
         // Mapa grande
         LinearLayout mapCard=card(0);mapCard.setClipToOutline(true);
         map=new WebView(this);map.getSettings().setJavaScriptEnabled(true);map.setBackgroundColor(Color.WHITE);
-        mapCard.addView(map,new LinearLayout.LayoutParams(-1,dp(360)));
+        mapParams=new LinearLayout.LayoutParams(-1,dp(300));
+        mapCard.addView(map,mapParams);
         root.addView(mapCard);
         gap(root,8);
 
@@ -372,38 +375,41 @@ public class MainActivity extends Activity {
         });
         info.addView(returnStartHome);
 
+        // Ferramentas da rota: ficam depois da lista, para as paradas aparecerem sem rolar a tela.
+        LinearLayout tools=card(14);
+        TextView toolsTitle=label("Ferramentas da rota",13,MUTED,true);toolsTitle.setPadding(0,0,0,dp(8));tools.addView(toolsTitle);
         truckRestrictionsButton=pill("🚛 Ver restrições do caminhão",Color.rgb(255,248,235),Color.rgb(146,64,14));
         truckRestrictionsButton.setBackground(strokedBg(Color.rgb(255,248,235),Color.rgb(251,191,36),14));
         truckRestrictionsButton.setOnClickListener(v->analyzeTruckRestrictions(true));
         LinearLayout.LayoutParams trp=new LinearLayout.LayoutParams(-1,dp(48));trp.setMargins(0,0,0,dp(8));
-        info.addView(truckRestrictionsButton,trp);
+        tools.addView(truckRestrictionsButton,trp);
         refreshTruckButton();
 
         fuelButton=pill("⛽ Postos na rota",Color.rgb(239,246,255),Color.rgb(30,64,175));
         fuelButton.setBackground(strokedBg(Color.rgb(239,246,255),Color.rgb(147,197,253),14));
         fuelButton.setOnClickListener(v->findFuelStations());
         LinearLayout.LayoutParams flp=new LinearLayout.LayoutParams(-1,dp(48));flp.setMargins(0,0,0,dp(8));
-        info.addView(fuelButton,flp);
+        tools.addView(fuelButton,flp);
 
         tollButton=pill("🛣 Pedágios da rota",Color.rgb(248,250,252),Color.rgb(51,65,85));
         tollButton.setBackground(strokedBg(Color.rgb(248,250,252),Color.rgb(203,213,225),14));
         tollButton.setOnClickListener(v->showTolls(true));
         LinearLayout.LayoutParams tlp=new LinearLayout.LayoutParams(-1,dp(48));tlp.setMargins(0,0,0,dp(8));
-        info.addView(tollButton,tlp);
+        tools.addView(tollButton,tlp);
 
         testTrackingButton=pill("🧪 Testar no mapa CONSTRULOG",Color.rgb(255,247,237),Color.rgb(154,52,18));
         testTrackingButton.setBackground(strokedBg(Color.rgb(255,247,237),Color.rgb(253,186,116),14));
         testTrackingButton.setOnClickListener(v->{if(testTrackingActive)stopConstrulogTest();else startConstrulogTest();});
         LinearLayout.LayoutParams testLp=new LinearLayout.LayoutParams(-1,dp(48));testLp.setMargins(0,0,0,dp(8));
         if(BuildConfig.PLAY_STORE_BUILD)testTrackingButton.setVisibility(View.GONE);
-        else info.addView(testTrackingButton,testLp);
+        else tools.addView(testTrackingButton,testLp);
 
         LinearLayout shareRow=new LinearLayout(this);shareRow.setOrientation(LinearLayout.HORIZONTAL);
         Button share=pill("↗  Compartilhar rota",Color.WHITE,BLUE);share.setBackground(strokedBg(Color.WHITE,LINE,14));share.setOnClickListener(v->shareRoute());
         Button save=pill("Salvar",Color.WHITE,NAVY);save.setBackground(strokedBg(Color.WHITE,LINE,14));save.setOnClickListener(v->saveCloud());
         shareRow.addView(share,new LinearLayout.LayoutParams(0,dp(48),1));
         LinearLayout.LayoutParams svp=new LinearLayout.LayoutParams(dp(96),dp(48));svp.setMargins(dp(8),0,0,0);shareRow.addView(save,svp);
-        info.addView(shareRow);
+        tools.addView(shareRow);
         shareRowView=shareRow;
         root.addView(info);
 
@@ -420,6 +426,7 @@ public class MainActivity extends Activity {
         root.addView(stopsCard);
 
         gap(root,10);
+        root.addView(tools);
 
         // Barra inferior de ação
         LinearLayout bottom=card(10);bottom.setOrientation(LinearLayout.HORIZONTAL);bottom.setGravity(Gravity.CENTER_VERTICAL);
@@ -428,7 +435,9 @@ public class MainActivity extends Activity {
         startRouteButton=startBtn;
         bottom.addView(optimizeButton,new LinearLayout.LayoutParams(0,dp(56),1f));
         LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(0,dp(56),1f);sp.setMargins(dp(10),0,0,0);bottom.addView(startBtn,sp);
-        root.addView(bottom);
+        // Fica sempre à vista: otimizar e iniciar não podem depender de rolar a tela até o fim.
+        LinearLayout.LayoutParams bottomLp=new LinearLayout.LayoutParams(-1,-2);bottomLp.setMargins(dp(10),dp(4),dp(10),dp(8));
+        page.addView(bottom,bottomLp);
 
         // objetos mantidos para compatibilidade
         account=label("Modo teste",11,MUTED,false);
