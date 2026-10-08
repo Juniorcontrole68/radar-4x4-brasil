@@ -8,7 +8,7 @@ const B=process.env.BASE_URL||'http://127.0.0.1:10000';
 const ADMIN_USER=process.env.ADMIN_USER||'admin_teste',ADMIN_PASS=process.env.ADMIN_PASS||'senha-de-teste-123';
 if(/onrender\.com/i.test(B)&&!/teste/i.test(B)){console.error('Recusado: BASE_URL parece ser a produção.');process.exit(2)}
 let pass=0,fail=0;
-function check(name,cond,extra=''){ if(cond){pass++;console.log('  OK   ',name)}else{fail++;console.log('  FALHA',name,extra)} }
+function check(name,cond,extra=''){ if(cond){pass++;console.log('  OK   ',name)}else{fail++;console.log('  FALHA',name,extra);if(process.env.GITHUB_ACTIONS)console.log('::error title=Teste falhou::'+String(name+' '+extra).replace(/\r?\n/g,' ').slice(0,900))} }
 async function call(method,path,{body,cookie,bearer,headers}={}){
   const h={...(headers||{})}; if(body!==undefined)h['Content-Type']='application/json'; if(cookie)h.Cookie=cookie; if(bearer)h.Authorization='Bearer '+bearer;
   const r=await fetch(B+path,{method,headers:h,body:body!==undefined?JSON.stringify(body):undefined,redirect:'manual'});
