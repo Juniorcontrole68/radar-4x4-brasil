@@ -11,19 +11,30 @@ try{
       'Remetente *<input id="cliente" required placeholder="Nome do remetente" />'
     );
     html=html.replaceAll('Nome do Cliente da Entrega','Remetente');
-    try{
-      const probes=[];
-      for(const term of ['Editar','Programada','status']){
-        let pos=0,n=0;
-        while((pos=html.indexOf(term,pos))>=0&&n<12){
-          probes.push('COLETAS DOM PROBE '+term+' @'+pos+' :: '+html.slice(Math.max(0,pos-260),pos+520).replace(/\s+/g,' '));
-          pos+=term.length;n++;
-        }
-      }
-      probes.forEach(x=>console.log(x));
-    }catch(e){console.log('COLETAS DOM PROBE ERRO',e.message)}
 
     html=html.replaceAll('Cliente / Entrega','Remetente / Endereço');
+    html=html.replace(
+      '<td><span class="badge \${statusClass(c.status)}">\${esc(c.status||\\'Programada\\')}</span></td>',
+      '<td><button type="button" class="badge \${statusClass(c.status)}" style="border:0;cursor:pointer;font:inherit" title="Clique para alterar o status" onclick="editStatusInline(\${c.id},this)">\${esc(c.status||\\'Programada\\')}</button></td>'
+    );
+
+    html=html.replace(
+      "const statusClass = (s='') => s==='Entregue'?'entregue':s==='Em trânsito'?'transito':s==='Cancelada'?'cancelada':''; function toast",
+      "const statusClass = (s='') => s==='Entregue'?'entregue':s==='Em trânsito'?'transito':s==='Cancelada'?'cancelada':''; "+
+      "window.editStatusInline=(id,el)=>{"+
+      "if(!el||el.dataset.editing==='1')return;el.dataset.editing='1';"+
+      "const c=coletas.find(x=>Number(x.id)===Number(id));if(!c){el.dataset.editing='';return;}"+
+      "const atual=c.status||'Programada';const sel=document.createElement('select');"+
+      "sel.className='badge '+statusClass(atual);sel.style.cursor='pointer';sel.style.font='inherit';sel.style.fontWeight='700';"+
+      "['Programada','Em trânsito','Coletada','Entregue'].forEach(st=>{const o=document.createElement('option');o.value=st;o.textContent=st;sel.appendChild(o)});"+
+      "sel.value=['Programada','Em trânsito','Coletada','Entregue'].includes(atual)?atual:'Programada';"+
+      "el.replaceWith(sel);sel.focus();try{sel.showPicker?.()}catch(e){};"+
+      "let done=false;const restore=()=>{if(done)return;done=true;render();};"+
+      "sel.addEventListener('change',async()=>{const novo=sel.value;sel.disabled=true;try{const r=await fetch('/api/painel/coletas-status/'+encodeURIComponent(id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:novo})});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Não foi possível atualizar o status.');c.status=novo;toast('Status atualizado: '+novo);render();}catch(e){alert(e.message);render();}});"+
+      "sel.addEventListener('blur',()=>setTimeout(restore,120));"+
+      "}; function toast"
+    );
+
     const mvStart='<div class="section-title">Motorista e veículo</div>\n      <div class="grid three">';
     if(html.includes(mvStart) && !html.includes('id="doc_motorista_file"')){
       const staticDocs=
