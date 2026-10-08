@@ -47,8 +47,9 @@ public class TrackingService extends Service implements LocationListener {
                 startLocation();
                 updateNotification("Rastreamento ativo • aguardando posição");
             }else{
-                updateNotification("Aguardando romaneio");
+                sessionId="";
                 stopLocation();
+                updateNotification("Aguardando novo romaneio");
             }
         }catch(Exception e){
             updateNotification("Sem comunicação • tentando novamente");
