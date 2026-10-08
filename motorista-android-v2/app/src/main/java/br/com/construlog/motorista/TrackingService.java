@@ -25,13 +25,20 @@ public class TrackingService extends Service implements LocationListener {
         startForeground(1201,notification("Iniciando rastreamento…"));
         PowerManager pm=(PowerManager)getSystemService(POWER_SERVICE);
         wake=pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"CONSTRULOG:GPS");
-        try{wake.acquire(12*60*60*1000L);}catch(Exception ignored){}
+        ensureWakeLock();
         lm=(LocationManager)getSystemService(LOCATION_SERVICE);
         exec.scheduleWithFixedDelay(this::checkAssignment,0,30,TimeUnit.SECONDS);
         exec.scheduleWithFixedDelay(this::heartbeat,5,60,TimeUnit.SECONDS);
     }
 
+    private void ensureWakeLock(){
+        try{
+            if(wake!=null&&!wake.isHeld())wake.acquire();
+        }catch(Exception ignored){}
+    }
+
     private void checkAssignment(){
+        ensureWakeLock();
         String token=Prefs.token(this);if(token.isEmpty())return;
         try{
             JSONObject j=Api.request("GET","/api/tracking/assignment/current",null,token);
@@ -73,6 +80,7 @@ public class TrackingService extends Service implements LocationListener {
     }
 
     private void heartbeat(){
+        ensureWakeLock();
         String token=Prefs.token(this);if(token.isEmpty())return;
         try{
             JSONObject b=new JSONObject();if(!sessionId.isEmpty())b.put("session_id",sessionId);
@@ -106,6 +114,7 @@ public class TrackingService extends Service implements LocationListener {
     }
 
     @Override public int onStartCommand(Intent intent,int flags,int startId){
+        ensureWakeLock();
         checkAssignment();
         return START_STICKY;
     }
