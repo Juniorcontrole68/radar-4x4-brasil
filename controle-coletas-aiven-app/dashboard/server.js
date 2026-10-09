@@ -4705,6 +4705,9 @@ async function rowsByName(sheetName){
 // SSW: achar o romaneio, e completar entregas, km, frete, cidades e baixas em segundo plano.
 const lancLib=require('../lancamentos.js');
 let LANC_FONTE_CACHE={at:0,value:null};
+let LANC_MOT_CACHE={at:0,value:null};
+// Chamado a cada gravação: os painéis e a lista de motoristas são relidos na próxima consulta.
+function lancMudou(){LANC_FONTE_CACHE.at=0;LANC_MOT_CACHE.at=0}
 // Linhas no formato da planilha quando os painéis já leem do sistema; rows vazio enquanto a fonte é a planilha.
 async function lancamentosDoSistema(){
   if(LANC_FONTE_CACHE.value&&Date.now()-LANC_FONTE_CACHE.at<20000)return LANC_FONTE_CACHE.value;   // toda gravação feita por aqui zera esta memória
@@ -4750,6 +4753,12 @@ async function lancBuscarRomaneio(numero,data){
 // Motoristas para a lista do card: os que tiveram lançamento nos últimos 30 dias (sistema ou,
 // enquanto a planilha ainda é a fonte, a própria planilha) e os que têm romaneio hoje no SSW.
 async function lancMotoristas(token){
+  if(LANC_MOT_CACHE.value&&Date.now()-LANC_MOT_CACHE.at<60000)return LANC_MOT_CACHE.value;
+  const value=await lancMotoristasAgora(token);
+  LANC_MOT_CACHE={at:Date.now(),value};
+  return value
+}
+async function lancMotoristasAgora(token){
   const base=await portalAuth('/api/painel/lancamentos/motoristas?dias=30',{token,timeout:15000});
   const mapa=new Map(),tipos=new Set(base.tipos||[]);
   const add=(nome,x,origem)=>{const k=lancNomeNorm(nome);if(!k)return;const a=mapa.get(k);if(!a||(x.ultimo||'')>(a.ultimo||''))mapa.set(k,{motorista:String(nome).toUpperCase().replace(/\s+/g,' ').trim(),veiculo_tipo:x.veiculo_tipo||a?.veiculo_tipo||'',operacao:x.operacao||a?.operacao||'',filial:x.filial||a?.filial||'',ultimo:x.ultimo||'',origem})};
@@ -4821,11 +4830,12 @@ async function lancEnriquecer(id,data,romaneioSsw){
   }
   calc.msg=avisos.join(' • ');
   await portalJson('/api/painel/lancamentos/'+encodeURIComponent(id),{method:'PATCH',body:{calculo:calc},timeout:20000});
-  LANC_FONTE_CACHE.at=0;
+  lancMudou();
   console.log('LANCAMENTOS completado: '+JSON.stringify({id,romaneio:romaneioSsw,status:calc.status,km:calc.km,frete:calc.frete_vialog,entregas:calc.entregas,realizadas:calc.realizadas,msg:calc.msg}))
 }
 // Baixas do dia (e do dia anterior) para os lançamentos do sistema, sem remontar rota.
 let LANC_BAIXAS_AT=0;
+const LANC_BAIXAS_DIA=new Map();
 async function lancAtualizarBaixas(force=false){
   if(!force&&Date.now()-LANC_BAIXAS_AT<5*60*1000)return;
   LANC_BAIXAS_AT=Date.now();
@@ -4837,7 +4847,14 @@ async function lancAtualizarBaixas(force=false){
       const rom=await lancBuscarRomaneio(l.romaneio,l.data).catch(()=>null);
       if(rom?.encontrado)lancEnfileirar(l.id,l.data,rom.romaneio_ssw)
     }
-    const doDia=(j.rows||[]).filter(r=>r.data===dia&&r.romaneio_ssw);
+    let doDia=(j.rows||[]).filter(r=>r.data===dia&&r.romaneio_ssw);
+    // Dias anteriores: só enquanto houver lançamento sem fechamento ou com entrega pendente, e no
+    // máximo uma vez por hora (reler um dia passado no SSW é pesado). Hoje: a cada rodada.
+    if(dia<hoje){
+      doDia=doDia.filter(l=>l.calculo?.status==='erro'?Number(l.calculo.tentativas||0)<3:(!l.calculo||l.calculo.status==='pendente'||l.realizadas===null||Number(l.pend||0)>0));
+      if(!doDia.length||Date.now()-(LANC_BAIXAS_DIA.get(dia)||0)<60*60*1000)continue;
+      LANC_BAIXAS_DIA.set(dia,Date.now())
+    }
     if(!doDia.length)continue;
     let op=null;try{op=await getSswMotoristasFast(dia,dia)}catch{continue}
     const porRom=new Map();
@@ -4855,7 +4872,7 @@ async function lancAtualizarBaixas(force=false){
       const c={status:l.calculo.status,msg:l.calculo.msg,ctes:l.calculo.ctes,lidos:l.calculo.lidos,realizadas:b.ok,baixas_em:new Date().toISOString(),romaneio_ssw:l.romaneio_ssw};
       if(pend!==null)c.pend=pend;
       await portalJson('/api/painel/lancamentos/'+encodeURIComponent(l.id),{method:'PATCH',body:{calculo:c},timeout:20000}).catch(()=>{});
-      LANC_FONTE_CACHE.at=0
+      lancMudou()
     }
   }
 }
@@ -5666,7 +5683,7 @@ if(u.pathname.startsWith('/api/lancamentos')){try{
     const corpo={data,motorista:b.motorista,romaneio:rom.encontrado?rom.romaneio:b.romaneio,romaneio_ssw:rom.romaneio_ssw||'',valor:b.valor,operacao:b.operacao,veiculo_tipo:b.veiculo_tipo,
       placa:rom.placa||'',filial:rom.filial||b.filial||'',entregas:rom.entregas||'',conferente:b.conferente,erros:b.erros,por:authUser.username};
     const x=await portalAuth('/api/painel/lancamentos',{...tk,method:'POST',body:corpo});
-    LANC_FONTE_CACHE.at=0;
+    lancMudou();
     if(rom.encontrado)lancEnfileirar(x.row.id,data,rom.romaneio_ssw);
     return sai(201,x)
   }
@@ -5675,12 +5692,12 @@ if(u.pathname.startsWith('/api/lancamentos')){try{
     if(!ID)return sai(503,{ok:false,error:'A planilha não está ligada neste ambiente.'});
     const linhas=await rows(GIDS.lancamentos);
     const x=await portalJson('/api/painel/lancamentos/importar',{method:'POST',body:{rows:linhas,por:authUser.username},timeout:120000});
-    LANC_FONTE_CACHE.at=0;
+    lancMudou();
     return sai(200,x)
   }
   if(sub==='/fonte'&&req.method==='POST'){
     const x=await portalAuth('/api/painel/lancamentos/fonte',{...tk,method:'POST',body:await readJsonLimited(req,4096)});
-    LANC_FONTE_CACHE.at=0;
+    lancMudou();
     return sai(200,x)
   }
   const mm=sub.match(/^\/(\d+)(\/recalcular)?$/);
@@ -5703,13 +5720,13 @@ if(u.pathname.startsWith('/api/lancamentos')){try{
       else if(b.forcar!==true)return sai(404,{ok:false,naoEncontrado:true,error:'Romaneio '+String(b.romaneio||'').trim()+' não encontrado no SSW nessa data. Confira o número e a data.'});
     }
     const x=await portalAuth('/api/painel/lancamentos/'+mm[1],{...tk,method:'PATCH',body:b});
-    LANC_FONTE_CACHE.at=0;
+    lancMudou();
     if(x.row?.calculo?.status==='pendente'&&x.row.romaneio_ssw)lancEnfileirar(x.row.id,x.row.data,x.row.romaneio_ssw);
     return sai(200,x)
   }
   if(mm&&!mm[2]&&req.method==='DELETE'){
     const x=await portalAuth('/api/painel/lancamentos/'+mm[1],{...tk,method:'DELETE'});
-    LANC_FONTE_CACHE.at=0;
+    lancMudou();
     return sai(200,x)
   }
   return sai(404,{ok:false,error:'Rota de lançamentos não encontrada.'})
