@@ -611,10 +611,14 @@ async function movitCompanyLinkFromReq(req){
   const token=routerBearer(req);
   if(!token){const e=new Error('Este celular não está vinculado à empresa.');e.status=401;throw e}
   const q=await pool.query(
-    "SELECT id::text AS id,driver_name,vehicle_plate FROM router_company_links WHERE token_hash=$1 AND active=TRUE LIMIT 1",
+    "SELECT id::text AS id,driver_name,vehicle_plate,simulation,(claimed_at<NOW()-INTERVAL '24 hours') AS sim_vencida FROM router_company_links WHERE token_hash=$1 AND active=TRUE LIMIT 1",
     [dashboardTokenHash(token)]
   );
   if(!q.rowCount){const e=new Error('Vínculo com a empresa não encontrado. Abra a rota pelo aplicativo CONSTRULOG Motorista.');e.status=401;throw e}
+  if(q.rows[0].simulation&&q.rows[0].sim_vencida){
+    await pool.query('UPDATE router_company_links SET active=FALSE WHERE id=$1',[q.rows[0].id]).catch(()=>{});
+    const e=new Error('Vínculo de simulação vencido. Gere outro link no quadro do Rastreio.');e.status=401;throw e
+  }
   return q.rows[0]
 }
 async function movitBuildDay(link){
@@ -1395,6 +1399,10 @@ async function start() {
     last_used_at TIMESTAMPTZ
   )`);
   await pool.query('CREATE INDEX IF NOT EXISTS idx_router_company_links_device ON router_company_links(device_id)');
+  // Vínculo de simulação: criado pela central para abrir a rota do dia de um motorista num
+  // celular que não é o dele (sem aparelho de rastreio). Vale 24 horas depois de aberto.
+  await pool.query('ALTER TABLE router_company_links ADD COLUMN IF NOT EXISTS simulation BOOLEAN NOT NULL DEFAULT FALSE');
+  await pool.query('ALTER TABLE router_company_links ADD COLUMN IF NOT EXISTS created_by BIGINT');
   await pool.query(`
     CREATE TABLE IF NOT EXISTS driver_tracking_contacts (
       driver_key TEXT PRIMARY KEY,
@@ -1624,6 +1632,49 @@ async function start() {
 
       // Aplicativo CONSTRULOG Motorista pede um código de uso único para abrir o MOVIT já
       // identificado como este motorista/placa (o aparelho já foi liberado pela central).
+      // Simulação: a central abre no próprio celular a rota do dia de um motorista, sem ser
+      // motorista cadastrado. Gera um código de uso único (30 min) para o aplicativo MOVIT.
+      if (u.pathname === '/api/painel/tracking/movit-simulacao' && req.method === 'POST') {
+        try{
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const body=await readJsonBodyLimited(req,8*1024);
+          const driver=String(body.driver_name||'').trim().replace(/\s+/g,' ').slice(0,120);
+          const plate=String(body.vehicle_plate||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,10);
+          if(driver.length<2)return sendJson(res,400,{ok:false,error:'Motorista inválido.'});
+          const code=crypto.randomBytes(12).toString('hex');
+          await pool.query("DELETE FROM router_company_links WHERE simulation=TRUE AND ((token_hash IS NULL AND code_expires_at<NOW()) OR claimed_at<NOW()-INTERVAL '24 hours')");
+          await pool.query(
+            "INSERT INTO router_company_links(code_hash,code_expires_at,device_id,driver_name,vehicle_plate,simulation,created_by) VALUES($1,NOW()+INTERVAL '30 minutes',NULL,$2,$3,TRUE,$4)",
+            [dashboardTokenHash(code),driver,plate,user.id]
+          );
+          console.log('MOVIT SIMULACAO criada: '+JSON.stringify({por:user.username,driver,plate}));
+          return sendJson(res,201,{ok:true,code,driver_name:driver,vehicle_plate:plate,app_url:'movit://empresa/'+code,
+            open_url:DRIVER_PUBLIC_BASE+'/movit/empresa/'+code,download_url:DRIVER_PUBLIC_BASE+'/downloads/MOVIT.apk',expires_minutes:30});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao preparar a simulação.'})}
+      }
+
+      // Página que o celular abre pelo link da simulação: um botão para abrir a rota no MOVIT.
+      if (u.pathname.match(/^\/movit\/empresa\/[a-f0-9]{24}$/) && req.method === 'GET') {
+        try{
+          const code=u.pathname.split('/').pop();
+          const q=await pool.query(
+            "SELECT driver_name,vehicle_plate,(token_hash IS NULL AND code_expires_at>NOW() AND active=TRUE) AS valido FROM router_company_links WHERE code_hash=$1 LIMIT 1",
+            [dashboardTokenHash(code)]
+          );
+          const esc=s=>String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+          const ok=q.rowCount&&q.rows[0].valido,row=q.rows[0]||{};
+          const css='body{font-family:system-ui;margin:0;background:#f7f9fc;color:#16142f}.wrap{max-width:620px;margin:auto;padding:20px}.card{background:#fff;border-radius:20px;padding:18px;box-shadow:0 4px 20px #0001;margin-bottom:14px}.btn{display:block;text-align:center;background:#2f73e8;color:#fff;text-decoration:none;font-weight:700;padding:16px;border-radius:14px}.btn.sec{background:#fff;color:#2f73e8;border:2px solid #2f73e8;margin-top:10px}.muted{color:#667085;font-size:14px;line-height:1.5}ol{padding-left:20px;line-height:1.7}';
+          const corpo=ok
+            ?'<div class="card"><h2 style="margin:0 0 6px">MOVIT • simulação</h2><div class="muted">Rota de hoje de</div><h3 style="margin:4px 0 0">'+esc(row.driver_name)+(row.vehicle_plate?' • '+esc(row.vehicle_plate):'')+'</h3></div>'+
+             '<div class="card"><a class="btn" href="movit://empresa/'+code+'">Abrir a rota no MOVIT</a><a class="btn sec" href="/downloads/MOVIT.apk">Ainda não tenho o MOVIT: baixar</a></div>'+
+             '<div class="card muted"><b>Como usar</b><ol><li>Se ainda não tem o MOVIT, toque em <b>baixar</b>, instale e volte a esta página.</li><li>Toque em <b>Abrir a rota no MOVIT</b>.</li></ol>Este link vale 30 minutos e abre uma vez só. A rota fica no aplicativo por 24 horas. É só para ver e simular: o motorista não é avisado e nada muda no rastreio dele.</div>'
+            :'<div class="card"><h2 style="margin:0 0 6px">MOVIT • simulação</h2><div class="muted">Este link venceu ou já foi usado. Gere outro no quadro do Rastreio, no botão <b>Simular rota</b>.</div></div>';
+          res.writeHead(ok?200:410,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+          return res.end('<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>MOVIT • simulação</title><style>'+css+'</style></head><body><div class="wrap">'+corpo+'</div></body></html>')
+        }catch(e){res.writeHead(500,{'Content-Type':'text/html; charset=utf-8'});return res.end('<h2>Erro ao abrir a simulação</h2>')}
+      }
+
       if (u.pathname === '/api/tracking/movit-link' && req.method === 'POST') {
         try{
           const device=await trackingDeviceFromReq(req);

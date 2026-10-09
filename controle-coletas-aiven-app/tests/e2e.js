@@ -232,6 +232,27 @@ async function call(method,path,{body,cookie,bearer,headers}={}){
   pd=await pedido('Motorista Sem Romaneio','QWE1R23','Celular sem romaneio');
   r=await call('POST','/api/tracking/requests/'+pd.row.id+'/approve',{cookie,body:{}});
   check('sem escolha, vale o que o motorista digitou (como antes)',r.status===200&&r.json?.driver_name==='Motorista Sem Romaneio'&&r.json?.vehicle_plate==='QWE1R23',r.status+' '+r.text.slice(0,160));
+
+  // A central abre no próprio celular a rota do dia de um motorista (sem ser motorista).
+  console.log('H. Simulação da rota do dia no MOVIT');
+  r=await call('POST','/api/painel/tracking/movit-simulacao',{body:{driver_name:'Motorista Teste',vehicle_plate:'ABC1D23'}}); check('simulação sem login -> 401',r.status===401,'veio '+r.status);
+  r=await call('POST','/api/tracking/movit-simulacao',{cookie,body:{driver_name:'',vehicle_plate:'ABC1D23'}}); check('simulação sem motorista -> 400',r.status===400,'veio '+r.status);
+  r=await call('POST','/api/tracking/movit-simulacao',{cookie,body:{driver_name:'Motorista Teste',vehicle_plate:'abc-1d23'}}); const sim=r.json||{};
+  check('central gera o link de simulação pelo dashboard',r.status===201&&/^[a-f0-9]{24}$/.test(sim.code||'')&&sim.app_url==='movit://empresa/'+sim.code&&String(sim.open_url).endsWith('/movit/empresa/'+sim.code)&&sim.vehicle_plate==='ABC1D23',r.status+' '+r.text.slice(0,200));
+  r=await call('GET','/movit/empresa/'+sim.code); check('página do link mostra o motorista e o botão que abre o MOVIT',r.status===200&&r.text.includes('Motorista Teste')&&r.text.includes('href="movit://empresa/'+sim.code+'"')&&r.text.includes('/downloads/MOVIT.apk'),r.status+' '+r.text.slice(0,120));
+  r=await call('POST','/api/router-app/company/claim',{body:{code:sim.code}}); const stk=r.json?.company_token;
+  check('MOVIT troca o código pelo vínculo de simulação',r.status===200&&!!stk&&r.json?.driver_name==='Motorista Teste',r.status+' '+r.text.slice(0,160));
+  r=await call('GET','/api/router-app/company/today?fresh=1',{bearer:stk});
+  if(r.json&&r.json.building){await new Promise(z=>setTimeout(z,21000));r=await call('GET','/api/router-app/company/today?fresh=1',{bearer:stk})}
+  check('simulação recebe a mesma rota do dia do motorista (2 paradas, na ordem)',r.status===200&&r.json?.stops?.length===2&&r.json.stops[0].destinatario==='CLIENTE A',r.status+' '+r.text.slice(0,200));
+  r=await call('POST','/api/router-app/company/claim',{body:{code:sim.code}}); check('código de simulação só abre uma vez',r.status===404,'veio '+r.status);
+  r=await call('GET','/movit/empresa/'+sim.code); check('página de link já usado avisa que venceu',r.status===410&&!r.text.includes('movit://empresa/'),r.status+' '+r.text.slice(0,120));
+  r=await call('GET','/api/router-app/company/today',{bearer:ctk2}); check('o vínculo do próprio motorista continua valendo',r.status===200&&r.json?.stops?.length===2,r.status+' '+r.text.slice(0,120));
+  if(db){
+    await db.query("UPDATE router_company_links SET claimed_at=NOW()-INTERVAL '25 hours' WHERE simulation=TRUE AND token_hash IS NOT NULL");
+    r=await call('GET','/api/router-app/company/today',{bearer:stk}); check('simulação vence 24 horas depois de aberta',r.status===401&&/simulação vencido/.test(r.text),r.status+' '+r.text.slice(0,120));
+    r=await call('GET','/api/router-app/company/today',{bearer:ctk2}); check('  ...sem afetar o vínculo do motorista',r.status===200,'veio '+r.status);
+  }
   if(db)await db.end();
   console.log('\nResultado: '+pass+' OK, '+fail+' falha(s)');
   process.exit(fail?1:0);

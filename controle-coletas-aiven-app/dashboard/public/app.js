@@ -3680,6 +3680,35 @@ function trackingBoardMsg(text,isErr=false){
   clearTimeout(window.__trackingBoardMsgTimer);
   if(text)window.__trackingBoardMsgTimer=setTimeout(()=>{el.style.display='none'},9000)
 }
+// Simulação: gera um link para abrir a rota de hoje de um motorista no MOVIT de quem está na central.
+async function trackingSimulateRoute(item,button){
+  const box=$('#trackingSimBox');if(!box)return;
+  const label=button?button.textContent:'';
+  if(button){button.disabled=true;button.textContent='Gerando…'}
+  try{
+    const r=await fetch('/api/tracking/movit-simulacao',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',
+      body:JSON.stringify({driver_name:item.r.driver_name||'',vehicle_plate:item.r.vehicle_plate||''})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao preparar a simulação.');
+    const who=(j.driver_name||'')+(j.vehicle_plate?' • '+j.vehicle_plate:'');
+    const msg='Simulação MOVIT • rota de hoje de '+who+'\n'+j.open_url+'\n(vale '+j.expires_minutes+' min, abre uma vez)';
+    box.innerHTML='<div>📱 <b>Simulação da rota de '+safe(who)+'</b> — abra este link no seu celular. Vale '+safe(j.expires_minutes)+' minutos e abre uma vez só; o motorista não é avisado.</div>'+
+      '<input type="text" readonly value="'+safe(j.open_url)+'" data-sim-link>'+
+      '<div class="tb-actions"><a class="tb-btn wa" target="_blank" rel="noopener" href="https://wa.me/?text='+encodeURIComponent(msg)+'">💬 Enviar para o meu WhatsApp</a>'+
+      '<button type="button" class="tb-btn" data-sim-act="copy">Copiar link</button>'+
+      '<a class="tb-btn" target="_blank" rel="noopener" href="'+safe(j.open_url)+'">Abrir neste aparelho</a>'+
+      '<button type="button" class="tb-btn" data-sim-act="close">Fechar</button></div>';
+    box.style.display='block';
+    box.onclick=async e=>{
+      const a=e.target?.closest?.('[data-sim-act]');if(!a)return;
+      if(a.dataset.simAct==='close'){box.style.display='none';box.innerHTML='';return}
+      const input=box.querySelector('[data-sim-link]');
+      try{await navigator.clipboard.writeText(input.value);a.textContent='Copiado'}catch(err){input.focus();input.select();a.textContent='Selecionado: copie com Ctrl+C'}
+    };
+    box.scrollIntoView({behavior:'smooth',block:'nearest'})
+  }catch(e){trackingBoardMsg('Erro ao preparar a simulação: '+e.message,true)}
+  finally{if(button){button.disabled=false;button.textContent=label}}
+}
 function trackingBoardRows(){
   return Array.isArray(TRACKING_DATA)?TRACKING_DATA:[]
 }
@@ -3766,6 +3795,7 @@ function renderTrackingBoard(rows,extraRows){
     if(d.action==='notify')actions.push('<button type="button" class="tb-btn wa" data-tb-act="notify" data-tb-i="'+i+'">💬 Avisar no WhatsApp</button>');
     if(d.action==='invite')actions.push('<button type="button" class="tb-btn wa" data-tb-act="invite" data-tb-i="'+i+'">💬 Enviar link do aplicativo</button>');
     if(d.action==='map'||(trackingHasPosition(r)&&d.action!=='map'))actions.push('<button type="button" class="tb-btn" data-tb-act="map" data-tb-i="'+i+'">🗺️ Ver no mapa</button>');
+    if(!r.test_only&&romList.length)actions.push('<button type="button" class="tb-btn" title="Abrir a rota de hoje deste motorista no MOVIT do seu celular, sem ser motorista. O motorista não é avisado." data-tb-act="simular" data-tb-i="'+i+'">📱 Simular rota</button>');
     const told=notified[it.key]?'<div class="tb-sub">Avisado às '+safe(notified[it.key])+'</div>':'';
     const tv=trackingTestVersion();
     const linkBtns=r.test_only?'':'<button type="button" class="tb-btn tb-mini" title="Enviar o link de instalação do aplicativo pelo WhatsApp" data-tb-act="link" data-tb-i="'+i+'">🔗 Enviar link</button>'+
@@ -3806,6 +3836,7 @@ async function trackingBoardClick(e){
     const el=$('#trackingMap');if(el)el.scrollIntoView({behavior:'smooth',block:'center'});
     trackingFocusDriver(item.key);return
   }
+  if(act==='simular'){await trackingSimulateRoute(item,b);return}
   if(act==='phone-edit'){TRACKING_CONTACT_EDIT={key:ckey,value:phone?trackingPhoneLabel(phone):''};trackingBoardRerender();return}
   if(act==='phone-cancel'){TRACKING_CONTACT_EDIT=null;trackingBoardRerender();return}
   if(act==='phone-save'){b.disabled=true;await trackingBoardSavePhone(item,String(TRACKING_CONTACT_EDIT?.value||''));return}
