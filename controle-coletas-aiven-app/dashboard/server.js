@@ -4791,6 +4791,9 @@ async function lancMotoristasAgora(token){
   return{ok:true,rows:[...mapa.values()].sort((a,b)=>a.motorista.localeCompare(b.motorista,'pt-BR')),novosNoSsw:doSsw.sort(),tipos:[...tipos].filter(Boolean),operacoes:lancLib.OPERACOES}
 }
 // Completa um lançamento com o que o SSW sabe do romaneio. Um por vez, em segundo plano.
+// As leituras de CT-e para os lançamentos ficam atrás de quem está esperando na tela (CT-e bipado = 2,
+// rota pedida = 1) e na frente de nada: 0 não lê do SSW.
+const LANC_PRIO=0.5;
 let LANC_FILA=Promise.resolve();
 const LANC_NA_FILA=new Set();
 function lancEnfileirar(id,data,romaneioSsw,refazer=false){
@@ -4806,7 +4809,7 @@ async function lancEnriquecer(id,data,romaneioSsw,refazer=false){
     // o romaneio mudou de tamanho no SSW: não serve a rota nem a lista de CT-es guardadas
     if(refazer){ROUTE_PLAN_CACHE.delete(data+'|'+romaneioSsw);SSW38_ROM_DETAIL_CACHE.delete(String(romaneioSsw).toUpperCase())}
     // rota: km, cidades na ordem de entrega e baixas (a montagem já lê os CT-es no SSW)
-    const plan=await buildRoutePlan(data,romaneioSsw,1);
+    const plan=await buildRoutePlan(data,romaneioSsw,LANC_PRIO);
     const pts=plan.points||[],ordem=(plan.optimizedOrder||[]).map(i=>pts[i]).filter(Boolean);
     const paradas=ordem.length?ordem:(plan.stops||[]);
     calc.km=Math.round(Number(plan.optimizedDistanceMeters||0)/1000)||null;
@@ -4822,7 +4825,7 @@ async function lancEnriquecer(id,data,romaneioSsw,refazer=false){
     if((plan.rejectedStops||[]).length)avisos.push((plan.rejectedStops||[]).length+' entrega(s) sem localização: o km pode estar menor que o real');
     if(Number(plan.approximateStops||0))avisos.push(plan.approximateStops+' entrega(s) com endereço aproximado');
     // frete do romaneio: soma do valor do frete de cada CT-e
-    const infos=await sswCteInfoMany(ctes,90000,1);
+    const infos=await sswCteInfoMany(ctes,90000,LANC_PRIO);
     let frete=0,lidos=0;const fretes={};
     for(const c of ctes){const info=infos.byKey.get(sswCteKey(c));const v=Number(info?.resumo?.frete||0)||Number(info?.cte?.valorPrestacao||0);if(info&&v>0){frete+=v;lidos++;fretes[sswCteKey(c)]=Math.round(v*100)/100}}
     calc.lidos=lidos;calc.fretes=fretes;
@@ -4872,7 +4875,7 @@ async function lancFaltaOcorr(romaneioSsw){
 // O romaneio costuma ser montado aos poucos: a linha aparece na hora, mas km, frete e cidades só são
 // buscados depois que a quantidade de CT-es parar de mudar por um tempo.
 const LANC_ESTAVEL_MS=Math.max(1,Number(process.env.LANC_ESTAVEL_SEGUNDOS)||600)*1000,LANC_SYNC_MS=Math.min(60000,LANC_ESTAVEL_MS);
-const LANC_VISTO=new Map(),LANC_FECHAR_AT=new Map();
+const LANC_VISTO=new Map(),LANC_FECHAR_AT=new Map(),LANC_PARCIAL=new Map();
 let LANC_SYNC_AT=0,LANC_SYNC_JOB=null;
 function lancSincronizarRomaneios(force=false){
   if(LANC_SYNC_JOB)return LANC_SYNC_JOB;
@@ -4908,6 +4911,8 @@ async function lancSincronizarAgora(){
     // ainda sem os dados, ou o romaneio mudou de tamanho depois: busca (de novo) quando parar de mudar
     if(estavel&&(st==='pendente'||(st!=='erro'&&Number(l.entregas||0)!==qtde)))lancEnfileirar(l.id,l.data,l.romaneio_ssw,st!=='pendente');
     // todas as entregas já têm baixa no SSW: fecha o romaneio (realizadas, pendentes e frete líquido)
+    // nem todos os CT-es foram lidos a tempo (a fila do SSW estava ocupada): tenta de novo a cada 5 min, até 6 vezes
+    else if(st==='parcial'&&(LANC_PARCIAL.get(key)?.n||0)<6&&Date.now()-(LANC_PARCIAL.get(key)?.at||0)>5*60*1000){LANC_PARCIAL.set(key,{n:(LANC_PARCIAL.get(key)?.n||0)+1,at:Date.now()});lancEnfileirar(l.id,l.data,l.romaneio_ssw)}
     else if(st!=='pendente'&&st!=='erro'&&Number(x.faltaOcorr||0)===0&&!l.calculo.fechado&&Date.now()-(LANC_FECHAR_AT.get(key)||0)>30*60*1000){LANC_FECHAR_AT.set(key,Date.now());lancEnfileirar(l.id,l.data,l.romaneio_ssw)}
   }
   if(criados){lancMudou();console.log('LANCAMENTOS romaneios do SSW: '+criados+' novo(s) na lista')}
