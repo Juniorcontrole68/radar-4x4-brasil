@@ -1,15 +1,14 @@
 /* Lançamentos (Operação): formulário em cima, lançamentos em ordem de romaneio embaixo (lancamentos.js) */
-.lc-form{display:grid;grid-template-columns:150px minmax(200px,1.5fr) 150px 160px 170px 150px;gap:12px;align-items:end}
+.lc-form{display:grid;grid-template-columns:128px minmax(150px,230px) 104px 124px 136px 150px minmax(110px,160px) 62px auto;gap:10px;align-items:end;justify-content:start}
 .lc-form label{display:grid;gap:5px;font-size:11px;font-weight:700;color:#475569;min-width:0}
 .lc-form label small{font-weight:600;color:#94a3b8}
-.lc-form input,.lc-form select{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:9px;padding:0 10px;height:42px;background:#fff;font-size:14px;color:var(--ink);font-family:inherit}
+.lc-form input,.lc-form select{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;padding:0 9px;height:36px;background:#fff;font-size:13px;color:var(--ink);font-family:inherit}
 .lc-form input:focus,.lc-form select:focus{outline:3px solid #99f6e4;outline-offset:1px;border-color:var(--brand)}
 .lc-form input.lc-up{text-transform:uppercase}
 .lc-form input.lc-up::placeholder{text-transform:none}
-.lc-form .lc-valor input{font-size:16px;font-weight:700;border:2px solid var(--brand);font-variant-numeric:tabular-nums}
-.lc-form .lc-extra{grid-column:span 2}
-.lc-form .lc-erros{grid-column:span 1}
-.lc-form .lc-go{grid-column:span 3;display:flex;gap:8px;justify-content:flex-end;align-items:end}
+.lc-form .lc-valor input{font-weight:700;border:2px solid var(--brand);font-variant-numeric:tabular-nums}
+.lc-form .lc-go{display:flex;gap:8px;justify-content:flex-end;align-items:end}
+.lc-form .lc-go .lc-btn{height:36px;padding:0 16px}
 .lc-head{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .lc-btn{border:0;border-radius:9px;padding:11px 16px;font-weight:700;cursor:pointer;background:var(--brand);color:#fff;font-size:13px;font-family:inherit}
 .lc-btn.ghost{background:#e2e8f0;color:#334155}
@@ -26,7 +25,7 @@
 .lc-filtro{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;font-weight:700;color:#475569}
 .lc-filtro input{border:1px solid var(--line);border-radius:9px;padding:8px 9px;font-size:13px;background:#fff;color:var(--ink);font-family:inherit}
 .lc-table{display:grid;grid-template-columns:minmax(0,1fr);overflow-x:auto;margin-top:4px}
-.lc-table table{width:100%;border-collapse:collapse;font-size:12.5px;min-width:1080px}
+.lc-table table{width:100%;border-collapse:collapse;font-size:12.5px;min-width:1160px}
 .lc-table th{text-align:left;font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.04em;padding:8px 8px;border-bottom:2px solid var(--line);white-space:nowrap;background:#f8fafc;position:sticky;top:0}
 .lc-table td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:middle;color:var(--ink)}
 .lc-table tr:hover td{background:#f8fafc}
@@ -48,6 +47,6 @@
 .lc-admin{margin-top:14px;display:flex;justify-content:space-between;gap:14px;align-items:center;flex-wrap:wrap;font-size:13px}
 .lc-admin .muted{margin-top:3px;font-size:12px;max-width:760px}
 .lc-admin-btns{display:flex;gap:8px;flex-wrap:wrap}
-@media(max-width:1250px){.lc-form{grid-template-columns:repeat(3,minmax(0,1fr))}.lc-form .lc-extra{grid-column:span 1}.lc-form .lc-go{grid-column:span 1}}
+@media(max-width:1180px){.lc-form{grid-template-columns:repeat(4,minmax(0,1fr))}.lc-form .lc-go{grid-column:span 4}}
 @media(max-width:760px){.lc-form{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.lc-form .lc-mot,.lc-form .lc-go{grid-column:1/-1}.lc-form .lc-go .lc-btn{flex:1}}
 @media(max-width:1050px){.nav button[data-tab=lancamentos]:before{content:'📝'}}

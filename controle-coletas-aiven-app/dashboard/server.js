@@ -4817,14 +4817,24 @@ async function lancEnriquecer(id,data,romaneioSsw){
     if(Number(plan.approximateStops||0))avisos.push(plan.approximateStops+' entrega(s) com endereço aproximado');
     // frete do romaneio: soma do valor do frete de cada CT-e
     const infos=await sswCteInfoMany(ctes,90000,1);
-    let frete=0,lidos=0;
-    for(const c of ctes){const info=infos.byKey.get(sswCteKey(c));const v=Number(info?.resumo?.frete||0)||Number(info?.cte?.valorPrestacao||0);if(info&&v>0){frete+=v;lidos++}}
-    calc.lidos=lidos;
+    let frete=0,lidos=0;const fretes={};
+    for(const c of ctes){const info=infos.byKey.get(sswCteKey(c));const v=Number(info?.resumo?.frete||0)||Number(info?.cte?.valorPrestacao||0);if(info&&v>0){frete+=v;lidos++;fretes[sswCteKey(c)]=Math.round(v*100)/100}}
+    calc.lidos=lidos;calc.fretes=fretes;
     if(lidos)calc.frete_vialog=Math.round(frete*100)/100;
     if(lidos<ctes.length){calc.status='parcial';avisos.push('frete lido de '+lidos+' de '+ctes.length+' CT-es')}
     // baixas
     const st=(plan.stops||[]);
-    if(st.length){calc.realizadas=st.filter(x=>x.entregue).length;calc.baixas_em=new Date().toISOString();if(data<spDateISO())calc.pend=Math.max(0,(calc.entregas||st.length)-calc.realizadas)}
+    if(st.length){
+      calc.realizadas=st.filter(x=>x.entregue).length;calc.baixas_em=new Date().toISOString();
+      const todas=calc.realizadas>=(calc.entregas||st.length);
+      // frete líquido = frete do romaneio menos o frete das entregas não feitas (só com o dia fechado)
+      if(data<spDateISO()){
+        calc.pend=Math.max(0,(calc.entregas||st.length)-calc.realizadas);
+        // só entre as entregas que o sistema conseguiu acompanhar (as sem localização ficam de fora da conta)
+        const acompanhadas={};for(const x of st){const k=sswCteKey(x.ctrc);if(k in fretes)acompanhadas[k]=fretes[k]}
+        calc.desconto_vialog=lancFreteNaoEntregue(acompanhadas,new Set(st.filter(x=>x.entregue).map(x=>sswCteKey(x.ctrc))))
+      }else if(todas)calc.desconto_vialog=0
+    }
   }catch(e){
     calc.status='erro';avisos.push(String(e?.message||e).slice(0,160))
   }
@@ -4833,6 +4843,7 @@ async function lancEnriquecer(id,data,romaneioSsw){
   lancMudou();
   console.log('LANCAMENTOS completado: '+JSON.stringify({id,romaneio:romaneioSsw,status:calc.status,km:calc.km,frete:calc.frete_vialog,entregas:calc.entregas,realizadas:calc.realizadas,msg:calc.msg}))
 }
+const lancFreteNaoEntregue=lancLib.freteNaoEntregue;
 // Baixas do dia (e do dia anterior) para os lançamentos do sistema, sem remontar rota.
 let LANC_BAIXAS_AT=0;
 const LANC_BAIXAS_DIA=new Map();
@@ -4840,7 +4851,7 @@ async function lancAtualizarBaixas(force=false){
   if(!force&&Date.now()-LANC_BAIXAS_AT<5*60*1000)return;
   LANC_BAIXAS_AT=Date.now();
   const hoje=spDateISO(),dias=[3,2,1,0].map(n=>spDateISO(new Date(Date.now()-n*864e5)));
-  const j=await portalJson('/api/painel/lancamentos?de='+dias[0]+'&ate='+hoje,{timeout:20000});
+  const j=await portalJson('/api/painel/lancamentos?fretes=1&de='+dias[0]+'&ate='+hoje,{timeout:20000});
   for(const dia of dias){
     // lançado "mesmo assim" sem o romaneio estar no SSW: confere de novo (hoje e ontem) e completa quando aparecer
     if(dia>=dias[2])for(const l of (j.rows||[]).filter(r=>r.data===dia&&!r.romaneio_ssw)){
@@ -4858,7 +4869,7 @@ async function lancAtualizarBaixas(force=false){
     if(!doDia.length)continue;
     let op=null;try{op=await getSswMotoristasFast(dia,dia)}catch{continue}
     const porRom=new Map();
-    for(const r of (op?.rows||[])){const k=String(r.romaneio||'').toUpperCase();if(!k)continue;const a=porRom.get(k)||{total:0,ok:0};a.total++;if(r.entregue)a.ok++;porRom.set(k,a)}
+    for(const r of (op?.rows||[])){const k=String(r.romaneio||'').toUpperCase();if(!k)continue;const a=porRom.get(k)||{total:0,ok:0,entregues:new Set()};a.total++;if(r.entregue){a.ok++;for(const ct of[r.ctrcOficial,r.ctrc])if(ct)a.entregues.add(sswCteKey(ct))}porRom.set(k,a)}
     for(const l of doDia){
       // lançamento que ainda não foi completado (servidor reiniciou no meio): tenta de novo
       // ...e o que deu erro, até 3 vezes (depois só pelo botão ↻ da tela)
@@ -4868,9 +4879,22 @@ async function lancAtualizarBaixas(force=false){
       if(!b||!b.total)continue;
       const entregas=l.entregas||b.total,pend=dia<hoje?Math.max(0,entregas-b.ok):null;
       const fechado=dia<hoje||b.ok>=entregas;
-      if((fechado?l.realizadas:l.ao_vivo)===b.ok&&(pend===null||l.pend===pend))continue;
-      const c={status:l.calculo.status,msg:l.calculo.msg,ctes:l.calculo.ctes,lidos:l.calculo.lidos,realizadas:b.ok,baixas_em:new Date().toISOString(),romaneio_ssw:l.romaneio_ssw};
+      // frete das entregas não feitas: descontado quando o dia fecha (ou zerado quando todas foram feitas)
+      let desconto=null,aviso='';
+      if(l.fretes&&Object.keys(l.fretes).length){
+        if(b.ok>=entregas)desconto=0;
+        else if(dia<hoje){
+          // as baixas precisam casar com os CT-es do romaneio; se não casarem, não inventa desconto
+          const casadas=Object.keys(l.fretes).filter(k=>b.entregues.has(k)).length;
+          if(casadas>=b.ok)desconto=lancFreteNaoEntregue(l.fretes,b.entregues);
+          else aviso='frete líquido não calculado: '+(b.ok-casadas)+' baixa(s) do SSW não casaram com os CT-es do romaneio'
+        }
+      }
+      const msg=[...String(l.calculo.msg||'').split(' • ').filter(x=>x&&!/^frete líquido não calculado/.test(x)),aviso].filter(Boolean).join(' • ');
+      if((fechado?l.realizadas:l.ao_vivo)===b.ok&&(pend===null||l.pend===pend)&&(desconto===null||Number(l.desconto_vialog||0)===desconto)&&msg===String(l.calculo.msg||''))continue;
+      const c={status:l.calculo.status,msg,ctes:l.calculo.ctes,lidos:l.calculo.lidos,realizadas:b.ok,baixas_em:new Date().toISOString(),romaneio_ssw:l.romaneio_ssw};
       if(pend!==null)c.pend=pend;
+      if(desconto!==null)c.desconto_vialog=desconto;
       await portalJson('/api/painel/lancamentos/'+encodeURIComponent(l.id),{method:'PATCH',body:{calculo:c},timeout:20000}).catch(()=>{});
       lancMudou()
     }
@@ -5671,7 +5695,7 @@ if(u.pathname.startsWith('/api/lancamentos')){try{
   if(sub==='/motoristas'&&req.method==='GET')return sai(200,await lancMotoristas(authUser.token));
   if(sub==='/romaneio'&&req.method==='GET'){
     const x=await lancBuscarRomaneio(u.searchParams.get('numero')||'',u.searchParams.get('data')||'');
-    if(x.encontrado&&x.motorista_ssw){const m=await lancMotoristas(authUser.token).catch(()=>({rows:[]}));x.motorista=lancMotoristaConhecido(x.motorista_ssw,(m.rows||[]).map(r=>r.motorista))||x.motorista_ssw.toUpperCase();const d=(m.rows||[]).find(r=>r.motorista===x.motorista);if(d){x.veiculo_tipo=d.veiculo_tipo;x.operacao=d.operacao}}
+    if(x.encontrado&&x.motorista_ssw){const m=await lancMotoristas(authUser.token).catch(()=>({rows:[]}));x.motorista=lancMotoristaConhecido(x.motorista_ssw,(m.rows||[]).map(r=>r.motorista))||x.motorista_ssw.toUpperCase();const d=(m.rows||[]).find(r=>r.motorista===x.motorista);if(d)x.veiculo_tipo=d.veiculo_tipo}   // a operação não é sugerida: o usuário escolhe
     return sai(200,x)
   }
   if(sub===''&&req.method==='POST'){

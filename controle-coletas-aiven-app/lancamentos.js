@@ -48,6 +48,14 @@ function romaneioCurto(v){
   const m=s.match(/(\d+)\s*-\s*(\d)\s*$/);
   return m?String(Number(m[1]))+'-'+m[2]:limpo(s,40)
 }
+// Frete líquido da Construlog = frete do romaneio menos o frete das entregas não feitas.
+// Aqui: a soma do frete dos CT-es (fretes: {ctrc: valor}) que não estão entre os entregues.
+function freteNaoEntregue(fretes,entregues){
+  const feitos=entregues instanceof Set?entregues:new Set(entregues||[]);
+  let soma=0;
+  for(const[ct,v]of Object.entries(fretes||{}))if(!feitos.has(ct))soma+=Number(v||0);
+  return Math.round(soma*100)/100
+}
 const dataLinha=r=>dataIso(r?.Data||r?.DATA||r?.ENTREGUE||r?.Entregue||r?.['  Data']||'');
 
 // Linha no formato da planilha a partir dos campos do lançamento do sistema.
@@ -76,7 +84,9 @@ function resumir(row){
     id:String(row.id),origem:row.origem,data:row.event_date||dataLinha(d),romaneio:row.romaneio||limpo(d.Romaneio,40),romaneio_ssw:s.romaneio_ssw||'',
     motorista:row.motorista||limpo(d.Motorista,120),veiculo_tipo:limpo(d.Veiculo,40),placa:s.placa||'',filial:limpo(d.Filial,10),operacao:limpo(d['Operação'],40),
     entregas:n('Entregas'),realizadas:n('Realizadas'),pend:n('Pend'),retorno:n('Retorno'),km:n('KM'),
-    valor:n('Frete Comb'),desconto:n('Desc.'),frete_mot_liq:n('Frete Mot Liq'),frete_vialog:n('Frete Vialog'),frete_vialog_liq:n('Frete Vialog Liq'),
+    valor:n('Frete Comb'),desconto:n('Desc.'),frete_mot_liq:n('Frete Mot Liq'),
+    // frete Construlog (na planilha a coluna se chama "Frete Vialog"): o frete do romaneio; o líquido desconta o frete das entregas não feitas
+    frete_vialog:n('Frete Vialog'),desconto_vialog:n('Desc'),frete_vialog_liq:n('Frete Vialog Liq'),
     conferente:limpo(d.Conferente,80),erros:n('Erros'),rota:limpo(d.Rota,600),
     // durante o dia as baixas ficam só aqui; a coluna Realizadas só é gravada com o dia fechado (os
     // painéis tratam Realizadas em branco como "ainda sem fechamento")
@@ -88,7 +98,7 @@ function resumir(row){
 function campos(row){
   const r=resumir(row),s=row.ssw||{};
   return{data:r.data,motorista:r.motorista,veiculo_tipo:r.veiculo_tipo,filial:r.filial,romaneio:r.romaneio,operacao:r.operacao,entregas:r.entregas,realizadas:r.realizadas,
-    pend:r.pend,retorno:r.retorno,km:r.km,valor:r.valor,desconto:r.desconto,frete_vialog:r.frete_vialog,desconto_vialog:numero((row.dados||{}).Desc),conferente:r.conferente,erros:r.erros,rota:r.rota,
+    pend:r.pend,retorno:r.retorno,km:r.km,valor:r.valor,desconto:r.desconto,frete_vialog:r.frete_vialog,desconto_vialog:r.desconto_vialog,conferente:r.conferente,erros:r.erros,rota:r.rota,
     placa:s.placa||'',romaneio_ssw:s.romaneio_ssw||''}
 }
 
@@ -226,7 +236,8 @@ async function atender(req,res,u,ctx){
       const hoje=spToday(),de=dataIso(u.searchParams.get('de'))||hoje,ate=dataIso(u.searchParams.get('ate'))||de;
       const origem=u.searchParams.get('origem')==='todas'?null:'sistema';
       const q=await pool.query(SEL+" WHERE event_date BETWEEN $1::date AND $2::date AND ($3::text IS NULL OR origem=$3) ORDER BY event_date,id LIMIT 3000",[de,ate,origem]);
-      const rows=q.rows.map(resumir).sort((a,b)=>a.data.localeCompare(b.data)||(Number(romaneioKey(a.romaneio))||0)-(Number(romaneioKey(b.romaneio))||0)||Number(a.id)-Number(b.id));
+      const comFretes=u.searchParams.get('fretes')==='1';
+      const rows=q.rows.map(r=>comFretes?{...resumir(r),fretes:r.ssw?.fretes||null}:resumir(r)).sort((a,b)=>a.data.localeCompare(b.data)||(Number(romaneioKey(a.romaneio))||0)-(Number(romaneioKey(b.romaneio))||0)||Number(a.id)-Number(b.id));
       return sendJson(res,200,{ok:true,de,ate,rows})
     }
     // ---- novo lançamento
@@ -279,19 +290,25 @@ async function atender(req,res,u,ctx){
           key=nk;c.romaneio=romaneioCurto(b.romaneio_ssw||b.romaneio);
           ssw.romaneio_ssw=limpo(b.romaneio_ssw,40).toUpperCase();ssw.placa=limpo(b.placa,12).toUpperCase();
           // romaneio trocado: o que tinha sido lido do SSW era do outro
-          Object.assign(c,{entregas:b.entregas??null,realizadas:null,pend:null,retorno:null,km:null,frete_vialog:null,rota:''});
+          Object.assign(c,{entregas:b.entregas??null,realizadas:null,pend:null,retorno:null,km:null,frete_vialog:null,desconto_vialog:null,rota:''});
+          delete ssw.fretes;
           ssw.calculo={status:'pendente',em:new Date().toISOString()}
         }
       }
       if(b.calculo&&typeof b.calculo==='object'){
         const k=b.calculo;
-        for(const f of['entregas','pend','retorno','km','frete_vialog'])if(Object.prototype.hasOwnProperty.call(k,f)){const v=numero(k[f]);c[f]=Number.isFinite(v)?v:null}
+        for(const f of['entregas','pend','retorno','km','frete_vialog','desconto_vialog'])if(Object.prototype.hasOwnProperty.call(k,f)){const v=numero(k[f]);c[f]=Number.isFinite(v)?v:null}
         let aoVivo=ssw.calculo?.ao_vivo??null;
         if(Object.prototype.hasOwnProperty.call(k,'realizadas')){
           const v=numero(k.realizadas),ent=numero(c.entregas);
           aoVivo=Number.isFinite(v)?v:null;
           const fechado=c.data<spToday()||(Number.isFinite(v)&&Number.isFinite(ent)&&ent>0&&v>=ent);
           c.realizadas=fechado&&Number.isFinite(v)?v:null
+        }
+        // frete de cada CT-e do romaneio: é com ele que se desconta o das entregas não feitas
+        if(k.fretes&&typeof k.fretes==='object'&&!Array.isArray(k.fretes)){
+          const f={};for(const[ct,v]of Object.entries(k.fretes).slice(0,600)){const x=numero(v);if(Number.isFinite(x)&&x>=0)f[limpo(ct,24).toUpperCase()]=Math.round(x*100)/100}
+          ssw.fretes=f
         }
         if(typeof k.rota==='string')c.rota=k.rota;
         if(typeof k.filial==='string'&&k.filial)c.filial=k.filial;
@@ -323,4 +340,4 @@ async function atender(req,res,u,ctx){
   }
 }
 
-module.exports={COLUNAS,OPERACOES,numero,dinheiro,dataIso,dataBr,romaneioKey,romaneioCurto,montarDados,resumir,ensureSchema,handle};
+module.exports={COLUNAS,OPERACOES,freteNaoEntregue,numero,dinheiro,dataIso,dataBr,romaneioKey,romaneioCurto,montarDados,resumir,ensureSchema,handle};

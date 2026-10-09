@@ -18,7 +18,7 @@ function valorDigitado(v){
 }
 
 let pronto=false,motoristas=[],tipos=[],operacoes=['MATCOM','ECOM','MATCOM/ECOM'],linhas=[],naFila=[],config=null;
-let rom=null,romSeq=0,editando=null,timerLista=null,autoMotorista='',mexeuTipo=false,mexeuOper=false;
+let rom=null,romSeq=0,editando=null,timerLista=null,autoMotorista='',mexeuTipo=false;
 
 function msg(texto,tipo=''){const el=q('#lcMsg');if(!el)return;el.textContent=texto;el.className='lc-msg'+(tipo?' '+tipo:'')}
 async function api(url,opts){
@@ -32,7 +32,8 @@ async function api(url,opts){
 function preencherListas(){
   q('#lcDriverList').innerHTML=motoristas.map(m=>'<option value="'+esc(m.motorista)+'">'+esc([m.veiculo_tipo,m.ultimo?'último em '+br(m.ultimo):m.origem==='ssw'?'no SSW hoje':''].filter(Boolean).join(' • '))+'</option>').join('');
   const sel=q('#lcTipo'),atual=sel.value;
-  const lista=[...new Set([...tipos,'FIORINO','VAN'].map(t=>String(t||'').toUpperCase()).filter(Boolean))];
+  // os tipos da casa primeiro; depois os que já apareceram nos lançamentos
+  const lista=[...new Set(['FIORINO','VAN','VAN COM TUBO','3/4',...tipos].map(t=>String(t||'').toUpperCase().replace(/\s+/g,' ').trim()).filter(Boolean))];
   sel.innerHTML='<option value="">Escolha</option>'+lista.map(t=>'<option>'+esc(t)+'</option>').join('');
   if(lista.includes(atual))sel.value=atual;
   const op=q('#lcOper'),oa=op.value;
@@ -42,8 +43,8 @@ function preencherListas(){
 function padroesDoMotorista(){
   const m=motoristas.find(x=>norm(x.motorista)===norm(q('#lcDriver').value));
   if(!m)return;
-  if(!mexeuTipo&&m.veiculo_tipo&&[...q('#lcTipo').options].some(o=>o.value===m.veiculo_tipo))q('#lcTipo').value=m.veiculo_tipo;
-  if(!mexeuOper&&m.operacao&&operacoes.includes(m.operacao))q('#lcOper').value=m.operacao
+  // sugere só o tipo de carro do último lançamento do motorista; a operação é sempre escolhida pelo usuário
+  if(!mexeuTipo&&m.veiculo_tipo&&[...q('#lcTipo').options].some(o=>o.value===m.veiculo_tipo))q('#lcTipo').value=m.veiculo_tipo
 }
 function mostrarRomaneio(){
   const el=q('#lcRomInfo');
@@ -53,7 +54,7 @@ function mostrarRomaneio(){
   if(rom.erro){el.className='lc-rom bad';el.textContent=rom.erro;return}
   if(!rom.encontrado){el.className='lc-rom warn';el.textContent='Romaneio não encontrado no SSW em '+br(rom.data)+'. Confira o número e a data. Se estiver certo, pode lançar mesmo assim e completar depois.';return}
   el.className='lc-rom ok';
-  el.innerHTML='<b>'+esc(rom.romaneio_ssw)+'</b> • '+esc(rom.motorista_ssw||'sem motorista no SSW')+(rom.placa?' • placa '+esc(rom.placa):'')+' • '+int(rom.entregas)+' entrega(s). Km, frete e cidades o sistema completa depois de lançar.'
+  el.innerHTML='<b>'+esc(rom.romaneio_ssw)+'</b> • '+esc(rom.motorista_ssw||'sem motorista no SSW')+(rom.placa?' • placa '+esc(rom.placa):'')+' • '+int(rom.entregas)+' entrega(s). Km, frete Construlog e cidades o sistema completa depois de lançar.'
 }
 async function buscarRomaneio(){
   const numero=q('#lcRom').value.trim(),data=q('#lcData').value||hoje();
@@ -69,8 +70,7 @@ async function buscarRomaneio(){
       const campo=q('#lcDriver');
       // só preenche o motorista se o usuário ainda não escolheu um (ou se foi o sistema que preencheu)
       if(j.motorista&&(!campo.value.trim()||norm(campo.value)===norm(autoMotorista))){campo.value=j.motorista;autoMotorista=j.motorista;padroesDoMotorista()}
-      if(!mexeuTipo&&j.veiculo_tipo&&[...q('#lcTipo').options].some(o=>o.value===j.veiculo_tipo))q('#lcTipo').value=j.veiculo_tipo;
-      if(!mexeuOper&&j.operacao&&operacoes.includes(j.operacao))q('#lcOper').value=j.operacao
+      if(!mexeuTipo&&j.veiculo_tipo&&[...q('#lcTipo').options].some(o=>o.value===j.veiculo_tipo))q('#lcTipo').value=j.veiculo_tipo
     }
   }catch(e){if(meu!==romSeq)return;rom={erro:e.message,digitado:numero,data}}
   mostrarRomaneio()
@@ -79,7 +79,7 @@ function limparFormulario(manterData=true){
   const d=q('#lcData').value;
   q('#lcForm').reset();
   q('#lcData').value=manterData&&d?d:hoje();
-  rom=null;editando=null;autoMotorista='';mexeuTipo=false;mexeuOper=false;romSeq++;
+  rom=null;editando=null;autoMotorista='';mexeuTipo=false;romSeq++;
   mostrarRomaneio();
   q('#lcSave').textContent='Lançar';q('#lcCancel').hidden=true;q('#lcFormTitle').textContent='Novo lançamento'
 }
@@ -123,7 +123,7 @@ function editar(id){
   if(r.veiculo_tipo&&![...q('#lcTipo').options].some(o=>o.value===r.veiculo_tipo))q('#lcTipo').insertAdjacentHTML('beforeend','<option>'+esc(r.veiculo_tipo)+'</option>');
   q('#lcTipo').value=r.veiculo_tipo||'';q('#lcOper').value=operacoes.includes(r.operacao)?r.operacao:'';
   q('#lcConf').value=r.conferente||'';q('#lcErros').value=r.erros||'';
-  mexeuTipo=mexeuOper=true;autoMotorista='';rom=null;mostrarRomaneio();
+  mexeuTipo=true;autoMotorista='';rom=null;mostrarRomaneio();
   q('#lcSave').textContent='Salvar alteração';q('#lcCancel').hidden=false;q('#lcFormTitle').textContent='Alterando o romaneio '+r.romaneio;
   msg('Altere o que precisar e clique em Salvar alteração.');
   q('#lcForm').scrollIntoView({behavior:'smooth',block:'nearest'});q('#lcValor').focus()
@@ -151,20 +151,20 @@ function renderLista(){
   const box=q('#lcTable'),tot=q('#lcTotais'),de=q('#lcDe').value,ate=q('#lcAte').value,varios=de!==ate;
   q('#lcListTitle').textContent='Lançamentos '+(varios?'de '+br(de)+' a '+br(ate):'de '+br(de));
   if(!linhas.length){box.innerHTML='<div class="lc-empty">Nenhum lançamento '+(varios?'neste período':'nesta data')+'.</div>';tot.innerHTML='';return}
-  const s={ent:0,real:0,km:0,valor:0,frete:0,valorComFrete:0};
+  const s={ent:0,real:0,km:0,valor:0,frete:0,liq:0,valorComFrete:0};
   const corpo=linhas.map(r=>{
     const feitas=r.realizadas??r.ao_vivo;
-    s.ent+=Number(r.entregas||0);s.real+=Number(feitas||0);s.km+=Number(r.km||0);s.valor+=Number(r.frete_mot_liq??r.valor??0);s.frete+=Number(r.frete_vialog||0);if(r.frete_vialog>0)s.valorComFrete+=Number(r.frete_mot_liq??r.valor??0);
-    const pct=r.frete_vialog>0&&r.valor!==null?Math.round((r.frete_mot_liq??r.valor)/r.frete_vialog*100)+'%':'—';
+    s.ent+=Number(r.entregas||0);s.real+=Number(feitas||0);s.km+=Number(r.km||0);s.valor+=Number(r.frete_mot_liq??r.valor??0);s.frete+=Number(r.frete_vialog||0);s.liq+=Number(r.frete_vialog_liq??r.frete_vialog??0);if(r.frete_vialog>0)s.valorComFrete+=Number(r.frete_mot_liq??r.valor??0);
+    const liq=r.frete_vialog_liq??r.frete_vialog,pct=liq>0&&r.valor!==null?Math.round((r.frete_mot_liq??r.valor)/liq*100)+'%':'—';
     return'<tr data-lc-row="'+esc(r.id)+'"'+(editando?.id===r.id?' class="editing"':'')+'>'+(varios?'<td>'+br(r.data).slice(0,5)+'</td>':'')+
       '<td><b>'+esc(r.romaneio)+'</b></td><td>'+esc(r.motorista)+'</td><td>'+esc(r.veiculo_tipo||'—')+(r.placa?'<small>'+esc(r.placa)+'</small>':'')+'</td><td>'+esc(r.operacao||'—')+'</td>'+
       '<td class="n">'+int(r.entregas)+'</td><td class="n">'+(feitas===null||feitas===undefined?'—':int(feitas)+(r.realizadas===null&&r.ao_vivo!==null?'<small>até agora</small>':''))+'</td><td class="n">'+(r.km?int(r.km):'—')+'</td>'+
-      '<td class="n"><b>'+reais(r.valor)+'</b></td><td class="n">'+reais(r.frete_vialog)+'</td><td class="n">'+pct+'</td>'+
+      '<td class="n"><b>'+reais(r.valor)+'</b></td><td class="n">'+reais(r.frete_vialog)+'</td><td class="n"'+(r.desconto_vialog>0?' title="Descontado o frete das entregas não feitas: '+reais(r.desconto_vialog)+'"':'')+'>'+reais(r.frete_vialog===null?null:liq)+(r.desconto_vialog>0?'<small>− '+reais(r.desconto_vialog)+'</small>':'')+'</td><td class="n">'+pct+'</td>'+
       '<td class="rota" title="'+esc(r.rota||'')+'">'+esc(r.rota||'—')+'</td><td>'+esc(r.conferente||'—')+(r.erros?'<small>'+int(r.erros)+' erro(s)</small>':'')+'</td><td>'+situacao(r)+'</td>'+
       '<td class="acts"><button type="button" data-lc-edit="'+esc(r.id)+'" title="Alterar" aria-label="Alterar o romaneio '+esc(r.romaneio)+'">✎</button><button type="button" data-lc-calc="'+esc(r.id)+'" title="Buscar de novo no SSW" aria-label="Buscar de novo no SSW">↻</button><button type="button" class="rm" data-lc-del="'+esc(r.id)+'" title="Excluir" aria-label="Excluir o romaneio '+esc(r.romaneio)+'">✕</button></td></tr>'
   }).join('');
-  box.innerHTML='<table><thead><tr>'+(varios?'<th>Data</th>':'')+'<th>Romaneio</th><th>Motorista</th><th>Carro</th><th>Operação</th><th class="n">Entregas</th><th class="n">Realizadas</th><th class="n">Km</th><th class="n">Valor negociado</th><th class="n">Frete</th><th class="n">% do frete</th><th>Cidades</th><th>Conferente</th><th>Situação</th><th></th></tr></thead><tbody>'+corpo+'</tbody></table>';
-  tot.innerHTML='<span><b>'+int(linhas.length)+'</b> romaneio(s)</span><span><b>'+int(s.ent)+'</b> entregas</span><span><b>'+int(s.real)+'</b> realizadas</span><span><b>'+int(s.km)+'</b> km</span><span>Motoristas <b>'+reais(s.valor)+'</b></span><span>Frete <b>'+reais(s.frete)+'</b></span>'+(s.frete>0?'<span title="Só os romaneios que já têm o frete">Motoristas = <b>'+Math.round(s.valorComFrete/s.frete*100)+'%</b> do frete</span>':'')
+  box.innerHTML='<table><thead><tr>'+(varios?'<th>Data</th>':'')+'<th>Romaneio</th><th>Motorista</th><th>Carro</th><th>Operação</th><th class="n">Entregas</th><th class="n">Realizadas</th><th class="n">Km</th><th class="n">Valor negociado</th><th class="n">Frete Construlog</th><th class="n" title="Frete do romaneio menos o frete das entregas não feitas">Frete líquido</th><th class="n" title="Valor do motorista sobre o frete líquido">% do frete</th><th>Cidades</th><th>Conferente</th><th>Situação</th><th></th></tr></thead><tbody>'+corpo+'</tbody></table>';
+  tot.innerHTML='<span><b>'+int(linhas.length)+'</b> romaneio(s)</span><span><b>'+int(s.ent)+'</b> entregas</span><span><b>'+int(s.real)+'</b> realizadas</span><span><b>'+int(s.km)+'</b> km</span><span>Motoristas <b>'+reais(s.valor)+'</b></span><span>Frete Construlog <b>'+reais(s.frete)+'</b></span><span>Frete líquido <b>'+reais(s.liq)+'</b></span>'+(s.liq>0?'<span title="Só os romaneios que já têm o frete">Motoristas = <b>'+Math.round(s.valorComFrete/s.liq*100)+'%</b> do frete líquido</span>':'')
 }
 function agendar(ms){clearTimeout(timerLista);timerLista=setTimeout(()=>{if(q('#lancamentos')?.classList.contains('active'))carregarLista(true)},ms)}
 async function carregarLista(silencioso=false){
@@ -226,7 +226,7 @@ function setup(){
   q('#lcRom').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();buscarRomaneio();q('#lcValor').focus()}};
   q('#lcData').onchange=()=>{if(!editando){q('#lcDe').value=q('#lcData').value;q('#lcAte').value=q('#lcData').value;carregarLista()}if(q('#lcRom').value.trim()){rom=null;buscarRomaneio()}};
   q('#lcDriver').onchange=()=>{if(norm(q('#lcDriver').value)!==norm(autoMotorista))autoMotorista='';padroesDoMotorista()};
-  q('#lcTipo').onchange=()=>{mexeuTipo=true};q('#lcOper').onchange=()=>{mexeuOper=true};
+  q('#lcTipo').onchange=()=>{mexeuTipo=true};
   q('#lcDe').onchange=()=>{if(q('#lcAte').value<q('#lcDe').value)q('#lcAte').value=q('#lcDe').value;carregarLista()};
   q('#lcAte').onchange=()=>carregarLista();
   q('#lcHoje').onclick=()=>{q('#lcDe').value=hoje();q('#lcAte').value=hoje();carregarLista()};

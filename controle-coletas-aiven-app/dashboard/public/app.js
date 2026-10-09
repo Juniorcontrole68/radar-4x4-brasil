@@ -787,7 +787,7 @@ function financeRender(){
     // Linhas com algo escrito na data, mas que não foi possível ler: ficam fora de qualquer período.
     const semData=(S.ops||[]).filter(o=>{const v=gd(o);return String(v??'').trim()!==''&&!pd(v)});
     if(semData.length&&window.__opsSemDataAviso!==semData.length){window.__opsSemDataAviso=semData.length;console.warn('Lançamentos com data não reconhecida:',semData.slice(0,10).map(o=>gd(o)))}
-    info.textContent=nf(rows.length)+' lançamento(s) • '+nf(drivers.length)+' motorista(s) • período '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje')+' • fonte atualizada às '+at+' • base: ENTREGUE / Frete Mot Liq / Frete Vialog Liq'+(semData.length?' • ATENÇÃO: '+nf(semData.length)+' lançamento(s) com data não reconhecida ficaram fora (ex.: "'+String(gd(semData[0])).slice(0,20)+'")':'')};
+    info.textContent=nf(rows.length)+' lançamento(s) • '+nf(drivers.length)+' motorista(s) • período '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje')+' • fonte atualizada às '+at+' • base: ENTREGUE / Frete Mot Liq / Frete Construlog Líq'+(semData.length?' • ATENÇÃO: '+nf(semData.length)+' lançamento(s) com data não reconhecida ficaram fora (ex.: "'+String(gd(semData[0])).slice(0,20)+'")':'')};
   const tableRows=drivers.map(x=>({
     motorista:x.motorista,pago:brl(x.paid),receber:brl(x.receive),lucro:brl(x.profit),
     lucroPct:x.profitPct.toFixed(1).replace('.',',')+'%',custoPct:x.costPct.toFixed(1).replace('.',',')+'%'
