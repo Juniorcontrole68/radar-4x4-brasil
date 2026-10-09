@@ -59,6 +59,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
  .tab[data-module="dashboard"]:before{content:"📊"}
  .tab[data-module="dashboards"]:before{content:"▦"}
  .tab[data-module="programacao"]:before{content:"📋"}
+ .tab[data-module="carga"]:before{content:"📦"}
  .tab[data-module="roteirizador-teste"]:before{content:"🧪"}
  .tab[data-module="roteirizador-v02"]:before{content:"🧭"}
  .tab[data-module="tracking"]:before{content:"📍"}
@@ -104,6 +105,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
       <button class="tab" data-group="operacao" data-module="dashboards" data-src="/dashboard/?embed=1&view=dashboards" data-name="Dashboards">▦ Dashboards</button>
       <button class="tab" data-group="operacao" data-module="agendamento-teste" data-src="/dashboard/?embed=1&view=agendamento-teste" data-name="Agendamento">📅 Agendamento</button>
       <button class="tab" data-group="operacao" data-module="programacao" data-src="/dashboard/?embed=1&view=programacao" data-name="Programação">📋 Programação</button>
+      <button class="tab" data-group="operacao" data-module="carga" data-src="/dashboard/?embed=1&view=carga" data-name="Montar carga">📦 Montar carga</button>
       <button class="tab" data-group="operacao" data-module="roteirizador-teste" data-src="/dashboard/?embed=1&view=roteirizador-teste" data-name="Roteirizador Teste">🧪 Roteirizador Teste</button>
       <button class="tab" data-group="operacao" data-module="roteirizador-v02" data-src="/dashboard/?embed=1&view=roteirizador-v02" data-name="Roteirizador V02">🧭 Roteirizador V02</button>
       <button class="tab" data-group="operacao" data-module="tracking" data-src="/dashboard/?embed=1&view=rastreamento" data-name="Rastreio de Carga">📍 Rastreio de Carga</button>
@@ -169,7 +171,7 @@ function moduleAllowed(mod){
   if(mod==='dashboards')return licensed('dashboards')&&(AUTH.is_admin||(AUTH.permissions||[]).some(p=>!['coletas','contas_pagar','dashboard'].includes(p)));
   if(mod==='usuarios')return licensed('usuarios')&&!!AUTH.is_admin;
   if(mod==='programacao')return licensed('programacao')&&hasPerm('programacao');
-  if(mod==='roteirizador-teste'||mod==='roteirizador-v02')return licensed('roteirizador')&&(hasPerm('roteirizador')||AUTH.is_admin);
+  if(mod==='carga'||mod==='roteirizador-teste'||mod==='roteirizador-v02')return licensed('roteirizador')&&(hasPerm('roteirizador')||AUTH.is_admin);
   if(mod==='tracking')return licensed('rastreio')&&hasPerm('tracking');
   if(mod==='lotacao')return licensed('lotacao')&&(moduleAllowed('coletas')||moduleAllowed('financeiro-lotacao'));
   if(mod==='agendamento-teste')return licensed('agendamento')&&(hasPerm('agendamentos')||hasPerm('dashboard'));
@@ -181,7 +183,7 @@ function moduleAllowed(mod){
 function applyModulePermissions(){
   document.querySelectorAll('.tab').forEach(btn=>btn.style.display=moduleAllowed(btn.dataset.module)?'':'none');
   const lotacaoOk=moduleAllowed('coletas')||moduleAllowed('financeiro-lotacao');
-  const operacaoMods=['dashboard','dashboards','agendamento-teste','programacao','roteirizador-teste','roteirizador-v02','tracking'];
+  const operacaoMods=['dashboard','dashboards','agendamento-teste','programacao','carga','roteirizador-teste','roteirizador-v02','tracking'];
   document.querySelector('.group-card[data-group="lotacao"]')?.style.setProperty('display',lotacaoOk?'flex':'none');
   document.querySelector('.group-card[data-group="operacao"]')?.style.setProperty('display',licensed('operacao')&&operacaoMods.some(moduleAllowed)?'flex':'none');
   const company=AUTH?.client?.name?(' • '+AUTH.client.name):'';
@@ -233,7 +235,7 @@ async function abrirModulo(btn){
   try{
     let src=btn.dataset.src;
     const sep=src.includes('?')?'&':'?';
-    if(mod==='dashboard'||mod==='dashboards'||mod==='programacao'||mod==='roteirizador-teste'||mod==='roteirizador-v02'||mod==='tracking'||mod==='agendamento-teste'){
+    if(mod==='dashboard'||mod==='dashboards'||mod==='programacao'||mod==='carga'||mod==='roteirizador-teste'||mod==='roteirizador-v02'||mod==='tracking'||mod==='agendamento-teste'){
       DASH_FRAME_TOKEN='';
       const ticket=await dashboardTicket();
       src += sep+'ticket='+encodeURIComponent(ticket)+'&refresh='+Date.now();
