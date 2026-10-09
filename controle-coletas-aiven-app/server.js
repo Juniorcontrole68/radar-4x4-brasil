@@ -847,6 +847,8 @@ function dashboardPerms(v) {
   if (typeof v === 'string') { try { const p=JSON.parse(v); return Array.isArray(p)?p.map(String):[]; } catch { return []; } }
   return [];
 }
+// Frota deixou de ser aberta a qualquer usuário logado: precisa da permissão "frota" (administrador sempre pode).
+const FROTA_SEM_ACESSO='Seu usuário não tem acesso ao módulo Frota. Peça a liberação a um administrador.';
 function dashboardHas(user,perm){return !!(user&&(user.is_admin||user.permissions?.includes('*')||user.permissions?.includes(perm)))}
 async function dashboardUserContext(row){
   let client=null,clientModules=[];
@@ -2614,7 +2616,7 @@ async function start() {
 
       if (u.pathname === '/api/painel/frota-state' && req.method === 'GET') {
         try {
-          await dashboardSession(req);
+          if(!dashboardHas(await dashboardSession(req),'frota'))return sendJson(res,403,{ok:false,error:FROTA_SEM_ACESSO});
           const q=await pool.query('SELECT data,updated_at FROM fleet_state WHERE id=1 LIMIT 1');
           return sendJson(res,200,{ok:true,data:q.rows[0]?.data||{},updated_at:q.rows[0]?.updated_at||null});
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar Frota.'})}
@@ -2622,7 +2624,7 @@ async function start() {
 
       if (u.pathname === '/api/painel/frota-state' && req.method === 'PUT') {
         try {
-          await dashboardSession(req);
+          if(!dashboardHas(await dashboardSession(req),'frota'))return sendJson(res,403,{ok:false,error:FROTA_SEM_ACESSO});
           const body=await readJsonBodyLimited(req,2*1024*1024);
           const data=body&&body.data&&typeof body.data==='object'?body.data:body;
           const out={
@@ -2641,7 +2643,7 @@ async function start() {
 
       if (u.pathname === '/api/painel/frota-maintenance-file' && req.method === 'POST') {
         try {
-          await dashboardSession(req);
+          if(!dashboardHas(await dashboardSession(req),'frota'))return sendJson(res,403,{ok:false,error:FROTA_SEM_ACESSO});
           const body=await readJsonBodyLimited(req,12*1024*1024);
           const maintenanceId=String(body.maintenance_id||'').trim().slice(0,120);
           const name=String(body.name||'nota-fiscal').trim().slice(0,240);
@@ -2664,7 +2666,7 @@ async function start() {
       const fleetFileMatch=u.pathname.match(/^\/api\/painel\/frota-maintenance-file\/([^/]+)$/);
       if (fleetFileMatch && req.method === 'GET') {
         try {
-          await dashboardSession(req);
+          if(!dashboardHas(await dashboardSession(req),'frota'))return sendJson(res,403,{ok:false,error:FROTA_SEM_ACESSO});
           const maintenanceId=decodeURIComponent(fleetFileMatch[1]);
           const q=await pool.query('SELECT nome_arquivo,mime,arquivo,bytes FROM fleet_maintenance_files WHERE maintenance_id=$1 LIMIT 1',[maintenanceId]);
           if(!q.rowCount)return sendJson(res,404,{ok:false,error:'Anexo não encontrado.'});
@@ -2681,7 +2683,7 @@ async function start() {
 
       if (fleetFileMatch && req.method === 'DELETE') {
         try {
-          await dashboardSession(req);
+          if(!dashboardHas(await dashboardSession(req),'frota'))return sendJson(res,403,{ok:false,error:FROTA_SEM_ACESSO});
           const maintenanceId=decodeURIComponent(fleetFileMatch[1]);
           await pool.query('DELETE FROM fleet_maintenance_files WHERE maintenance_id=$1',[maintenanceId]);
           return sendJson(res,200,{ok:true});
@@ -3373,7 +3375,8 @@ async function start() {
 
       if (req.method === 'GET' && (u.pathname === '/frota' || u.pathname === '/frota/')) {
         try {
-          await dashboardSession(req,false);
+          const fu=await dashboardSession(req,false);
+          if(!dashboardHas(fu,'frota')){res.writeHead(403,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end('<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;padding:32px;color:#16142f"><h2>Frota</h2><p>'+FROTA_SEM_ACESSO+'</p></body>')}
           return sendHtml(res,FROTA_PAGE);
         } catch(e){
           res.writeHead(302,{Location:'/?login=1#frota','Cache-Control':'no-store'});

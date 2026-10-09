@@ -1039,6 +1039,16 @@ public class MainActivity extends Activity {
                 start=route.optJSONObject("start");
                 prefs.edit().putBoolean("current_return_start",route.optBoolean("returnToStart",false)).apply();
                 lastPlan=null;
+                // A central já mandou a rota roteirizada (trajeto e km): abre pronta para iniciar,
+                // na ordem que a central definiu, sem precisar otimizar de novo.
+                if(route.optJSONObject("geometry")!=null&&route.optDouble("distanceMeters",0)>0&&!stops.isEmpty()){
+                    JSONObject pl=new JSONObject();
+                    pl.put("geometry",route.optJSONObject("geometry"));
+                    pl.put("distanceMeters",route.optDouble("distanceMeters",0));
+                    pl.put("durationSeconds",route.optDouble("durationSeconds",0));
+                    lastPlan=pl;
+                }
+                final JSONObject planned=lastPlan;
                 String title=j.optString("title","Rota compartilhada");
                 String driver=j.optString("driver_name","");
                 String eventDate=j.optString("event_date","");
@@ -1050,9 +1060,13 @@ public class MainActivity extends Activity {
                     .apply();
                 runOnUiThread(()->{
                     routeTitle.setText(title);
+                    refreshStartPointUi();
                     renderList();
-                    renderMap(null);
-                    status.setText("Rota compartilhada aberta. Toque em Otimizar para atualizar o trajeto.");
+                    renderMap(planned);
+                    if(planned!=null){
+                        summary.setText(stops.size()+" entrega"+(stops.size()==1?"":"s")+" • "+fmtKm(planned.optDouble("distanceMeters",0))+(prefs.getBoolean("current_return_start",false)?" • retorna ao início":" • só ida"));
+                        status.setText("Rota da central aberta, já na ordem de entrega. Toque em Iniciar rota.");
+                    }else status.setText("Rota compartilhada aberta. Toque em Otimizar para atualizar o trajeto.");
                 });
             }catch(Exception e){runOnUiThread(()->status.setText("Abrir rota: "+e.getMessage()));}
         });
@@ -1345,11 +1359,15 @@ public class MainActivity extends Activity {
                 if(effectiveStart==null)throw new Exception("Defina o ponto de partida.");
 
                 double slat=effectiveStart.optDouble("lat",Double.NaN),slon=effectiveStart.optDouble("lon",Double.NaN);
+                // Rota que veio da empresa: a saída é a base, que NÃO é uma entrega. Ela só fica na
+                // lista quando o próprio usuário a colocou como primeira parada (rota livre).
+                boolean startInStops=false;
                 for(JSONObject s:stops){
                     double lat=s.optDouble("lat",Double.NaN),lon=s.optDouble("lon",Double.NaN);
                     boolean sameStart=Double.isFinite(slat)&&Double.isFinite(slon)&&Double.isFinite(lat)&&Double.isFinite(lon)
                         &&Math.abs(lat-slat)<0.000001&&Math.abs(lon-slon)<0.000001;
-                    if(!sameStart)arr.put(new JSONObject(s.toString()));
+                    if(sameStart)startInStops=true;
+                    else arr.put(new JSONObject(s.toString()));
                 }
                 if(arr.length()<1)throw new Exception("Adicione pelo menos uma parada além do ponto de partida.");
                 body.put("stops",arr);
@@ -1366,7 +1384,7 @@ public class MainActivity extends Activity {
                 if(points.length()>0){
                     JSONObject startPoint=new JSONObject(points.getJSONObject(0).toString());
                     start=new JSONObject(startPoint.toString());
-                    ordered.add(startPoint);
+                    if(startInStops)ordered.add(startPoint);
                 }
                 for(int i=0;i<order.length();i++){
                     int idx=order.getInt(i);

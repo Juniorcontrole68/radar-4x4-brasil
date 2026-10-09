@@ -177,7 +177,7 @@ function moduleAllowed(mod){
   if(mod==='lotacao')return licensed('lotacao')&&(moduleAllowed('coletas')||moduleAllowed('financeiro-lotacao'));
   if(mod==='agendamento-teste')return licensed('agendamento')&&(hasPerm('agendamentos')||hasPerm('dashboard'));
   if(mod==='contas')return licensed('contas_pagar')&&hasPerm('contas_pagar');
-  if(mod==='frota')return licensed('frota');
+  if(mod==='frota')return licensed('frota')&&hasPerm('frota');
   if(mod==='pdf-unificador')return !!AUTH;
   return false
 }

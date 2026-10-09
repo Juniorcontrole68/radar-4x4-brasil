@@ -90,6 +90,16 @@ const chave=n=>'35'+'2610'+'54582567000142'+'57'+'001'+String(n).padStart(9,'0')
       await st(sem.H,'GET','/api/roteirizador/bipar?codigo=AMR15327-3')===403&&await st(sem.H,'GET','/api/roteirizador/motoristas')===403&&await st(sem.H,'POST','/api/roteirizador/enviar-carga',corpo)===403,
       [await st(sem.H,'GET','/api/roteirizador/bipar?codigo=AMR15327-3'),await st(sem.H,'GET','/api/roteirizador/motoristas'),await st(sem.H,'POST','/api/roteirizador/enviar-carga',corpo)]);
     check('  ...mas continua roteirizando nas telas que já tinha',await st(sem.H,'POST','/api/roteirizador/recalcular',{date:'',stops})===200);
+    // Frota: deixou de ser aberta a qualquer usuário logado
+    const fro=await cria('frota_sim_'+sufixo,['frota']);
+    const pagina=async h=>(await fetch(B+'/frota?embed=1',{headers:h,redirect:'manual'})).status;
+    check('Frota: sem a permissão não lê, não grava, não abre a página nem anexo',
+      await st(sem.H,'GET','/api/frota-state')===403&&await st(sem.H,'GET','/api/painel/frota-state')===403&&await st(com.H,'PUT','/api/painel/frota-state',{data:{vehicles:[]}})===403&&
+      await pagina(sem.H)===403&&await st(sem.H,'GET','/api/painel/frota-maintenance-file/x1')===403&&await st(sem.H,'DELETE','/api/painel/frota-maintenance-file/x1')===403,
+      [await st(sem.H,'GET','/api/frota-state'),await st(sem.H,'GET','/api/painel/frota-state'),await pagina(sem.H)]);
+    check('Frota: com a permissão "Frota" abre e lê normalmente',await st(fro.H,'GET','/api/frota-state')===200&&await st(fro.H,'GET','/api/painel/frota-state')===200&&await pagina(fro.H)===200,[await st(fro.H,'GET','/api/frota-state'),await pagina(fro.H)]);
+    check('Frota: administrador continua com acesso',await st(H,'GET','/api/frota-state')===200&&await pagina(H)===200);
+    check('Frota: sem login continua mandando para a tela de entrada',await pagina({})===302&&await st({},'GET','/api/painel/frota-state')===401,[await pagina({}),await st({},'GET','/api/painel/frota-state')]);
     r=await fetch(B+'/dashboard/app.js');
     check('a permissão aparece na lista de acessos dos usuários',/\['montar_carga','Montar carga/.test(await r.text()))
   }

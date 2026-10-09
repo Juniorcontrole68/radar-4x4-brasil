@@ -7,7 +7,9 @@ let saving=false;
 async function loadRemote(){
   try{
     const r=await fetch('/api/frota-state',{cache:'no-store'});
-    const j=await r.json();
+    const j=await r.json().catch(()=>({}));
+    // sem login ainda, ou usuário sem acesso à Frota: fica vazio, sem aviso na tela
+    if(r.status===401||r.status===403){db=empty();return}
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar Frota.');
     db=Object.assign(empty(),j.data||{});
   }catch(e){

@@ -86,9 +86,9 @@ function render(){
  $('#tbCheck').innerHTML=db.checklists.map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.driver)+'</td><td>'+esc(x.status)+'</td><td>'+esc(x.note)+'</td><td>'+delBtn('checklists',x.id)+'</td></tr>').join('');
  $('#tbCost').innerHTML=db.vehicles.map(v=>{const f=db.fuel.filter(x=>x.plate===v.plate).reduce((s,x)=>s+Number(x.total||0),0),m=db.maintenance.filter(x=>x.plate===v.plate).reduce((s,x)=>s+Number(x.total||0),0);return '<tr><td>'+esc(v.plate)+'</td><td>'+esc(v.model)+'</td><td>'+money(f)+'</td><td>'+money(m)+'</td><td><b>'+money(f+m)+'</b></td></tr>'}).join('');
  $$('[data-del]').forEach(b=>b.onclick=async()=>{if(!confirm('Excluir este registro?'))return;if(b.dataset.del==='maintenance')fetch('/api/painel/frota-maintenance-file/'+encodeURIComponent(b.dataset.id),{method:'DELETE'}).catch(()=>{});db[b.dataset.del]=db[b.dataset.del].filter(x=>x.id!==b.dataset.id);await save();msg('Registro excluído')});
- $('[data-file]').forEach(b=>b.onclick=()=>window.open('/api/painel/frota-maintenance-file/'+encodeURIComponent(b.dataset.file),'_blank'));
- $('[data-maint-edit]').forEach(b=>b.onclick=()=>editMaintenance(b.dataset.maintEdit));
- $('[data-maint-proof]').forEach(b=>b.onclick=()=>{maintQuickId=b.dataset.maintProof;$('#maintQuickFile').value='';$('#maintQuickFile').click()});
+ $$('[data-file]').forEach(b=>b.onclick=()=>window.open('/api/painel/frota-maintenance-file/'+encodeURIComponent(b.dataset.file),'_blank'));
+ $$('[data-maint-edit]').forEach(b=>b.onclick=()=>editMaintenance(b.dataset.maintEdit));
+ $$('[data-maint-proof]').forEach(b=>b.onclick=()=>{maintQuickId=b.dataset.maintProof;$('#maintQuickFile').value='';$('#maintQuickFile').click()});
 }
 async function add(k,o){const x=Object.assign({id:id(),createdAt:new Date().toISOString()},o);db[k].unshift(x);await save();return x}
 $('#fVeh').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('vehicles',{plate:fv(f,'plate').toUpperCase(),brand:fv(f,'brand'),model:fv(f,'model'),type:fv(f,'type'),km:Number(fv(f,'km')||0),driver:fv(f,'driver'),status:fv(f,'status')||'Ativo'});f.reset();msg('Veículo salvo')};

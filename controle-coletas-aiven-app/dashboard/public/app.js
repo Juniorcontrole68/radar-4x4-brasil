@@ -59,8 +59,9 @@ function ensureFleetNav(){
       const lot=nav.querySelector('button[data-tab="lotacao"]');
       if(lot&&lot.nextSibling)nav.insertBefore(btn,lot.nextSibling);else nav.appendChild(btn);
     }
-    btn.style.display='';
+    btn.style.display=hasPerm('frota')?'':'none';
     btn.onclick=()=>{
+      if(!hasPerm('frota'))return;
       document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('active'));
       document.querySelectorAll('.section').forEach(x=>x.classList.remove('active'));
       btn.classList.add('active');
@@ -114,7 +115,7 @@ function tabAllowed(tab){
   };
   if(tab==='usuarios')return !!AUTH?.is_admin;
   if(tab==='lotacao')return hasAnyPerm(['lotacao','coletas','financeiro']);
-  if(tab==='frota')return !!AUTH;
+  if(tab==='frota')return hasPerm('frota');
   if(tab==='roteirizador')return hasPerm('roteirizador');
   if(tab==='agendamentos-copia')return hasAnyPerm(['dashboard','agendamentos','agendamentos_copia']);
   if(tab==='dashboards')return AUTH?.is_admin||PERMISSION_OPTIONS.some(([p])=>hasPerm(p)&&p!=='dashboard'&&p!=='montar_carga');
@@ -128,7 +129,7 @@ function applyPermissions(){
     else if(b.dataset.tab==='dashboards')show=tabAllowed('dashboards');
     else if(b.dataset.tab==='agendamentos')show=hasPerm('agendamentos')&&!hasPerm('dashboard');
     else if(b.dataset.tab==='lotacao')show=tabAllowed('lotacao');
-    else if(b.dataset.tab==='frota')show=!!AUTH;
+    else if(b.dataset.tab==='frota')show=hasPerm('frota');
     else if(navMap[b.dataset.tab])show=hasPerm(navMap[b.dataset.tab]);
     b.style.display=show?'':'none';
   });
