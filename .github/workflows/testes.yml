@@ -53,6 +53,8 @@ jobs:
         run: |
           node --check controle-coletas-aiven-app/server.js
           node --check controle-coletas-aiven-app/dashboard/server.js
+          node --check controle-coletas-aiven-app/lancamentos.js
+          node --check controle-coletas-aiven-app/dashboard/public/lancamentos.js
           node --check contas-a-pagar-v3/src/coletas.js
       - name: Subir o servidor em modo teste
         run: |
@@ -97,6 +99,7 @@ jobs:
           done
           node tests/ssw-sessao.js
           node tests/carga.js
+          node tests/lancamentos.js
       - name: Log do servidor
         if: always()
         run: cat servidor.log || true; echo ----; cat servidor-ssw.log || true

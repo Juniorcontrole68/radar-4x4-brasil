@@ -72,6 +72,7 @@ console.log('XML do CT-e');
   check('destinatário: bairro, cidade, UF e CEP',d.bairro==='ZONA RURAL'&&d.cidade==='SAO JOAO DA BOA VISTA'&&d.uf==='SP'&&d.cep==='13871-160',d);
   check('remetente não se mistura com destinatário',p.remetente.logradouro==='ROD. LINS/GUAIMBE'&&p.remetente.cidade==='LINS');
   check('sem recebedor no XML: vem vazio',p.recebedor===null&&p.expedidor===null);
+  check('valor da prestação e da carga no XML',cte.parseCteXml(XML.replace('<infCTeNorm>','<vPrest><vTPrest>96.72</vTPrest><vRec>96.72</vRec></vPrest><infCTeNorm><infCarga><vCarga>1934.45</vCarga></infCarga>')).valorPrestacao===96.72&&p.valorPrestacao===0);
   check('chaves das notas fiscais',p.nfChaves.length===2&&p.nfChaves[0].slice(25,34)==='000525535',p.nfChaves);
   check('observações (com & e campo do contribuinte)',p.observacoes[0]==='ENTREGAR NO PERIODO DA MANHA & LIGAR ANTES'&&p.observacoes[1]==='LOCAL: RUA JULIA PERES APARECIDO 30 PRIMAVERA',p.observacoes);
   const comReceb=XML.replace('<dest>','<receb><CPF>12345678901</CPF><xNome>OBRA DO WAGNO</xNome><enderReceb><xLgr>RUA JULIA PERES APARECIDO</xLgr><nro>30</nro><xBairro>PRIMAVERA</xBairro><xMun>SAO JOAO DA BOA VISTA</xMun><CEP>13871160</CEP><UF>SP</UF></enderReceb></receb><dest>');
@@ -124,13 +125,14 @@ console.log('Tela da opção 101 (como o SSW mostra)');
 
 console.log('Dados da carga na tela 101');
 {
-  const TOPO='<div>Dados do CTRC: 000022119 Dom&iacute;nio: CNG Empresa: 01 CTRC&nbsp;/Subc./RPS: <b>AMR015326-5</b> DACTE XML SEFAZ CT-e: 001 000014791 07/10/26 14:43 AUTORIZADO Previs&atilde;o de entrega: 09/10/26 ajustar N&deg; da Nota Fiscal: 1/000525535 N&ordm; Pedido: 74236 Estou chegando: Qtde. de vol./pares: 5/0 Conferente coleta: Peso c&aacute;lculo (Kg): 134,084 Peso real /Peso real orig (Kg): 1.134,084 Cubagem/Cub Orig (m&sup3;): 0,0000 Valor da Nota Fiscal: 1.580,62 Frete original:</div>';
+  const TOPO='<div>Dados do CTRC: 000022119 Dom&iacute;nio: CNG Empresa: 01 CTRC&nbsp;/Subc./RPS: <b>AMR015326-5</b> DACTE XML SEFAZ CT-e: 001 000014791 07/10/26 14:43 AUTORIZADO Previs&atilde;o de entrega: 09/10/26 ajustar N&deg; da Nota Fiscal: 1/000525535 N&ordm; Pedido: 74236 Estou chegando: Qtde. de vol./pares: 5/0 Conferente coleta: Peso c&aacute;lculo (Kg): 134,084 Peso real /Peso real orig (Kg): 1.134,084 Cubagem/Cub Orig (m&sup3;): 0,0000 Valor da Nota Fiscal: 1.580,62 Frete original: Valor frete (R$): 79,03 Situa&ccedil;&atilde;o de liquida&ccedil;&atilde;o: NAO LIQUIDADO</div>';
   const r=cte.parseTela101(TOPO).resumo;
   check('número do CT-e no SSW',r.ctrc==='AMR015326-5',r.ctrc);
   check('nota fiscal sem a série e sem zeros',r.nf==='525535',r.nf);
   check('volumes',r.volumes===5,r.volumes);
   check('peso com milhar e vírgula',r.peso===1134.084,r.peso);
   check('valor da nota',r.valorNf===1580.62,r.valorNf);
+  check('valor do frete do CT-e',r.frete===79.03,r.frete);
   check('previsão e pedido',r.previsao==='09/10/26'&&r.pedido==='74236',r);
   const sit=cte.parseTela101('<div>Observa&ccedil;&atilde;o: Instru&ccedil;&atilde;o Entrega: Situa&ccedil;&atilde;o Atual: CNG AMR 09/10/26 06:45 85-SAIDA PARA ENTREGA O corr&ecirc;ncias Fr e te D ANFEs</div>').resumo.situacao;
   check('situação atual do CT-e (sem as siglas da frente)',sit==='09/10/26 06:45 85-SAIDA PARA ENTREGA',sit);

@@ -26,6 +26,7 @@ Module.Module._initPaths();
 
 const { initDb, pool } = require('../contas-a-pagar-v3/src/db');
 const { initColetasDb } = require('../contas-a-pagar-v3/src/coletas');
+const lancamentos = require('./lancamentos');
 const { handler } = require('../contas-a-pagar-v3/src/handler');
 
 const PORT = process.env.PORT || 10000;
@@ -77,7 +78,7 @@ const DASH_API_PREFIXES = [
   '/api/programacao-entregas','/api/programacao-simulacao','/api/evolucao-motoristas',
   '/api/agendamento-teste','/api/nf-materiais','/api/frota-state','/api/frota-maintenance-file',
   '/api/carregamentos-count','/api/carregamentos-finais','/api/coletas/status',
-  '/api/lotacao'
+  '/api/lotacao','/api/lancamentos'
 ];
 // Rotas de rastreio atendidas AQUI: são as que o app do motorista e as páginas de teste usam,
 // com token do aparelho ou sem login. Precisam ficar fora do repasse ao dashboard: ele exige
@@ -1532,6 +1533,7 @@ async function start() {
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
   await pool.query(`INSERT INTO fleet_state(id,data) VALUES(1,'{"vehicles":[],"fuel":[],"maintenance":[],"tires":[],"people":[],"documents":[],"checklists":[]}'::jsonb) ON CONFLICT (id) DO NOTHING`);
+  await lancamentos.ensureSchema(pool);
   await pool.query(`CREATE TABLE IF NOT EXISTS fleet_maintenance_files (
     maintenance_id TEXT PRIMARY KEY,
     nome_arquivo TEXT NOT NULL,
@@ -2613,6 +2615,9 @@ async function start() {
           return sendJson(res,200,{ok:true,order,distanceMeters:route.distance,durationSeconds:route.duration,geometry:route.geometry,points,returnToStart,avoidanceRequested:avoidTolls.length,avoidanceHits});
         }catch(e){return sendJson(res,e.status||502,{ok:false,error:e.message||'Falha ao otimizar rota.'})}
       }
+
+      // Lançamentos da operação (substitui a aba de lançamentos da planilha): ver lancamentos.js
+      if (await lancamentos.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,sessionOrInternal,dashboardSession,dashboardHas,spToday})) return;
 
       if (u.pathname === '/api/painel/frota-state' && req.method === 'GET') {
         try {

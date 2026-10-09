@@ -109,6 +109,7 @@ function parseCteXml(xml){
     cidadeFim:xmlValue(ide,'xMunFim'),ufFim:xmlValue(ide,'UFFim'),
     remetente:xmlParty(xml,'rem','enderReme'),expedidor:xmlParty(xml,'exped','enderExped'),
     recebedor:xmlParty(xml,'receb','enderReceb'),destinatario:xmlParty(xml,'dest','enderDest'),
+    valorPrestacao:Number(xmlValue(xmlBlock(xml,'vPrest'),'vTPrest'))||0,valorCarga:Number(xmlValue(xmlBlock(xml,'infCarga'),'vCarga'))||0,
     nfChaves:[...xml.matchAll(/<(?:\w+:)?infNFe\b[^>]*>\s*<(?:\w+:)?chave>(\d{44})<\//gi)].map(m=>m[1]),
     observacoes:obs
   }
@@ -183,6 +184,7 @@ function parseTela101(html){
     volumes:Number((plain.match(/Qtde\.?\s*de\s*vol\.?[^:]{0,12}:\s*(\d+)/i)||[])[1]||0),
     peso:num((plain.match(/Peso real[^:]{0,40}:\s*([\d.,]+)/i)||[])[1]),
     valorNf:num((plain.match(/Valor da Nota Fiscal:\s*([\d.,]+)/i)||[])[1]),
+    frete:num((plain.match(/Valor frete\s*\(R\$\)\s*:\s*([\d.,]+)/i)||[])[1]),
     previsao:(plain.match(/Previs[aã]o de entrega:\s*(\d{2}\/\d{2}\/\d{2,4})/i)||[])[1]||'',
     pedido:(plain.match(/Pedido:\s*([A-Z0-9.\/-]{1,30})/i)||[])[1]||'',
     // "CNG AMR 09/10/26 06:45 85-SAIDA PARA ENTREGA": última ocorrência do CT-e

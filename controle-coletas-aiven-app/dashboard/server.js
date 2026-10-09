@@ -4700,6 +4700,167 @@ async function rowsByName(sheetName){
 }
 // Lista de motoristas/romaneios do dia (opção 38 + operação), usada pelo roteirizador,
 // pelo rastreamento e pela rotina automática de GPS.
+// ---------------------------------------------------------------- lançamentos da operação
+// O card Lançamentos grava no servidor principal (lancamentos.js). Aqui fica o que depende do
+// SSW: achar o romaneio, e completar entregas, km, frete, cidades e baixas em segundo plano.
+const lancLib=require('../lancamentos.js');
+let LANC_FONTE_CACHE={at:0,value:null};
+// Linhas no formato da planilha quando os painéis já leem do sistema; rows vazio enquanto a fonte é a planilha.
+async function lancamentosDoSistema(){
+  if(LANC_FONTE_CACHE.value&&Date.now()-LANC_FONTE_CACHE.at<20000)return LANC_FONTE_CACHE.value;   // toda gravação feita por aqui zera esta memória
+  const j=await portalJson('/api/painel/lancamentos/planilha',{timeout:20000});
+  LANC_FONTE_CACHE={at:Date.now(),value:j};
+  return j
+}
+const lancNomeNorm=v=>String(v||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/[^A-Z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+// "AROLDO AP DE ALMEIDA" (SSW) -> "AROLDO ALMEIDA" (como a operação escreve), quando esse nome já existe.
+function lancMotoristaConhecido(nomeSsw,conhecidos){
+  const alvo=lancNomeNorm(nomeSsw),ta=new Set(alvo.split(' '));
+  if(!alvo)return'';
+  let melhor='',pontos=0;
+  for(const c of conhecidos){
+    const n=lancNomeNorm(c),t=n.split(' ').filter(Boolean);
+    if(!t.length)continue;
+    if(n===alvo)return c;
+    // mesmo primeiro nome e todas as palavras do nome curto presentes no nome do SSW
+    if(t[0]===alvo.split(' ')[0]&&t.length>=2&&t.every(w=>ta.has(w))&&t.length>pontos){melhor=c;pontos=t.length}
+  }
+  return melhor
+}
+// Acha o romaneio no SSW na data: "1061-8", "10618", "1061" ou "AMR001061-8".
+async function lancBuscarRomaneio(numero,data){
+  const raw=String(numero||'').toUpperCase().trim(),key=lancLib.romaneioKey(raw);
+  if(!key)throw Object.assign(new Error('Informe o número do romaneio.'),{status:400});
+  const alvo=/^\d{4}-\d{2}-\d{2}$/.test(String(data||''))?data:spDateISO();
+  const lista=[];
+  if(alvo===spDateISO()){
+    const quick=await Promise.allSettled([fetchSsw38QuickPrefix('AMR'),fetchSsw38QuickPrefix('TBT')]);
+    for(const q of quick)if(q.status==='fulfilled')lista.push(...(q.value?.rows||[]))
+  }
+  try{const full=await getSswMotoristasFast(alvo,alvo);lista.push(...(full?.romaneios38||[]))}catch(e){if(!lista.length)console.log('LANCAMENTOS busca de romaneio ERRO: '+String(e?.message||e))}
+  const semDv=!/-\s*\d\s*$/.test(raw)&&!/^[A-Z]{3}/.test(raw)?String(Number(raw.replace(/\D/g,''))):'';
+  const numDe=r=>String(Number((String(r||'').match(/(\d+)\s*-\s*\d\s*$/)||[])[1]||0));
+  const hit=lista.find(x=>lancLib.romaneioKey(x.romaneio)===key)||(semDv?lista.find(x=>numDe(x.romaneio)===semDv):null);
+  if(!hit)return{ok:true,encontrado:false,data:alvo,digitado:raw,romaneiosDoDia:[...new Set(lista.map(x=>String(x.romaneio||'')).filter(Boolean))].length};
+  const rom=String(hit.romaneio||'').toUpperCase().trim();
+  const entregas=Number(hit.qtdeCtrcs||0)||(hit.ctrcMeta||hit.ctrcNfs||hit.ctrcs||[]).length||0;
+  return{ok:true,encontrado:true,data:alvo,romaneio_ssw:rom,romaneio:lancLib.romaneioCurto(rom),motorista_ssw:String(hit.motorista||'').trim(),placa:String(hit.veiculo||'').trim().toUpperCase(),
+    entregas,filial:(rom.match(/^[A-Z]{3}/)||[''])[0]}
+}
+// Motoristas para a lista do card: os que tiveram lançamento nos últimos 30 dias (sistema ou,
+// enquanto a planilha ainda é a fonte, a própria planilha) e os que têm romaneio hoje no SSW.
+async function lancMotoristas(token){
+  const base=await portalAuth('/api/painel/lancamentos/motoristas?dias=30',{token,timeout:15000});
+  const mapa=new Map(),tipos=new Set(base.tipos||[]);
+  const add=(nome,x,origem)=>{const k=lancNomeNorm(nome);if(!k)return;const a=mapa.get(k);if(!a||(x.ultimo||'')>(a.ultimo||''))mapa.set(k,{motorista:String(nome).toUpperCase().replace(/\s+/g,' ').trim(),veiculo_tipo:x.veiculo_tipo||a?.veiculo_tipo||'',operacao:x.operacao||a?.operacao||'',filial:x.filial||a?.filial||'',ultimo:x.ultimo||'',origem})};
+  for(const r of (base.rows||[]))add(r.motorista,r,'sistema');
+  try{
+    const f=await lancamentosDoSistema();
+    if(f.fonte!=='sistema'&&ID){
+      const desde=new Date(Date.now()-31*864e5).toISOString().slice(0,10);
+      for(const r of await rows(GIDS.lancamentos)){
+        const d=lancLib.dataIso(r.Data||r.DATA||r.ENTREGUE||r.Entregue||'');
+        if(!d||d<desde||!String(r.Motorista||'').trim())continue;
+        const tipo=String(r.Veiculo||'').toUpperCase().trim();if(tipo)tipos.add(tipo);
+        add(r.Motorista,{veiculo_tipo:tipo,operacao:String(r['Operação']||'').toUpperCase().trim(),filial:String(r.Filial||'').toUpperCase().trim(),ultimo:d},'planilha')
+      }
+    }
+  }catch(e){console.log('LANCAMENTOS motoristas da planilha ERRO: '+String(e?.message||e))}
+  const conhecidos=[...mapa.values()].map(x=>x.motorista);
+  const doSsw=[];
+  try{
+    const hoje=spDateISO(),lista=[];
+    const quick=await Promise.allSettled([fetchSsw38QuickPrefix('AMR'),fetchSsw38QuickPrefix('TBT')]);
+    for(const q of quick)if(q.status==='fulfilled')lista.push(...(q.value?.rows||[]));
+    try{const full=await getSswMotoristasFast(hoje,hoje);lista.push(...(full?.romaneios38||[]))}catch{}
+    for(const x of lista){
+      const nome=String(x.motorista||'').trim();
+      if(nome&&!lancMotoristaConhecido(nome,conhecidos)&&!doSsw.some(n=>lancNomeNorm(n)===lancNomeNorm(nome)))doSsw.push(nome.toUpperCase())
+    }
+  }catch{}
+  return{ok:true,rows:[...mapa.values()].sort((a,b)=>a.motorista.localeCompare(b.motorista,'pt-BR')),novosNoSsw:doSsw.sort(),tipos:[...tipos].filter(Boolean),operacoes:lancLib.OPERACOES}
+}
+// Completa um lançamento com o que o SSW sabe do romaneio. Um por vez, em segundo plano.
+let LANC_FILA=Promise.resolve();
+const LANC_NA_FILA=new Set();
+function lancEnfileirar(id,data,romaneioSsw){
+  const k=String(id);
+  if(!romaneioSsw||LANC_NA_FILA.has(k))return;
+  LANC_NA_FILA.add(k);
+  LANC_FILA=LANC_FILA.catch(()=>{}).then(()=>lancEnriquecer(id,data,romaneioSsw)).catch(e=>console.log('LANCAMENTOS completar '+romaneioSsw+' ERRO: '+String(e?.message||e))).finally(()=>LANC_NA_FILA.delete(k))
+}
+async function lancEnriquecer(id,data,romaneioSsw){
+  const calc={status:'ok',msg:'',romaneio_ssw:romaneioSsw,filial:(String(romaneioSsw).match(/^[A-Z]{3}/)||[''])[0]};
+  const avisos=[];
+  try{
+    // rota: km, cidades na ordem de entrega e baixas (a montagem já lê os CT-es no SSW)
+    const plan=await buildRoutePlan(data,romaneioSsw,1);
+    const pts=plan.points||[],ordem=(plan.optimizedOrder||[]).map(i=>pts[i]).filter(Boolean);
+    const paradas=ordem.length?ordem:(plan.stops||[]);
+    calc.km=Math.round(Number(plan.optimizedDistanceMeters||0)/1000)||null;
+    const cidades=[];for(const p of paradas){const c=lancNomeNorm(p.cidade);if(c&&cidades[cidades.length-1]!==c&&!cidades.includes(c))cidades.push(c)}
+    calc.rota=cidades.join(',');
+    const ctes=[...new Set([...(plan.stops||[]),...(plan.rejectedStops||[])].map(x=>String(x.ctrc||'').toUpperCase().trim()).filter(Boolean))];
+    calc.entregas=Number(plan.expectedDeliveries||0)||ctes.length||null;
+    calc.ctes=ctes.length;
+    if(plan.veiculo)calc.placa=String(plan.veiculo).toUpperCase();
+    if((plan.rejectedStops||[]).length)avisos.push((plan.rejectedStops||[]).length+' entrega(s) sem localização: o km pode estar menor que o real');
+    if(Number(plan.approximateStops||0))avisos.push(plan.approximateStops+' entrega(s) com endereço aproximado');
+    // frete do romaneio: soma do valor do frete de cada CT-e
+    const infos=await sswCteInfoMany(ctes,90000,1);
+    let frete=0,lidos=0;
+    for(const c of ctes){const info=infos.byKey.get(sswCteKey(c));const v=Number(info?.resumo?.frete||0)||Number(info?.cte?.valorPrestacao||0);if(info&&v>0){frete+=v;lidos++}}
+    calc.lidos=lidos;
+    if(lidos)calc.frete_vialog=Math.round(frete*100)/100;
+    if(lidos<ctes.length){calc.status='parcial';avisos.push('frete lido de '+lidos+' de '+ctes.length+' CT-es')}
+    // baixas
+    const st=(plan.stops||[]);
+    if(st.length){calc.realizadas=st.filter(x=>x.entregue).length;calc.baixas_em=new Date().toISOString();if(data<spDateISO())calc.pend=Math.max(0,(calc.entregas||st.length)-calc.realizadas)}
+  }catch(e){
+    calc.status='erro';avisos.push(String(e?.message||e).slice(0,160))
+  }
+  calc.msg=avisos.join(' • ');
+  await portalJson('/api/painel/lancamentos/'+encodeURIComponent(id),{method:'PATCH',body:{calculo:calc},timeout:20000});
+  LANC_FONTE_CACHE.at=0;
+  console.log('LANCAMENTOS completado: '+JSON.stringify({id,romaneio:romaneioSsw,status:calc.status,km:calc.km,frete:calc.frete_vialog,entregas:calc.entregas,realizadas:calc.realizadas,msg:calc.msg}))
+}
+// Baixas do dia (e do dia anterior) para os lançamentos do sistema, sem remontar rota.
+let LANC_BAIXAS_AT=0;
+async function lancAtualizarBaixas(force=false){
+  if(!force&&Date.now()-LANC_BAIXAS_AT<5*60*1000)return;
+  LANC_BAIXAS_AT=Date.now();
+  const hoje=spDateISO(),dias=[3,2,1,0].map(n=>spDateISO(new Date(Date.now()-n*864e5)));
+  const j=await portalJson('/api/painel/lancamentos?de='+dias[0]+'&ate='+hoje,{timeout:20000});
+  for(const dia of dias){
+    // lançado "mesmo assim" sem o romaneio estar no SSW: confere de novo (hoje e ontem) e completa quando aparecer
+    if(dia>=dias[2])for(const l of (j.rows||[]).filter(r=>r.data===dia&&!r.romaneio_ssw)){
+      const rom=await lancBuscarRomaneio(l.romaneio,l.data).catch(()=>null);
+      if(rom?.encontrado)lancEnfileirar(l.id,l.data,rom.romaneio_ssw)
+    }
+    const doDia=(j.rows||[]).filter(r=>r.data===dia&&r.romaneio_ssw);
+    if(!doDia.length)continue;
+    let op=null;try{op=await getSswMotoristasFast(dia,dia)}catch{continue}
+    const porRom=new Map();
+    for(const r of (op?.rows||[])){const k=String(r.romaneio||'').toUpperCase();if(!k)continue;const a=porRom.get(k)||{total:0,ok:0};a.total++;if(r.entregue)a.ok++;porRom.set(k,a)}
+    for(const l of doDia){
+      // lançamento que ainda não foi completado (servidor reiniciou no meio): tenta de novo
+      // ...e o que deu erro, até 3 vezes (depois só pelo botão ↻ da tela)
+      if(!l.calculo||l.calculo.status==='pendente'){lancEnfileirar(l.id,l.data,l.romaneio_ssw);continue}
+      if(l.calculo.status==='erro'){if(Number(l.calculo.tentativas||0)<3)lancEnfileirar(l.id,l.data,l.romaneio_ssw);continue}
+      const b=porRom.get(String(l.romaneio_ssw).toUpperCase());
+      if(!b||!b.total)continue;
+      const entregas=l.entregas||b.total,pend=dia<hoje?Math.max(0,entregas-b.ok):null;
+      const fechado=dia<hoje||b.ok>=entregas;
+      if((fechado?l.realizadas:l.ao_vivo)===b.ok&&(pend===null||l.pend===pend))continue;
+      const c={status:l.calculo.status,msg:l.calculo.msg,ctes:l.calculo.ctes,lidos:l.calculo.lidos,realizadas:b.ok,baixas_em:new Date().toISOString(),romaneio_ssw:l.romaneio_ssw};
+      if(pend!==null)c.pend=pend;
+      await portalJson('/api/painel/lancamentos/'+encodeURIComponent(l.id),{method:'PATCH',body:{calculo:c},timeout:20000}).catch(()=>{});
+      LANC_FONTE_CACHE.at=0
+    }
+  }
+}
+if(!TEST_MODE)setInterval(()=>{lancAtualizarBaixas().catch(e=>console.log('LANCAMENTOS baixas ERRO: '+String(e?.message||e)))},10*60*1000).unref();
+
 async function buildRoteirizadorLista(date){
   let romRows=[],operation=null;
   if(date===spDateISO()){
@@ -5479,6 +5640,80 @@ if(u.pathname==='/api/roteirizador/cte'){try{
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:true,stop,radiusLimitKm:300}))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+if(u.pathname.startsWith('/api/lancamentos')){try{
+  // Card Lançamentos (Operação): permissão própria.
+  if(!dashboardHasAny(authUser,['lancamentos']))return dashboardDeny(res,'Seu usuário não tem acesso aos Lançamentos. Peça a liberação a um administrador.');
+  const sai=(code,x)=>{res.writeHead(code,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))};
+  const tk={token:authUser.token,timeout:20000},sub=u.pathname.slice('/api/lancamentos'.length);
+  if(sub===''&&req.method==='GET'){
+    const x=await portalAuth('/api/painel/lancamentos?'+u.searchParams.toString(),tk);
+    lancAtualizarBaixas().catch(()=>{});
+    return sai(200,{...x,naFila:[...LANC_NA_FILA]})
+  }
+  if(sub==='/config'&&req.method==='GET'){const x=await portalAuth('/api/painel/lancamentos/config',tk);return sai(200,{...x,is_admin:!!authUser.is_admin,planilhaLigada:!!ID})}
+  if(sub==='/motoristas'&&req.method==='GET')return sai(200,await lancMotoristas(authUser.token));
+  if(sub==='/romaneio'&&req.method==='GET'){
+    const x=await lancBuscarRomaneio(u.searchParams.get('numero')||'',u.searchParams.get('data')||'');
+    if(x.encontrado&&x.motorista_ssw){const m=await lancMotoristas(authUser.token).catch(()=>({rows:[]}));x.motorista=lancMotoristaConhecido(x.motorista_ssw,(m.rows||[]).map(r=>r.motorista))||x.motorista_ssw.toUpperCase();const d=(m.rows||[]).find(r=>r.motorista===x.motorista);if(d){x.veiculo_tipo=d.veiculo_tipo;x.operacao=d.operacao}}
+    return sai(200,x)
+  }
+  if(sub===''&&req.method==='POST'){
+    const b=await readJsonLimited(req,64*1024);
+    const data=lancLib.dataIso(b.data)||spDateISO();
+    let rom={encontrado:false};
+    try{rom=await lancBuscarRomaneio(b.romaneio,data)}catch(e){if(e.status===400)throw e}
+    if(!rom.encontrado&&b.forcar!==true)return sai(404,{ok:false,naoEncontrado:true,error:'Romaneio '+String(b.romaneio||'').trim()+' não encontrado no SSW em '+data.split('-').reverse().join('/')+'. Confira o número e a data.'});
+    const corpo={data,motorista:b.motorista,romaneio:rom.encontrado?rom.romaneio:b.romaneio,romaneio_ssw:rom.romaneio_ssw||'',valor:b.valor,operacao:b.operacao,veiculo_tipo:b.veiculo_tipo,
+      placa:rom.placa||'',filial:rom.filial||b.filial||'',entregas:rom.entregas||'',conferente:b.conferente,erros:b.erros,por:authUser.username};
+    const x=await portalAuth('/api/painel/lancamentos',{...tk,method:'POST',body:corpo});
+    LANC_FONTE_CACHE.at=0;
+    if(rom.encontrado)lancEnfileirar(x.row.id,data,rom.romaneio_ssw);
+    return sai(201,x)
+  }
+  if(sub==='/importar-planilha'&&req.method==='POST'){
+    if(!authUser.is_admin)return dashboardDeny(res,'Só o administrador pode trazer o histórico da planilha.');
+    if(!ID)return sai(503,{ok:false,error:'A planilha não está ligada neste ambiente.'});
+    const linhas=await rows(GIDS.lancamentos);
+    const x=await portalJson('/api/painel/lancamentos/importar',{method:'POST',body:{rows:linhas,por:authUser.username},timeout:120000});
+    LANC_FONTE_CACHE.at=0;
+    return sai(200,x)
+  }
+  if(sub==='/fonte'&&req.method==='POST'){
+    const x=await portalAuth('/api/painel/lancamentos/fonte',{...tk,method:'POST',body:await readJsonLimited(req,4096)});
+    LANC_FONTE_CACHE.at=0;
+    return sai(200,x)
+  }
+  const mm=sub.match(/^\/(\d+)(\/recalcular)?$/);
+  if(mm&&mm[2]&&req.method==='POST'){
+    const lista=await portalAuth('/api/painel/lancamentos?de=2000-01-01&ate=2100-01-01',tk);
+    const l=(lista.rows||[]).find(r=>r.id===mm[1]);
+    if(!l)return sai(404,{ok:false,error:'Lançamento não encontrado.'});
+    let rs=l.romaneio_ssw;
+    if(!rs){const rom=await lancBuscarRomaneio(l.romaneio,l.data).catch(()=>({}));rs=rom.romaneio_ssw||''}
+    if(!rs)return sai(404,{ok:false,error:'Romaneio '+l.romaneio+' não encontrado no SSW em '+l.data.split('-').reverse().join('/')+'.'});
+    lancEnfileirar(l.id,l.data,rs);
+    return sai(202,{ok:true})
+  }
+  if(mm&&!mm[2]&&req.method==='PATCH'){
+    const b=await readJsonLimited(req,64*1024);delete b.calculo;
+    let rom=null;
+    if(Object.prototype.hasOwnProperty.call(b,'romaneio')){
+      rom=await lancBuscarRomaneio(b.romaneio,lancLib.dataIso(b.data)||spDateISO()).catch(()=>({encontrado:false}));
+      if(rom.encontrado)Object.assign(b,{romaneio:rom.romaneio,romaneio_ssw:rom.romaneio_ssw,placa:rom.placa,entregas:rom.entregas,filial:rom.filial});
+      else if(b.forcar!==true)return sai(404,{ok:false,naoEncontrado:true,error:'Romaneio '+String(b.romaneio||'').trim()+' não encontrado no SSW nessa data. Confira o número e a data.'});
+    }
+    const x=await portalAuth('/api/painel/lancamentos/'+mm[1],{...tk,method:'PATCH',body:b});
+    LANC_FONTE_CACHE.at=0;
+    if(x.row?.calculo?.status==='pendente'&&x.row.romaneio_ssw)lancEnfileirar(x.row.id,x.row.data,x.row.romaneio_ssw);
+    return sai(200,x)
+  }
+  if(mm&&!mm[2]&&req.method==='DELETE'){
+    const x=await portalAuth('/api/painel/lancamentos/'+mm[1],{...tk,method:'DELETE'});
+    LANC_FONTE_CACHE.at=0;
+    return sai(200,x)
+  }
+  return sai(404,{ok:false,error:'Rota de lançamentos não encontrada.'})
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/roteirizador/bipar'){try{
   // Carga por bipagem: um CT-e bipado vira uma parada, com o endereço lido do SSW.
   if(!dashboardHasAny(authUser,['montar_carga']))return dashboardDeny(res);
@@ -5589,10 +5824,13 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
   if(n==='agendamentos'&&!dashboardHasAny(authUser,['dashboard','agendamentos']))return dashboardDeny(res);
   if(n==='agendamentos_copia'&&!dashboardHasAny(authUser,['dashboard','agendamentos','agendamentos_copia']))return dashboardDeny(res);
   if(n==='ajudantes'&&!dashboardHasAny(authUser,['dashboard','ajudantes','financeiro']))return dashboardDeny(res);
-  const x=sheetName?await rowsByName(sheetName):await rows(gid),baseRows=n==='lancamentos'?filterLancamentosForUser(x,authUser):(n==='ajudantes'?filterAjudantesForUser(x,authUser):x),safeRows=n==='agendamentos'?baseRows.map(r=>({...r,NF:String(r.NF??'').trim()?r.NF:(r['2']??'')})):baseRows;
+  // Lançamentos: depois que o histórico foi trazido para o sistema, os painéis leem só do sistema.
+  let doSistema=null;
+  if(n==='lancamentos'){try{const f=await lancamentosDoSistema();if(f.fonte==='sistema')doSistema=f.rows||[]}catch(e){console.log('LANCAMENTOS fonte ERRO (seguindo com a planilha): '+String(e?.message||e))}}
+  const x=doSistema?doSistema:(sheetName?await rowsByName(sheetName):await rows(gid)),baseRows=n==='lancamentos'?filterLancamentosForUser(x,authUser):(n==='ajudantes'?filterAjudantesForUser(x,authUser):x),safeRows=n==='agendamentos'?baseRows.map(r=>({...r,NF:String(r.NF??'').trim()?r.NF:(r['2']??'')})):baseRows;
   res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});
-  const warning=(n==='lancamentos'&&LANC_DATE_HEADER_FOUND!=='')?'O título da coluna de data na planilha de lançamentos está como "'+LANC_DATE_HEADER_FOUND+'" (o esperado é "Data"). A coluna foi reconhecida pelo conteúdo, mas corrija o título na planilha.':'';
-  return res.end(JSON.stringify(warning?{ok:true,rows:safeRows,count:safeRows.length,warning}:{ok:true,rows:safeRows,count:safeRows.length}))
+  const warning=(n==='lancamentos'&&!doSistema&&LANC_DATE_HEADER_FOUND!=='')?'O título da coluna de data na planilha de lançamentos está como "'+LANC_DATE_HEADER_FOUND+'" (o esperado é "Data"). A coluna foi reconhecida pelo conteúdo, mas corrija o título na planilha.':'';
+  return res.end(JSON.stringify(warning?{ok:true,rows:safeRows,count:safeRows.length,warning}:{ok:true,rows:safeRows,count:safeRows.length,...(doSistema?{fonte:'sistema'}:{})}))
 }catch(e){res.writeHead(502,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:false,error:e.message}))}}if(req.method==='GET'&&u.pathname==='/'&&u.searchParams.get('embed')==='1'){
   try{
     let html=fs.readFileSync(path.join(PUB,'index.html'),'utf8');

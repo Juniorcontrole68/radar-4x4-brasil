@@ -4,7 +4,7 @@ const http=require('http');
 const PORT=Number(process.env.MOCK_PORT||10555);
 let logins=0,seq=0,recusados=0;const tokens=new Map(),paths={};
 const DATA={
-  AMR:[['AMR001056-1','EYV3626','08/10/26','JAILSON MOREIRA DE SOUZA','12','5'],['AMR001057-1','FAB1A23','08/10/26','FABIANO TESTE','8','8']],
+  AMR:[['AMR001056-1','EYV3626','08/10/26','JAILSON MOREIRA DE SOUZA','12','5'],['AMR001057-1','FAB1A23','08/10/26','FABIANO TESTE','5','5']],
   TBT:[['TBT000321-1','TBT9Z99','08/10/26','ROGER TESTE','6','2']]
 };
 const page=rows=>'<html><body><form><input name="act" value=""><input name="dummy" value="1"></form><table><tr><th>Romaneio</th><th>Veículo</th><th>Inclusão</th><th>Motorista</th><th>Qtde CTRCs</th><th>Falta Ocorr.</th></tr>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</table></body></html>';
@@ -51,13 +51,27 @@ const tela101=(nro,c)=>{
   return'<html><head><title>101 - Situa&ccedil;&atilde;o do CTRC</title></head><body><form><input type="hidden" name="act" value=""><input type="hidden" name="g_ctrc_ser_ctrc" value="AMR"><input type="hidden" name="g_ctrc_nro_ctrc" value="'+nro+'"><input type="hidden" name="seq_ctrc" value="'+(22000+Number(nro)%1000)+'"><input type="hidden" name="FAMILIA" value="TST"><input type="hidden" name="web_sess" value="abc"></form>'+
     dv('texto','CTRC&nbsp;/Subc./RPS:')+dv('data','<b>'+ctrc+'</b>')+'<A id="link_imp_xml" class=baselnk href="#" onclick="ajaxEnvia(\'XML\', 0);return false;">XML</A>'+
     dv('texto','CT-e:')+dv('data','001 '+String(c.nct).padStart(9,'0'))+dv('texto','Previs&atilde;o de entrega:')+dv('data','09/10/26')+dv('texto','N&deg; da Nota Fiscal:')+dv('data','1/'+String(c.nf).padStart(9,'0'))+dv('texto','N&ordm; Pedido:')+dv('data','74236')+
-    dv('texto','Qtde. de vol./pares:')+dv('data',c.vol+'/0')+dv('texto','Peso real /Peso real orig (Kg):')+dv('data',c.peso)+dv('texto','Valor da Nota Fiscal:')+dv('data','1.580,62')+
+    dv('texto','Qtde. de vol./pares:')+dv('data',c.vol+'/0')+dv('texto','Peso real /Peso real orig (Kg):')+dv('data',c.peso)+dv('texto','Valor da Nota Fiscal:')+dv('data','1.580,62')+dv('texto','Valor frete (R$):')+dv('data',(c.frete||'79,03'))+
     dv('texto','Remetente:')+dv('texto','Destinat&aacute;rio:')+dv('texto','Nome:')+dv('data','NAVAS E CIA LTDA (B2)')+dv('texto','Nome:')+dv('data',c.nome.slice(0,26)+' ..')+dv('texto','CNPJ:')+dv('data','44530855000108')+dv('texto','CNPJ:')+dv('data',c.doc)+mapa('link_mapa_setor_cli_dest',c.lgr+','+c.nro,true)+
     dv('texto','Expedidor:')+dv('texto','Entrega:')+dv('texto','Nome:')+dv('data','NAVAS E CIA LTDA B2')+dv('texto','Nome:')+dv('data',c.nome)+dv('texto','CNPJ:')+dv('data','44530855000108')+dv('texto','CNPJ:')+dv('data',c.doc)+mapa('link_mapa_setor_cli_ent',c.lgr.slice(0,15)+', '+c.nro,true)+
     dv('texto','Endere&ccedil;o:')+dv('data','ROD. LINS/GUAIMBE,50')+dv('texto','Endere&ccedil;o:')+dv('data',c.lgr.slice(0,15)+','+c.nro)+dv('texto','Complemento:')+dv('texto','Complemento:')+dv('data',c.cpl.slice(0,28))+
     dv('texto','Bairro:')+dv('data','JARDIM GUANABARA')+dv('texto','Bairro:')+dv('data',c.bairro)+dv('texto','CEP:')+dv('data','16403-266 LINS/SP')+dv('texto','CEP:')+dv('data',c.cep.slice(0,5)+'-'+c.cep.slice(5)+' '+c.cid+'/'+c.uf)+dv('texto','Telefone:')+dv('texto','Pagador:')+
     dv('texto','Situa&ccedil;&atilde;o Atual:')+dv('data','TST AMR 09/10/26 06:45 85-SAIDA PARA ENTREGA')+'<A id="link_ocor" href="#" onclick="ajaxEnvia(\'O\', 1);return false;"><u>O</u>corr&ecirc;ncias</A> <A id="link_danfe" href="#" onclick="ajaxEnvia(\'A\', 1);return false;">DANFEs</A> <A id="link_arq" href="#" onclick="ajaxEnvia(\'ARQ\', 1);return false;">Arquivos EDI</A></body></html>'
 };
+// PDF do romaneio (opção 38 -> ssw0146): uma linha por CT-e, começando por "CTRC  NF", como o do SSW.
+// O romaneio AMR001057-1 leva os cinco CT-es de mentira (um deles a mais de 300 km).
+function pdfDe(linhas){
+  const txt='BT /F1 9 Tf 40 800 Td 12 TL '+linhas.map(l=>'('+String(l).replace(/[\\()]/g,'\\$&')+') Tj T*').join(' ')+' ET';
+  const objs=['<</Type/Catalog/Pages 2 0 R>>','<</Type/Pages/Kids[3 0 R]/Count 1>>','<</Type/Page/Parent 2 0 R/MediaBox[0 0 595 842]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>',
+    '<</Length '+Buffer.byteLength(txt,'latin1')+'>>\nstream\n'+txt+'\nendstream','<</Type/Font/Subtype/Type1/BaseFont/Courier>>'];
+  let out='%PDF-1.4\n';const pos=[];
+  objs.forEach((o,i)=>{pos.push(Buffer.byteLength(out,'latin1'));out+=(i+1)+' 0 obj\n'+o+'\nendobj\n'});
+  const xref=Buffer.byteLength(out,'latin1');
+  out+='xref\n0 '+(objs.length+1)+'\n0000000000 65535 f \n'+pos.map(n=>String(n).padStart(10,'0')+' 00000 n \n').join('')+'trailer\n<</Size '+(objs.length+1)+'/Root 1 0 R>>\nstartxref\n'+xref+'\n%%EOF\n';
+  return Buffer.from(out,'latin1')
+}
+const ROMANEIO_PDF={'AMR|1057|1':['ROMANEIO DE ENTREGAS AMR001057-1   FABIANO TESTE   FAB1A23','CTRC         NF       DESTINATARIO',
+  ...Object.entries(CTES).map(([nro,c])=>'AMR'+String(nro).padStart(6,'0')+'-'+c.dv+'  '+String(c.nf).padStart(6,'0')+'  '+c.nome.slice(0,30))]};
 const semCte='<html><body><form><input type="hidden" name="act" value=""></form><div class=texto>CTRC n&atilde;o encontrado.</div></body></html>';
 http.createServer(async(req,res)=>{
   const u=new URL(req.url,'http://x');paths[req.method+' '+u.pathname]=(paths[req.method+' '+u.pathname]||0)+1;
@@ -87,6 +101,16 @@ http.createServer(async(req,res)=>{
     if(act==='A')return send(200,'<html><body>Nenhuma DANFE dispon&iacute;vel.</body></html>');
     if(act==='ARQ')return send(200,'<html><body>Nenhum arquivo EDI para este CTRC.</body></html>');
     return send(200,semCte)
+  }
+  if(u.pathname==='/bin/ssw0146'){
+    const k=[u.searchParams.get('f1'),u.searchParams.get('f2'),u.searchParams.get('f3')].join('|');
+    if(!ROMANEIO_PDF[k])return send(200,'<html><body>Romaneio n&atilde;o encontrado.</body></html>');
+    return send(200,'<html><form><input type=hidden name=web_body value="'+encodeURIComponent('abrir("ROM'+k.replace(/\|/g,'_')+'.pdf","ROM'+k.replace(/\|/g,'_')+'.pdf",1,1,"binary",3)')+'"></form></html>')
+  }
+  if(u.pathname==='/bin/ssw0424'&&/^ROM/.test(String(u.searchParams.get('filename')||''))){
+    const linhas=ROMANEIO_PDF[String(u.searchParams.get('filename')).replace(/^ROM|\.pdf$/g,'').replace(/_/g,'|')];
+    if(!linhas)return send(404,'');
+    res.writeHead(200,{'Content-Type':'application/pdf'});return res.end(pdfDe(linhas))
   }
   if(u.pathname==='/bin/ssw0424'){
     const nro=Number((String(u.searchParams.get('filename')||'').match(/66480000(\d+)\.zip$/)||[])[1]),c=CTES[nro];
