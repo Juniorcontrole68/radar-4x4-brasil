@@ -1437,6 +1437,107 @@ async function deliveryProgramEnrichSsw101(rows,force=false){
   return out
 }
 
+// ---------------------------------------------------------------- diagnóstico da opção 101
+// O que o SSW mostra para um CT-e: texto da tela, campos, botões/links e, se houver ação de
+// XML, o começo do arquivo. Serve para descobrir de onde tirar o endereço completo do
+// destinatário (XML da nota ou do CT-e). Só consulta: as únicas ações disparadas são as de
+// download que têm "XML" no nome. O resultado fica 30 minutos na memória, atrás de um link
+// sorteado, para ser lido uma vez por quem está investigando.
+const SSW_DIAG=new Map();
+function sswDiagStore(value){
+  const token=crypto.randomBytes(12).toString('hex');
+  for(const [k,v] of SSW_DIAG)if(Date.now()-v.at>30*60*1000)SSW_DIAG.delete(k);
+  SSW_DIAG.set(token,{at:Date.now(),value});
+  return token
+}
+function sswDiagActions(html){
+  // Chamadas JavaScript dos botões e links da tela (onclick; na falta, href), com o texto visível.
+  const out=[],seen=new Set();
+  const attr=(attrs,name)=>{const m=attrs.match(new RegExp('\\b'+name+'\\s*=\\s*"([^"]*)"','i'))||attrs.match(new RegExp('\\b'+name+"\\s*=\\s*'([^']*)'",'i'));return m?m[1]:''};
+  for(const m of String(html||'').matchAll(/<(a|input|button|img|td|tr|div|span|area)\b([^>]*)>([^<]{0,160})/gi)){
+    const attrs=String(m[2]||'');
+    if(!/\b(?:onclick|href)\s*=/i.test(attrs))continue;
+    const call=(attr(attrs,'onclick')||attr(attrs,'href')).replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&amp;/g,'&').replace(/\s+/g,' ').trim().slice(0,260);
+    if(!call||/^(#|javascript:;?|javascript:void\(0\);?)?$/i.test(call))continue;
+    const text=htmlText38(m[3]||'').slice(0,80),label=[attr(attrs,'value'),attr(attrs,'title'),attr(attrs,'alt'),attr(attrs,'id'),attr(attrs,'name')].filter(Boolean).join(' | ').slice(0,120);
+    const key=call+'|'+text+'|'+label;if(seen.has(key))continue;seen.add(key);
+    out.push({tag:m[1].toLowerCase(),call,text,label});
+    if(out.length>=250)break
+  }
+  return out
+}
+async function sswDiagnosticoCte(ctrc){
+  const out={ok:true,ctrc:String(ctrc||'').toUpperCase(),geradoEm:new Date().toISOString(),etapas:[]};
+  const mm=out.ctrc.match(/^([A-Z]{3})0*(\d+)-\d$/);
+  if(!mm)return{ok:false,error:'CT-e inválido. Use o formato AMR15326-5.'};
+  if(!internalSswConfigured())return{ok:false,error:'Credenciais internas SSW não configuradas'};
+  const session=await deliveryProgramCreateSsw101Session();
+  const post=async params=>{
+    const rr=await fetch('https://sistema.ssw.inf.br/bin/'+session.prog,{method:'POST',
+      headers:{...session.hdr('https://sistema.ssw.inf.br/bin/'+session.prog),'Content-Type':'application/x-www-form-urlencoded'},
+      body:params.toString(),redirect:'manual',signal:AbortSignal.timeout(25000)});
+    session.apply(rr.headers);
+    return{status:rr.status,html:await rr.text()}
+  };
+  const params=new URLSearchParams(session.baseParams.toString());
+  params.set('t_ser_ctrc',mm[1]);params.set('t_nro_ctrc',mm[2]);params.set('act','P1');
+  const tela=await post(params),html=tela.html;
+  out.programa=session.prog;out.status=tela.status;out.bytes=Buffer.byteLength(html);
+  out.texto=htmlText38(html).slice(0,30000);
+  out.campos=[...html.matchAll(/<input\b([^>]*)>/gi)].map(m=>{const a=m[1]||'';return{
+    name:(a.match(/\bname=["']?([^"'\s>]+)/i)||[])[1]||'',id:(a.match(/\bid=["']?([^"'\s>]+)/i)||[])[1]||'',
+    type:(a.match(/\btype=["']?([^"'\s>]+)/i)||[])[1]||'',value:htmlText38((a.match(/\bvalue=["']([^"']*)["']/i)||[])[1]||'').slice(0,90)}}).slice(0,300);
+  out.acoes=sswDiagActions(html);
+  // Trechos do HTML em volta de cada "xml", para ver exatamente como a tela oferece o arquivo.
+  out.trechosXml=[];
+  for(const m of html.matchAll(/xml/gi)){
+    out.trechosXml.push(html.slice(Math.max(0,m.index-500),Math.min(html.length,m.index+500)).replace(/\s+/g,' '));
+    if(out.trechosXml.length>=12)break
+  }
+  out.inicioHtml=html.slice(0,2500).replace(/\s+/g,' ');
+  // Ações com "XML" no nome: dispara (é download) e guarda o começo do arquivo.
+  const candidatos=[];
+  for(const a of out.acoes){
+    if(!/xml/i.test(a.call+' '+a.text+' '+a.label))continue;
+    const act=(a.call.match(/ajaxEnvia\(\s*['"]([^'"]+)['"]/i)||a.call.match(/\bact=([A-Za-z0-9_]+)/i)||a.call.match(/\(\s*['"]([A-Z0-9_]{2,20})['"]/)||[])[1]||'';
+    if(act&&!candidatos.some(c=>c.act===act))candidatos.push({act,de:a});
+    if(candidatos.length>=5)break
+  }
+  out.tentativasXml=[];
+  for(const c of candidatos){
+    const t={act:c.act,de:c.de};
+    try{
+      const p2=deliveryProgramFormParams(html);p2.set('act',c.act);
+      const r2=await post(p2);
+      t.status=r2.status;t.bytes=Buffer.byteLength(r2.html);t.texto=htmlText38(r2.html).slice(0,1500);t.html=r2.html.slice(0,2500).replace(/\s+/g,' ');
+      const webBody=(r2.html.match(/name=web_body[^>]*value=["']([^"']+)["']/i)||[])[1]||'';
+      let decoded='';try{decoded=decodeURIComponent(webBody.replace(/&amp;/g,'&'))}catch{decoded=webBody}
+      t.webBody=decoded.slice(0,2500);
+      const am=(decoded||r2.html).match(/abrir\(['"]([^'"]+)['"],\s*['"]([^'"]+)['"],\s*(\d+),\s*(\d+),\s*['"]([^'"]*)['"]/i);
+      if(am){
+        const pu=new URL('/bin/ssw0424','https://sistema.ssw.inf.br');
+        pu.searchParams.set('act',am[1]);pu.searchParams.set('filename',am[2]);pu.searchParams.set('path',am[5]||'');pu.searchParams.set('down',am[3]);pu.searchParams.set('nw',am[4]);
+        const fr=await fetch(pu,{headers:session.hdr('https://sistema.ssw.inf.br/bin/'+session.prog),redirect:'manual',signal:AbortSignal.timeout(25000)});
+        session.apply(fr.headers);
+        const buf=Buffer.from(await fr.arrayBuffer());
+        t.arquivo={nome:am[2],status:fr.status,tipo:fr.headers.get('content-type')||'',bytes:buf.length,inicio:buf.toString('utf8').slice(0,14000)}
+      }
+    }catch(e){t.erro=String(e?.message||e)}
+    out.tentativasXml.push(t)
+  }
+  // O que o relatório do BI2 (174) e o romaneio já trazem para este CT-e.
+  try{
+    const bi=parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text);
+    out.bi2={colunas:bi.headers,linha:(bi.rows||[]).find(r=>normCtrcLoose(r.numero_ctrc||r.CTRC)===normCtrcLoose(out.ctrc))||null}
+  }catch(e){out.bi2={erro:String(e?.message||e)}}
+  try{
+    const full=await getSswMotoristasFast(spDateISO(),spDateISO());
+    const rom=(full?.romaneios38||[]).find(x=>(x.ctrcMeta||[]).some(m=>normCtrcLoose(m.ctrc)===normCtrcLoose(out.ctrc)));
+    out.romaneio=rom?{romaneio:rom.romaneio,meta:(rom.ctrcMeta||[]).find(m=>normCtrcLoose(m.ctrc)===normCtrcLoose(out.ctrc))}:null;
+    out.linhaSsw=(full?.rows||[]).find(r=>normCtrcLoose(r.ctrcOficial||r.ctrc)===normCtrcLoose(out.ctrc))||null
+  }catch(e){out.romaneio={erro:String(e?.message||e)}}
+  return out
+}
 async function probeSsw101Cte(ctrc){
   if(!internalSswConfigured())return{ok:false,error:'Credenciais internas SSW não configuradas'};
   const mm=String(ctrc||'').toUpperCase().match(/^([A-Z]{3})0*(\d+)-\d$/);
@@ -4304,7 +4405,15 @@ async function trackingSyncTick(){
     console.log('TRACKING SYNC ERRO: '+String(e.message||e))
   }
 }
-http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.pathname==='/health'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:true}))}if(req.method==='GET'&&u.pathname==='/'&&u.searchParams.get('ticket')){try{
+http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.pathname==='/health'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:true}))}
+// Resultado de um diagnóstico do SSW, lido pelo link sorteado (30 minutos). Sem login: quem tem o link lê.
+if(req.method==='GET'&&/^\/diag\/[a-f0-9]{24}$/.test(u.pathname)){
+  const hit=SSW_DIAG.get(u.pathname.slice(6));
+  if(!hit||Date.now()-hit.at>30*60*1000){res.writeHead(410,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:'Diagnóstico vencido. Gere outro.'}))}
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Robots-Tag':'noindex'});
+  return res.end(JSON.stringify(hit.value))
+}
+if(req.method==='GET'&&u.pathname==='/'&&u.searchParams.get('ticket')){try{
   const ticket=String(u.searchParams.get('ticket')||'').trim();
   const x=await portalAuth('/api/painel/auth/embed-exchange',{method:'POST',body:{ticket}});
   const indexPath=path.join(PUB,'index.html');
@@ -4873,6 +4982,22 @@ if(u.pathname==='/api/evolucao-motoristas'&&req.method==='GET'){try{
   res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
+if(u.pathname==='/api/ssw/diagnostico-cte'&&req.method==='GET'){
+  // Só administrador. Devolve uma página com o link do resultado, para colar na conversa.
+  if(!authUser.is_admin)return dashboardDeny(res);
+  const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  const page=(title,body)=>'<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Diagnóstico SSW</title><style>body{font-family:system-ui;margin:0;background:#f7f9fc;color:#16142f}.wrap{max-width:720px;margin:auto;padding:24px}.card{background:#fff;border-radius:16px;padding:20px;box-shadow:0 4px 20px #0001}input{width:100%;box-sizing:border-box;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-size:15px;margin-top:10px}.muted{color:#667085;font-size:14px;line-height:1.5}</style></head><body><div class="wrap"><div class="card"><h2 style="margin-top:0">'+esc(title)+'</h2>'+body+'</div></div></body></html>';
+  try{
+    const x=await sswDiagnosticoCte(u.searchParams.get('ctrc')||'');
+    if(!x.ok){res.writeHead(400,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(page('Não deu para consultar','<div class="muted">'+esc(x.error)+'</div>'))}
+    const link=String(process.env.PUBLIC_BASE_URL||'https://controle-coletas-jr.onrender.com').replace(/\/+$/,'')+'/dashboard/diag/'+sswDiagStore(x);
+    res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+    return res.end(page('Diagnóstico do CT-e '+x.ctrc+' pronto','<div class="muted">Copie o link abaixo e mande na conversa. Ele vale 30 minutos e mostra os dados deste CT-e como o SSW apresenta.</div><input readonly value="'+esc(link)+'" onclick="this.select()"><div class="muted" style="margin-top:12px">Tela lida: '+esc(x.bytes)+' bytes • botões e links: '+esc(x.acoes.length)+' • tentativas de XML: '+esc(x.tentativasXml.length)+'</div>'))
+  }catch(e){
+    res.writeHead(502,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+    return res.end(page('Erro ao consultar o SSW','<div class="muted">'+esc(String(e?.message||e))+'</div>'))
+  }
+}
 if(u.pathname==='/api/ssw/sessoes'&&req.method==='GET'){
   // Contador de logins no SSW desde a última inicialização (só administrador).
   if(!authUser.is_admin)return dashboardDeny(res);
