@@ -4489,6 +4489,12 @@ if(/^\/api\/tracking\/requests\/\d+\/(approve|reject)$/.test(u.pathname)&&req.me
   const x=await portalAuth(tail,{method:'POST',body:fwd,token:authUser.token,timeout:25000});
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+if(u.pathname==='/api/tracking/movit-exportar'&&req.method==='POST'){try{
+  if(!dashboardHasAny(authUser,['tracking']))return dashboardDeny(res);
+  const body=await readJsonLimited(req,3*1024*1024);
+  const x=await portalAuth('/api/painel/tracking/movit-exportar',{method:'POST',body:{date:String(body?.date||''),plans:Array.isArray(body?.plans)?body.plans.slice(0,10):[]},token:authUser.token,timeout:25000});
+  res.writeHead(201,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/tracking/movit-simulacao'&&req.method==='POST'){try{
   if(!dashboardHasAny(authUser,['tracking']))return dashboardDeny(res);
   const body=await readJsonLimited(req,8*1024);

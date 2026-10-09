@@ -3680,6 +3680,110 @@ function trackingBoardMsg(text,isErr=false){
   clearTimeout(window.__trackingBoardMsgTimer);
   if(text)window.__trackingBoardMsgTimer=setTimeout(()=>{el.style.display='none'},9000)
 }
+// Caixa com o link pronto (simulação da rota do dia ou romaneios exportados): enviar para o
+// próprio WhatsApp, copiar ou abrir no aparelho.
+function trackingShowPhoneLink(box,headHtml,url,waText){
+  box.innerHTML='<div>'+headHtml+'</div>'+
+    '<input type="text" readonly value="'+safe(url)+'" data-sim-link>'+
+    '<div class="tb-actions"><a class="tb-btn wa" target="_blank" rel="noopener" href="https://wa.me/?text='+encodeURIComponent(waText)+'">💬 Enviar para o meu WhatsApp</a>'+
+    '<button type="button" class="tb-btn" data-sim-act="copy">Copiar link</button>'+
+    '<a class="tb-btn" target="_blank" rel="noopener" href="'+safe(url)+'">Abrir neste aparelho</a>'+
+    '<button type="button" class="tb-btn" data-sim-act="close">Fechar</button></div>';
+  box.style.display='block';
+  box.onchange=null;
+  box.onclick=async e=>{
+    const a=e.target?.closest?.('[data-sim-act]');if(!a)return;
+    if(a.dataset.simAct==='close'){box.style.display='none';box.innerHTML='';return}
+    const input=box.querySelector('[data-sim-link]');
+    try{await navigator.clipboard.writeText(input.value);a.textContent='Copiado'}catch(err){input.focus();input.select();a.textContent='Selecionado: copie com Ctrl+C'}
+  };
+  box.scrollIntoView({behavior:'smooth',block:'nearest'})
+}
+// Exportar romaneios: escolhe a data e um ou mais romaneios; o link abre as entregas na
+// "Rota livre" do MOVIT, onde dá para otimizar, reordenar e comparar com outro roteirizador.
+let TRACKING_EXPORT={date:'',rows:[],picked:new Set(),loading:false,busy:false,note:''};
+function trackingExportToday(){return new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'})}
+function trackingExportRender(){
+  const box=$('#trackingSimBox');if(!box)return;
+  const st=TRACKING_EXPORT,items=[];
+  for(const x of st.rows){
+    const roms=(Array.isArray(x.romaneios)?x.romaneios:[x.romaneio]).map(v=>String(v||'').trim()).filter(Boolean);
+    for(const rom of roms)items.push({rom,motorista:driverDisplayName(x.motorista||''),veiculo:String(x.veiculo||'').toUpperCase(),entregas:Number(x.entregas||0),varios:roms.length>1})
+  }
+  items.sort((a,b)=>a.motorista.localeCompare(b.motorista,'pt-BR')||a.rom.localeCompare(b.rom));
+  const list=st.loading?'<div class="tb-exp-status">Buscando os romaneios de '+safe(st.date.split('-').reverse().join('/'))+'…</div>'
+    :(items.length?'<div class="tb-exp-list">'+items.map(it=>'<label><input type="checkbox" data-exp-rom="'+safe(it.rom)+'"'+(st.picked.has(it.rom)?' checked':'')+(st.busy?' disabled':'')+'><b>'+safe(it.rom)+'</b> '+safe(it.motorista||'sem motorista')+(it.veiculo?' • '+safe(it.veiculo):'')+
+        '<span class="muted">'+(it.entregas?nf(it.entregas)+' entrega(s)'+(it.varios?' no caminhão':''):'')+'</span></label>').join('')+'</div>'
+      :'<div class="tb-exp-status">'+safe(st.note||'Nenhum romaneio encontrado nesta data.')+'</div>');
+  const n=st.picked.size;
+  box.innerHTML='<div>📱 <b>Exportar romaneios para o MOVIT do seu celular</b> — marque um ou mais romaneios. As entregas abrem na <b>Rota livre</b>, onde você pode otimizar e comparar. Não muda nada para o motorista.</div>'+
+    '<div style="margin-top:8px"><label>Data dos romaneios<input type="date" data-exp-date value="'+safe(st.date)+'" max="'+safe(trackingExportToday())+'"'+(st.busy?' disabled':'')+'></label></div>'+list+
+    (st.note&&items.length?'<div class="tb-exp-status">'+safe(st.note)+'</div>':'')+
+    '<div class="tb-actions"><button type="button" class="tb-btn primary" data-exp-act="go"'+((n&&!st.busy&&!st.loading)?'':' disabled')+'>'+(st.busy?'Gerando…':(n?'Gerar link com '+n+' romaneio'+(n>1?'s':''):'Gerar link'))+'</button>'+
+    '<button type="button" class="tb-btn" data-exp-act="close"'+(st.busy?' disabled':'')+'>Fechar</button></div>';
+  box.style.display='block'
+}
+async function trackingExportLoad(date){
+  const st=TRACKING_EXPORT;st.date=date;st.picked=new Set();st.note='';st.rows=[];
+  const today=trackingExportToday();
+  // Hoje: a lista já está no quadro. Outra data: consulta o roteirizador (só lê, não mexe no rastreio).
+  if(date===today&&Array.isArray(TRACKING_DRIVER_ROWS)&&TRACKING_DRIVER_ROWS.length){st.rows=TRACKING_DRIVER_ROWS;trackingExportRender();return}
+  st.loading=true;trackingExportRender();
+  try{
+    const r=await fetch('/api/roteirizador/lista?date='+encodeURIComponent(date)+'&t='+Date.now(),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao ler os romaneios.');
+    if(st.date!==date)return;
+    st.rows=(Array.isArray(j.rows)?j.rows:[]).filter(x=>(Array.isArray(x.romaneios)?x.romaneios:[x.romaneio]).some(v=>String(v||'').trim()))
+  }catch(e){if(st.date===date)st.note='Não consegui ler os romaneios desta data: '+e.message}
+  finally{if(st.date===date){st.loading=false;trackingExportRender()}}
+}
+async function trackingExportGo(){
+  const st=TRACKING_EXPORT,box=$('#trackingSimBox');if(!box||st.busy||!st.picked.size)return;
+  const roms=[...st.picked],plans=[],failed=[];
+  st.busy=true;st.note='';trackingExportRender();
+  try{
+    for(let i=0;i<roms.length;i++){
+      st.note='Lendo o romaneio '+roms[i]+' ('+(i+1)+' de '+roms.length+')… pode levar até um minuto.';trackingExportRender();
+      try{
+        const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(st.date)+'&romaneio='+encodeURIComponent(roms[i])+'&t='+Date.now(),{cache:'no-store'});
+        const p=await r.json().catch(()=>({}));
+        if(!r.ok||p.ok===false||!Array.isArray(p.points))throw new Error(p.error||'rota não disponível');
+        const owner=st.rows.find(x=>(Array.isArray(x.romaneios)?x.romaneios:[x.romaneio]).map(String).includes(roms[i]));
+        // Só o necessário para montar as paradas: o traçado no mapa não vai (o MOVIT refaz ao otimizar).
+        plans.push({romaneio:roms[i],motorista:driverDisplayName(p.motorista||owner?.motorista||''),veiculo:p.veiculo||owner?.veiculo||'',baseAddress:p.baseAddress||'',points:p.points,optimizedOrder:Array.isArray(p.optimizedOrder)?p.optimizedOrder:[]})
+      }catch(e){failed.push(roms[i]+' ('+e.message+')')}
+    }
+    if(!plans.length)throw new Error('não consegui ler nenhum dos romaneios: '+failed.join('; '));
+    st.note='Montando o link…';trackingExportRender();
+    const r=await fetch('/api/tracking/movit-exportar',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({date:st.date,plans})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao exportar os romaneios.');
+    const fora=[...failed,...(Array.isArray(j.semEntregas)?j.semEntregas.map(x=>x+' (nenhuma entrega localizada no mapa)'):[])];
+    st.busy=false;
+    trackingShowPhoneLink(box,'📱 <b>'+safe(j.title)+'</b> — '+safe(nf(j.stops))+' entrega(s). Abra este link no seu celular; as entregas entram na <b>Rota livre</b> do MOVIT. Toque em <b>Otimizar</b> lá para o MOVIT calcular a ordem dele.'+
+      (fora.length?'<div class="tb-exp-status">Ficou de fora: '+safe(fora.join('; '))+'</div>':''),
+      j.open_url,j.title+'\n'+j.open_url)
+  }catch(e){st.busy=false;st.note='Erro: '+e.message;trackingExportRender()}
+}
+function trackingExportOpen(){
+  const box=$('#trackingSimBox');if(!box)return;
+  box.onclick=e=>{
+    const a=e.target?.closest?.('[data-exp-act]');if(!a)return;
+    if(a.dataset.expAct==='close'){box.style.display='none';box.innerHTML='';return}
+    if(a.dataset.expAct==='go')trackingExportGo()
+  };
+  box.onchange=e=>{
+    const d=e.target?.closest?.('[data-exp-date]');
+    if(d){const v=String(d.value||'');if(/^\d{4}-\d{2}-\d{2}$/.test(v)&&v<=trackingExportToday())trackingExportLoad(v);return}
+    const c=e.target?.closest?.('[data-exp-rom]');if(!c)return;
+    const rom=String(c.dataset.expRom||'');if(c.checked)TRACKING_EXPORT.picked.add(rom);else TRACKING_EXPORT.picked.delete(rom);
+    trackingExportRender()
+  };
+  TRACKING_EXPORT.busy=false;
+  trackingExportLoad(trackingExportToday());
+  box.scrollIntoView({behavior:'smooth',block:'nearest'})
+}
 // Simulação: gera um link para abrir a rota de hoje de um motorista no MOVIT de quem está na central.
 async function trackingSimulateRoute(item,button){
   const box=$('#trackingSimBox');if(!box)return;
@@ -3692,20 +3796,7 @@ async function trackingSimulateRoute(item,button){
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao preparar a simulação.');
     const who=(j.driver_name||'')+(j.vehicle_plate?' • '+j.vehicle_plate:'');
     const msg='Simulação MOVIT • rota de hoje de '+who+'\n'+j.open_url+'\n(vale '+j.expires_minutes+' min, abre uma vez)';
-    box.innerHTML='<div>📱 <b>Simulação da rota de '+safe(who)+'</b> — abra este link no seu celular. Vale '+safe(j.expires_minutes)+' minutos e abre uma vez só; o motorista não é avisado.</div>'+
-      '<input type="text" readonly value="'+safe(j.open_url)+'" data-sim-link>'+
-      '<div class="tb-actions"><a class="tb-btn wa" target="_blank" rel="noopener" href="https://wa.me/?text='+encodeURIComponent(msg)+'">💬 Enviar para o meu WhatsApp</a>'+
-      '<button type="button" class="tb-btn" data-sim-act="copy">Copiar link</button>'+
-      '<a class="tb-btn" target="_blank" rel="noopener" href="'+safe(j.open_url)+'">Abrir neste aparelho</a>'+
-      '<button type="button" class="tb-btn" data-sim-act="close">Fechar</button></div>';
-    box.style.display='block';
-    box.onclick=async e=>{
-      const a=e.target?.closest?.('[data-sim-act]');if(!a)return;
-      if(a.dataset.simAct==='close'){box.style.display='none';box.innerHTML='';return}
-      const input=box.querySelector('[data-sim-link]');
-      try{await navigator.clipboard.writeText(input.value);a.textContent='Copiado'}catch(err){input.focus();input.select();a.textContent='Selecionado: copie com Ctrl+C'}
-    };
-    box.scrollIntoView({behavior:'smooth',block:'nearest'})
+    trackingShowPhoneLink(box,'📱 <b>Simulação da rota de '+safe(who)+'</b> — abra este link no seu celular. Vale '+safe(j.expires_minutes)+' minutos e abre uma vez só; o motorista não é avisado.',j.open_url,msg);
   }catch(e){trackingBoardMsg('Erro ao preparar a simulação: '+e.message,true)}
   finally{if(button){button.disabled=false;button.textContent=label}}
 }
@@ -4265,6 +4356,7 @@ function setupTracking(){
   if($('#trackingGenerateCode'))$('#trackingGenerateCode').onclick=generateTrackingCode;
   if($('#trackingRequestsRefresh'))$('#trackingRequestsRefresh').onclick=refreshTrackingRequests;
   if($('#trackingBoardRefresh'))$('#trackingBoardRefresh').onclick=()=>{TRACKING_NEXT_REFRESH=0;refreshTracking()};
+  if($('#trackingExportOpen'))$('#trackingExportOpen').onclick=trackingExportOpen;
   const boardTable=$('#trackingBoardTable');
   if(boardTable){
     boardTable.onclick=trackingBoardClick;

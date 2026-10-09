@@ -253,6 +253,28 @@ async function call(method,path,{body,cookie,bearer,headers}={}){
     r=await call('GET','/api/router-app/company/today',{bearer:stk}); check('simulação vence 24 horas depois de aberta',r.status===401&&/simulação vencido/.test(r.text),r.status+' '+r.text.slice(0,120));
     r=await call('GET','/api/router-app/company/today',{bearer:ctk2}); check('  ...sem afetar o vínculo do motorista',r.status===200,'veio '+r.status);
   }
+
+  // A central exporta um ou mais romaneios para a "Rota livre" do MOVIT (simular e comparar).
+  console.log('I. Exportar romaneios para o MOVIT');
+  const base0={label:'Base Americana',address:'Rua da Base, 10 - Americana - SP',lat:-22.739,lon:-47.331,precision:'base'};
+  const planoA={romaneio:'AMR001070-1',motorista:'Gilmar de Teste',veiculo:'FGH2J34',baseAddress:base0.address,points:[base0,
+    {lat:-22.90,lon:-47.06,destinatario:'CLIENTE CAMPINAS',nf:'5001',ctrc:'AMR500001',endereco:'Rua A',numero:'100',bairro:'Centro',cidade:'Campinas',uf:'SP',precision:'ssw-coordenada',sourceRomaneio:'AMR001070-1',entregue:true,baixaAt:'2026-10-09 08:00'},
+    {lat:-22.76,lon:-47.15,destinatario:'CLIENTE SUMARE',nf:'5002',ctrc:'AMR500002',endereco:'Rua B',numero:'20',cidade:'Sumaré',uf:'SP',precision:'cidade',sourceRomaneio:'AMR001070-1'},
+    {lat:null,lon:null,destinatario:'SEM COORDENADA',nf:'5003',ctrc:'AMR500003'}],optimizedOrder:[2,1,3]};
+  const planoB={romaneio:'AMR001071-9',motorista:'GILMAR DE TESTE',veiculo:'FGH2J34',points:[base0,
+    {lat:-22.76,lon:-47.15,destinatario:'CLIENTE SUMARE',nf:'5002',ctrc:'AMR500002',cidade:'Sumaré',uf:'SP'},
+    {lat:-22.82,lon:-47.27,destinatario:'CLIENTE NOVA ODESSA',nf:'5004',ctrc:'AMR500004',cidade:'Nova Odessa',uf:'SP'}],optimizedOrder:[]};
+  r=await call('POST','/api/painel/tracking/movit-exportar',{body:{date:spHoje,plans:[planoA]}}); check('exportar sem login -> 401',r.status===401,'veio '+r.status);
+  r=await call('POST','/api/tracking/movit-exportar',{cookie,body:{date:spHoje,plans:[]}}); check('exportar sem romaneio escolhido -> 400',r.status===400,'veio '+r.status);
+  r=await call('POST','/api/tracking/movit-exportar',{cookie,body:{date:spHoje,plans:[{romaneio:'AMR009999-9',points:[base0]}]}}); check('romaneio sem entrega localizada -> 400, dizendo qual',r.status===400&&/AMR009999-9/.test(r.json?.error||''),r.status+' '+r.text.slice(0,160));
+  r=await call('POST','/api/tracking/movit-exportar',{cookie,body:{date:spHoje,plans:[planoA,planoB]}}); const exp=r.json||{};
+  check('dois romaneios do mesmo caminhão viram uma rota só (3 entregas: a repetida entra uma vez e a sem coordenada fica de fora)',r.status===201&&exp.stops===3&&JSON.stringify(exp.romaneios)==='["AMR001070-1","AMR001071-9"]'&&/^Simulação • Gilmar de Teste • Rom\. AMR001070-1, AMR001071-9 • \d\d\/\d\d$/.test(exp.title||'')&&String(exp.open_url).endsWith('/movit/rota/'+exp.token),r.status+' '+r.text.slice(0,260));
+  r=await call('GET','/api/public-router/share/'+exp.token); const rd=r.json?.route_data||{};
+  check('MOVIT lê a rota: entregas na ordem sugerida de cada romaneio',r.status===200&&(rd.stops||[]).map(x=>x.destinatario).join(' > ')==='CLIENTE SUMARE > CLIENTE CAMPINAS > CLIENTE NOVA ODESSA'&&rd.stops[0].seq===1&&rd.stops[2].romaneio==='AMR001071-9',JSON.stringify((rd.stops||[]).map(x=>[x.seq,x.destinatario,x.romaneio])));
+  check('  ...saída da base, volta à base e endereço escrito para o navegador',rd.start?.lat===-22.739&&rd.returnToStart===true&&rd.stops[1].original==='Rua A, 100, Centro, Campinas - SP, Brasil',JSON.stringify([rd.start,rd.returnToStart,rd.stops?.[1]?.original]));
+  check('  ...sem o campo "romaneio" da rota (a simulação nunca vira rota oficial) e sem baixas',!('romaneio' in rd)&&rd.simulation===true&&rd.stops.every(x=>x.entregue===false),JSON.stringify({romaneio:rd.romaneio,sim:rd.simulation}));
+  r=await call('GET','/movit/rota/'+exp.token); check('página do link lista as entregas, abre o MOVIT e oferece o download',r.status===200&&r.text.includes('href="movit://route/'+exp.token+'"')&&r.text.includes('CLIENTE NOVA ODESSA')&&r.text.includes('/downloads/MOVIT.apk'),r.status+' '+r.text.slice(0,100));
+  r=await call('GET','/api/router-app/company/today',{bearer:ctk2}); check('rota do dia do motorista de verdade não muda',r.status===200&&r.json?.stops?.length===2&&r.json.stops[0].destinatario==='CLIENTE A',r.status+' '+r.text.slice(0,120));
   if(db)await db.end();
   console.log('\nResultado: '+pass+' OK, '+fail+' falha(s)');
   process.exit(fail?1:0);

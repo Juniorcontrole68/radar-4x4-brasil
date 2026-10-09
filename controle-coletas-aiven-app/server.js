@@ -588,16 +588,22 @@ function movitStopFromPlan(p,seq){
     entregue:!!p.entregue,baixaAt:String(p.baixaAt||'')
   }
 }
+// Coordenada de verdade: Number(null) e Number('') valem 0, e uma parada sem coordenada não
+// pode virar uma entrega no ponto 0,0 do mapa.
+function movitHasCoord(p){
+  const ok=v=>v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v));
+  return !!p&&ok(p.lat)&&ok(p.lon)&&!(Number(p.lat)===0&&Number(p.lon)===0)
+}
 function movitDayFromPlan(plan){
   const points=Array.isArray(plan?.points)?plan.points:[];
   const order=Array.isArray(plan?.optimizedOrder)&&plan.optimizedOrder.length?plan.optimizedOrder:points.map((_,i)=>i).slice(1);
   const stops=[];
   for(const idx of order){
     const p=points[idx];
-    if(!p||!Number.isFinite(Number(p.lat))||!Number.isFinite(Number(p.lon))||p.precision==='base'||p.precision==='fixed-end')continue;
+    if(!movitHasCoord(p)||p.precision==='base'||p.precision==='fixed-end')continue;
     stops.push(movitStopFromPlan(p,stops.length+1))
   }
-  const base=points[0]&&Number.isFinite(Number(points[0].lat))?{lat:Number(points[0].lat),lon:Number(points[0].lon),label:String(points[0].label||plan.baseAddress||'Base'),resolved:String(points[0].address||points[0].label||plan.baseAddress||'Base')}:null;
+  const base=movitHasCoord(points[0])?{lat:Number(points[0].lat),lon:Number(points[0].lon),label:String(points[0].label||plan.baseAddress||'Base'),resolved:String(points[0].address||points[0].label||plan.baseAddress||'Base')}:null;
   return{
     stops,start:base,returnToStart:true,
     geometry:plan?.outboundGeometry||plan?.geometry||null,
@@ -1632,6 +1638,52 @@ async function start() {
 
       // Aplicativo CONSTRULOG Motorista pede um código de uso único para abrir o MOVIT já
       // identificado como este motorista/placa (o aparelho já foi liberado pela central).
+      // Exportação para simulação: a central escolhe um ou mais romaneios e recebe um link que
+      // abre essas entregas na "Rota livre" do MOVIT (editável: dá para otimizar e comparar).
+      // As rotas chegam do navegador já lidas pelo roteirizador (/api/roteirizador/rota); aqui
+      // viram paradas no mesmo formato da rota do dia. O romaneio vai só no título e em cada
+      // parada, nunca no campo "romaneio" da rota: assim o aplicativo não envia esta simulação
+      // de volta como rota oficial do motorista.
+      if (u.pathname === '/api/painel/tracking/movit-exportar' && req.method === 'POST') {
+        try{
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const body=await readJsonBodyLimited(req,3*1024*1024);
+          const date=/^\d{4}-\d{2}-\d{2}$/.test(String(body.date||''))?String(body.date):spToday();
+          const plans=(Array.isArray(body.plans)?body.plans:[]).filter(x=>x&&typeof x==='object').slice(0,10);
+          if(!plans.length)return sendJson(res,400,{ok:false,error:'Escolha pelo menos um romaneio.'});
+          const stops=[],seen=new Set(),romaneios=[],semEntregas=[],motoristas=[];
+          let start=null;
+          for(const plan of plans){
+            const rom=String(plan.romaneio||'').trim().slice(0,60);
+            const day=movitDayFromPlan(plan);
+            if(!day.stops.length){if(rom)semEntregas.push(rom);continue}
+            if(rom&&!romaneios.includes(rom))romaneios.push(rom);
+            const mot=String(plan.motorista||'').trim().replace(/\s+/g,' ').slice(0,120);
+            if(mot&&!motoristas.some(m=>m.toLowerCase()===mot.toLowerCase()))motoristas.push(mot);
+            if(!start&&day.start)start=day.start;
+            for(const st of day.stops){
+              // A mesma entrega pode vir em dois romaneios escolhidos: entra uma vez só.
+              const key=st.ctrc?('C|'+st.ctrc):(st.nf?('N|'+st.nf+'|'+st.destinatario):('P|'+st.lat.toFixed(5)+'|'+st.lon.toFixed(5)+'|'+st.label));
+              if(seen.has(key))continue;
+              seen.add(key);
+              stops.push({...st,seq:stops.length+1,romaneio:st.romaneio||rom,entregue:false,baixaAt:''})
+            }
+          }
+          if(!stops.length)return sendJson(res,400,{ok:false,error:'Nenhuma entrega pôde ser localizada no mapa'+(semEntregas.length?' ('+semEntregas.join(', ')+')':'')+'.',semEntregas});
+          const [y,m,d]=date.split('-');
+          const quem=motoristas.length===1?motoristas[0]:(motoristas.length?motoristas.length+' motoristas':'');
+          const title=('Simulação • '+[quem,'Rom. '+romaneios.join(', '),d+'/'+m].filter(Boolean).join(' • ')).slice(0,180);
+          const routeData={stops,start,returnToStart:true,simulation:true,romaneios};
+          const token=crypto.randomBytes(10).toString('hex');
+          await pool.query("INSERT INTO router_shared_routes(share_token,title,driver_name,event_date,route_data) VALUES($1,$2,$3,$4::date,$5::jsonb)",
+            [token,title,motoristas.length===1?motoristas[0]:'',date,JSON.stringify(routeData)]);
+          console.log('MOVIT EXPORTACAO criada: '+JSON.stringify({por:user.username,date,romaneios,paradas:stops.length}));
+          return sendJson(res,201,{ok:true,token,title,date,romaneios,stops:stops.length,semEntregas,
+            open_url:DRIVER_PUBLIC_BASE+'/movit/rota/'+token,app_url:'movit://route/'+token,download_url:DRIVER_PUBLIC_BASE+'/downloads/MOVIT.apk'});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao exportar os romaneios.'})}
+      }
+
       // Simulação: a central abre no próprio celular a rota do dia de um motorista, sem ser
       // motorista cadastrado. Gera um código de uso único (30 min) para o aplicativo MOVIT.
       if (u.pathname === '/api/painel/tracking/movit-simulacao' && req.method === 'POST') {
@@ -1859,7 +1911,7 @@ async function start() {
           const row=q.rows[0],data=row.route_data||{},stops=Array.isArray(data.stops)?data.stops:[];
           const esc=s=>String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
           const list=stops.map((s,i)=>'<div class="stop"><b>'+(i+1)+'. '+esc(s.label||s.resolved||'Parada')+'</b><div>'+esc(s.resolved||'')+'</div></div>').join('');
-          const html='<!doctype html><html lang="pt-BR"><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta charset="utf-8"><title>'+esc(row.title)+'</title><style>body{font-family:system-ui;margin:0;background:#f7f9fc;color:#16142f}.wrap{max-width:620px;margin:auto;padding:20px}.card{background:#fff;border-radius:20px;padding:18px;box-shadow:0 4px 20px #0001;margin-bottom:14px}.btn{display:block;text-align:center;background:#2f73e8;color:#fff;text-decoration:none;font-weight:700;padding:16px;border-radius:14px}.stop{padding:12px 0;border-bottom:1px solid #e6ebf2}.muted{color:#667085;font-size:14px}</style></head><body><div class="wrap"><div class="card"><h2>MOVIT</h2><h3>'+esc(row.title)+'</h3><div class="muted">'+stops.length+' paradas</div></div><div class="card"><a class="btn" href="movit://route/'+token+'">Abrir esta rota no MOVIT</a></div><div class="card">'+list+'</div></div></body></html>';
+          const html='<!doctype html><html lang="pt-BR"><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta charset="utf-8"><title>'+esc(row.title)+'</title><style>body{font-family:system-ui;margin:0;background:#f7f9fc;color:#16142f}.wrap{max-width:620px;margin:auto;padding:20px}.card{background:#fff;border-radius:20px;padding:18px;box-shadow:0 4px 20px #0001;margin-bottom:14px}.btn{display:block;text-align:center;background:#2f73e8;color:#fff;text-decoration:none;font-weight:700;padding:16px;border-radius:14px}.stop{padding:12px 0;border-bottom:1px solid #e6ebf2}.muted{color:#667085;font-size:14px}</style></head><body><div class="wrap"><div class="card"><h2>MOVIT</h2><h3>'+esc(row.title)+'</h3><div class="muted">'+stops.length+' paradas</div></div><div class="card"><a class="btn" href="movit://route/'+token+'">Abrir esta rota no MOVIT</a><div class="muted" style="text-align:center;margin-top:12px">Ainda não tem o MOVIT? <a href="/downloads/MOVIT.apk">Baixar o aplicativo</a>, instalar e voltar a esta página.</div></div><div class="card">'+list+'</div></div></body></html>';
           res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(html)
         }catch(e){res.writeHead(500,{'Content-Type':'text/html; charset=utf-8'});return res.end('<h2>Erro ao abrir rota</h2>')}
       }
