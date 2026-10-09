@@ -57,7 +57,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
  .tab[data-module="coletas"]:before{content:"🚚"}
  .tab[data-module="financeiro"]:before{content:"💰"}
  .tab[data-module="dashboard"]:before{content:"📊"}
- .tab[data-module="dashboards"]:before{content:"▦"}
+ .tab[data-module="dashboards"]:before{content:"📈"}
  .tab[data-module="programacao"]:before{content:"📋"}
  .tab[data-module="carga"]:before{content:"📦"}
  .tab[data-module="roteirizador-teste"]:before{content:"🧪"}
@@ -86,6 +86,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
     <div class="tabs">
       <button class="module-card group-card active" data-group="lotacao">🚛 Lotação</button>
       <button class="module-card group-card operation" data-group="operacao">⚙️ Operação</button>
+      <button class="tab module-card" data-module="dashboards" data-src="/dashboard/?embed=1&view=dashboards" data-name="Dashboards">📈 Dashboards</button>
       <button class="tab module-card" data-module="frota" data-src="/frota?embed=1" data-name="Frota">🚚 Frota</button>
       <button class="tab module-card" data-module="contas" data-src="/contas?embed=1" data-name="Contas a Pagar">🧾 Contas a Pagar</button>
       <button class="tab module-card" data-module="usuarios" data-src="/dashboard/?embed=1&view=usuarios" data-name="Usuários">👥 Usuários</button>
@@ -102,7 +103,6 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
     <div class="subtabs" data-group-panel="operacao">
       <span class="subtab-label">Operação</span>
       <button class="tab" data-group="operacao" data-module="dashboard" data-src="/dashboard/?embed=1&view=dashboard" data-name="Visão Geral">📊 Visão Geral</button>
-      <button class="tab" data-group="operacao" data-module="dashboards" data-src="/dashboard/?embed=1&view=dashboards" data-name="Dashboards">▦ Dashboards</button>
       <button class="tab" data-group="operacao" data-module="agendamento-teste" data-src="/dashboard/?embed=1&view=agendamento-teste" data-name="Agendamento">📅 Agendamento</button>
       <button class="tab" data-group="operacao" data-module="programacao" data-src="/dashboard/?embed=1&view=programacao" data-name="Programação">📋 Programação</button>
       <button class="tab" data-group="operacao" data-module="carga" data-src="/dashboard/?embed=1&view=carga" data-name="Montar carga">📦 Montar carga</button>
@@ -183,7 +183,7 @@ function moduleAllowed(mod){
 function applyModulePermissions(){
   document.querySelectorAll('.tab').forEach(btn=>btn.style.display=moduleAllowed(btn.dataset.module)?'':'none');
   const lotacaoOk=moduleAllowed('coletas')||moduleAllowed('financeiro-lotacao');
-  const operacaoMods=['dashboard','dashboards','agendamento-teste','programacao','carga','roteirizador-teste','roteirizador-v02','tracking'];
+  const operacaoMods=['dashboard','agendamento-teste','programacao','carga','roteirizador-teste','roteirizador-v02','tracking'];
   document.querySelector('.group-card[data-group="lotacao"]')?.style.setProperty('display',lotacaoOk?'flex':'none');
   document.querySelector('.group-card[data-group="operacao"]')?.style.setProperty('display',licensed('operacao')&&operacaoMods.some(moduleAllowed)?'flex':'none');
   const company=AUTH?.client?.name?(' • '+AUTH.client.name):'';
