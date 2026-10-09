@@ -2576,6 +2576,22 @@ function trackingHasPosition(row){
   return Number.isFinite(a)&&Number.isFinite(b)&&a>=-90&&a<=90&&b>=-180&&b<=180
 }
 function trackingDriverKey(driver,plate){return trackingNorm(driver)+'|'+trackingNorm(plate)}
+// Um motorista, uma linha: quando dois celulares ativos caem no mesmo motorista do dia (troca
+// de aparelho, cadastro digitado diferente), fica o que está dando sinal; no empate, o que
+// deu sinal por último.
+function trackingOnePhonePerDriver(rows){
+  const t=v=>{const n=new Date(v||0).getTime();return Number.isFinite(n)?n:0};
+  const score=r=>{const dev=Number(r.device_age_seconds);return[(r.device_age_seconds!==null&&Number.isFinite(dev)&&dev<=300)?1:0,r.never_connected?0:1,t(r.last_seen_at),t(r.enrolled_at)]};
+  const better=(a,b)=>{const x=score(a),y=score(b);for(let i=0;i<x.length;i++){if(x[i]!==y[i])return x[i]>y[i]}return false};
+  const best=new Map(),out=[];
+  for(const r of (Array.isArray(rows)?rows:[])){
+    if(r.test_only||!r.operation_active||!r.device_id){out.push(r);continue}
+    const k=trackingDriverKey(r.driver_name,r.vehicle_plate),cur=best.get(k);
+    if(!cur){best.set(k,r);out.push(r)}
+    else if(better(r,cur)){out[out.indexOf(cur)]=r;best.set(k,r)}
+  }
+  return out
+}
 function trackingMatchOperationRow(row){
   const rows=Array.isArray(TRACKING_DRIVER_ROWS)?TRACKING_DRIVER_ROWS:[];
   const p=trackingNorm(row?.vehicle_plate||row?.veiculo||''),d=trackingNorm(row?.driver_name||row?.motorista||'');
@@ -3883,7 +3899,7 @@ async function refreshTracking(){
       if(plate)todayKeys.add('P|'+plate);
       if(driver)todayKeys.add('D|'+driver);
     }
-    const currentRows=liveRows.map(r=>{
+    const currentRowsAll=liveRows.map(r=>{
       const op=trackingMatchOperationRow(r);
       return op?{
         ...r,
@@ -3902,6 +3918,7 @@ async function refreshTracking(){
       // o celular aprovado e a sessão, em vez de substituir por um placeholder vazio.
       return !!(r.test_only||inOperation);
     }).map(r=>({...r,operation_active:r.test_only?true:true}));
+    const currentRows=trackingOnePhonePerDriver(currentRowsAll);
     // Mantém todos os motoristas da operação do dia no mapa. Quem ainda não tiver
     // GPS/aparelho ativo aparece com a rota planejada e status "Sem sinal", sem
     // criar posição fictícia no mapa.

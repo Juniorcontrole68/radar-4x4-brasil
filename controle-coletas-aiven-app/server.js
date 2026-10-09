@@ -624,8 +624,8 @@ async function movitBuildDay(link){
   const a=await pool.query(
     `SELECT romaneios FROM driver_tracking_assignments
      WHERE active=TRUE AND work_date=$1::date
-       AND (lower(trim(driver_name))=lower(trim($2))
-            OR (COALESCE($3,'')<>'' AND upper(trim(COALESCE(vehicle_plate,'')))=upper(trim($3))))
+       AND (${sqlNome('driver_name')}=${sqlNome('$2')}
+            OR (COALESCE($3,'')<>'' AND ${sqlPlaca('vehicle_plate')}=${sqlPlaca('$3')}))
      ORDER BY updated_at DESC,id DESC LIMIT 1`,
     [today,link.driver_name,link.vehicle_plate||'']
   );
@@ -634,7 +634,7 @@ async function movitBuildDay(link){
   // 1) Rota que a operação já montou/ajustou e exportou para este romaneio tem prioridade.
   const mr=await pool.query(
     `SELECT romaneio,title,route_data,updated_at FROM movit_romaneio_routes
-     WHERE event_date=$1::date AND (romaneio=ANY($2::text[]) OR lower(trim(driver_name))=lower(trim($3)))
+     WHERE event_date=$1::date AND (romaneio=ANY($2::text[]) OR ${sqlNome('driver_name')}=${sqlNome('$3')})
      ORDER BY (romaneio=ANY($2::text[])) DESC,updated_at DESC LIMIT 1`,
     [today,roms,link.driver_name]
   );
@@ -866,11 +866,19 @@ function trackingBearer(req){
 // Um aparelho "vivo" é o que deu sinal nos últimos 10 minutos DEPOIS de ter sido criado.
 // A aprovação grava last_seen_at igual a enrolled_at (mesma transação), então last_seen_at
 // maior que enrolled_at é a prova de que o celular conectou de verdade pelo menos uma vez.
+// Nome e placa comparáveis no SQL. O motorista digita o próprio nome e a placa uma vez, no
+// celular ("André", "rvd-4f12"); o SSW traz "Andre" e "RVD4F12". Comparar letra por letra fazia
+// o celular novo não receber o romaneio e o antigo continuar na tela como segundo motorista.
+const SQL_ACENTOS_DE='ÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑáàâãäéèêëíìîïóòôõöúùûüçñ';
+const SQL_ACENTOS_PARA='AAAAAEEEEIIIIOOOOOUUUUCNaaaaaeeeeiiiiooooouuuucn';
+function sqlNome(expr){return "regexp_replace(lower(translate(trim(COALESCE("+expr+",'')),'"+SQL_ACENTOS_DE+"','"+SQL_ACENTOS_PARA+"')),'[[:space:]]+',' ','g')"}
+function sqlPlaca(expr){return "regexp_replace(upper(COALESCE("+expr+",'')),'[^A-Z0-9]','','g')"}
+// Dois aparelhos são do mesmo motorista quando o nome é o mesmo (sem acento/caixa). A placa
+// digitada não entra: um erro de digitação nela não pode criar um "segundo motorista".
 const TRACKING_SIBLING_ALIVE_SQL=`
   SELECT 1 FROM driver_tracking_devices o
   WHERE o.active=TRUE AND o.id<>$1
-    AND lower(trim(o.driver_name))=lower(trim($2))
-    AND upper(trim(COALESCE(o.vehicle_plate,'')))=upper(trim(COALESCE($3,'')))
+    AND ${sqlNome('o.driver_name')}=${sqlNome('$2')}
     AND o.last_seen_at>=NOW()-INTERVAL '10 minutes'
     AND o.last_seen_at>o.enrolled_at`;
 async function trackingDeviceFromReq(req){
@@ -886,7 +894,7 @@ async function trackingDeviceFromReq(req){
     // O aparelho só fica inativo quando outra aprovação do mesmo motorista/placa o substitui.
     // Se o substituto nunca conectou (pedido antigo aprovado por engano, celular que não
     // buscou a nova credencial), este aparelho volta a valer sozinho em vez de ficar mudo.
-    const sib=await pool.query(TRACKING_SIBLING_ALIVE_SQL+' LIMIT 1',[dev.id,dev.driver_name,dev.vehicle_plate||'']);
+    const sib=await pool.query(TRACKING_SIBLING_ALIVE_SQL+' LIMIT 1',[dev.id,dev.driver_name]);
     if(sib.rowCount){const e=new Error('Dispositivo substituído por outro aparelho.');e.status=401;throw e}
     await pool.query('UPDATE driver_tracking_devices SET active=TRUE,reactivated_at=NOW() WHERE id=$1',[dev.id]);
     dev.active=true;
@@ -896,10 +904,30 @@ async function trackingDeviceFromReq(req){
 }
 // Quando dois aparelhos do mesmo motorista/placa estão ativos e vivos, vale o mais novo.
 async function trackingYieldToNewerDevice(dev){
-  const newer=await pool.query(TRACKING_SIBLING_ALIVE_SQL+' AND o.enrolled_at>$4 LIMIT 1',[dev.id,dev.driver_name,dev.vehicle_plate||'',dev.enrolled_at]);
+  const newer=await pool.query(TRACKING_SIBLING_ALIVE_SQL+' AND o.enrolled_at>$3 LIMIT 1',[dev.id,dev.driver_name,dev.enrolled_at]);
   if(!newer.rowCount)return false;
   await pool.query('UPDATE driver_tracking_devices SET active=FALSE WHERE id=$1',[dev.id]);
   return true
+}
+// O aparelho que está dando sinal aposenta os aparelhos MAIS ANTIGOS do mesmo motorista que
+// estão parados há mais de 10 minutos. Sem isso, o celular velho de quem trocou de aparelho
+// ficava ativo para sempre e aparecia como um segundo motorista "parado" no quadro.
+// Só olha para trás (mais antigos): um aparelho recém-aprovado nunca é derrubado por este caminho.
+const TRACKING_RETIRE_CHECK=new Map();
+async function trackingRetireOlderStoppedDevices(dev){
+  const last=TRACKING_RETIRE_CHECK.get(dev.id)||0;
+  if(Date.now()-last<10*60*1000)return;
+  TRACKING_RETIRE_CHECK.set(dev.id,Date.now());
+  const r=await pool.query(
+    `UPDATE driver_tracking_devices o SET active=FALSE
+     WHERE o.active=TRUE AND o.id<>$1
+       AND ${sqlNome('o.driver_name')}=${sqlNome('$2')}
+       AND o.enrolled_at<$3
+       AND COALESCE(o.last_seen_at,o.enrolled_at)<NOW()-INTERVAL '10 minutes'
+     RETURNING o.id::text AS id`,
+    [dev.id,dev.driver_name,dev.enrolled_at]
+  );
+  if(r.rowCount)console.log('TRACKING APARELHO ANTIGO APOSENTADO: '+JSON.stringify({deviceId:dev.id,driver:dev.driver_name,aposentados:r.rows.map(x=>x.id)}))
 }
 function trackingCleanHealth(h){
   if(!h||typeof h!=='object'||Array.isArray(h))return null;
@@ -2506,21 +2534,33 @@ async function start() {
         try {
           const device=await trackingDeviceFromReq(req);
           const q=await pool.query(
-            `SELECT driver_name,vehicle_plate,romaneios,work_date,updated_at
+            `SELECT driver_name,vehicle_plate,romaneios,work_date,updated_at,
+                    (COALESCE(vehicle_plate,'')<>'' AND ${sqlPlaca('vehicle_plate')}=${sqlPlaca('$1')}) AS mesma_placa
              FROM driver_tracking_assignments
              WHERE active=TRUE
                AND work_date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
                AND (
-                 (COALESCE(vehicle_plate,'')<>'' AND upper(trim(vehicle_plate))=upper(trim(COALESCE($1,''))))
-                 OR lower(trim(driver_name))=lower(trim($2))
+                 (COALESCE(vehicle_plate,'')<>'' AND ${sqlPlaca('vehicle_plate')}=${sqlPlaca('$1')})
+                 OR ${sqlNome('driver_name')}=${sqlNome('$2')}
                )
              ORDER BY
-               CASE WHEN COALESCE(vehicle_plate,'')<>'' AND upper(trim(vehicle_plate))=upper(trim(COALESCE($1,''))) THEN 0 ELSE 1 END,
+               CASE WHEN COALESCE(vehicle_plate,'')<>'' AND ${sqlPlaca('vehicle_plate')}=${sqlPlaca('$1')} THEN 0 ELSE 1 END,
                updated_at DESC
              LIMIT 1`,
             [device.vehicle_plate||'',device.driver_name]
           );
-          return sendJson(res,200,{ok:true,assignment:q.rows[0]||null});
+          const assignment=q.rows[0]||null;
+          if(assignment){
+            // Achou o romaneio pelo nome, mas a placa do cadastro do celular é outra (erro de
+            // digitação ou troca de veículo): o cadastro passa a acompanhar a placa do romaneio.
+            const placaRomaneio=String(assignment.vehicle_plate||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+            if(!assignment.mesma_placa&&placaRomaneio.length>=7){
+              await pool.query('UPDATE driver_tracking_devices SET vehicle_plate=$2 WHERE id=$1',[device.id,placaRomaneio]);
+              console.log('TRACKING PLACA AJUSTADA PELO ROMANEIO: '+JSON.stringify({deviceId:device.id,driver:device.driver_name,de:device.vehicle_plate||'',para:placaRomaneio}))
+            }
+            delete assignment.mesma_placa
+          }
+          return sendJson(res,200,{ok:true,assignment});
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao consultar romaneio do motorista.'})}
       }
 
@@ -3681,8 +3721,8 @@ async function start() {
              WHERE a.active=TRUE
                AND a.work_date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
                AND (
-                 (COALESCE(a.vehicle_plate,'')<>'' AND upper(trim(a.vehicle_plate))=upper(trim(COALESCE(d.vehicle_plate,''))))
-                 OR lower(trim(a.driver_name))=lower(trim(d.driver_name))
+                 (COALESCE(a.vehicle_plate,'')<>'' AND ${sqlPlaca('a.vehicle_plate')}=${sqlPlaca('d.vehicle_plate')})
+                 OR ${sqlNome('a.driver_name')}=${sqlNome('d.driver_name')}
                )
              LIMIT 1`,
             [deviceId]
@@ -3726,6 +3766,7 @@ async function start() {
           // motorista aparecia como "sem sinal" mesmo com o aplicativo funcionando; e uma sessão
           // de ontem ainda aberta continuava recebendo as posições de hoje.
           const effectiveSessionId=await trackingEnsureTodaySession(device.id);
+          await trackingRetireOlderStoppedDevices(device).catch(e=>console.log('TRACKING aposentar aparelho antigo: '+String(e.message||e)));
           await pool.query(
             `UPDATE driver_tracking_devices
              SET last_seen_at=NOW(),
@@ -3853,8 +3894,8 @@ async function start() {
                        AND l.last_seen_at>l.enrolled_at
                        AND l.id IS DISTINCT FROM x.approved_device_id
                        AND (
-                         (COALESCE(x.vehicle_plate,'')<>'' AND upper(trim(COALESCE(l.vehicle_plate,'')))=upper(trim(x.vehicle_plate)))
-                         OR lower(trim(l.driver_name))=lower(trim(x.driver_name))
+                         (COALESCE(x.vehicle_plate,'')<>'' AND ${sqlPlaca('l.vehicle_plate')}=${sqlPlaca('x.vehicle_plate')})
+                         OR ${sqlNome('l.driver_name')}=${sqlNome('x.driver_name')}
                        )
                    ) AS has_live_device
             FROM (
@@ -3890,17 +3931,16 @@ async function start() {
             const row=rq.rows[0];
             if(row.status==='approved'){await client.query('COMMIT');return sendJson(res,200,{ok:true,status:'approved'})}
             const token=crypto.randomBytes(32).toString('hex');
-            // Aparelhos anteriores do mesmo motorista/placa que estão PARADOS são desativados.
+            // Aparelhos anteriores do mesmo motorista (mesmo nome, sem acento/caixa) que estão PARADOS são desativados.
             // Quem está enviando sinal agora continua valendo: se o novo aparelho conectar de
             // verdade, o antigo cede a vez sozinho no próximo sinal (trackingYieldToNewerDevice).
             await client.query(
               `UPDATE driver_tracking_devices
                SET active=FALSE
                WHERE active=TRUE
-                 AND lower(trim(driver_name))=lower(trim($1))
-                 AND upper(trim(COALESCE(vehicle_plate,'')))=upper(trim(COALESCE($2,'')))
+                 AND ${sqlNome('driver_name')}=${sqlNome('$1')}
                  AND COALESCE(last_seen_at,enrolled_at)<NOW()-INTERVAL '10 minutes'`,
-              [row.driver_name,row.vehicle_plate||'']
+              [row.driver_name]
             );
             const dev=await client.query(
               "INSERT INTO driver_tracking_devices(token_hash,driver_name,vehicle_plate,device_name,last_seen_at) VALUES($1,$2,$3,$4,NOW()) RETURNING id::text AS id",
@@ -3970,7 +4010,7 @@ async function start() {
               await client.query(
                 `UPDATE driver_tracking_assignments SET active=FALSE,updated_at=NOW()
                  WHERE work_date=$1::date AND active=TRUE
-                   AND (upper(trim(COALESCE(vehicle_plate,'')))=upper(trim($2)) OR lower(trim(driver_name))=lower(trim($3)))`,
+                   AND (${sqlPlaca('vehicle_plate')}=${sqlPlaca('$2')} OR ${sqlNome('driver_name')}=${sqlNome('$3')})`,
                 [workDate,plate,driver]
               );
               // Só encerra sessões de GPS quando o pedido é para HOJE. Um pedido referente a
@@ -3981,7 +4021,7 @@ async function start() {
                    SET status='ended',ended_at=COALESCE(ended_at,NOW())
                    FROM driver_tracking_devices d
                    WHERE s.device_id=d.id AND s.status='active'
-                     AND (upper(trim(COALESCE(d.vehicle_plate,'')))=upper(trim($1)) OR lower(trim(d.driver_name))=lower(trim($2)))`,
+                     AND (${sqlPlaca('d.vehicle_plate')}=${sqlPlaca('$1')} OR ${sqlNome('d.driver_name')}=${sqlNome('$2')})`,
                   [plate,driver]
                 );
               }
@@ -3999,7 +4039,7 @@ async function start() {
             await client.query(
               `UPDATE driver_tracking_assignments SET active=FALSE,updated_at=NOW()
                WHERE work_date=$1::date AND active=TRUE
-                 AND (upper(trim(COALESCE(vehicle_plate,'')))=upper(trim($2)) OR lower(trim(driver_name))=lower(trim($3)))`,
+                 AND (${sqlPlaca('vehicle_plate')}=${sqlPlaca('$2')} OR ${sqlNome('driver_name')}=${sqlNome('$3')})`,
               [workDate,plate,driver]
             );
             await client.query(
@@ -4209,8 +4249,8 @@ async function start() {
                 `SELECT romaneios FROM driver_tracking_assignments
                  WHERE active=TRUE AND work_date=$1::date
                    AND (
-                     lower(trim(driver_name))=lower(trim($2))
-                     OR (COALESCE($3,'')<>'' AND upper(trim(COALESCE(vehicle_plate,'')))=upper(trim($3)))
+                     ${sqlNome('driver_name')}=${sqlNome('$2')}
+                     OR (COALESCE($3,'')<>'' AND ${sqlPlaca('vehicle_plate')}=${sqlPlaca('$3')})
                    )
                  ORDER BY updated_at DESC,id DESC LIMIT 1`,
                 [today,row.driver_name||'',row.vehicle_plate||'']
@@ -4221,7 +4261,7 @@ async function start() {
                  FROM movit_romaneio_routes
                  WHERE event_date=$1::date
                    AND (
-                     lower(trim(driver_name))=lower(trim($2))
+                     ${sqlNome('driver_name')}=${sqlNome('$2')}
                      OR romaneio=ANY($3::text[])
                    )
                  ORDER BY updated_at DESC LIMIT 1`,

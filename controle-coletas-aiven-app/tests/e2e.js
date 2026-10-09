@@ -161,6 +161,53 @@ async function call(method,path,{body,cookie,bearer,headers}={}){
   r=await call('POST','/api/router-app/company/claim',{body:{code:code2}}); const ctk2=r.json?.company_token;
   r=await call('GET','/api/router-app/company/today',{bearer:ctk}); check('vínculo antigo deixa de valer quando um novo é criado',r.status===401,'veio '+r.status);
   r=await call('GET','/api/router-app/company/today',{bearer:ctk2}); check('vínculo novo recebe a mesma rota',r.status===200&&r.json?.stops?.length===2,r.status+' '+r.text.slice(0,120));
+  // Troca de celular com o cadastro digitado diferente do SSW (caso real de 09/10: "Carlos André
+  // Oliveira de jesus" / RDV4F12 no celular novo; "Carlos Andre Oliveira de Jesus" / RVD4F12 no SSW).
+  console.log('F. Troca de celular: nome com acento e placa digitada com letras trocadas');
+  const cadastra=async(nome,placa,modelo)=>{
+    let x=await call('POST','/api/tracking/register-request',{body:{driver_name:nome,vehicle_plate:placa,device_name:modelo}});const tk=x.json?.request_token;
+    x=await call('GET','/api/painel/tracking/requests',{cookie});const pd=x.json?.rows?.find(y=>y.status==='pending'&&y.device_name===modelo);
+    if(pd)await call('POST','/api/painel/tracking/requests/'+pd.id+'/approve',{cookie,body:{}});
+    x=await call('GET','/api/tracking/register-status?request_token='+tk);return x.json?.token};
+  const doMotorista=async re=>((await call('GET','/api/painel/tracking/live?light=1',{cookie})).json?.rows||[]).filter(x=>re.test(x.driver_name));
+  // O mapa ao vivo já junta aparelhos de mesma placa; para saber quais estão ativos de fato, olha o banco.
+  const ativos=async()=>(await db.query("SELECT device_name FROM driver_tracking_devices WHERE active=TRUE AND device_name LIKE '%do Carlos' ORDER BY id")).rows.map(x=>x.device_name).join(', ');
+  const velho=await cadastra('Carlos Andre Oliveira de Jesus','RVD4F12','Celular antigo do Carlos');
+  await hb(velho);
+  r=await call('POST','/api/painel/tracking/assignment',{cookie,body:{driver_name:'Carlos Andre Oliveira de Jesus',vehicle_plate:'RVD4F12',romaneios:['AMR001058-8'],work_date:spHoje}});
+  if(db){
+    await db.query("UPDATE driver_tracking_devices SET enrolled_at=NOW()-INTERVAL '5 days',last_seen_at=NOW()-INTERVAL '2 days' WHERE device_name='Celular antigo do Carlos'");
+    const novo=await cadastra('Carlos André  Oliveira de jesus','rdv-4f12','Celular novo do Carlos');
+    check('celular novo é aprovado e recebe a credencial',!!novo);
+    let dele=await doMotorista(/^carlos andr/i);
+    check('aprovar o celular novo aposenta o antigo parado, mesmo com nome e placa digitados diferente',await ativos()==='Celular novo do Carlos'&&dele.length===1,await ativos());
+    r=await call('GET','/api/tracking/assignment/current',{bearer:novo});
+    check('celular novo recebe o romaneio do dia (antes: nenhum, e o GPS não iniciava)',JSON.stringify(r.json?.assignment?.romaneios)==='["AMR001058-8"]'&&!('mesma_placa' in (r.json?.assignment||{})),r.text.slice(0,160));
+    dele=await doMotorista(/^carlos andr/i);
+    check('cadastro do celular passa a usar a placa do romaneio',dele[0]?.vehicle_plate==='RVD4F12','placa '+dele[0]?.vehicle_plate);
+    // Estado que já existe em produção: os dois aparelhos ativos, o antigo parado há dias.
+    await db.query("UPDATE driver_tracking_devices SET active=TRUE WHERE device_name='Celular antigo do Carlos'");
+    check('  (preparo) os dois aparelhos ativos, como está em produção',await ativos()==='Celular antigo do Carlos, Celular novo do Carlos',await ativos());
+    r=await hb(novo); check('celular novo dá sinal e abre a sessão do dia',r.status===200&&!!r.json?.session_id,r.status+' '+r.text.slice(0,120));
+    dele=await doMotorista(/^carlos andr/i);
+    check('ao dar sinal, o celular novo aposenta o antigo parado: um motorista, um celular',await ativos()==='Celular novo do Carlos'&&dele.length===1&&dele[0].device_name==='Celular novo do Carlos',await ativos());
+    check('mapa ao vivo mostra o romaneio no celular novo',JSON.stringify(dele[0]?.romaneios)==='["AMR001058-8"]',JSON.stringify(dele[0]?.romaneios));
+    r=await call('POST','/api/tracking/point',{bearer:novo,body:{latitude:-22.70,longitude:-47.31,accuracy_m:8,captured_at:new Date().toISOString()}});
+    check('celular novo envia posição',r.status===200||r.status===201,r.status+' '+r.text.slice(0,120));
+    // O antigo, se voltar a dar sinal com o novo funcionando, é recusado (não vira segundo motorista).
+    r=await hb(velho); check('celular antigo é recusado enquanto o novo está funcionando',r.status===401,r.status+' '+r.text.slice(0,120));
+    check('  ...e continua inativo',await ativos()==='Celular novo do Carlos',await ativos());
+    // Homônimo parcial não é o mesmo motorista.
+    const outro=await cadastra('Carlos Andre Oliveira','RVD4F12','Celular de outro Carlos');
+    await hb(outro); r=await hb(novo);
+    check('motorista de nome parecido, mas diferente, não derruba o celular do Carlos',r.status===200,r.status+' '+r.text.slice(0,120));
+    // Aparelho recém-aprovado que ainda não conectou não é derrubado pelo antigo que segue funcionando.
+    const troca=await cadastra('CARLOS ANDRÉ OLIVEIRA DE JESUS','RVD4F12','Terceiro celular do Carlos');
+    r=await hb(novo); check('aparelho em uso continua valendo enquanto o recém-aprovado não conecta',r.status===200,r.status+' '+r.text.slice(0,120));
+    check('  ...e o recém-aprovado continua ativo, esperando conectar',await ativos()==='Celular novo do Carlos, Terceiro celular do Carlos',await ativos());
+    r=await hb(troca); check('recém-aprovado conecta',r.status===200,r.status+' '+r.text.slice(0,120));
+    r=await hb(novo); check('  ...e o anterior cede a vez',r.status===401&&await ativos()==='Terceiro celular do Carlos',r.status+' '+await ativos());
+  }else console.log('  (pulado: precisa de acesso direto ao banco para simular aparelho parado)');
   if(db)await db.end();
   console.log('\nResultado: '+pass+' OK, '+fail+' falha(s)');
   process.exit(fail?1:0);
