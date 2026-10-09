@@ -1619,10 +1619,12 @@ function sswCteInfo(ctrc,prio=0){
 // segundo plano e fica pronto para a próxima consulta. Devolve o que já está em mãos.
 async function sswCteInfoMany(ctrcs,budgetMs=45000,prio=0){
   const list=[...new Set((ctrcs||[]).map(c=>String(c||'').toUpperCase().trim()).filter(Boolean))];
-  const jobs=list.map(c=>sswCteInfo(c,prio).catch(()=>null));
-  let timer;
-  await Promise.race([Promise.all(jobs),new Promise(r=>{timer=setTimeout(r,budgetMs)})]);
-  clearTimeout(timer);
+  if(prio>0){
+    const jobs=list.map(c=>sswCteInfo(c,prio).catch(()=>null));
+    let timer;
+    await Promise.race([Promise.all(jobs),new Promise(r=>{timer=setTimeout(r,budgetMs)})]);
+    clearTimeout(timer)
+  }   // prio 0: não lê nada do SSW, só aproveita o que já está na memória
   const out=new Map();let pendentes=0;
   for(const c of list){const v=sswCteCached(c);if(v)out.set(sswCteKey(c),v);else if(v===undefined)pendentes++}
   return{byKey:out,pendentes,total:list.length}
@@ -3832,10 +3834,23 @@ async function routeRefreshCachedDeliveryStatus(plan,target){
   }
 }
 
-async function buildRoutePlan(date='',romaneio='',prio=0){
+// Uma montagem por romaneio de cada vez: quem pedir a mesma rota enquanto ela está sendo
+// montada (o aplicativo do motorista insiste a cada 20 s) entra na mesma montagem, em vez de
+// disparar outra igual por cima.
+const ROUTE_PLAN_INFLIGHT=new Map();
+function buildRoutePlan(date='',romaneio='',prio=0){
+  const key=(date||spDateISO())+'|'+String(romaneio||'').trim()+'|'+(prio>0?1:0);
+  if(ROUTE_PLAN_INFLIGHT.has(key))return ROUTE_PLAN_INFLIGHT.get(key);
+  const job=buildRoutePlanNow(date,romaneio,prio).finally(()=>ROUTE_PLAN_INFLIGHT.delete(key));
+  ROUTE_PLAN_INFLIGHT.set(key,job);
+  return job
+}
+async function buildRoutePlanNow(date='',romaneio='',prio=0){
   const target=date||spDateISO(),cacheKey=target+'|'+String(romaneio||'').trim();
   const cached=ROUTE_PLAN_CACHE.get(cacheKey);
-  if(cached&&Date.now()-cached.at<10*60*1000)return await routeRefreshCachedDeliveryStatus(cached.value,target);
+  // Quem pediu a rota (prio>=1) não aceita uma guardada sem os endereços do SSW: monta de novo.
+  // O mapa do rastreio (prio 0) usa a que estiver guardada.
+  if(cached&&Date.now()-cached.at<10*60*1000&&(prio===0||!cached.faltaSsw))return await routeRefreshCachedDeliveryStatus(cached.value,target);
 
   let data;
   if(target===spDateISO()){
@@ -3942,10 +3957,12 @@ async function buildRoutePlan(date='',romaneio='',prio=0){
       console.log('ROTEIRIZADOR fallback de linhas ERRO: '+String(e.message||e))
     }
   }
-  // Endereço de entrega direto do SSW (XML do CT-e + tela 101). Começa já, para correr junto
-  // com as outras consultas; mais abaixo espera o que faltar: até 60 s quando um usuário pediu
-  // esta rota, 30 s quando é o mapa do rastreio montando rotas em segundo plano.
-  const cteJob=!ROTA_USA_ENDERECO_SSW?Promise.resolve(null):sswCteInfoMany(metas.map(m=>m.ctrc),prio?60000:30000,prio).catch(e=>{console.log('ROTEIRIZADOR XML CT-e ERRO: '+String(e?.message||e));return null});
+  // Endereço de entrega direto do SSW (XML do CT-e + tela 101). Só lê do SSW quando alguém pediu
+  // esta rota (exportar, simular, rota do dia do motorista): começa já, para correr junto com as
+  // outras consultas, e mais abaixo espera o que faltar, até 60 s. O mapa do rastreio (prio 0),
+  // que monta a rota de todos os motoristas sozinho, usa só o que já foi lido: na primeira
+  // publicação ele mandava ler todos os CT-es do dia de uma vez e deixava o SSW lento para o resto.
+  const cteJob=!ROTA_USA_ENDERECO_SSW?Promise.resolve(null):sswCteInfoMany(metas.map(m=>m.ctrc),60000,prio).catch(e=>{console.log('ROTEIRIZADOR XML CT-e ERRO: '+String(e?.message||e));return null});
   // Fonte prioritária para cliente/cidade: pendências atuais da própria opção 38.
   // Ela já traz CT-e/NF + cliente + cidade e evita depender do BI2 para localizar a rota.
   const pendingByLoose=new Map(),pendingByNf=new Map();
@@ -4077,13 +4094,13 @@ async function buildRoutePlan(date='',romaneio='',prio=0){
   });
   value.rejectedStops=[...(value.rejectedStops||[]),...rejectedStops];
   value.expectedDeliveries=Number(selected.qtdeCtrcs||metas.length||0);
-  // Se ainda há CT-e sendo lido no SSW, guarda a rota por 2 minutos só: a próxima consulta já vem completa.
-  ROUTE_PLAN_CACHE.set(cacheKey,{at:Date.now()-(cteInfo?.pendentes?8*60*1000:0),value});
+  value.enderecoSsw={ctes:cteInfo?.total||0,lidos:cteInfo?.byKey?.size||0};
+  ROUTE_PLAN_CACHE.set(cacheKey,{at:Date.now(),value,faltaSsw:!cteInfo||cteInfo.byKey.size<cteInfo.total});
   return await routeRefreshCachedDeliveryStatus(value,target)
 }
 
 
-async function buildTrackingPlannedRoute(date='',driver='',plate=''){
+async function buildTrackingPlannedRoute(date='',driver='',plate='',prio=0){
   const target=date||spDateISO(),driverKey=normKey(driver),plateKey=normPlate(plate);
   if(!driverKey&&!plateKey)throw Object.assign(new Error('Motorista ou placa não informado.'),{status:400});
 
@@ -4128,7 +4145,7 @@ async function buildTrackingPlannedRoute(date='',driver='',plate=''){
   const plans=[];
   for(const rom of candidates.slice(0,10)){
     try{
-      const p=await buildRoutePlan(target,rom);
+      const p=await buildRoutePlan(target,rom,prio);
       if(p?.stops?.length)plans.push(p)
     }catch(e){
       console.log('RASTREIO romaneio '+rom+' ERRO: '+String(e.message||e))
@@ -5287,7 +5304,8 @@ if(u.pathname==='/api/tracking/planned-route'&&req.method==='GET'){try{
   const x=await buildTrackingPlannedRoute(
     u.searchParams.get('date')||spDateISO(),
     u.searchParams.get('driver')||'',
-    u.searchParams.get('plate')||''
+    u.searchParams.get('plate')||'',
+    authUser.internal?1:0          // rota do dia pedida pelo aplicativo do motorista (ou simulação): lê do SSW
   );
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
@@ -5518,7 +5536,7 @@ if(req.method==='POST'&&u.pathname==='/api/roteirizador/recalcular'){try{
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/roteirizador/rota'){try{
   if(!dashboardHasAny(authUser,['dashboard','roteirizador','ssw_saidas','evolucao','tracking']))return dashboardDeny(res);
-  const x=await buildRoutePlan(u.searchParams.get('date')||'',u.searchParams.get('romaneio')||'',1);
+  const x=await buildRoutePlan(u.searchParams.get('date')||'',u.searchParams.get('romaneio')||'',u.searchParams.get('prioridade')==='1'?1:0);
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}

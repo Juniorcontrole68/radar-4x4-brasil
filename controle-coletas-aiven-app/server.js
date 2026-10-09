@@ -699,7 +699,7 @@ async function movitBuildDay(link){
   try{
     const qs=new URLSearchParams({date:today,driver:link.driver_name,plate:link.vehicle_plate||''});
     const r=await fetch('http://'+DASH_INTERNAL_HOST+':'+DASH_INTERNAL_PORT+'/api/tracking/planned-route?'+qs.toString(),{
-      headers:{'X-Internal-Key':INTERNAL_KEY,'Accept':'application/json'},signal:AbortSignal.timeout(90000)
+      headers:{'X-Internal-Key':INTERNAL_KEY,'Accept':'application/json'},signal:AbortSignal.timeout(150000)
     });
     const j=await r.json().catch(()=>({}));
     if(r.ok&&j.ok){

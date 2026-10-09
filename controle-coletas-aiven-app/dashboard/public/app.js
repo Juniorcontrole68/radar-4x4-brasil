@@ -2438,7 +2438,7 @@ async function calculateRoute(){
   const btn=$('#routeCalculate');if(btn){btn.disabled=true;btn.textContent='Calculando…'}
   if(status)status.textContent='Localizando clientes e calculando a menor sequência. Na primeira consulta isso pode levar alguns segundos…';
   try{
-    const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(date)+'&romaneio='+encodeURIComponent(rom),{cache:'no-store'});
+    const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(date)+'&romaneio='+encodeURIComponent(rom)+'&prioridade=1',{cache:'no-store'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível calcular a rota.');
     ROUTE_PLAN=j;ROUTE_MANUAL_ORDER=(j.originalOrder||[]).slice();
@@ -3747,7 +3747,7 @@ async function trackingExportGo(){
     for(let i=0;i<roms.length;i++){
       st.note='Lendo o romaneio '+roms[i]+' ('+(i+1)+' de '+roms.length+')… pode levar até um minuto.';trackingExportRender();
       try{
-        const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(st.date)+'&romaneio='+encodeURIComponent(roms[i])+'&t='+Date.now(),{cache:'no-store'});
+        const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(st.date)+'&romaneio='+encodeURIComponent(roms[i])+'&prioridade=1&t='+Date.now(),{cache:'no-store'});
         const p=await r.json().catch(()=>({}));
         if(!r.ok||p.ok===false||!Array.isArray(p.points))throw new Error(p.error||'rota não disponível');
         const owner=st.rows.find(x=>(Array.isArray(x.romaneios)?x.romaneios:[x.romaneio]).map(String).includes(roms[i]));
@@ -4527,7 +4527,7 @@ async function rtOptimize(){
   if(btn){btn.disabled=true;btn.textContent='Otimizando…'}
   if(status)status.textContent='Calculando sequência de teste com a mesma base de dados do SSW…';
   try{
-    const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(date)+'&romaneio='+encodeURIComponent(rom)+'&test=1&t='+Date.now(),{cache:'no-store'});
+    const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(date)+'&romaneio='+encodeURIComponent(rom)+'&test=1&prioridade=1&t='+Date.now(),{cache:'no-store'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível calcular a rota.');
     RT_PLAN=j;RT_ORDER=(j.optimizedOrder||[]).slice();
