@@ -244,11 +244,13 @@ const temPdf=!require('child_process').spawnSync('pdftotext',['-v']).error;
   check('  ...e o romaneio fica livre para lançar de novo pelo formulário',a.status===201,a);
 
   console.log('O romaneio muda ao longo do dia');
-  await mock('rom=AMR001057-1&qtde=6');
-  let r57=(await espera(rs=>rs.some(x=>x.romaneio==='1057-1'&&x.entregas===6),90000,2500)).find(x=>x.romaneio==='1057-1')||{};
-  check('romaneio ganhou uma entrega no SSW: o lançamento acompanha, sem perder valor e conferente',r57.entregas===6&&r57.valor===900.5&&r57.conferente==='MARIA'&&r57.calculo?.status!=='pendente',r57);
-  check('  ...ainda aberto, nenhuma entregue: romaneio não fechou',!r57.calculo?.fechado&&r57.realizadas===null,r57);
+  // (onde não há pdftotext o romaneio não é lido por inteiro e fica como "não completou": nada disto se aplica)
+  if(!temPdf)console.log('  (pulado: sem pdftotext neste ambiente)');
   if(temPdf){
+    await mock('rom=AMR001057-1&qtde=6');
+    let r57=(await espera(rs=>rs.some(x=>x.romaneio==='1057-1'&&x.entregas===6),90000,2500)).find(x=>x.romaneio==='1057-1')||{};
+    check('romaneio ganhou uma entrega no SSW: o lançamento acompanha, sem perder valor e conferente',r57.entregas===6&&r57.valor===900.5&&r57.conferente==='MARIA'&&r57.calculo?.status!=='pendente',r57);
+    check('  ...ainda aberto, nenhuma entregue: romaneio não fechou',!r57.calculo?.fechado&&r57.realizadas===null,r57);
     const cte=(nro,sit)=>fetch(M+'/__mock/cte?nro='+nro+'&sit='+encodeURIComponent(sit));
     // o motorista baixa duas entregas: o SSW passa a mostrar 3 sem ocorrência
     await cte(15326,'09/10/26 15:20 01-MERCADORIA ENTREGUE');await cte(15327,'09/10/26 15:40 01-MERCADORIA ENTREGUE');
