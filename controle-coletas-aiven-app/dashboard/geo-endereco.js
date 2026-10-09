@@ -121,9 +121,13 @@ function tokenMatch(a,b){
 // 0 a 1: quanto do nome procurado aparece no nome encontrado. O SSW corta nomes longos, então
 // conta o que foi pedido, não o que sobrou no mapa ("ROGERIO ZANAGA" bate com "Rogério Zanaga de
 // Camargo Neves").
+// Palavras que não identificam um lugar sozinhas: "SITIO" casava com qualquer "Sítio ..." do mapa.
+const GENERICAS=new Set(['SITIO','FAZENDA','CHACARA','ZONA','RURAL','BAIRRO','CENTRO','LOTE','LOTEAMENTO','QUADRA','GLEBA','MUNICIPAL','VICINAL','KM','SN','CASA','GALPAO','AREA','DISTRITO','CONDOMINIO','RESIDENCIAL','JARDIM','VILA','PARQUE']);
 function streetSimilarity(wanted,found){
   const a=streetTokens(wanted),b=streetTokens(found);
   if(!a.length||!b.length)return 0;
+  // sem "RUA/AVENIDA…" na frente e só com palavra genérica: não há nome de rua para comparar
+  if(!norm(wanted).split(' ').some(w=>TIPO_PALAVRAS.has(w))&&!a.some(w=>!GENERICAS.has(w)&&w.length>=3&&!/^\d+$/.test(w)))return 0;
   let hit=0;for(const w of a)if(b.some(x=>tokenMatch(w,x)))hit++;
   return hit/a.length
 }

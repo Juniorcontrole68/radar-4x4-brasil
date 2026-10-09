@@ -86,7 +86,7 @@ function xmlParty(xml,name,enderName){
   const e=xmlBlock(block,enderName);
   const cep=xmlValue(e,'CEP').replace(/\D/g,'');
   return{
-    nome:xmlValue(block.replace(e,''),'xNome'),doc:xmlValue(block,'CNPJ')||xmlValue(block,'CPF'),
+    nome:xmlValue(block.replace(e,''),'xNome'),doc:xmlValue(block,'CNPJ')||xmlValue(block,'CPF'),fone:xmlValue(block.replace(e,''),'fone').replace(/\D/g,''),
     logradouro:xmlValue(e,'xLgr'),numero:xmlValue(e,'nro'),complemento:xmlValue(e,'xCpl'),bairro:xmlValue(e,'xBairro'),
     cidade:xmlValue(e,'xMun'),uf:xmlValue(e,'UF'),codMunicipio:xmlValue(e,'cMun'),
     cep:cep.length===8?cep.slice(0,5)+'-'+cep.slice(5):''
@@ -203,28 +203,42 @@ function entregaNoComplemento(texto){
   const resto=m[1].replace(/^[\s:,\-]+/,'').trim();
   return TIPO_RUA.test(resto)?resto:''
 }
+// O SSW grava no XML um bloco "recebedor" que quase sempre é o próprio destinatário com os
+// campos cortados ("SITIO BAIRRO OL" para "SITIO BAIRRO OLARIA"). Só é outro local de entrega
+// quando o documento, a cidade, o número ou a rua são mesmo diferentes.
+function recebedorEhOutroLocal(dest,receb){
+  if(!receb?.logradouro)return false;
+  if(!dest?.logradouro)return true;
+  const dig=v=>String(v||'').replace(/\D/g,'');
+  if(dig(receb.doc)&&dig(dest.doc)&&dig(receb.doc)!==dig(dest.doc))return true;
+  if(semAcento(receb.cidade)!==semAcento(dest.cidade))return true;
+  if(dig(receb.numero)!==dig(dest.numero))return true;
+  const a=semAcento(receb.logradouro),b=semAcento(dest.logradouro);
+  return!(b.startsWith(a)||a.startsWith(b))
+}
 // Endereços possíveis de uma entrega, do mais confiável para o menos. Quem chama tenta achar
-// cada um no mapa, nesta ordem, e fica com o primeiro que o mapa reconhece.
+// cada um no mapa, nesta ordem. outroLocal=true: a entrega NÃO é no endereço do cadastro.
 //   info: {cte (XML), entrega e mapas (tela 101)}   romaneioEndereco: texto do romaneio (pode vir cortado)
 function enderecosEntrega(info,romaneioEndereco=''){
-  const cte=info?.cte||null,dest=cte?.destinatario||null,receb=cte?.recebedor||null,tela=info?.entrega||null;
+  const cte=info?.cte||null,dest=cte?.destinatario||null,tela=info?.entrega||null;
+  const receb=recebedorEhOutroLocal(dest,cte?.recebedor)?cte.recebedor:null;
   const mapa=info?.mapas?.ent||info?.mapas?.dest||null;
-  const cidade=receb?.cidade||dest?.cidade||tela?.cidade||mapa?.cidade||'',uf=receb?.uf||dest?.uf||tela?.uf||mapa?.uf||'';
+  const cidade=dest?.cidade||tela?.cidade||mapa?.cidade||receb?.cidade||'',uf=dest?.uf||tela?.uf||mapa?.uf||receb?.uf||'';
   const out=[],seen=new Set();
   const add=(fonte,endereco,numero='',extra={})=>{
     endereco=String(endereco||'').replace(/\s+/g,' ').trim();numero=String(numero||'').trim();
     if(endereco.length<4)return;
     const key=semAcento(endereco)+'|'+semAcento(numero);
     if(seen.has(key))return;seen.add(key);
-    out.push({fonte,endereco,numero,bairro:extra.bairro||'',cidade:extra.cidade||cidade,uf:extra.uf||uf,cep:extra.cep||''})
+    out.push({fonte,endereco,numero,bairro:extra.bairro||'',cidade:extra.cidade||cidade,uf:extra.uf||uf,cep:extra.cep||'',outroLocal:!!extra.outroLocal})
   };
-  // 1) recebedor: o CT-e diz que a entrega é em outro lugar
-  if(receb?.logradouro)add('XML do CT-e (recebedor)',receb.logradouro,receb.numero,{bairro:receb.bairro,cidade:receb.cidade,uf:receb.uf,cep:receb.cep});
+  // 1) recebedor diferente do destinatário: o CT-e diz que a entrega é em outro lugar
+  if(receb)add('XML do CT-e (recebedor)',receb.logradouro,receb.numero,{bairro:receb.bairro,cidade:receb.cidade,uf:receb.uf,cep:receb.cep,outroLocal:true});
   // 2) "endereço de entrega" escrito no complemento: usa a versão mais completa do texto
   // (a tela do SSW corta o complemento em 28 letras: cortado, ele pode casar com a rua errada)
   const telaCompl=String(tela?.complemento||'').length<26?tela?.complemento:'';
   const textos=[dest?.complemento,telaCompl,romaneioEndereco].map(entregaNoComplemento).filter(Boolean).sort((a,b)=>b.length-a.length);
-  if(textos[0])add('complemento (endereço de entrega)',textos[0],'');
+  if(textos[0])add('complemento (endereço de entrega)',textos[0],'',{outroLocal:true});
   // 3) endereço do destinatário
   if(dest?.logradouro)add('XML do CT-e (destinatário)',dest.logradouro,dest.numero,{bairro:dest.bairro,cep:dest.cep});
   // (com o XML em mãos, cadastro e tela só repetem o mesmo endereço, às vezes cortado)
@@ -233,9 +247,8 @@ function enderecosEntrega(info,romaneioEndereco=''){
     if(tela?.logradouro)add('tela do CT-e no SSW',tela.logradouro,tela.numero,{bairro:tela.bairro,cep:tela.cep})
   }
   // 4) o que já se usava: texto do romaneio
-  if(romaneioEndereco)add('romaneio',romaneioEndereco,'');
+  if(romaneioEndereco)add('romaneio',romaneioEndereco,'',{outroLocal:!!entregaNoComplemento(romaneioEndereco)});
   return out
 }
 
-
-module.exports={zipEntries,isZip,xmlFromDownload,parseCteXml,parseTela101,parseMapaCall,xmlValue,xmlBlock,entregaNoComplemento,enderecosEntrega};
+module.exports={zipEntries,isZip,xmlFromDownload,parseCteXml,parseTela101,parseMapaCall,xmlValue,xmlBlock,entregaNoComplemento,enderecosEntrega,recebedorEhOutroLocal};

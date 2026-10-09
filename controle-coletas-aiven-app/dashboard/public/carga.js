@@ -10,6 +10,7 @@ const num=(v,d=0)=>Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:d,
 const km=m=>Number.isFinite(Number(m))&&Number(m)>0?num(Number(m)/1000,1)+' km':'—';
 const tempo=s=>{s=Math.round(Number(s||0)/60);if(!s)return'—';const h=Math.floor(s/60),m=s%60;return h?h+' h '+String(m).padStart(2,'0')+' min':m+' min'};
 const digitos=v=>String(v||'').replace(/\D/g,'');
+const fone=v=>{const d=digitos(v);return d.length>=10?'('+d.slice(0,2)+') '+d.slice(2,d.length-4)+'-'+d.slice(-4):d};
 // Mesmo CT-e bipado (44 dígitos) ou digitado (AMR15326-5): chave para não repetir na lista.
 const codigoKey=c=>{const d=digitos(c);return d.length===44?'K'+d:'C'+String(c||'').toUpperCase().replace(/\s+/g,'').replace(/^([A-Z]{3})0+/,'$1')};
 const ctrcKey=c=>String(c||'').toUpperCase().replace(/\s+/g,'').replace(/^([A-Z]{3})0+/,'$1');
@@ -96,10 +97,10 @@ async function processar(){
   }
   rodando=false
 }
-const aprox=s=>['cidade','cliente','ssw-cliente','cep','cte-aproximado'].includes(String(s?.precision||''));
+const aprox=s=>['cidade','cliente','cep','cte-aproximado'].includes(String(s?.precision||''));
 function selo(s){
   const p=String(s?.precision||'');
-  const t=p==='endereco'?'endereço':p==='rua'?'rua (sem o número)':p==='cep'?'CEP':p==='ssw-cliente'?'ponto do cliente':'só a cidade';
+  const t=p==='endereco'?'endereço':p==='rua'?'rua (sem o número)':p==='cep'?'CEP':p==='ssw-cliente'?'ponto do cliente (SSW)':p==='cliente'?'aproximado: ver endereço':'só a cidade';
   return'<span class="precision-badge '+(aprox(s)?'approx':'')+'" title="'+esc(s.coordinateSource||'')+'">'+t+'</span>'
 }
 
@@ -209,7 +210,7 @@ function imprimir(){
   // No caminhão a última entrega entra primeiro: a folha vem na ordem de carregar.
   const linhas=lista.slice().reverse().map((x,i)=>{
     const s=x.stop,entrega=n-i;
-    return'<tr><td class="c big">'+(i+1)+'º</td><td class="c">'+entrega+'ª</td><td><b>'+esc(s.ctrc)+'</b><br><span>NF '+esc(s.nf||'—')+'</span></td><td><b>'+esc(s.destinatario)+'</b><br><span>'+esc([[s.endereco,s.numero].filter(Boolean).join(', '),s.bairro].filter(Boolean).join(' • '))+(s.complemento?' • Compl.: '+esc(s.complemento):'')+'</span></td><td>'+esc((s.cidade||'')+(s.uf?'/'+s.uf:''))+'</td><td class="r">'+(s.volumes?num(s.volumes):'—')+'</td><td class="r">'+(s.peso?num(s.peso,1):'—')+'</td><td class="c"><i></i></td></tr>'
+    return'<tr><td class="c big">'+(i+1)+'º</td><td class="c">'+entrega+'ª</td><td><b>'+esc(s.ctrc)+'</b><br><span>NF '+esc(s.nf||'—')+'</span></td><td><b>'+esc(s.destinatario)+'</b><br><span>'+esc([[s.endereco,s.numero].filter(Boolean).join(', '),s.bairro].filter(Boolean).join(' • '))+(s.complemento?' • Compl.: '+esc(s.complemento):'')+(s.telefone?' • Tel.: '+esc(fone(s.telefone)):'')+'</span></td><td>'+esc((s.cidade||'')+(s.uf?'/'+s.uf:''))+'</td><td class="r">'+(s.volumes?num(s.volumes):'—')+'</td><td class="r">'+(s.peso?num(s.peso,1):'—')+'</td><td class="c"><i></i></td></tr>'
   }).join('');
   const agora=new Date().toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'});
   const html='<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Carga '+esc(S.driver||'')+' '+esc(S.date.split('-').reverse().join('/'))+'</title><style>'+
@@ -308,7 +309,7 @@ function render(){
       const s=x.stop,pos=S.route?S.route.order.indexOf(x.id):-1,naRota=pos>=0;
       const numero=naRota?pos+1:(S.route?'+':ok.length-i);
       const end=[[s.endereco,s.numero].filter(Boolean).join(', '),s.bairro,(s.cidade||'')+(s.uf?'/'+s.uf:'')].filter(Boolean).join(' • ');
-      const extra=[s.complemento?'Compl.: '+esc(s.complemento):'',s.situacao?esc(s.situacao):''].filter(Boolean).join(' • ');
+      const extra=[s.complemento?'Compl.: '+esc(s.complemento):'',s.telefone?'Tel.: '+esc(fone(s.telefone)):'',s.situacao?esc(s.situacao):''].filter(Boolean).join(' • ');
       linhas.push('<div class="cg-row'+(naRota&&!S.stale?'':' unrouted')+'" data-cg-row="'+x.id+'"><div class="seq">'+numero+'</div>'+
         '<div><div class="who">'+esc(s.destinatario)+'</div><div class="meta"><b>'+esc(s.ctrc)+'</b> • NF '+esc(s.nf||'—')+' • '+esc(end)+' '+selo(s)+'</div>'+(extra?'<div class="meta">'+extra+'</div>':'')+'</div>'+
         '<div class="num"><small>Vol.</small>'+(s.volumes?num(s.volumes):'—')+'</div><div class="num"><small>Peso</small>'+(s.peso?num(s.peso,1)+' kg':'—')+'</div>'+

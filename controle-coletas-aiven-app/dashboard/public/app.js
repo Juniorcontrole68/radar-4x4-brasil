@@ -2302,8 +2302,8 @@ function routeRenderMap(){
   setTimeout(()=>ROUTE_MAP.invalidateSize(),80)
 }
 function routePrecision(p){
-  const approx=p.precision==='cidade'||p.precision==='cliente'||p.precision==='ssw-cliente';
-  const label=p.precision==='endereco'?'endereço':p.precision==='rua'?'rua':p.precision==='cep'?'CEP':p.precision==='ssw-cliente'?'ponto do cliente':p.precision==='cliente'?'cliente/cidade':'cidade';
+  const approx=p.precision==='cidade'||p.precision==='cliente';
+  const label=p.precision==='endereco'?'endereço':p.precision==='rua'?'rua':p.precision==='cep'?'CEP':p.precision==='ssw-cliente'?'ponto do cliente (SSW)':p.precision==='cliente'?'cliente/cidade':'cidade';
   return '<span class="precision-badge '+(approx?'approx':'')+'">'+label+'</span>'
 }
 function routeRenderBest(){

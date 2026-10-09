@@ -1519,14 +1519,15 @@ async function sswCteDaTela(session,tela,ctrc=''){
 // Campo da opção 101 que aceita a chave de 44 dígitos (código de barras do DACTE) e a ação
 // que dispara a busca. Lido do próprio formulário, para não depender de nome fixo.
 function ssw101CampoChave(formHtml){
+  // No SSW real (conferido em 09/10/2026) é o campo "Código de barras": t_cod_barras, ação BAR.
+  // Outros campos de 50 letras (cód. do cliente, pedido) NÃO servem: respondem "nenhum CTRC".
   const html=String(formHtml||'');
   const campos=[...html.matchAll(/<input\b([^>]*)>/gi)].map(m=>{const a=m[1]||'';const g=n=>(a.match(new RegExp('\\b'+n+'=["\']?([^"\'\\s>]+)','i'))||[])[1]||'';
-    return{name:g('name'),id:g('id'),type:g('type'),maxlength:Number(g('maxlength'))||0,attrs:a,pos:m.index}});
-  const c=campos.find(c=>c.name&&/^(text|tel|number)?$/i.test(c.type)&&/chave/i.test(c.name+' '+c.id))
-    ||campos.find(c=>c.name&&/^(text|tel|number)?$/i.test(c.type)&&c.maxlength>=44);
-  if(!c)return null;
-  const act=(c.attrs.match(/ajaxEnvia\(\s*['"]([^'"]+)['"]/i)||html.slice(c.pos,c.pos+900).match(/ajaxEnvia\(\s*['"]([^'"]+)['"]/i)||[])[1]||'';
-  return act?{name:c.name,act}:null
+    return{name:g('name'),id:g('id'),attrs:a,pos:m.index}});
+  const c=campos.find(c=>/cod_?barras?/i.test(c.name))||campos.find(c=>/barra/i.test(c.name+' '+c.id))||campos.find(c=>/chave/i.test(c.name+' '+c.id));
+  if(!c||!c.name)return null;
+  const act=(c.attrs.match(/ajaxEnvia\(\s*['"]([^'"]+)['"]/i)||html.slice(c.pos,c.pos+900).match(/ajaxEnvia\(\s*['"]([^'"]+)['"]/i)||[])[1]||'BAR';
+  return{name:c.name,act}
 }
 async function sswCteLerPorChave(session,key){
   const campo=ssw101CampoChave(session.formHtml);
@@ -1534,17 +1535,52 @@ async function sswCteLerPorChave(session,key){
   const params=new URLSearchParams(session.baseParams.toString());
   params.set(campo.name,key);params.set('act',campo.act);
   const tela=await sswPost101(session,params);
-  if(!/name=["']?seq_ctrc/i.test(tela.html))return null;
+  if(/Nenhum CTRC selecionado/i.test(tela.html))return'nao-achou';
   const lido=await sswCteDaTela(session,tela,'');
   return lido.ctrc?lido:null
 }
-// Chave geral: a rota do romaneio só passa a usar o endereço lido do SSW quando isto for true.
-// Fica false até a leitura ser conferida com dados reais pelo diagnóstico (/api/ssw/diagnostico-cte).
-const ROTA_USA_ENDERECO_SSW=false;
+// Chave geral: a rota do romaneio usa o endereço lido do SSW (tela 101 + XML do CT-e). Ligada em
+// 09/10/2026, depois de conferir com os 12 CT-es reais do romaneio AMR001060-0 pelo diagnóstico
+// (/api/ssw/diagnostico-cte). Para voltar ao texto do romaneio, basta pôr false.
+const ROTA_USA_ENDERECO_SSW=true;
 // O que o SSW guarda de cada CT-e (endereço não muda): fica 24 h na memória. Uma leitura por
-// vez, todas na mesma sessão da opção 101, para não abrir vários logins no SSW.
-const SSW_CTE_CACHE=new Map(),SSW_CTE_INFLIGHT=new Map();
-let SSW_CTE_CHAIN=Promise.resolve(),SSW_CTE_SESSION=null;
+// vez, todas na mesma sessão da opção 101, para não abrir vários logins no SSW nem disparar
+// consultas em paralelo. A fila tem prioridade: 2 = CT-e bipado (alguém esperando na tela),
+// 1 = rota pedida por um usuário, 0 = rotas montadas em segundo plano (mapa do rastreio).
+const SSW_CTE_CACHE=new Map(),SSW_CTE_INFLIGHT=new Map(),SSW_CTE_QUEUE=[];
+let SSW_CTE_RUNNING=false,SSW_CTE_SESSION=null;
+function sswCteEnqueue(key,prio,fn){
+  return new Promise((resolve,reject)=>{
+    const job={key,prio,fn,resolve,reject};
+    let i=SSW_CTE_QUEUE.findIndex(j=>j.prio<prio);
+    if(i<0)i=SSW_CTE_QUEUE.length;
+    SSW_CTE_QUEUE.splice(i,0,job);
+    sswCtePump()
+  })
+}
+// Quem já estava na fila e passou a ser urgente vai para a frente.
+function sswCtePromote(key,prio){
+  const i=SSW_CTE_QUEUE.findIndex(j=>j.key===key);
+  if(i<0||SSW_CTE_QUEUE[i].prio>=prio)return;
+  const [job]=SSW_CTE_QUEUE.splice(i,1);job.prio=prio;
+  let k=SSW_CTE_QUEUE.findIndex(j=>j.prio<prio);if(k<0)k=SSW_CTE_QUEUE.length;
+  SSW_CTE_QUEUE.splice(k,0,job)
+}
+async function sswCtePump(){
+  if(SSW_CTE_RUNNING)return;
+  SSW_CTE_RUNNING=true;
+  try{
+    while(SSW_CTE_QUEUE.length){
+      const job=SSW_CTE_QUEUE.shift();
+      try{job.resolve(await job.fn())}catch(e){job.reject(e)}
+      await new Promise(r=>setTimeout(r,120))      // respiro entre um CT-e e outro
+    }
+  }finally{SSW_CTE_RUNNING=false}
+}
+async function sswCteSession(){
+  if(!SSW_CTE_SESSION||Date.now()-SSW_CTE_SESSION.at>8*60*1000)SSW_CTE_SESSION={at:Date.now(),s:await deliveryProgramCreateSsw101Session()};
+  return SSW_CTE_SESSION.s
+}
 function sswCteKey(ctrc){return normCtrcLoose(ctrc)||String(ctrc||'').toUpperCase().trim()}
 function sswCteCached(ctrc){const h=SSW_CTE_CACHE.get(sswCteKey(ctrc));return h&&Date.now()-h.at<h.ttl?h.value:undefined}
 const SSW_CHAVE_CTRC=new Map();   // chave de 44 dígitos -> número do CT-e no SSW
@@ -1557,17 +1593,16 @@ function sswCteFromLido(lido,ctrc){
   if(!lido||!(lido.entrega||lido.cte||Object.keys(lido.mapas||{}).length||lido.resumo?.ctrc))return null;
   return{ctrc:lido.resumo?.ctrc||String(ctrc||'').toUpperCase(),cte:lido.cte,entrega:lido.entrega,mapas:lido.mapas||{},resumo:lido.resumo||{}}
 }
-function sswCteInfo(ctrc){
+function sswCteInfo(ctrc,prio=0){
   const key=sswCteKey(ctrc),hit=sswCteCached(ctrc);
   if(hit!==undefined)return Promise.resolve(hit);
   if(!internalSswConfigured()||!/^[A-Z]{3}0*\d+-\d$/i.test(String(ctrc||'').trim()))return Promise.resolve(null);
-  if(SSW_CTE_INFLIGHT.has(key))return SSW_CTE_INFLIGHT.get(key);
-  const job=(SSW_CTE_CHAIN=SSW_CTE_CHAIN.catch(()=>{}).then(async()=>{
+  if(SSW_CTE_INFLIGHT.has(key)){sswCtePromote(key,prio);return SSW_CTE_INFLIGHT.get(key)}
+  const job=sswCteEnqueue(key,prio,async()=>{
     let value=null;
     for(let attempt=0;attempt<2&&!value;attempt++){
       try{
-        if(!SSW_CTE_SESSION||Date.now()-SSW_CTE_SESSION.at>8*60*1000)SSW_CTE_SESSION={at:Date.now(),s:await deliveryProgramCreateSsw101Session()};
-        value=sswCteFromLido(await sswCteLer(SSW_CTE_SESSION.s,String(ctrc).toUpperCase().trim()),ctrc);
+        value=sswCteFromLido(await sswCteLer(await sswCteSession(),String(ctrc).toUpperCase().trim()),ctrc);
         if(!value)SSW_CTE_SESSION=null   // tela vazia: a sessão deve ter caído; tenta com outra
       }catch(e){
         SSW_CTE_SESSION=null;
@@ -1576,15 +1611,15 @@ function sswCteInfo(ctrc){
     }
     sswCteStore(ctrc,value);
     return value
-  })).finally(()=>SSW_CTE_INFLIGHT.delete(key));
+  }).finally(()=>SSW_CTE_INFLIGHT.delete(key));
   SSW_CTE_INFLIGHT.set(key,job);
   return job
 }
 // Lê vários CT-es esperando no máximo budgetMs. O que não der tempo continua sendo lido em
 // segundo plano e fica pronto para a próxima consulta. Devolve o que já está em mãos.
-async function sswCteInfoMany(ctrcs,budgetMs=45000){
+async function sswCteInfoMany(ctrcs,budgetMs=45000,prio=0){
   const list=[...new Set((ctrcs||[]).map(c=>String(c||'').toUpperCase().trim()).filter(Boolean))];
-  const jobs=list.map(c=>sswCteInfo(c).catch(()=>null));
+  const jobs=list.map(c=>sswCteInfo(c,prio).catch(()=>null));
   let timer;
   await Promise.race([Promise.all(jobs),new Promise(r=>{timer=setTimeout(r,budgetMs)})]);
   clearTimeout(timer);
@@ -1596,26 +1631,27 @@ async function sswCteInfoMany(ctrcs,budgetMs=45000){
 // vale para CT-e emitido agora há pouco); 3º o relatório 174 do BI2.
 function sswCtePorChave(key){
   const known=SSW_CHAVE_CTRC.get(key);
-  if(known)return sswCteInfo(known);
+  if(known)return sswCteInfo(known,2);
   if(!internalSswConfigured())return Promise.resolve(null);
   const inKey='K'+key;
   if(SSW_CTE_INFLIGHT.has(inKey))return SSW_CTE_INFLIGHT.get(inKey);
-  const job=(SSW_CTE_CHAIN=SSW_CTE_CHAIN.catch(()=>{}).then(async()=>{
+  const job=sswCteEnqueue(inKey,2,async()=>{
     let value=null;
     for(let attempt=0;attempt<2&&!value;attempt++){
       try{
-        if(!SSW_CTE_SESSION||Date.now()-SSW_CTE_SESSION.at>8*60*1000)SSW_CTE_SESSION={at:Date.now(),s:await deliveryProgramCreateSsw101Session()};
-        const lido=await sswCteLerPorChave(SSW_CTE_SESSION.s,key);
+        const session=await sswCteSession();
+        if(!ssw101CampoChave(session.formHtml))break;      // a opção 101 não tem busca pelo código de barras
+        const lido=await sswCteLerPorChave(session,key);
+        if(lido==='nao-achou')break;                        // o SSW respondeu: não existe CT-e com esta chave
         value=lido?sswCteFromLido(lido,lido.ctrc):null;
-        if(!value&&!ssw101CampoChave(SSW_CTE_SESSION.s.formHtml))break;   // a opção 101 não tem busca pela chave
-        if(!value&&attempt===0)SSW_CTE_SESSION=null
+        if(!value)SSW_CTE_SESSION=null                      // resposta estranha: a sessão deve ter caído
       }catch(e){SSW_CTE_SESSION=null;if(attempt)console.log('SSW CT-e pela chave ERRO: '+String(e?.message||e))}
     }
     if(value)sswCteStore(value.ctrc,value);
     return value
-  })).then(async value=>{
+  }).then(async value=>{
     if(value)return value;
-    // relatório 174: pasta do dia e, se preciso, o relatório geral
+    // relatório 174 (só traz os CT-es emitidos na véspera): pasta do dia e, se preciso, o geral
     const digits=v=>String(v||'').replace(/\D/g,'');
     const fontes=[async()=>{const x=await fetchBi2FolderDayParsed(174,'ctrc',spDateISO());return x.ok?(x.rows||[]):[]},async()=>parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text).rows||[]];
     for(const get of fontes){
@@ -1623,7 +1659,7 @@ function sswCtePorChave(key){
         const row=(await get()).find(r=>digits(routeField(r,[/^nro_chave_acesso_cte$/,/chave.*acesso.*cte/,/^chave_cte$/]))===key);
         if(!row)continue;
         const d=digits(row.numero_ctrc),sigla=String(row.sigla_ctrc||'').trim().toUpperCase();
-        if(/^[A-Z]{3}$/.test(sigla)&&d.length>=2){const v=await sswCteInfo(sigla+d.slice(0,-1)+'-'+d.slice(-1));if(v)return v}
+        if(/^[A-Z]{3}$/.test(sigla)&&d.length>=2){const v=await sswCteInfo(sigla+d.slice(0,-1)+'-'+d.slice(-1),2);if(v)return v}
       }catch(e){console.log('SSW CT-e pela chave (BI2) ERRO: '+String(e?.message||e))}
     }
     return null
@@ -1637,7 +1673,7 @@ async function routeBiparCte(codigo){
   const fail=(status,msg)=>Object.assign(new Error(msg),{status});
   let info=null,chave='';
   if(/^[A-Z]{3}0*\d+-\d$/.test(up)){
-    info=await sswCteInfo(up);
+    info=await sswCteInfo(up,2);
     if(!info)throw fail(404,'CT-e '+up+' não encontrado no SSW.')
   }else if(digits.length===44&&digits.length>=raw.replace(/\s/g,'').length-2){
     chave=digits;
@@ -1650,60 +1686,72 @@ async function routeBiparCte(codigo){
   const base=await routeBaseGeo();
   if(!base)throw new Error('Não foi possível localizar a base de Americana.');
   const loc=await routeLocateEntrega(info,'','','SP','');
-  const dest=info.cte?.recebedor?.logradouro?info.cte.recebedor:(info.cte?.destinatario||null);
+  const dest=info.cte?.destinatario||info.cte?.recebedor||null;
   const destinatario=info.cte?.destinatario?.nome||info.entrega?.nome||'Destinatário';
   const nfs=[...new Set([info.resumo?.nf,...(info.cte?.nfChaves||[]).map(c=>String(Number(c.slice(25,34))))].filter(Boolean))];
   const comum={
     source:'cte',barcode:chave||info.cte?.chave||'',originalOrder:0,ctrc:info.ctrc,nf:nfs.slice(0,4).join(', '),destinatario,
     complemento:String(dest?.complemento||info.entrega?.complemento||'').slice(0,120),
     volumes:Number(info.resumo?.volumes||0)||0,peso:Number(info.resumo?.peso||0)||0,valorNf:Number(info.resumo?.valorNf||0)||0,
-    previsao:info.resumo?.previsao||'',situacao:info.resumo?.situacao||'',observacoes:(info.cte?.observacoes||[]).join(' | ').slice(0,300)
+    previsao:info.resumo?.previsao||'',situacao:info.resumo?.situacao||'',telefone:String(dest?.fone||info.cte?.destinatario?.fone||'')
   };
   if(!loc)throw Object.assign(fail(422,'CT-e '+info.ctrc+' ('+destinatario+') encontrado, mas sem endereço ou cidade para localizar no mapa.'),{stop:comum});
   const radius=routeHaversine(base,loc);
   if(radius>ROUTE_MAX_RADIUS_METERS)throw fail(422,'O destino do CT-e '+info.ctrc+' fica a mais de 300 km da base ('+Math.round(radius/1000)+' km).');
   const v=loc.mostra||{};
   return{...comum,cidade:loc.cidade||dest?.cidade||'',uf:loc.uf||dest?.uf||'SP',
-    endereco:v.endereco||dest?.logradouro||'',numero:v.numero||'',bairro:v.outroLocal?(v.bairro||''):(v.bairro||dest?.bairro||''),cep:v.outroLocal?'':(v.cep||dest?.cep||''),enderecoFonte:v.fonte||'',
+    endereco:v.endereco||dest?.logradouro||'',numero:v.numero||'',bairro:v.outroLocal?(v.bairro||''):(v.bairro||dest?.bairro||''),cep:v.outroLocal?(v.cep||''):(v.cep||dest?.cep||''),enderecoFonte:v.fonte||'',
     precision:loc.precision,coordinateSource:loc.coordinateSource||'',query:loc.query||'',lat:loc.lat,lon:loc.lon,
     label:destinatario+((loc.cidade||dest?.cidade)?' • '+(loc.cidade||dest?.cidade):''),radiusKm:radius/1000}
 }
-// Acha a entrega no mapa: tenta os endereços do SSW do mais confiável para o menos e fica
-// com o primeiro que o mapa reconhece como rua da cidade certa. Sem rua, usa o ponto do
-// cliente no SSW; depois CEP; por último a sede do município.
+// Acha a entrega no mapa, com as regras tiradas dos CT-es reais (romaneio AMR001060-0):
+//  - entrega em outro local (recebedor diferente ou "endereço de entrega" no complemento): vale
+//    esse endereço; se o mapa não achar, a parada fica aproximada no ponto do cadastro;
+//  - entrega no endereço do cadastro: se o mapa acha rua E número, usa o mapa; se acha só a rua
+//    (avenida comprida, número fora do mapa), usa o ponto que o SSW guarda do cliente, que nos
+//    CT-es conferidos ficou a menos de 160 m do endereço; sem ponto no SSW, fica a rua;
+//  - sem rua nenhuma: ponto do SSW, depois CEP e, por último, a sede do município.
 async function routeLocateEntrega(info,romaneioEndereco,cidadePadrao,ufPadrao,cepPadrao){
   const cands=sswCte.enderecosEntrega(info,romaneioEndereco);
   const mostra=c=>{
     if(!c)return null;
     // texto livre (complemento, romaneio) precisa de limpeza; campos do XML já vêm separados
-    if(/^XML/.test(c.fonte))return{endereco:c.endereco,numero:c.numero,bairro:c.bairro,cep:c.cep,fonte:c.fonte};
+    if(/^XML/.test(c.fonte))return{endereco:c.endereco,numero:c.numero,bairro:c.bairro,cep:c.cep,fonte:c.fonte,outroLocal:c.outroLocal};
     const k=geoEnd.cleanSswAddress(c.endereco,c.numero);
     // entrega fora do endereço do cadastro: bairro e CEP do cadastro não valem para ela
-    return{endereco:k.street||c.endereco,numero:k.number||'',bairro:c.bairro||k.bairro||'',cep:c.cep,fonte:c.fonte,outroLocal:/^complemento/.test(c.fonte)}
+    return{endereco:k.street||c.endereco,numero:k.number||'',bairro:c.bairro||k.bairro||'',cep:c.cep,fonte:c.fonte,outroLocal:c.outroLocal}
   };
-  let entregaFora=false;
+  const cadastro=cands.find(c=>!c.outroLocal)||null,fora=cands.find(c=>c.outroLocal)||null;
+  const cid=cadastro?.cidade||cands[0]?.cidade||cidadePadrao,u=cadastro?.uf||cands[0]?.uf||ufPadrao||'SP';
+  const bruto=[info?.mapas?.ent,info?.mapas?.dest].find(p=>p&&p.lat!==null&&p.lat!==undefined)||null;
+  const ptSsw=bruto&&geoEnd.insideCity(bruto,cid,u)!==false?bruto:null;
+  const noPonto=(precision,fonte,c)=>({lat:ptSsw.lat,lon:ptSsw.lon,precision,displayName:ptSsw.endereco||'',query:'Ponto do cliente no SSW',coordinateSource:fonte,cidade:cid,uf:u,mostra:mostra(c)});
+  let melhorRua=null;
   for(const c of cands){
-    const cid=c.cidade||cidadePadrao,u=c.uf||ufPadrao||'SP';
-    if(!cid)continue;
-    const loc=await routeLocateAddress({endereco:c.endereco,numero:c.numero,cidade:cid,uf:u,cep:''}).catch(()=>null);
-    if(loc&&(loc.precision==='endereco'||loc.precision==='rua')){
-      // O cliente pediu entrega em outro endereço (complemento) e o mapa não achou esse endereço:
-      // o endereço do cadastro vira só uma aproximação, e o motorista lê o endereço da entrega.
-      if(entregaFora)return{lat:loc.lat,lon:loc.lon,precision:'ssw-cliente',displayName:loc.displayName,query:loc.query,
-        coordinateSource:'Endereço do cadastro (entrega em outro local, ver endereço)',cidade:cid,uf:u,mostra:mostra(cands[0])};
-      return{...loc,cidade:cid,uf:u,mostra:mostra(c)}
-    }
-    if(/^complemento/.test(c.fonte)||/recebedor/.test(c.fonte))entregaFora=true
+    const cc=c.cidade||cidadePadrao,cu=c.uf||ufPadrao||'SP';
+    if(!cc)continue;
+    if(fora&&!c.outroLocal)continue;     // a entrega é em outro local: o endereço do cadastro não serve como exato
+    const loc=await routeLocateAddress({endereco:c.endereco,numero:c.numero,cidade:cc,uf:cu,cep:''}).catch(()=>null);
+    if(!loc||(loc.precision!=='endereco'&&loc.precision!=='rua'))continue;
+    if(c.outroLocal)return{...loc,cidade:cc,uf:cu,mostra:mostra(c)};
+    if(loc.precision==='endereco')return{...loc,cidade:cc,uf:cu,mostra:mostra(c)};
+    if(!melhorRua)melhorRua={...loc,cidade:cc,uf:cu,mostra:mostra(c)};
+    if(ptSsw)break
   }
-  const cid=cands[0]?.cidade||cidadePadrao,u=cands[0]?.uf||ufPadrao||'SP';
-  const principal=mostra(cands[0]);
-  const pt=[info?.mapas?.ent,info?.mapas?.dest].find(p=>p&&p.lat!==null&&p.lat!==undefined);
-  if(pt&&geoEnd.insideCity(pt,cid,u)!==false)return{lat:pt.lat,lon:pt.lon,precision:'ssw-cliente',displayName:pt.endereco||'',query:'Ponto do cliente no SSW',
-    coordinateSource:'Ponto do cliente no SSW',cidade:cid,uf:u,mostra:principal};
+  if(fora){
+    // entrega em outro local e o mapa não achou: aproxima pelo cadastro, e o motorista lê o endereço da entrega
+    if(ptSsw)return noPonto('cliente','Ponto do cadastro (a entrega é em outro endereço)',fora);
+    const cep=cadastro?.cep||cepPadrao||'';
+    const loc=(cid||cep)?await routeLocateAddress({endereco:cadastro?.endereco||'',numero:cadastro?.numero||'',cidade:cid,uf:u,cep}).catch(()=>null):null;
+    return loc?{...loc,precision:(loc.precision==='endereco'||loc.precision==='rua')?'cliente':loc.precision,
+      coordinateSource:'Endereço do cadastro (a entrega é em outro endereço)',cidade:cid,uf:u,mostra:mostra(fora)}:null
+  }
+  if(ptSsw)return noPonto('ssw-cliente','Ponto do cliente no SSW',cadastro||cands[0]);
+  if(melhorRua)return melhorRua;
   const cep=cands.find(c=>c.cep)?.cep||cepPadrao||'';
   if(!cid&&!cep)return null;
   const loc=await routeLocateAddress({endereco:'',numero:'',cidade:cid,uf:u,cep}).catch(()=>null);
-  return loc?{...loc,cidade:cid,uf:u,mostra:principal}:null
+  return loc?{...loc,cidade:cid,uf:u,mostra:mostra(cadastro||cands[0])}:null
 }
 
 // Diagnóstico: para o CT-e pedido e os outros do mesmo romaneio, mostra o endereço que cada
@@ -3558,7 +3606,7 @@ async function routeFinalizePlan(stops,meta={}){
     durationSeconds:Number.isFinite(geo.durationSeconds)?geo.durationSeconds:0,
     outboundDistanceMeters:Number.isFinite(geo.distanceMeters)?geo.distanceMeters:0,rejectedStops:rejected,
     fixedEnd:hasFixedEnd,endIndex:hasFixedEnd?points.length-1:null,
-    approximateStops:clean.filter(x=>['cidade','cliente','ssw-cliente','manual-aproximado','cte-aproximado'].includes(x.precision)).length
+    approximateStops:clean.filter(x=>['cidade','cliente','manual-aproximado','cte-aproximado'].includes(x.precision)).length
   }
 }
 function routeReadJson(req,maxBytes=1024*1024){
@@ -3784,7 +3832,7 @@ async function routeRefreshCachedDeliveryStatus(plan,target){
   }
 }
 
-async function buildRoutePlan(date='',romaneio=''){
+async function buildRoutePlan(date='',romaneio='',prio=0){
   const target=date||spDateISO(),cacheKey=target+'|'+String(romaneio||'').trim();
   const cached=ROUTE_PLAN_CACHE.get(cacheKey);
   if(cached&&Date.now()-cached.at<10*60*1000)return await routeRefreshCachedDeliveryStatus(cached.value,target);
@@ -3895,8 +3943,9 @@ async function buildRoutePlan(date='',romaneio=''){
     }
   }
   // Endereço de entrega direto do SSW (XML do CT-e + tela 101). Começa já, para correr junto
-  // com as outras consultas; mais abaixo espera o que faltar, até 60 s contados daqui.
-  const cteJob=!ROTA_USA_ENDERECO_SSW?Promise.resolve(null):sswCteInfoMany(metas.map(m=>m.ctrc),60000).catch(e=>{console.log('ROTEIRIZADOR XML CT-e ERRO: '+String(e?.message||e));return null});
+  // com as outras consultas; mais abaixo espera o que faltar: até 60 s quando um usuário pediu
+  // esta rota, 30 s quando é o mapa do rastreio montando rotas em segundo plano.
+  const cteJob=!ROTA_USA_ENDERECO_SSW?Promise.resolve(null):sswCteInfoMany(metas.map(m=>m.ctrc),prio?60000:30000,prio).catch(e=>{console.log('ROTEIRIZADOR XML CT-e ERRO: '+String(e?.message||e));return null});
   // Fonte prioritária para cliente/cidade: pendências atuais da própria opção 38.
   // Ela já traz CT-e/NF + cliente + cidade e evita depender do BI2 para localizar a rota.
   const pendingByLoose=new Map(),pendingByNf=new Map();
@@ -3939,7 +3988,7 @@ async function buildRoutePlan(date='',romaneio=''){
     // Completa o BI2 com os dados detalhados do SSW. Alguns CT-es chegam no BI2
     // sem endereço/coordenada; o SSW ainda pode trazer cidade, CEP ou GPS.
     const r={...(detail||{}),...(primary||{})};
-    const info=cteInfo?.byKey?.get(sswCteKey(meta.ctrc))||null,xd=info?.cte?.recebedor?.logradouro?info.cte.recebedor:(info?.cte?.destinatario||null);
+    const info=cteInfo?.byKey?.get(sswCteKey(meta.ctrc))||null,xd=info?.cte?.destinatario||info?.cte?.recebedor||null;
     const destinatario=r.destinatario_nome||r.destinatario||routeField(r,[/(destinatario|destinat)_?nome/,/^destinatario$/])||pending?.cliente||enriched?.cliente||info?.cte?.destinatario?.nome||info?.entrega?.nome||('Entrega '+(idx+1));
     const cidade=r.cidade_destino||r.dest_cidade||r.cidade||routeField(r,[/(cidade).*(dest|destinat)/,/(dest|destinat).*cidade/,/^cidade_destino$/])||pending?.cidade||enriched?.cidade||xd?.cidade||info?.entrega?.cidade||'';
     const uf=r.uf_destino||r.dest_uf||r.uf||routeField(r,[/(uf).*(dest|destinat)/,/(dest|destinat).*uf/,/^uf_destino$/])||pending?.uf||enriched?.uf||xd?.uf||info?.entrega?.uf||'SP';
@@ -3959,7 +4008,7 @@ async function buildRoutePlan(date='',romaneio=''){
     let {cidade,parts}=prepared[idx];
     const visto=located[idx]?.mostra||null;
     // Endereço que o motorista lê e que vai para o aplicativo de navegação: o do SSW, limpo.
-    if(visto)parts={endereco:visto.endereco||parts.endereco,numero:visto.numero||'',bairro:visto.outroLocal?visto.bairro:(visto.bairro||parts.bairro),cep:visto.outroLocal?'':(visto.cep||parts.cep)};
+    if(visto)parts={endereco:visto.endereco||parts.endereco,numero:visto.numero||'',bairro:visto.outroLocal?visto.bairro:(visto.bairro||parts.bairro),cep:visto.outroLocal?(visto.cep||''):(visto.cep||parts.cep)};
     if(!cidade&&located[idx]?.cidade)cidade=located[idx].cidade;
     let query='',precision='cidade',geo=null,coordinateSource='';
     if(exactCoord){
@@ -4004,7 +4053,7 @@ async function buildRoutePlan(date='',romaneio=''){
     stops.push({
       originalOrder:idx+1,ctrc:meta.ctrc||'',nf:meta.nf||'',destinatario,cidade,uf,
       endereco:parts.endereco,numero:parts.numero,bairro:parts.bairro,cep:parts.cep,
-      complemento:String((info?.cte?.recebedor?.logradouro?info.cte.recebedor.complemento:info?.cte?.destinatario?.complemento)||'').slice(0,120),
+      complemento:String(info?.cte?.destinatario?.complemento||info?.entrega?.complemento||'').slice(0,120),telefone:String(info?.cte?.destinatario?.fone||''),
       enderecoFonte:visto?.fonte||'romaneio',volumes:Number(info?.resumo?.volumes||0)||0,peso:Number(info?.resumo?.peso||0)||0,
       precision,coordinateSource,query,lat:geo.lat,lon:geo.lon,radiusKm:radius/1000,label:destinatario+(cidade?' • '+cidade:''),
       entregue:!!detail?.entregue,
@@ -4028,8 +4077,8 @@ async function buildRoutePlan(date='',romaneio=''){
   });
   value.rejectedStops=[...(value.rejectedStops||[]),...rejectedStops];
   value.expectedDeliveries=Number(selected.qtdeCtrcs||metas.length||0);
-  // Se ainda há CT-e sendo lido no SSW, guarda a rota por 1 minuto só: a próxima consulta já vem completa.
-  ROUTE_PLAN_CACHE.set(cacheKey,{at:Date.now()-(cteInfo?.pendentes?9*60*1000:0),value});
+  // Se ainda há CT-e sendo lido no SSW, guarda a rota por 2 minutos só: a próxima consulta já vem completa.
+  ROUTE_PLAN_CACHE.set(cacheKey,{at:Date.now()-(cteInfo?.pendentes?8*60*1000:0),value});
   return await routeRefreshCachedDeliveryStatus(value,target)
 }
 
@@ -5469,7 +5518,7 @@ if(req.method==='POST'&&u.pathname==='/api/roteirizador/recalcular'){try{
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/roteirizador/rota'){try{
   if(!dashboardHasAny(authUser,['dashboard','roteirizador','ssw_saidas','evolucao','tracking']))return dashboardDeny(res);
-  const x=await buildRoutePlan(u.searchParams.get('date')||'',u.searchParams.get('romaneio')||'');
+  const x=await buildRoutePlan(u.searchParams.get('date')||'',u.searchParams.get('romaneio')||'',1);
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}

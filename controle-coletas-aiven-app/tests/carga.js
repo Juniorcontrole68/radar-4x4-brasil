@@ -18,19 +18,20 @@ const chave=n=>'35'+'2610'+'54582567000142'+'57'+'001'+String(n).padStart(9,'0')
   console.log('Bipar o CT-e');
   r=await fetch(B+'/api/roteirizador/bipar?codigo=AMR15326-5');check('sem login -> 401',r.status===401,'veio '+r.status);
   let a=await bipar(chave(14791)),s=a.j.stop||{};
-  check('chave de 44 dígitos acha o CT-e pela busca da opção 101',a.status===200&&s.ctrc==='AMR015326-5'&&s.barcode===chave(14791),a);
+  check('chave de 44 dígitos acha o CT-e pelo campo "Código de barras" da opção 101',a.status===200&&s.ctrc==='AMR015326-5'&&s.barcode===chave(14791),a);
   check('destinatário, nota, volumes e peso vêm do SSW',s.destinatario==='3056207 WAGNO ABREU DE JESUZ'&&s.nf==='525535'&&s.volumes===5&&s.peso===134.084,s);
   check('endereço de entrega escrito no complemento vira o endereço da parada',s.endereco==='RUA JULIA PERES APARECIDO'&&s.numero==='30'&&s.enderecoFonte==='complemento (endereço de entrega)',s);
   check('  ...sem levar bairro e CEP do cadastro (são de outro lugar)',s.bairro===''&&s.cep==='',{bairro:s.bairro,cep:s.cep});
   check('complemento inteiro (do XML, não o cortado da tela) e situação do CT-e',s.complemento==='SN ENDERECO ENTREGA RUA JULIA PERES APARECIDO NUM 30 BAIRRO'&&/85-SAIDA PARA ENTREGA/.test(s.situacao),s);
-  check('sem mapa na rede: cai no ponto do cliente no SSW, marcado como aproximado',s.precision==='ssw-cliente'&&Math.abs(s.lat+21.9777401)<1e-6&&Math.abs(s.lon+46.7894998)<1e-6&&s.cidade==='SAO JOAO DA BOA VISTA',s);
+  check('entrega em outro endereço que o mapa não achou: fica no ponto do cadastro, marcada como aproximada',s.precision==='cliente'&&/outro endereço/.test(s.coordinateSource)&&Math.abs(s.lat+21.9777401)<1e-6&&Math.abs(s.lon+46.7894998)<1e-6&&s.cidade==='SAO JOAO DA BOA VISTA',s);
   const antes=await posts();
   a=await bipar('amr 15326-5');
   check('mesmo CT-e digitado depois: responde da memória, sem voltar ao SSW',a.status===200&&a.j.stop.ctrc==='AMR015326-5'&&await posts()===antes,{antes,depois:await posts()});
   a=await bipar(chave(14791));
   check('mesma chave de novo: também da memória',a.status===200&&await posts()===antes);
   a=await bipar('AMR15327-3');const s2=a.j.stop||{};
-  check('número digitado: endereço do destinatário no XML, com bairro e CEP',a.status===200&&s2.endereco==='AVENIDA SAUDADE'&&s2.numero==='516'&&s2.bairro==='CENTRO'&&s2.cep==='13800-000'&&s2.enderecoFonte==='XML do CT-e (destinatário)',s2);
+  check('número digitado: endereço do destinatário no XML (inteiro, não o do recebedor cortado), com bairro, CEP e telefone',a.status===200&&s2.endereco==='AVENIDA SAUDADE'&&s2.numero==='516'&&s2.bairro==='CENTRO'&&s2.cep==='13800-000'&&s2.enderecoFonte==='XML do CT-e (destinatário)'&&s2.telefone==='1936236644',s2);
+  check('  ...entrega no próprio cadastro usa o ponto do cliente no SSW, sem marcar como aproximado',s2.precision==='ssw-cliente'&&Math.abs(s2.lat+22.42887)<1e-6,s2);
   check('  ...e a chave do XML fica guardada para o próximo bip',s2.barcode===chave(14792),s2.barcode);
   a=await bipar(chave(14793));const s3=a.j.stop||{};
   check('terceiro CT-e pela chave',a.status===200&&s3.ctrc==='AMR015328-1'&&s3.complemento==='GALPAO 2',s3);
@@ -48,7 +49,7 @@ const chave=n=>'35'+'2610'+'54582567000142'+'57'+'001'+String(n).padStart(9,'0')
   const plan=await r.json();
   check('rota sai da base e volta, com as 4 entregas',r.status===200&&plan.ok&&plan.optimizedOrder.length===4&&plan.points.length===5&&plan.optimizedDistanceMeters>100000,{status:r.status,erro:plan.error});
   check('cada ponto mantém a marca da carga (para a tela casar a ordem)',plan.points.slice(1).map(p=>p.cargaId).sort().join()==='c1,c2,c3,c4');
-  check('ponto do cliente e cidade contam como aproximados',plan.approximateStops===4,plan.approximateStops);
+  check('aproximadas: só a entrega em outro endereço e a que ficou na sede do município',plan.approximateStops===2,plan.approximateStops);
   const ordem=plan.optimizedOrder.map(i=>plan.points[i]);
   const corpo={date:new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}),driver_name:'Motorista Bipagem',vehicle_plate:'abc-1d23',
     plan:{points:[plan.points[0],...ordem],optimizedOrder:[1,2,3,4],geometry:plan.geometry,optimizedDistanceMeters:plan.optimizedDistanceMeters,durationSeconds:plan.durationSeconds}};
@@ -81,7 +82,7 @@ const chave=n=>'35'+'2610'+'54582567000142'+'57'+'001'+String(n).padStart(9,'0')
   const it=(d.itens||[])[0]||{};
   check('diagnóstico termina e acha o CT-e pela chave na opção 101',d.pronto===true&&!d.erro&&d.ctrc==='AMR015327-3'&&d.achadoPor?.opcao101==='AMR015327-3',{pronto:d.pronto,erro:d.erro,ctrc:d.ctrc,achadoPor:d.achadoPor});
   check('  ...abre o .zip e lê o destinatário do XML',it.arquivo?.dentro===chave(14792)+'-cte.xml'&&it.cte?.destinatario?.logradouro==='AVENIDA SAUDADE'&&it.xmlTexto?.startsWith('<?xml'),it.arquivo);
-  check('  ...mostra os endereços candidatos e o escolhido',Array.isArray(it.mapa?.candidatos)&&it.mapa.candidatos[0]?.fonte==='XML do CT-e (destinatário)'&&it.mapa.escolhido?.precisao==='ssw-cliente',it.mapa);
+  check('  ...mostra os endereços candidatos e o escolhido',Array.isArray(it.mapa?.candidatos)&&it.mapa.candidatos.length===1&&it.mapa.candidatos[0]?.fonte==='XML do CT-e (destinatário)'&&it.mapa.escolhido?.precisao==='ssw-cliente',it.mapa);
   check('  ...e sonda as telas DANFEs e Arquivos EDI',(it.sondagens||[]).map(x=>x.act).join()==='A,ARQ'&&/Nenhuma DANFE/.test(it.sondagens[0].texto),it.sondagens);
   r=await fetch(B+'/api/ssw/diagnostico-cte?codigo=xyz',{headers:H});check('código que não é CT-e: 400 com explicação',r.status===400&&/Não reconheci/.test(await r.text()));
   r=await fetch(B+'/dashboard/carga.css');check('folha de estilo sai como CSS (antes saía como HTML e o navegador recusava)',r.status===200&&/^text\/css/.test(r.headers.get('content-type')||''),r.headers.get('content-type'));

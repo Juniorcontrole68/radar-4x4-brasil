@@ -27,7 +27,8 @@ const chaveDe=c=>'35'+'2610'+'54582567000142'+'57'+'001'+String(c.nct).padStart(
 const porChave=k=>Object.entries(CTES).find(([,c])=>chaveDe(c)===k);
 const xmlDe=c=>'<?xml version="1.0" encoding="UTF-8"?><cteProc xmlns="http://www.portalfiscal.inf.br/cte"><CTe><infCte Id="CTe'+chaveDe(c)+'" versao="4.00"><ide><serie>1</serie><nCT>'+c.nct+'</nCT><xMunFim>'+c.cid+'</xMunFim><UFFim>'+c.uf+'</UFFim></ide><compl><xObs>LIGAR ANTES DE ENTREGAR</xObs></compl>'+
   '<rem><CNPJ>44530855000108</CNPJ><xNome>NAVAS E CIA LTDA</xNome><enderReme><xLgr>ROD. LINS/GUAIMBE</xLgr><nro>50</nro><xMun>LINS</xMun><CEP>16403266</CEP><UF>SP</UF></enderReme></rem>'+
-  '<dest><CNPJ>'+c.doc+'</CNPJ><xNome>'+c.nome+'</xNome><enderDest><xLgr>'+c.lgr+'</xLgr><nro>'+c.nro+'</nro>'+(c.cpl?'<xCpl>'+c.cpl+'</xCpl>':'')+'<xBairro>'+c.bairro+'</xBairro><xMun>'+c.cid+'</xMun><CEP>'+c.cep+'</CEP><UF>'+c.uf+'</UF></enderDest></dest>'+
+  '<receb><CNPJ>'+c.doc+'</CNPJ><xNome>'+c.nome+'</xNome><enderReceb><xLgr>'+c.lgr.slice(0,15)+'</xLgr><nro>'+c.nro+'</nro>'+(c.cpl?'<xCpl>'+c.cpl.slice(0,42)+'</xCpl>':'')+'<xBairro>'+c.bairro+'</xBairro><xMun>'+c.cid+'</xMun><CEP>'+c.cep+'</CEP><UF>'+c.uf+'</UF></enderReceb></receb>'+
+  '<dest><CNPJ>'+c.doc+'</CNPJ><xNome>'+c.nome+'</xNome><fone>1936236644</fone><enderDest><xLgr>'+c.lgr+'</xLgr><nro>'+c.nro+'</nro>'+(c.cpl?'<xCpl>'+c.cpl+'</xCpl>':'')+'<xBairro>'+c.bairro+'</xBairro><xMun>'+c.cid+'</xMun><CEP>'+c.cep+'</CEP><UF>'+c.uf+'</UF></enderDest></dest>'+
   '<infCTeNorm><infDoc><infNFe><chave>3526104453085500010855001'+String(c.nf).padStart(9,'0')+'1000000017</chave></infNFe></infDoc></infCTeNorm></infCte></CTe></cteProc>';
 function zipDe(nome,texto){
   const name=Buffer.from(nome),raw=Buffer.from(texto),data=zlib.deflateRawSync(raw);
@@ -37,9 +38,14 @@ function zipDe(nome,texto){
   return Buffer.concat([lh,name,data,ch,name,end])
 }
 const dv=(c,t)=>'<div class='+c+' style="left:1px;top:1px;">'+t+'</div> ';
-const FORM101='<html><body><form><input type="hidden" name="act" value=""><div class=texto>CTRC (com DV):</div><input type="text" name="t_ser_ctrc" value="" maxlength=3><input type="text" name="t_nro_ctrc" value="" maxlength=7><a href="#" onclick="ajaxEnvia(\'P1\', 0);return false;">&#9658;</a>'+
-  '<div class=texto>Nota Fiscal:</div><input type="text" name="t_nro_nf" value="" maxlength=9><a href="#" onclick="ajaxEnvia(\'P2\', 0);return false;">&#9658;</a>'+
-  '<div class=texto>Chave CT-e/NF-e:</div><input type="text" name="t_chave_fis" id="t_chave_fis" value="" maxlength=44 size=44><a href="#" onclick="ajaxEnvia(\'P7\', 0);return false;">&#9658;</a><input type="hidden" name="web_sess" value="abc"></form></body></html>';
+// Formulário inicial como o do SSW real: vários campos de 50 letras; só o "Código de barras"
+// (t_cod_barras, ação BAR) acha o CT-e pela chave de 44 dígitos.
+const campo=(rotulo,nome,max,act)=>'<div class=texto>'+rotulo+':</div><input type="text" name="'+nome+'" id="'+nome+'" value="" maxlength='+max+'><a href="#" onclick="ajaxEnvia(\''+act+'\', 1);return false;">&#9658;</a><a href="#" onclick="btnClose();return false;">&times;</a>';
+const FORM101='<html><body><form><input type="hidden" name="act" value="">'+
+  '<div class=texto>CTRC (sigla opc, n&uacute;mero sem DV):</div><input type="text" name="t_ser_ctrc" value="" maxlength=3><input type="text" name="t_nro_ctrc" id="t_nro_ctrc" value="" maxlength=6><a href="#" onclick="ajaxEnvia(\'P1\', 1);return false;">&#9658;</a>'+
+  campo('Nota Fiscal','t_nro_nf',10,'P2')+campo('Cod vol cliente/shipment','t_cod_cli',50,'P8')+campo('CT-e/NFS-e','t_nro_cte',10,'P4')+campo('N&deg; Pedido','t_nro_pedido',50,'P6')+campo('C&oacute;digo de barras','t_cod_barras',50,'BAR')+
+  '<input type="hidden" name="seq_ctrc" value=""><input type="hidden" name="FAMILIA" value="TST"><input type="hidden" name="web_sess" value="abc"></form></body></html>';
+const nenhum='<html><body>Nenhum CTRC selecionado para dados e per&iacute;odo informados</body></html>';
 const tela101=(nro,c)=>{
   const ctrc='AMR'+String(nro).padStart(6,'0')+'-'+c.dv,mapa=(id,end,comPonto)=>'<A id="'+id+'" class="baselnk" href="#" onclick="showmapa(\'end='+end+'&nome='+encodeURIComponent(c.nome)+(comPonto&&c.lat?'&olat='+c.lat+'&olng='+c.lon:'')+'&cid='+c.cid+'&uf='+c.uf+'\');return false;">mapa</A> ';
   return'<html><head><title>101 - Situa&ccedil;&atilde;o do CTRC</title></head><body><form><input type="hidden" name="act" value=""><input type="hidden" name="g_ctrc_ser_ctrc" value="AMR"><input type="hidden" name="g_ctrc_nro_ctrc" value="'+nro+'"><input type="hidden" name="seq_ctrc" value="'+(22000+Number(nro)%1000)+'"><input type="hidden" name="FAMILIA" value="TST"><input type="hidden" name="web_sess" value="abc"></form>'+
@@ -74,7 +80,8 @@ http.createServer(async(req,res)=>{
   if(u.pathname==='/bin/ssw0053'&&req.method==='POST'){
     const p=new URLSearchParams(body),act=p.get('act')||'';
     if(act==='P1'){const nro=Number(p.get('t_nro_ctrc')),c=CTES[nro];st.cte=c?nro:0;return send(200,c?tela101(nro,c):semCte)}
-    if(act==='P7'){const hit=porChave(p.get('t_chave_fis')||'');st.cte=hit?Number(hit[0]):0;return send(200,hit?tela101(hit[0],hit[1]):semCte)}
+    if(act==='BAR'){const hit=porChave(p.get('t_cod_barras')||'');st.cte=hit?Number(hit[0]):0;return send(200,hit?tela101(hit[0],hit[1]):nenhum)}
+    if(act==='P8'||act==='P6'||act==='P4'||act==='P2')return send(200,nenhum);
     const nro=Number(p.get('g_ctrc_nro_ctrc')),c=CTES[nro];
     if(act==='XML'&&c)return send(200,'<html><form><input type=hidden name=web_body value="'+encodeURIComponent('abrir("CTe_66480000'+nro+'.zip", "CTe_66480000'+nro+'.zip", 1, 1, "binary", 3)')+'"></form></html>');
     if(act==='A')return send(200,'<html><body>Nenhuma DANFE dispon&iacute;vel.</body></html>');

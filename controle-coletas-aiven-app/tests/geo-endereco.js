@@ -89,6 +89,15 @@ function fetchGravado(chamadas){return async u=>{const url=new URL(String(u));ch
   r=await geo.createLocator({fetch:async()=>respostaPhoton([]),geocodeCep:async()=>null}).locateAddress({endereco:'RUA X, 1',cidade:'Cidade Que Nao Existe',uf:'SP'});
   check('cidade desconhecida e nada no mapa: devolve vazio, não inventa posição',r===null,JSON.stringify(r));
 
+  // Achado no CT-e real AMR015326-5: "SITIO BAIRRO OLARIA" vira rua "SITIO", e o mapa devolvia
+  // o "Sítio Ypiacas" (12 km do cliente) como se fosse a rua.
+  const sitio=[{lat:-21.879048,lon:-46.733752,name:'Sítio Ypiacas',street:'Rua David de Carvalho',housenumber:'',city:'São João da Boa Vista',state:'São Paulo',type:'house'}];
+  check('"SITIO BAIRRO OLARIA": sobra só "SITIO" como nome de rua',geo.cleanSswAddress('SITIO BAIRRO OLARIA','3').street==='SITIO');
+  check('nome só com palavra genérica (SITIO) não casa com um sítio qualquer do mapa',geo.pickAddressResult(sitio,{street:'SITIO',number:'3',cidade:'SAO JOAO DA BOA VISTA',uf:'SP'})===null);
+  check('  ...nem FAZENDA, CHACARA ou ZONA RURAL',geo.streetSimilarity('FAZENDA','Fazenda Santa Rita')===0&&geo.streetSimilarity('CHACARA','Chácara Bela Vista')===0&&geo.streetSimilarity('ZONA RURAL','Zona Rural')===0);
+  check('com um nome que identifica, continua casando',geo.streetSimilarity('SITIO YPIACAS','Sítio Ypiacas')===1&&geo.streetSimilarity('FAZENDA SANTA RITA','Fazenda Santa Rita')===1&&geo.streetSimilarity('RUA DO SITIO VELHO','Rua do Sítio Velho')===1);
+  check('ruas de verdade não são afetadas',geo.streetSimilarity('AVENIDA EMILIA MARCHI MARTINI','Avenida Emília Marchi Martini')===1&&geo.streetSimilarity('RUA JULIA PERES APARECIDO','Rua Julia Peres Aparecido')===1&&geo.streetSimilarity('RUA JARDIM','Rua Jardim')===1&&geo.streetSimilarity('AVENIDA DO PARQUE','Avenida do Parque')===1);
+
   console.log('\nResultado: '+pass+' OK, '+fail+' falha(s)');
   process.exit(fail?1:0)
 })().catch(e=>{console.error('ERRO NO TESTE',e);process.exit(2)});
