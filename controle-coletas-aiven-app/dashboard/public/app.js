@@ -2303,7 +2303,7 @@ function routeRenderMap(){
 }
 function routePrecision(p){
   const approx=p.precision==='cidade'||p.precision==='cliente';
-  const label=p.precision==='endereco'?'endereço':p.precision==='cep'?'CEP':p.precision==='cliente'?'cliente/cidade':'cidade';
+  const label=p.precision==='endereco'?'endereço':p.precision==='rua'?'rua':p.precision==='cep'?'CEP':p.precision==='cliente'?'cliente/cidade':'cidade';
   return '<span class="precision-badge '+(approx?'approx':'')+'">'+label+'</span>'
 }
 function routeRenderBest(){
@@ -3124,7 +3124,8 @@ function trackingVisitWindow(stop,history,allowCepApprox=false,baixaAt=null){
     ...p,_distanceKm:trackingHaversineKm({latitude:p._lat,longitude:p._lon},stop)
   })).filter(p=>Number.isFinite(p._distanceKm));
 
-  const isCep=precision==='cep'||source.includes('cep');
+  // 'rua': achou a via mas não a porta. Como o CEP, não serve para confirmar visita a 100 metros.
+  const isCep=precision==='cep'||precision==='rua'||source.includes('cep');
   if(!isCep){
     let arrival=null,departure=null,inside=false;
     if(valid.length){
@@ -3220,7 +3221,7 @@ function trackingAnalyzePlan(row,plan,history){
       else{statusKey='ok';statusLabel=diffMin>=0?'Baixa '+diffMin+' min após chegada':'Baixa quase simultânea'}
     }else if(arrival&&!sswDelivered){statusKey='warn';statusLabel='Visita GPS • aguardando baixa'}
     else if(!arrival&&sswDelivered){statusKey='ok';statusLabel='Visita confirmada pela baixa SSW'}
-    const coordSource=String(s.coordinateSource||'').trim()||(String(s.precision||'').toLowerCase()==='cep'?'CEP':(String(s.precision||'').toLowerCase()==='cidade'?'Cidade aproximada':'Endereço'));
+    const coordSource=String(s.coordinateSource||'').trim()||(String(s.precision||'').toLowerCase()==='cep'?'CEP':(String(s.precision||'').toLowerCase()==='cidade'?'Cidade aproximada':(String(s.precision||'').toLowerCase()==='rua'?'Rua (sem o número)':'Endereço')));
     out.push({
       driver:row.driver_name||'',plate:row.vehicle_plate||'',romaneios:plan.romaneios||[plan.romaneio].filter(Boolean),
       plannedPos:pos+1,pointIndex,ctrc:s.ctrc||'',nf:s.nf||'',client:s.destinatario||s.label||('Entrega '+(pos+1)),

@@ -339,6 +339,32 @@ async function routePublicViaCep(raw){
     return null
   }
 }
+// Busca de endereço no Photon, limitada ao Brasil. Devolve [] quando não acha ou quando o
+// serviço falha (quem chama segue para a próxima fonte).
+async function routePublicPhoton(query,near=null,limit=8){
+  try{
+    const u=new URL('https://photon.komoot.io/api/');
+    u.searchParams.set('q',query);u.searchParams.set('limit',String(limit));
+    u.searchParams.set('bbox','-74.1,-33.9,-34.7,5.4');
+    if(near){u.searchParams.set('lat',String(near.lat));u.searchParams.set('lon',String(near.lon))}
+    const r=await fetch(u,{headers:{'User-Agent':'MOVIT-Rotas/1.3 (+https://controle-coletas-jr.onrender.com)'},signal:AbortSignal.timeout(7000)});
+    if(!r.ok){console.warn('MOVIT Photon falhou','HTTP '+r.status);return[]}
+    const j=await r.json().catch(()=>null);
+    const hasNumber=/\d/.test(String(query));
+    const rows=(Array.isArray(j?.features)?j.features:[]).filter(f=>!f?.properties?.countrycode||String(f.properties.countrycode).toUpperCase()==='BR').map(f=>{
+      const p=f.properties||{},lat=Number(f?.geometry?.coordinates?.[1]),lon=Number(f?.geometry?.coordinates?.[0]);
+      const road=String(p.street||(p.type==='street'?p.name:'')||'');
+      const city=String(p.city||p.town||p.village||(p.type==='city'?p.name:'')||''),state=String(p.state||'');
+      const label=[p.name&&p.name!==road?p.name:'',[road,p.housenumber].filter(Boolean).join(', '),p.district||p.locality||'',city,state,p.postcode||'','Brasil'].filter((v,i,a)=>v&&a.indexOf(v)===i).join(', ');
+      return{lat,lon,label,road,city,state,precision:p.housenumber?'number':'street',source:'Photon',approximate:!p.housenumber&&hasNumber,
+        _rank:(p.type==='house'?0:p.type==='street'?1:2),_distance:near&&Number.isFinite(lat)&&Number.isFinite(lon)?routePublicHaversine(near,{lat,lon}):0}
+    }).filter(x=>Number.isFinite(x.lat)&&Number.isFinite(x.lon));
+    // Endereços (porta, depois rua) antes de bairros e cidades; com posição conhecida, os mais próximos primeiro.
+    rows.sort((a,b)=>a._rank-b._rank||a._distance-b._distance);
+    rows.forEach(x=>{delete x._rank;delete x._distance});
+    return rows
+  }catch(e){console.warn('MOVIT Photon falhou',String(e?.message||e));return[]}
+}
 async function routePublicGeocode(q,nearLat=null,nearLon=null,allMatches=false){
   const raw=String(q||'').trim().replace(/\s+/g,' ');
   if(raw.length<4)throw Object.assign(new Error('Informe ao menos o nome da rua.'),{status:400});
@@ -423,6 +449,12 @@ async function routePublicGeocode(q,nearLat=null,nearLon=null,allMatches=false){
       return[];
     }
   }
+
+  // 1ª fonte: Photon (dados do OpenStreetMap, tolera erro de digitação). O Nominatim, que era a
+  // única fonte, passou a recusar as consultas deste servidor e toda busca voltava
+  // "Não localizei essa via"; ele continua abaixo como segunda opção.
+  const viaPhoton=await routePublicPhoton(raw,hasNear?{lat:nlat,lon:nlon}:null,allMatches?20:8);
+  if(viaPhoton.length)return viaPhoton;
 
   if(allMatches){
     const merged=[],seen=new Set();

@@ -1,0 +1,17 @@
+{
+ "_o_que_e":"Respostas reais do Photon (photon.komoot.io) gravadas em 09/10/2026 para os 12 endereços do romaneio AMR001060-0, já limpos. Cada resultado: [lon, lat, país, tipo, nome, rua, número, cidade, bairro, estado].",
+ "respostas":{
+  "AVENIDA SAUDADE 516, MOGI MIRIM":[[-46.95915,-22.4215,"BR","street","Avenida da Saudade","","","Mogi Mirim","Tucura","São Paulo"],[-46.95665,-22.42887,"BR","street","Avenida da Saudade","","","Mogi Mirim","Centro","São Paulo"],[-46.95609,-22.42929,"BR","street","Avenida da Saudade","","","Mogi Mirim","Centro","São Paulo"],[-46.95796,-22.424,"BR","street","Avenida da Saudade","","","Mogi Mirim","Centro","São Paulo"]],
+  "AVENIDA PIERINA UZAM BARUFI 540, MOGI GUACU":[[-46.98851,-22.20276,"BR","street","Avenida Pierina Uzam Barufi","","","Mogi Guaçu","Mogi Guaçu","São Paulo"]],
+  "RUA CONCEICAO TRAVAGLIA BLANCO 65, MOGI GUACU":[[-46.94411,-22.32128,"BR","street","Rua Conceição Travaglia Blanco","","","Mogi Guaçu","Jardim Santa Cruz","São Paulo"]],
+  "AVENIDA EMILIA MARCHI MARTINI 2790, MOGI GUACU":[[-46.94283,-22.36213,"BR","street","Avenida Emília Marchi Martini","","","Mogi Guaçu","Cruzeiro","São Paulo"],[-46.93977,-22.36052,"BR","street","Avenida Emília Marchi Martini","","","Mogi Guaçu","Jardim Presidente","São Paulo"],[-46.92795,-22.35532,"BR","street","Avenida Emília Marchi Martini","","","Mogi Guaçu","Jardim América","São Paulo"],[-46.92378,-22.35455,"BR","street","Avenida Emília Marchi Martini","","","Mogi Guaçu","Jardim Esplanada","São Paulo"],[-46.91959,-22.35344,"BR","street","Avenida Emília Marchi Martini","","","Mogi Guaçu","Jardim Esplanada","São Paulo"],[-46.93596,-22.35786,"BR","street","Avenida Emília Marchi Martini","","","Mogi Guaçu","Jardim Almira","São Paulo"]],
+  "AVENIDA MARIA PALIARI CASSIMIRO 12, MOGI GUACU":[],
+  "RUA MARECHAL FLORIANO PEIXOTO 620, AGUAI":[[-46.97421,-22.05724,"BR","street","Rua Marechal Floriano Peixoto","","","Aguaí","Jardim Nova Aguaí","São Paulo"]],
+  "RUA JULIA PERES APARECIDO 30, SAO JOAO DA BOA VISTA":[[-46.79804,-21.95601,"BR","street","Rua Julia Peres Aparecido","","","São João da Boa Vista","Vila Valentin","São Paulo"]],
+  "RUA CORONEL ELTEVAO ELPIDIO ROMAO 173, SANTO ANTONIO DO JARDIM":[[-46.68424,-22.11458,"BR","street","Rua Coronel Estêvão Elpídio Romão","","","Santo Antônio do Jardim","Santo Antônio do Jardim","São Paulo"]],
+  "AVENIDA MONTE SIAO 519, AGUAS DE LINDOIA":[[-46.6199,-22.47154,"BR","house","Casa Vizil","Avenida Monte Sião","519","Águas de Lidóia","Bela Vista","São Paulo"]],
+  "AVENIDA DOUTOR REBOUCAS 268, SOCORRO":[[-46.52836,-22.597,"BR","street","Avenida Doutor Rebouças","","","Socorro","Centro","São Paulo"],[-46.52677,-22.59692,"BR","house","Unimed Amparo - Unidade Socorro","Avenida Doutor Rebouças","","Socorro","Jardim Carvalho","São Paulo"]],
+  "RUA CANANEIA 210, PEDREIRA":[[-46.89544,-22.72976,"BR","house","Triunfo materiais elétricos","Rua Cananeia","210","Pedreira","Jardim Triunfo 78","São Paulo"]],
+  "AVENIDA ROGERIO ZANAGA 272, AMERICANA":[[-47.37212,-22.70555,"BR","street","Avenida Rogério Zanaga de Camargo Neves","","","Americana","Jardim Mário Covas","São Paulo"],[-47.30315,-22.7035,"BR","house","","Avenida Graciliano Ramos;Avenida Marginal","272","Americana","Antonio Zanaga II","São Paulo"],[-47.2976,-22.71016,"BR","house","Auto Posto Galpão Zanaga","Avenida Henrique Roberto Guilherme Alberto Brechmacher","","Americana","Jardim Brasil","São Paulo"]]
+ }
+}

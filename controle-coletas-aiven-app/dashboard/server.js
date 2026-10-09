@@ -2750,6 +2750,28 @@ function routeHaversine(a,b){
   const h=Math.sin(dlat/2)**2+Math.cos(la1)*Math.cos(la2)*Math.sin(dlon/2)**2;
   return 2*R*Math.asin(Math.sqrt(h))
 }
+// ---------------------------------------------------------------- endereço do cliente no mapa
+// Limpeza do endereço do SSW, sede do município, consulta aos serviços de mapa e conferência
+// "o ponto fica na cidade certa": tudo em geo-endereco.js (testado em tests/geo-endereco.js).
+const geoEnd=require('./geo-endereco.js');
+// Nominatim aceita 1 consulta por segundo: todas passam pela mesma fila.
+function routeNominatimSlot(fn){
+  return (ROUTE_GEO_QUEUE=ROUTE_GEO_QUEUE.catch(()=>{}).then(async()=>{
+    const wait=Math.max(0,1100-(Date.now()-ROUTE_GEOCODE_LAST));
+    if(wait)await new Promise(r=>setTimeout(r,wait));
+    ROUTE_GEOCODE_LAST=Date.now();
+    return fn()
+  }))
+}
+const geoLoc=geoEnd.createLocator({
+  fetch:(...a)=>fetch(...a),
+  geocodeCep:cep=>routeGeocodeCep(cep,null,null),
+  nominatimSlot:routeNominatimSlot,
+  log:m=>console.log(m)
+});
+const geoProviderAvailable=geoLoc.providerAvailable,geoProviderResult=geoLoc.providerResult;
+const routeLocateAddress=geoLoc.locateAddress;
+
 async function routeGeocodeCep(cep,center=null,maxRadiusMeters=null){
   const digits=String(cep||'').replace(/\D/g,'');
   if(digits.length!==8)return null;
@@ -2778,11 +2800,25 @@ async function routeGeocode(query,center=null,maxRadiusMeters=null){
   const centerKey=center&&Number.isFinite(center.lat)&&Number.isFinite(center.lon)?('|'+center.lat.toFixed(3)+'|'+center.lon.toFixed(3)+'|'+Number(maxRadiusMeters||0)):'';
   const key=routeKeyNorm(q)+centerKey;
   if(ROUTE_GEO_CACHE.has(key))return ROUTE_GEO_CACHE.get(key);
+  // "Cidade, UF, Brasil": responde com a sede do município da tabela, sem consultar serviço.
+  // É imediato e não confunde a cidade com um bairro de mesmo nome em outra cidade.
+  const sede=geoEnd.cityQueryCentroid(q);
+  if(sede){
+    const v={lat:sede.lat,lon:sede.lon,displayName:q,city:sede.cidade,state:sede.uf,source:'tabela de municípios'};
+    if(center&&Number.isFinite(center.lat)&&Number.isFinite(center.lon)){
+      v.distanceFromBaseMeters=routeHaversine(center,v);
+      if(Number(maxRadiusMeters)>0&&v.distanceFromBaseMeters>Number(maxRadiusMeters))return null
+    }
+    ROUTE_GEO_CACHE.set(key,v);
+    return v
+  }
+  if(!geoProviderAvailable('nominatim'))return null;
   if(ROUTE_GEO_INFLIGHT.has(key))return ROUTE_GEO_INFLIGHT.get(key);
 
   // Nominatim limita chamadas em sequência. Serializamos as consultas e
   // compartilhamos a mesma promessa entre rotas que procuram a mesma cidade.
   const job=(ROUTE_GEO_QUEUE=ROUTE_GEO_QUEUE.catch(()=>{}).then(async()=>{
+    if(!geoProviderAvailable('nominatim'))return null;
     const wait=Math.max(0,1100-(Date.now()-ROUTE_GEOCODE_LAST));
     if(wait)await new Promise(r=>setTimeout(r,wait));
     ROUTE_GEOCODE_LAST=Date.now();
@@ -2790,7 +2826,8 @@ async function routeGeocode(query,center=null,maxRadiusMeters=null){
     u.searchParams.set('format','jsonv2');u.searchParams.set('limit','5');u.searchParams.set('addressdetails','1');u.searchParams.set('countrycodes','br');u.searchParams.set('q',q);
     try{
       const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Roteirizador/1.0 (operacao interna)','Accept-Language':'pt-BR,pt;q=0.9'},signal:AbortSignal.timeout(12000)});
-      const j=await r.json().catch(()=>[]);
+      const j=await r.json().catch(()=>null);
+      geoProviderResult('nominatim',!r.ok||!Array.isArray(j)?'err':(j.length?'ok':'empty'),r.ok?'':'HTTP '+r.status);
       if(r.ok&&Array.isArray(j)&&j.length){
         let list=j.map(x=>({
           lat:Number(x.lat),lon:Number(x.lon),displayName:x.display_name||q,
@@ -2804,7 +2841,7 @@ async function routeGeocode(query,center=null,maxRadiusMeters=null){
         if(v)ROUTE_GEO_CACHE.set(key,v);
         return v
       }
-    }catch{}
+    }catch(e){geoProviderResult('nominatim','err',String(e?.name||e?.message||e))}
     return null
   })).finally(()=>ROUTE_GEO_INFLIGHT.delete(key));
   ROUTE_GEO_INFLIGHT.set(key,job);
@@ -3427,8 +3464,10 @@ async function buildRoutePlan(date='',romaneio=''){
   const baseGeo=await routeBaseGeo();
   if(!baseGeo)throw new Error('Não foi possível localizar a base de Americana.');
   const stops=[],rejectedStops=[];
-  for(let idx=0;idx<metas.length;idx++){
-    const meta=metas[idx],lk=normCtrcLoose(meta.ctrc),nf=normNf(meta.nf);
+  // 1ª passada: junta os dados de cada entrega. 2ª: localiza todos os endereços de uma vez
+  // (as consultas ao mapa rodam em paralelo). 3ª: monta as paradas na ordem do romaneio.
+  const prepared=metas.map((meta,idx)=>{
+    const lk=normCtrcLoose(meta.ctrc),nf=normNf(meta.nf);
     const detail=detailByLoose.get(lk)||(!lk?detailByNf.get(nf):null)||null;
     const primary=byLoose.get(lk)||byNf.get(nf)||meta.__row||null;
     const pending=pendingByLoose.get(lk)||pendingByNf.get(nf)||null;
@@ -3439,28 +3478,21 @@ async function buildRoutePlan(date='',romaneio=''){
     const destinatario=r.destinatario_nome||r.destinatario||routeField(r,[/(destinatario|destinat)_?nome/,/^destinatario$/])||pending?.cliente||enriched?.cliente||('Entrega '+(idx+1));
     const cidade=r.cidade_destino||r.dest_cidade||r.cidade||routeField(r,[/(cidade).*(dest|destinat)/,/(dest|destinat).*cidade/,/^cidade_destino$/])||pending?.cidade||enriched?.cidade||'';
     const uf=r.uf_destino||r.dest_uf||r.uf||routeField(r,[/(uf).*(dest|destinat)/,/(dest|destinat).*uf/,/^uf_destino$/])||pending?.uf||enriched?.uf||'SP';
-    const parts=routeAddressParts(r,meta);
-    const exactCoord=routeSswCoordinates(r,meta);
+    return{meta,detail,pending,destinatario,cidade,uf,parts:routeAddressParts(r,meta),exactCoord:routeSswCoordinates(r,meta)}
+  });
+  const located=await Promise.all(prepared.map(p=>(p.exactCoord||!(p.parts.endereco||p.parts.cep))?null
+    :routeLocateAddress({endereco:p.parts.endereco,numero:p.parts.numero,cidade:p.cidade,uf:p.uf,cep:p.parts.cep}).catch(e=>{console.log('GEO localizar ERRO: '+String(e?.message||e));return null})));
+  for(let idx=0;idx<metas.length;idx++){
+    const {meta,detail,pending,destinatario,cidade,uf,parts,exactCoord}=prepared[idx];
     let query='',precision='cidade',geo=null,coordinateSource='';
     if(exactCoord){
       geo=exactCoord;precision='ssw-coordenada';coordinateSource='SSW';
       query='Coordenada cadastrada no SSW'
     }else{
-      // Prioridade: endereço completo do destinatário. CEP é apenas contingência.
-      // Isso evita empilhar vários clientes no centro do mesmo CEP e melhora a
-      // confirmação de visita pelo GPS a 100 metros.
-      if(parts.endereco){
-        query=[parts.endereco,parts.numero,parts.bairro,cidade,uf||'SP','Brasil'].filter(Boolean).join(',');
-        precision='endereco';
-        geo=await routeGeocode(query,baseGeo,ROUTE_MAX_RADIUS_METERS);
-        if(geo)coordinateSource='Endereço do cliente'
-      }
-      if(!geo&&parts.cep){
-        query=parts.cep+', Brasil';precision='cep';
-        geo=await routeGeocodeCep(parts.cep,baseGeo,ROUTE_MAX_RADIUS_METERS);
-        if(!geo)geo=await routeGeocode(query,baseGeo,ROUTE_MAX_RADIUS_METERS);
-        if(geo)coordinateSource='CEP BrasilAPI'
-      }
+      // Prioridade: rua e número do destinatário; depois CEP; por último a sede do município.
+      // Em todos os casos o ponto precisa ficar na cidade do destinatário (routeLocateAddress).
+      const loc=located[idx];
+      if(loc){geo={lat:loc.lat,lon:loc.lon,displayName:loc.displayName};precision=loc.precision;query=loc.query;coordinateSource=loc.coordinateSource}
       if(!geo&&pending?.cidade){
         query=[cidade,uf||'SP','Brasil'].filter(Boolean).join(', ');
         precision='cidade';
