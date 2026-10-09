@@ -4906,6 +4906,99 @@ async function lancEnriquecer(id,data,romaneioSsw,refazer=false){
   console.log('LANCAMENTOS completado: '+JSON.stringify({id,romaneio:romaneioSsw,status:calc.status,km:calc.km,frete:calc.frete_vialog,entregas:calc.entregas,feitas:calc.realizadas,desconto:calc.desconto_vialog,msg:calc.msg}));
   if(calc.status!=='erro')lancConjunto(data,id).catch(e=>console.log('LANCAMENTOS rota conjunta ERRO: '+String(e?.message||e)))
 }
+// Diagnóstico de um lançamento (só administrador; só consulta): o que está guardado, o que a tela do
+// CT-e responde agora para as entregas que não constam como entregues, e como é a tela da opção 38
+// (links da linha do romaneio), para o sistema passar a ler as baixas direto de lá.
+function lancDiagnosticoStart(numero){
+  const key=lancLib.romaneioKey(numero);
+  if(!key)return{ok:false,error:'Informe o número do romaneio (ex.: 1061-8).'};
+  if(!internalSswConfigured())return{ok:false,error:'Credenciais internas SSW não configuradas'};
+  const out={ok:true,versao:1,tipo:'lancamento',romaneio:String(numero).trim().slice(0,30),geradoEm:new Date().toISOString(),pronto:false,andamento:'procurando o lançamento',feitos:0};
+  const token=sswDiagStore(out);
+  lancDiagnosticoRun(out,key,String(numero)).catch(e=>{out.erro=String(e?.message||e);console.log('LANCAMENTOS diagnóstico ERRO: '+out.erro)})
+    .finally(()=>{out.pronto=true;out.andamento=out.erro?'parou com erro':'pronto';out.terminadoEm=new Date().toISOString()});
+  return{ok:true,token,out}
+}
+async function lancDiagnosticoRun(out,key,digitado){
+  // aceita "1061-8", "AMR001061-8" e também sem o dígito ("1061")
+  const semDv=!/-\s*\d\s*$/.test(digitado)&&!/^\s*[A-Z]{3}/i.test(digitado)?String(Number(digitado.replace(/\D/g,''))):'';
+  const numDe=r=>String(Number((String(r||'').match(/(\d+)\s*-\s*\d\s*$/)||[])[1]||0));
+  const bate=r=>lancLib.romaneioKey(r)===key||(!!semDv&&numDe(r)===semDv);
+  const hoje=spDateISO(),desde=spDateISO(new Date(Date.now()-10*864e5));
+  const j=await portalJson('/api/painel/lancamentos?soltos=1&de='+desde+'&ate='+hoje,{timeout:20000});
+  const l=(j.rows||[]).find(r=>bate(r.romaneio_ssw||r.romaneio))||null;
+  out.lancamento=l?{id:l.id,data:l.data,romaneio:l.romaneio,romaneio_ssw:l.romaneio_ssw,motorista:l.motorista,placa:l.placa,entregas:l.entregas,realizadas:l.realizadas,ao_vivo:l.ao_vivo,pend:l.pend,km:l.km,
+    frete:l.frete_vialog,desconto:l.desconto_vialog,liquido:l.frete_vialog_liq,calculo:l.calculo,ctes:l.ctes,atualizado_em:l.atualizado_em}:null;
+  // romaneio como a opção 38 lista agora
+  const aberto=(await lancRomaneiosDeHoje().catch(()=>[])).find(x=>bate(x.romaneio))||null;
+  out.opcao38=aberto?{romaneio:aberto.romaneio,veiculo:aberto.veiculo,inclusao:aberto.inclusao,motorista:aberto.motorista,qtdeCtrcs:aberto.qtdeCtrcs,faltaOcorr:aberto.faltaOcorr,seqRomaneio:aberto.seqRomaneio||''}:null;
+  // 1) tela do CT-e, agora, para as entregas que não constam como entregues (ou sem frete)
+  out.andamento='lendo as entregas que não constam como entregues';
+  out.entregas=[];
+  for(const x of (l?.ctes||[]).filter(c=>c.s!=='e'||c.f===null).slice(0,10)){
+    const item={ctrc:x.c,guardado:{s:x.s,o:x.o,f:x.f}};
+    out.entregas.push(item);
+    try{
+      const mm=String(x.c).match(/^([A-Z]{3})0*(\d+)-\d$/);
+      if(!mm){item.erro='número fora do formato';continue}
+      await sswCteEnqueue('D'+x.c,2,async()=>{
+        const session=await sswCteSession(),params=new URLSearchParams(session.baseParams.toString());
+        params.set('t_ser_ctrc',mm[1]);params.set('t_nro_ctrc',mm[2]);params.set('act','P1');
+        const tela=await sswPost101(session,params),r=sswCte.parseTela101(tela.html).resumo||{};
+        Object.assign(item,{status:tela.status,bytes:Buffer.byteLength(tela.html||''),lido:{ctrc:r.ctrc||'',situacao:r.situacao||'',frete:r.frete||0,nf:r.nf||''},
+          classificado:lancSituacao(r.situacao||''),texto:htmlText38(tela.html||'').slice(0,500)})
+      })
+    }catch(e){item.erro=String(e?.message||e)}
+    out.feitos++
+  }
+  // 2) opção 38: a tela e a linha do romaneio, como o SSW entrega (mesmas consultas que o sistema já faz)
+  out.andamento='lendo a tela da opção 38';
+  const rom=String(l?.romaneio_ssw||aberto?.romaneio||'').toUpperCase(),prefix=(rom.match(/^[A-Z]{3}/)||['AMR'])[0];
+  const corta=(t,n)=>String(t||'').replace(/\s+/g,' ').slice(0,n);
+  const dec=t=>String(t||'').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#39;/gi,"'").replace(/&amp;/gi,'&');
+  out.tela38=await withSswSession('op38:'+prefix,async({apply,cookie})=>{
+    const H={'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},t={};
+    let r=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2='+encodeURIComponent(prefix)+'&f3=38',{headers:H,redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
+    const nav=await r.text(),prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0198';
+    sswAssertLoggedIn(nav,prog);
+    r=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:{...H,'Cookie':cookie()},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
+    const html=await r.text();
+    t.prog=prog;t.bytes=Buffer.byteLength(html);t.titulo=htmlText38((html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)||[])[1]||'');
+    t.campos=[...html.matchAll(/<input\b([^>]*)>/gi)].map(m=>{const a=m[1]||'';return{name:(a.match(/\bname=["']?([^"'\s>]+)/i)||[])[1]||'',id:(a.match(/\bid=["']?([^"'\s>]+)/i)||[])[1]||'',type:(a.match(/\btype=["']?([^"'\s>]+)/i)||[])[1]||''}}).filter(x=>x.name||x.id).slice(0,60);
+    t.acoes=sswDiagActions(html).slice(0,80);
+    t.scripts=[...html.matchAll(/<script[^>]+src=["']([^"']+)["']/gi)].map(m=>m[1]).slice(0,20);
+    t.funcoes=[...new Set([...html.matchAll(/function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)].map(m=>m[1]))].slice(0,80);
+    t.trechos=[...html.matchAll(/.{0,200}(?:omprovante|ajaxEnvia\(|seq_romaneio|nro_romaneio).{0,260}/gi)].map(m=>corta(dec(m[0]),480)).slice(0,25);
+    // lista de romaneios (a mesma chamada da leitura rápida)
+    let corpo=html;
+    if(!parseSsw38Table(html).rows.length){
+      const params=new URLSearchParams();
+      for(const m of html.matchAll(/<input\b([^>]*)>/gi)){const a=m[1]||'',nm=(a.match(/\bname=["']?([^"'\s>]+)/i)||[])[1],val=(a.match(/\bvalue=["']([^"']*)["']/i)||a.match(/\bvalue=([^\s>]+)/i)||[])[1]||'',type=(a.match(/\btype=["']?([^"'\s>]+)/i)||[])[1]||'';if(nm&&!/^(?:button|submit)$/i.test(type))params.set(nm,htmlText38(val))}
+      params.set('act','ROM_ALL');
+      const rr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':H['User-Agent'],'Referer':'https://sistema.ssw.inf.br/bin/'+prog,'Cookie':cookie()},body:params.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});
+      apply(rr.headers);corpo=await rr.text()
+    }
+    t.listaBytes=Buffer.byteLength(corpo);t.listaInicio=corta(dec(corpo),700);
+    const linhas=[...corpo.matchAll(/<r\b[^>]*>([\s\S]*?)<\/r>/gi)].map(m=>m[1]),trs=[...corpo.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(m=>m[1]);
+    const num=(rom.match(/0*(\d+)-\d$/)||[])[1]||'@@';
+    const alvo=linhas.find(x=>dec(x).includes(rom)||new RegExp('\\b0*'+num+'-\\d').test(htmlText38(dec(x))))||linhas[0]||'';
+    t.linhas=linhas.length;t.linhaDoRomaneio={};
+    for(const fm of alvo.matchAll(/<f(\d+)\b[^>]*>([\s\S]*?)<\/f\1>/gi))t.linhaDoRomaneio['f'+fm[1]]=corta(dec(fm[2]),900);
+    if(!linhas.length){const tr=(rom&&trs.find(x=>x.includes(rom)))||trs[1]||'';t.linhaHtml=corta(tr,2500)}
+    // os scripts da tela dizem o que cada link faz
+    t.js=[];
+    for(const src of t.scripts.filter(x=>/ssw0198|ssw_|romane/i.test(x)).slice(0,4)){
+      try{
+        const jr=await fetch(new URL(src,'https://sistema.ssw.inf.br/bin/'),{headers:{'User-Agent':H['User-Agent'],'Cookie':cookie()},redirect:'manual',signal:AbortSignal.timeout(15000)});
+        const js=await jr.text();
+        t.js.push({src,bytes:Buffer.byteLength(js),trechos:[...js.matchAll(/.{0,220}(?:omprovante|COMPROV|seq_romaneio|nro_romaneio).{0,300}/gi)].map(m=>corta(m[0],540)).slice(0,20),
+          acoes:[...new Set([...js.matchAll(/ajaxEnvia\(\s*['"]([^'"]+)['"]/g)].map(m=>m[1]))].slice(0,80)})
+      }catch(e){t.js.push({src,erro:String(e?.message||e)})}
+    }
+    return t
+  });
+  out.feitos++
+}
 // Relê no SSW a situação das entregas que ainda não constam como entregues e refaz as contas do lançamento.
 const LANC_SIT_BUSY=new Set();
 async function lancAtualizarSituacoes(l,falta){
@@ -5860,6 +5953,20 @@ if(u.pathname.startsWith('/api/lancamentos')){try{
     const x=await portalAuth('/api/painel/lancamentos?'+u.searchParams.toString(),tk);
     lancManutencao().catch(()=>{});
     return sai(200,{...x,naFila:[...LANC_NA_FILA]})
+  }
+  if(sub==='/diagnostico'&&req.method==='GET'){
+    // Só administrador. Devolve uma página com o link do resultado, para colar na conversa.
+    if(!authUser.is_admin)return dashboardDeny(res,'Só o administrador abre o diagnóstico.');
+    const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+    const page=(title,body)=>'<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Diagnóstico do lançamento</title><style>body{font-family:system-ui;margin:0;background:#f7f9fc;color:#16142f}.wrap{max-width:720px;margin:auto;padding:24px}.card{background:#fff;border-radius:16px;padding:20px;box-shadow:0 4px 20px #0001}input{width:100%;box-sizing:border-box;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-size:15px;margin-top:10px}.muted{color:#667085;font-size:14px;line-height:1.5}</style></head><body><div class="wrap"><div class="card"><h2 style="margin-top:0">'+esc(title)+'</h2>'+body+'</div></div></body></html>';
+    const html=(code,t,b)=>{res.writeHead(code,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(page(t,b))};
+    const numero=(u.searchParams.get('romaneio')||'').trim();
+    if(!numero)return html(200,'Diagnóstico de um lançamento','<div class="muted">Digite o número do romaneio que está diferente do SSW (ex.: 1061-8) e aperte Enter.</div><form method="get" action="/api/lancamentos/diagnostico"><input name="romaneio" autofocus autocomplete="off" placeholder="Número do romaneio"><div class="muted" style="margin-top:10px">Só consulta: nada é alterado no SSW nem no lançamento.</div></form>');
+    const x=lancDiagnosticoStart(numero);
+    if(!x.ok)return html(400,'Não deu para consultar','<div class="muted">'+esc(x.error)+'</div>');
+    const link=String(process.env.PUBLIC_BASE_URL||'https://controle-coletas-jr.onrender.com').replace(/\/+$/,'')+'/dashboard/diag/'+x.token;
+    return html(200,'Diagnóstico do romaneio '+esc(numero),'<div class="muted">Copie o link abaixo e mande na conversa. Ele vale 30 minutos e mostra o que o sistema guardou deste romaneio e o que o SSW responde agora.</div><input readonly value="'+esc(link)+'" onclick="this.select()"><div class="muted" id="st" style="margin-top:12px;font-weight:600">Consultando o SSW… leva cerca de 1 minuto.</div>'+
+      '<script>(function(){var st=document.getElementById("st");function v(){fetch('+JSON.stringify('/dashboard/diag/'+x.token)+',{cache:"no-store"}).then(function(r){return r.json()}).then(function(d){if(d.pronto){st.textContent=d.erro?("Parou com erro: "+d.erro+" — pode mandar o link mesmo assim."):"Pronto. Pode mandar o link.";st.style.color=d.erro?"#b42318":"#067647"}else{st.textContent="Consultando o SSW… "+(d.andamento||"")+".";setTimeout(v,3000)}}).catch(function(){setTimeout(v,5000)})}v()})()</script>')
   }
   if(sub==='/config'&&req.method==='GET'){const x=await portalAuth('/api/painel/lancamentos/config',tk);return sai(200,{...x,is_admin:!!authUser.is_admin,planilhaLigada:!!ID})}
   if(sub==='/motoristas'&&req.method==='GET')return sai(200,await lancMotoristas(authUser.token));
