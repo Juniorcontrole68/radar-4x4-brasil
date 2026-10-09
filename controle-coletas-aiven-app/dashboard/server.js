@@ -1466,77 +1466,152 @@ function sswDiagActions(html){
   }
   return out
 }
-async function sswDiagnosticoCte(ctrc){
-  const out={ok:true,ctrc:String(ctrc||'').toUpperCase(),geradoEm:new Date().toISOString(),etapas:[]};
-  const mm=out.ctrc.match(/^([A-Z]{3})0*(\d+)-\d$/);
-  if(!mm)return{ok:false,error:'CT-e inválido. Use o formato AMR15326-5.'};
-  if(!internalSswConfigured())return{ok:false,error:'Credenciais internas SSW não configuradas'};
-  const session=await deliveryProgramCreateSsw101Session();
-  const post=async params=>{
-    const rr=await fetch('https://sistema.ssw.inf.br/bin/'+session.prog,{method:'POST',
-      headers:{...session.hdr('https://sistema.ssw.inf.br/bin/'+session.prog),'Content-Type':'application/x-www-form-urlencoded'},
-      body:params.toString(),redirect:'manual',signal:AbortSignal.timeout(25000)});
-    session.apply(rr.headers);
-    return{status:rr.status,html:await rr.text()}
-  };
+// ---------------------------------------------------------------- CT-e no SSW: tela 101 + XML
+const sswCte=require('./ssw-cte.js');
+// Baixa o arquivo que a tela manda abrir: abrir("nome","nome",1,1,"binary",3).
+async function sswAbrirArquivo(session,html){
+  const webBody=(String(html||'').match(/name=web_body[^>]*value=["']([^"']+)["']/i)||[])[1]||'';
+  let decoded='';try{decoded=decodeURIComponent(webBody.replace(/&amp;/g,'&'))}catch{decoded=webBody}
+  const am=(decoded||String(html||'')).match(/abrir\(['"]([^'"]+)['"],\s*['"]([^'"]+)['"],\s*(\d+),\s*(\d+),\s*['"]([^'"]*)['"]/i);
+  if(!am)return{webBody:decoded.slice(0,1500),buf:null};
+  const pu=new URL('/bin/ssw0424','https://sistema.ssw.inf.br');
+  pu.searchParams.set('act',am[1]);pu.searchParams.set('filename',am[2]);pu.searchParams.set('path',am[5]||'');pu.searchParams.set('down',am[3]);pu.searchParams.set('nw',am[4]);
+  const fr=await fetch(pu,{headers:session.hdr('https://sistema.ssw.inf.br/bin/'+session.prog),redirect:'manual',signal:AbortSignal.timeout(25000)});
+  session.apply(fr.headers);
+  const buf=Buffer.from(await fr.arrayBuffer());
+  return{webBody:decoded.slice(0,1500),nome:am[2],status:fr.status,tipo:fr.headers.get('content-type')||'',buf}
+}
+async function sswPost101(session,params){
+  const rr=await fetch('https://sistema.ssw.inf.br/bin/'+session.prog,{method:'POST',
+    headers:{...session.hdr('https://sistema.ssw.inf.br/bin/'+session.prog),'Content-Type':'application/x-www-form-urlencoded'},
+    body:params.toString(),redirect:'manual',signal:AbortSignal.timeout(25000)});
+  session.apply(rr.headers);
+  return{status:rr.status,html:await rr.text()}
+}
+// Lê um CT-e na opção 101: bloco "Entrega", ponto do mapa do SSW e o XML do CT-e (vem em .zip).
+// Só consulta. Devolve também o HTML da tela para quem quiser olhar mais (diagnóstico).
+async function sswCteLer(session,ctrc){
+  const mm=String(ctrc||'').toUpperCase().match(/^([A-Z]{3})0*(\d+)-\d$/);
+  if(!mm)throw new Error('CT-e inválido: '+ctrc);
   const params=new URLSearchParams(session.baseParams.toString());
   params.set('t_ser_ctrc',mm[1]);params.set('t_nro_ctrc',mm[2]);params.set('act','P1');
-  const tela=await post(params),html=tela.html;
-  out.programa=session.prog;out.status=tela.status;out.bytes=Buffer.byteLength(html);
-  out.texto=htmlText38(html).slice(0,30000);
-  out.campos=[...html.matchAll(/<input\b([^>]*)>/gi)].map(m=>{const a=m[1]||'';return{
-    name:(a.match(/\bname=["']?([^"'\s>]+)/i)||[])[1]||'',id:(a.match(/\bid=["']?([^"'\s>]+)/i)||[])[1]||'',
-    type:(a.match(/\btype=["']?([^"'\s>]+)/i)||[])[1]||'',value:htmlText38((a.match(/\bvalue=["']([^"']*)["']/i)||[])[1]||'').slice(0,90)}}).slice(0,300);
-  out.acoes=sswDiagActions(html);
-  // Trechos do HTML em volta de cada "xml", para ver exatamente como a tela oferece o arquivo.
-  out.trechosXml=[];
-  for(const m of html.matchAll(/xml/gi)){
-    out.trechosXml.push(html.slice(Math.max(0,m.index-500),Math.min(html.length,m.index+500)).replace(/\s+/g,' '));
-    if(out.trechosXml.length>=12)break
+  const tela=await sswPost101(session,params),html=tela.html;
+  const out={ctrc:String(ctrc).toUpperCase(),html,status:tela.status,...sswCte.parseTela101(html),cte:null,xml:'',arquivo:null};
+  if(!/link_imp_xml|ajaxEnvia\(\s*['"]XML['"]/i.test(html))return out;
+  const p2=deliveryProgramFormParams(html);p2.set('act','XML');
+  const r2=await sswPost101(session,p2);
+  const file=await sswAbrirArquivo(session,r2.html);
+  out.arquivo={nome:file.nome||'',status:file.status||0,tipo:file.tipo||'',bytes:file.buf?file.buf.length:0,webBody:file.webBody};
+  if(file.buf){
+    const x=sswCte.xmlFromDownload(file.buf);
+    out.arquivo.dentro=x.nome||'';out.arquivo.arquivos=x.arquivos||[];if(x.erro)out.arquivo.erro=x.erro;
+    out.xml=x.xml||'';out.cte=sswCte.parseCteXml(out.xml)
   }
-  out.inicioHtml=html.slice(0,2500).replace(/\s+/g,' ');
-  // Ações com "XML" no nome: dispara (é download) e guarda o começo do arquivo.
-  const candidatos=[];
-  for(const a of out.acoes){
-    if(!/xml/i.test(a.call+' '+a.text+' '+a.label))continue;
-    const act=(a.call.match(/ajaxEnvia\(\s*['"]([^'"]+)['"]/i)||a.call.match(/\bact=([A-Za-z0-9_]+)/i)||a.call.match(/\(\s*['"]([A-Z0-9_]{2,20})['"]/)||[])[1]||'';
-    if(act&&!candidatos.some(c=>c.act===act))candidatos.push({act,de:a});
-    if(candidatos.length>=5)break
-  }
-  out.tentativasXml=[];
-  for(const c of candidatos){
-    const t={act:c.act,de:c.de};
-    try{
-      const p2=deliveryProgramFormParams(html);p2.set('act',c.act);
-      const r2=await post(p2);
-      t.status=r2.status;t.bytes=Buffer.byteLength(r2.html);t.texto=htmlText38(r2.html).slice(0,1500);t.html=r2.html.slice(0,2500).replace(/\s+/g,' ');
-      const webBody=(r2.html.match(/name=web_body[^>]*value=["']([^"']+)["']/i)||[])[1]||'';
-      let decoded='';try{decoded=decodeURIComponent(webBody.replace(/&amp;/g,'&'))}catch{decoded=webBody}
-      t.webBody=decoded.slice(0,2500);
-      const am=(decoded||r2.html).match(/abrir\(['"]([^'"]+)['"],\s*['"]([^'"]+)['"],\s*(\d+),\s*(\d+),\s*['"]([^'"]*)['"]/i);
-      if(am){
-        const pu=new URL('/bin/ssw0424','https://sistema.ssw.inf.br');
-        pu.searchParams.set('act',am[1]);pu.searchParams.set('filename',am[2]);pu.searchParams.set('path',am[5]||'');pu.searchParams.set('down',am[3]);pu.searchParams.set('nw',am[4]);
-        const fr=await fetch(pu,{headers:session.hdr('https://sistema.ssw.inf.br/bin/'+session.prog),redirect:'manual',signal:AbortSignal.timeout(25000)});
-        session.apply(fr.headers);
-        const buf=Buffer.from(await fr.arrayBuffer());
-        t.arquivo={nome:am[2],status:fr.status,tipo:fr.headers.get('content-type')||'',bytes:buf.length,inicio:buf.toString('utf8').slice(0,14000)}
-      }
-    }catch(e){t.erro=String(e?.message||e)}
-    out.tentativasXml.push(t)
-  }
-  // O que o relatório do BI2 (174) e o romaneio já trazem para este CT-e.
-  try{
-    const bi=parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text);
-    out.bi2={colunas:bi.headers,linha:(bi.rows||[]).find(r=>normCtrcLoose(r.numero_ctrc||r.CTRC)===normCtrcLoose(out.ctrc))||null}
-  }catch(e){out.bi2={erro:String(e?.message||e)}}
-  try{
-    const full=await getSswMotoristasFast(spDateISO(),spDateISO());
-    const rom=(full?.romaneios38||[]).find(x=>(x.ctrcMeta||[]).some(m=>normCtrcLoose(m.ctrc)===normCtrcLoose(out.ctrc)));
-    out.romaneio=rom?{romaneio:rom.romaneio,meta:(rom.ctrcMeta||[]).find(m=>normCtrcLoose(m.ctrc)===normCtrcLoose(out.ctrc))}:null;
-    out.linhaSsw=(full?.rows||[]).find(r=>normCtrcLoose(r.ctrcOficial||r.ctrc)===normCtrcLoose(out.ctrc))||null
-  }catch(e){out.romaneio={erro:String(e?.message||e)}}
   return out
+}
+// Diagnóstico: para o CT-e pedido e os outros do mesmo romaneio, mostra o endereço que cada
+// fonte do SSW traz (romaneio, tela 101, XML do CT-e, ponto do mapa) e onde cada um cai no mapa.
+// Roda em segundo plano: o link do resultado já sai na hora e vai sendo preenchido.
+function sswDiagnosticoStart(ctrc,data){
+  const out={ok:true,versao:2,ctrc:String(ctrc||'').toUpperCase().trim(),data:/^\d{4}-\d{2}-\d{2}$/.test(String(data||''))?data:spDateISO(),
+    geradoEm:new Date().toISOString(),pronto:false,andamento:'entrando no SSW',total:0,feitos:0,itens:[]};
+  if(!/^[A-Z]{3}0*\d+-\d$/.test(out.ctrc))return{ok:false,error:'CT-e inválido. Use o formato AMR15326-5.'};
+  if(!internalSswConfigured())return{ok:false,error:'Credenciais internas SSW não configuradas'};
+  const token=sswDiagStore(out);
+  sswDiagnosticoRun(out).catch(e=>{out.erro=String(e?.message||e);console.log('SSW DIAGNÓSTICO ERRO: '+out.erro)})
+    .finally(()=>{out.pronto=true;out.andamento=out.erro?'parou com erro':'pronto';out.terminadoEm=new Date().toISOString()});
+  return{ok:true,token,out}
+}
+async function sswDiagnosticoRun(out){
+  // CT-es do mesmo romaneio (no dia pedido). Se não achar, consulta só o CT-e informado.
+  let metas=[{ctrc:out.ctrc}];
+  try{
+    out.andamento='procurando o romaneio do dia';
+    const full=await getSswMotoristasFast(out.data,out.data);
+    const rom=(full?.romaneios38||[]).find(x=>(x.ctrcMeta||[]).some(m=>normCtrcLoose(m.ctrc)===normCtrcLoose(out.ctrc)));
+    if(rom){
+      out.romaneio={romaneio:rom.romaneio,motorista:rom.motorista||'',veiculo:rom.veiculo||'',ctes:(rom.ctrcMeta||[]).length};
+      const same=(rom.ctrcMeta||[]).find(m=>normCtrcLoose(m.ctrc)===normCtrcLoose(out.ctrc));
+      metas=[same,...(rom.ctrcMeta||[]).filter(m=>m!==same)].slice(0,30)
+    }else out.romaneio=null
+  }catch(e){out.romaneio={erro:String(e?.message||e)}}
+  out.total=metas.length;
+  out.andamento='entrando na opção 101';
+  const session=await deliveryProgramCreateSsw101Session();
+  out.programa=session.prog;
+  const m1=v=>Math.round(Number(v));
+  const ponto=l=>l?{lat:Number(l.lat.toFixed(6)),lon:Number(l.lon.toFixed(6)),precisao:l.precision||'',achou:l.displayName||'',busca:l.query||''}:null;
+  for(let i=0;i<metas.length;i++){
+    const meta=metas[i]||{},item={ctrc:String(meta.ctrc||'').toUpperCase(),nf:meta.nf||'',romaneio:{endereco:meta.endereco||'',cep:meta.cep||''}};
+    out.andamento='lendo o CT-e '+item.ctrc+' ('+(i+1)+' de '+metas.length+')';
+    out.itens.push(item);
+    let lido=null;
+    try{
+      lido=await sswCteLer(session,item.ctrc);
+      item.tela={status:lido.status,bytes:Buffer.byteLength(lido.html),entrega:lido.entrega,mapas:lido.mapas};
+      item.arquivo=lido.arquivo;
+      item.cte=lido.cte
+    }catch(e){item.erro=String(e?.message||e)}
+    // Onde cada endereço cai no mapa, e a distância até o ponto que o SSW guarda do cliente.
+    try{
+      const parte=lido?.cte?.recebedor?.logradouro?lido.cte.recebedor:(lido?.cte?.destinatario||null);
+      const cidade=parte?.cidade||lido?.entrega?.cidade||lido?.mapas?.ent?.cidade||lido?.mapas?.dest?.cidade||'';
+      const uf=parte?.uf||lido?.entrega?.uf||lido?.mapas?.ent?.uf||'SP',cep=parte?.cep||meta.cep||'';
+      const mapaSsw=[lido?.mapas?.ent,lido?.mapas?.dest].find(p=>p&&p.lat!==null)||null;
+      const loc={ssw:mapaSsw?{lat:mapaSsw.lat,lon:mapaSsw.lon,endereco:mapaSsw.endereco}:null};
+      const tenta=async(endereco,numero)=>endereco?ponto(await routeLocateAddress({endereco,numero,cidade,uf,cep}).catch(()=>null)):null;
+      loc.peloRomaneio=await tenta(meta.endereco||'','');
+      loc.peloXml=parte?await tenta(parte.logradouro,parte.numero):null;
+      const compl=String(parte?.complemento||'');
+      loc.peloComplementoXml=/\b(RUA|R\.?|AV\.?|AVENIDA|ROD\.?|RODOVIA|ESTRADA|EST\.?|ALAMEDA|AL\.?|TRAVESSA|PRACA|PRAÇA)\s+\S/i.test(compl)?await tenta(compl.replace(/^.*?\b(?=(?:END(?:ERECO)?\.?\s*(?:DE\s+)?ENTREGA|ENTREGAR?\b))/i,''),''):null;
+      loc.cidade=cidade;loc.uf=uf;
+      if(loc.ssw)for(const k of ['peloRomaneio','peloXml','peloComplementoXml'])if(loc[k])loc[k].metrosDoPontoSsw=m1(routeHaversine(loc.ssw,loc[k]));
+      item.mapa=loc
+    }catch(e){item.mapaErro=String(e?.message||e)}
+    // Só no CT-e pedido: o XML inteiro, o texto da tela e o que as telas "DANFEs" e
+    // "Arquivos EDI" oferecem (é lá que pode estar o XML da nota fiscal).
+    if(i===0&&lido){
+      item.xmlTexto=lido.xml.slice(0,20000);
+      item.telaTexto=htmlText38(lido.html).slice(0,9000);
+      item.acoes=sswDiagActions(lido.html);
+      item.sondagens=[];
+      for(const act of ['A','ARQ']){
+        const t={act};
+        try{
+          const p=deliveryProgramFormParams(lido.html);p.set('act',act);
+          const r=await sswPost101(session,p);
+          t.status=r.status;t.bytes=Buffer.byteLength(r.html);t.texto=htmlText38(r.html).slice(0,2500);t.inicioHtml=r.html.slice(0,3000).replace(/\s+/g,' ');
+          t.acoes=sswDiagActions(r.html).slice(0,60);
+          const f=await sswAbrirArquivo(session,r.html);
+          t.webBody=f.webBody;
+          if(f.buf){const x=sswCte.xmlFromDownload(f.buf);t.arquivo={nome:f.nome,status:f.status,tipo:f.tipo,bytes:f.buf.length,dentro:x.nome||'',arquivos:x.arquivos||[],inicio:(x.xml||f.buf.toString('latin1')).slice(0,6000)}}
+          // Um nível abaixo: ações dessa tela que falam em XML (download).
+          t.filhos=[];
+          for(const a of t.acoes.filter(a=>/xml/i.test(a.call+' '+a.text+' '+a.label)).slice(0,3)){
+            const c={de:a};
+            try{
+              const mmA=a.call.match(/ajaxEnvia\(\s*['"]([^'"]*)['"]\s*,\s*\d+\s*(?:,\s*['"]([^'"]*)['"])?/i);
+              let rr=null;
+              if(mmA&&mmA[2]&&/^ssw\d{3,5}\?/i.test(mmA[2])){
+                const g=await fetch('https://sistema.ssw.inf.br/bin/'+mmA[2],{headers:session.hdr('https://sistema.ssw.inf.br/bin/'+session.prog),redirect:'manual',signal:AbortSignal.timeout(25000)});
+                session.apply(g.headers);rr={status:g.status,html:await g.text()}
+              }else if(mmA&&mmA[1]){
+                const pp=deliveryProgramFormParams(r.html);pp.set('act',mmA[1]);rr=await sswPost101(session,pp)
+              }
+              if(rr){
+                c.status=rr.status;c.bytes=Buffer.byteLength(rr.html);c.texto=htmlText38(rr.html).slice(0,1200);
+                const ff=await sswAbrirArquivo(session,rr.html);c.webBody=ff.webBody;
+                if(ff.buf){const x=sswCte.xmlFromDownload(ff.buf);c.arquivo={nome:ff.nome,status:ff.status,tipo:ff.tipo,bytes:ff.buf.length,dentro:x.nome||'',arquivos:x.arquivos||[],inicio:(x.xml||ff.buf.toString('latin1')).slice(0,12000)}}
+              }
+            }catch(e){c.erro=String(e?.message||e)}
+            t.filhos.push(c)
+          }
+        }catch(e){t.erro=String(e?.message||e)}
+        item.sondagens.push(t)
+      }
+    }
+    out.feitos=i+1
+  }
 }
 async function probeSsw101Cte(ctrc){
   if(!internalSswConfigured())return{ok:false,error:'Credenciais internas SSW não configuradas'};
@@ -4988,11 +5063,12 @@ if(u.pathname==='/api/ssw/diagnostico-cte'&&req.method==='GET'){
   const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
   const page=(title,body)=>'<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Diagnóstico SSW</title><style>body{font-family:system-ui;margin:0;background:#f7f9fc;color:#16142f}.wrap{max-width:720px;margin:auto;padding:24px}.card{background:#fff;border-radius:16px;padding:20px;box-shadow:0 4px 20px #0001}input{width:100%;box-sizing:border-box;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-size:15px;margin-top:10px}.muted{color:#667085;font-size:14px;line-height:1.5}</style></head><body><div class="wrap"><div class="card"><h2 style="margin-top:0">'+esc(title)+'</h2>'+body+'</div></div></body></html>';
   try{
-    const x=await sswDiagnosticoCte(u.searchParams.get('ctrc')||'');
+    const x=sswDiagnosticoStart(u.searchParams.get('ctrc')||'',u.searchParams.get('data')||'');
     if(!x.ok){res.writeHead(400,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(page('Não deu para consultar','<div class="muted">'+esc(x.error)+'</div>'))}
-    const link=String(process.env.PUBLIC_BASE_URL||'https://controle-coletas-jr.onrender.com').replace(/\/+$/,'')+'/dashboard/diag/'+sswDiagStore(x);
+    const link=String(process.env.PUBLIC_BASE_URL||'https://controle-coletas-jr.onrender.com').replace(/\/+$/,'')+'/dashboard/diag/'+x.token;
     res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
-    return res.end(page('Diagnóstico do CT-e '+x.ctrc+' pronto','<div class="muted">Copie o link abaixo e mande na conversa. Ele vale 30 minutos e mostra os dados deste CT-e como o SSW apresenta.</div><input readonly value="'+esc(link)+'" onclick="this.select()"><div class="muted" style="margin-top:12px">Tela lida: '+esc(x.bytes)+' bytes • botões e links: '+esc(x.acoes.length)+' • tentativas de XML: '+esc(x.tentativasXml.length)+'</div>'))
+    return res.end(page('Diagnóstico do CT-e '+x.out.ctrc,'<div class="muted">Copie o link abaixo e mande na conversa. Ele vale 30 minutos e mostra os endereços deste CT-e e dos outros do mesmo romaneio como o SSW guarda.</div><input readonly value="'+esc(link)+'" onclick="this.select()"><div class="muted" id="st" style="margin-top:12px;font-weight:600">Consultando o SSW… leva cerca de 1 minuto.</div>'+
+      '<script>(function(){var st=document.getElementById("st");function v(){fetch('+JSON.stringify('/dashboard/diag/'+x.token)+',{cache:"no-store"}).then(function(r){return r.json()}).then(function(d){if(d.pronto){st.textContent=d.erro?("Parou com erro: "+d.erro+" — pode mandar o link mesmo assim."):("Pronto: "+d.feitos+" CT-e(s) lidos. Pode mandar o link.");st.style.color=d.erro?"#b42318":"#067647"}else{st.textContent="Consultando o SSW… "+(d.andamento||"")+".";setTimeout(v,3000)}}).catch(function(){setTimeout(v,5000)})}v()})()</script>'))
   }catch(e){
     res.writeHead(502,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
     return res.end(page('Erro ao consultar o SSW','<div class="muted">'+esc(String(e?.message||e))+'</div>'))

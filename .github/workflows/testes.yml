@@ -69,6 +69,8 @@ jobs:
         run: TZ=America/Sao_Paulo node controle-coletas-aiven-app/tests/leitores.js
       - name: Localização de endereços no mapa (respostas gravadas, sem rede)
         run: node controle-coletas-aiven-app/tests/geo-endereco.js
+      - name: Leitura do CT-e guardado no SSW (zip do XML e tela 101, sem rede)
+        run: node controle-coletas-aiven-app/tests/ssw-cte.js
       - name: Sessão do SSW (contra um SSW de mentira, sem rede externa)
         env:
           TEST_MODE: ''
