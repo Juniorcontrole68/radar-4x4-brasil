@@ -1,9 +1,9 @@
 name: Build Motorista APKs
 
+# Só roda quando acionada manualmente (aba Actions > Run workflow).
+# Antes rodava a cada envio para esta branch e gravava este aplicativo antigo por cima do
+# aplicativo do motorista publicado na produção (branch controle-coletas-aiven).
 on:
-  push:
-    branches:
-      - construlog-dashboard
   workflow_dispatch:
 
 permissions:
