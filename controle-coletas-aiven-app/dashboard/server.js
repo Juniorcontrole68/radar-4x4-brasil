@@ -1509,6 +1509,9 @@ async function sswCteLer(session,ctrc){
   }
   return out
 }
+// Chave geral: a rota do romaneio só passa a usar o endereço lido do SSW quando isto for true.
+// Fica false até a leitura ser conferida com dados reais pelo diagnóstico (/api/ssw/diagnostico-cte).
+const ROTA_USA_ENDERECO_SSW=false;
 // O que o SSW guarda de cada CT-e (endereço não muda): fica 24 h na memória. Uma leitura por
 // vez, todas na mesma sessão da opção 101, para não abrir vários logins no SSW.
 const SSW_CTE_CACHE=new Map(),SSW_CTE_INFLIGHT=new Map();
@@ -3785,7 +3788,7 @@ async function buildRoutePlan(date='',romaneio=''){
   }
   // Endereço de entrega direto do SSW (XML do CT-e + tela 101). Começa já, para correr junto
   // com as outras consultas; mais abaixo espera o que faltar, até 60 s contados daqui.
-  const cteJob=sswCteInfoMany(metas.map(m=>m.ctrc),60000).catch(e=>{console.log('ROTEIRIZADOR XML CT-e ERRO: '+String(e?.message||e));return null});
+  const cteJob=!ROTA_USA_ENDERECO_SSW?Promise.resolve(null):sswCteInfoMany(metas.map(m=>m.ctrc),60000).catch(e=>{console.log('ROTEIRIZADOR XML CT-e ERRO: '+String(e?.message||e));return null});
   // Fonte prioritária para cliente/cidade: pendências atuais da própria opção 38.
   // Ela já traz CT-e/NF + cliente + cidade e evita depender do BI2 para localizar a rota.
   const pendingByLoose=new Map(),pendingByNf=new Map();
