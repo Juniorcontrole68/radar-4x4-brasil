@@ -360,7 +360,8 @@ function parseSsw38Table(html){
     const rom=ir>=0?cells[ir]:'',mot=im>=0?cells[im]:'',qraw=iq>=0?cells[iq]:'';
     if(!rom||!/^(?:AMR|TBT)/i.test(rom)||!mot)continue;
     const q=Number(String(qraw).replace(/\D/g,''))||0;
-    rows.push({romaneio:rom,veiculo:iv>=0?cells[iv]:'',inclusao:ii>=0?cells[ii]:'',motorista:mot,qtdeCtrcs:q,faltaOcorr:ifalta>=0?(Number(String(cells[ifalta]||'').replace(/\D/g,''))||0):0});
+    rows.push({romaneio:rom,veiculo:iv>=0?cells[iv]:'',inclusao:ii>=0?cells[ii]:'',motorista:mot,qtdeCtrcs:q,faltaOcorr:ifalta>=0?(Number(String(cells[ifalta]||'').replace(/\D/g,''))||0):0,
+      seqRomaneio:(String(trs[parsed.indexOf(cells)]||'').replace(/&amp;/g,'&').match(/[?&]seq_romaneio=(\d+)/i)||[])[1]||''});
   }
   return{rows,headers:h};
 }
@@ -397,9 +398,13 @@ async function fetchRomaneioCtrcs38(x,jar,apply,cookie){
 
   // O PDF traz CTRC/CT-e e NF na mesma linha. Guardamos os pares para
   // conseguir cruzar pelo número da NF quando o BI2 usa outro formato de CTRC.
-  const pairMatches=[...text.matchAll(/^\s*([A-Z]{3}\d{5,7}-\d)\s+(\d{4,12})\b/gmi)]
+  // O número vem sem zeros à esquerda: AMR15557-8, mas também AMS769-2 (CT-e de outra série). Por isso
+  // a linha "CT-e + nota" aceita número curto; o próprio romaneio (AMR1059-6) fica de fora.
+  const partesDoc=v=>{const m=String(v||'').toUpperCase().match(/^([A-Z]{3})0*(\d+)-(\d)$/);return m?m[1]+'|'+m[2]+'|'+m[3]:String(v||'')};
+  const ehRomaneio=v=>partesDoc(v)===partesDoc(rom);
+  const pairMatches=[...text.matchAll(/^\s*([A-Z]{3}\d{1,7}-\d)\s+(\d{4,12})\b/gmi)]
     .map(m=>({ctrc:m[1].toUpperCase(),nf:String(m[2]).replace(/^0+/,'')||'0'}))
-    .filter(p=>p.ctrc!==rom);
+    .filter(p=>!ehRomaneio(p.ctrc));
   const pairSeen=new Set();
   x.ctrcNfs=pairMatches.filter(p=>{const k=p.ctrc+'|'+p.nf;if(pairSeen.has(k))return false;pairSeen.add(k);return true});
 
@@ -409,9 +414,9 @@ async function fetchRomaneioCtrcs38(x,jar,apply,cookie){
   const pdfLines=text.split(/\r?\n/);
   x.ctrcMeta=[];
   for(let i=0;i<pdfLines.length;i++){
-    const m=pdfLines[i].match(/^\s*([A-Z]{3}\d{5,7}-\d)\s+(\d{4,12})\b/i);
-    if(!m||m[1].toUpperCase()===rom)continue;
-    let j=i+1;while(j<pdfLines.length&&!/^\s*[A-Z]{3}\d{5,7}-\d\s+\d{4,12}\b/i.test(pdfLines[j]))j++;
+    const m=pdfLines[i].match(/^\s*([A-Z]{3}\d{1,7}-\d)\s+(\d{4,12})\b/i);
+    if(!m||ehRomaneio(m[1]))continue;
+    let j=i+1;while(j<pdfLines.length&&!/^\s*[A-Z]{3}\d{1,7}-\d\s+\d{4,12}\b/i.test(pdfLines[j]))j++;
     const blockLines=pdfLines.slice(i,Math.min(j,i+40)).map(v=>String(v||'').trim()).filter(Boolean);
     const block=blockLines.join(' ');
     const cnpjs=[...new Set([...block.matchAll(/(?:\d{2}[.\s]?\d{3}[.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2}|\b\d{14}\b)/g)]
@@ -430,8 +435,9 @@ async function fetchRomaneioCtrcs38(x,jar,apply,cookie){
   // Antes o parser pegava a NF de 6 dígitos, o que impedia o cruzamento com as baixas.
   const ctrcTokens=[...text.matchAll(/\b([A-Z]{3}\d{5,7}-\d)\b/gi)]
     .map(m=>m[1].toUpperCase())
-    .filter(v=>v!==rom);
-  const ctrcs=[...new Set(ctrcTokens)];
+    .filter(v=>!ehRomaneio(v));
+  // primeiro os das linhas "CT-e + nota" (na ordem do romaneio, inclusive os de número curto); depois o que mais houver no texto
+  const ctrcs=[...new Set([...x.ctrcNfs.map(p=>p.ctrc),...ctrcTokens])];
   if(ctrcs.length){
     console.log('SSW38 PDF CTRCs: '+JSON.stringify({romaneio:x.romaneio,esperado:expected,encontrado:ctrcs.length,amostra:ctrcs.slice(0,5)}));
     if(!expected||ctrcs.length===expected)return ctrcs;
@@ -4740,7 +4746,8 @@ async function lancBuscarRomaneio(numero,data){
     const quick=await Promise.allSettled([fetchSsw38QuickPrefix('AMR'),fetchSsw38QuickPrefix('TBT')]);
     for(const q of quick)if(q.status==='fulfilled')lista.push(...(q.value?.rows||[]))
   }
-  try{const full=await getSswMotoristasFast(alvo,alvo);lista.push(...(full?.romaneios38||[]))}catch(e){if(!lista.length)console.log('LANCAMENTOS busca de romaneio ERRO: '+String(e?.message||e))}
+  // para hoje basta a lista da opção 38; a leitura completa do dia (pesada) só para outra data ou se a lista falhar
+  if(alvo!==spDateISO()||!lista.length){try{const full=await getSswMotoristasFast(alvo,alvo);lista.push(...(full?.romaneios38||[]))}catch(e){if(!lista.length)console.log('LANCAMENTOS busca de romaneio ERRO: '+String(e?.message||e))}}
   const semDv=!/-\s*\d\s*$/.test(raw)&&!/^[A-Z]{3}/.test(raw)?String(Number(raw.replace(/\D/g,''))):'';
   const numDe=r=>String(Number((String(r||'').match(/(\d+)\s*-\s*\d\s*$/)||[])[1]||0));
   const hit=lista.find(x=>lancLib.romaneioKey(x.romaneio)===key)||(semDv?lista.find(x=>numDe(x.romaneio)===semDv):null);
@@ -4782,7 +4789,6 @@ async function lancMotoristasAgora(token){
     const hoje=spDateISO(),lista=[];
     const quick=await Promise.allSettled([fetchSsw38QuickPrefix('AMR'),fetchSsw38QuickPrefix('TBT')]);
     for(const q of quick)if(q.status==='fulfilled')lista.push(...(q.value?.rows||[]));
-    try{const full=await getSswMotoristasFast(hoje,hoje);lista.push(...(full?.romaneios38||[]))}catch{}
     for(const x of lista){
       const nome=String(x.motorista||'').trim();
       if(nome&&!lancMotoristaConhecido(nome,conhecidos)&&!doSsw.some(n=>lancNomeNorm(n)===lancNomeNorm(nome)))doSsw.push(nome.toUpperCase())
@@ -4844,6 +4850,63 @@ function sswCteSituacao(ctrc,prio=LANC_PRIO){
   SSW_SIT_INFLIGHT.set(key,job);
   return job
 }
+// Tela "038 - Baixa de Entregas > Comprovantes" (o link Imagens do romaneio na opção 38): todas as
+// entregas do romaneio com a ocorrência de cada uma, numa consulta só. É a mesma tela que a operação
+// confere, e vale para qualquer série de CT-e. seq = número interno do romaneio no SSW.
+// Se a tela vier vazia várias vezes seguidas (o SSW mudou a tela, por exemplo), o sistema para de pedi-la
+// por meia hora e fica só com a tela de cada CT-e, para não gastar consultas à toa.
+let LANC_COMPROV_VAZIAS=0,LANC_COMPROV_PAUSA=0;
+async function lancComprovantes(romaneioSsw,seq,guardarHtml=false){
+  seq=String(seq||'').replace(/\D/g,'');
+  if(!seq||!internalSswConfigured())return null;
+  if(!guardarHtml&&Date.now()<LANC_COMPROV_PAUSA)return null;
+  const prefix=(String(romaneioSsw||'').toUpperCase().match(/^[A-Z]{3}/)||['AMR'])[0],UA='Mozilla/5.0 Chrome/120 Safari/537.36';
+  const value=await withSswSession('op38:'+prefix,async({apply,cookie})=>{
+    let r=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2='+encodeURIComponent(prefix)+'&f3=38',{headers:{'User-Agent':UA,'Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
+    const nav=await r.text(),prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0198',base='https://sistema.ssw.inf.br/bin/'+prog;
+    sswAssertLoggedIn(nav,prog);
+    r=await fetch(base,{headers:{'User-Agent':UA,'Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
+    const tela=await r.text(),url=base+'?act=ENV_ROM_COMPROV&seq_romaneio='+seq;
+    r=await fetch(url,{headers:{'User-Agent':UA,'Cookie':cookie(),'Referer':base},redirect:'manual',signal:AbortSignal.timeout(20000)});apply(r.headers);
+    let html=await r.text(),p=sswCte.parseComprovantes(html),modo='GET';
+    if(!p.itens.length){
+      // a tela do SSW manda o formulário junto com o link: repete a mesma consulta desse jeito
+      const params=deliveryProgramFormParams(tela);params.set('act','ENV_ROM_COMPROV');params.set('seq_romaneio',seq);
+      r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':UA,'Cookie':cookie(),'Referer':base},body:params.toString(),redirect:'manual',signal:AbortSignal.timeout(20000)});apply(r.headers);
+      const h2=await r.text(),p2=sswCte.parseComprovantes(h2);
+      if(p2.itens.length||!html){html=h2;p=p2;modo='POST'}
+    }
+    return{...p,modo,status:r.status,bytes:Buffer.byteLength(html),...(guardarHtml?{html}:{})}
+  });
+  if(value?.itens?.length)LANC_COMPROV_VAZIAS=0;
+  else if(++LANC_COMPROV_VAZIAS>=6){LANC_COMPROV_VAZIAS=0;LANC_COMPROV_PAUSA=Date.now()+30*60*1000;console.log('LANCAMENTOS comprovantes: tela vazia várias vezes seguidas; meia hora só com a tela de cada CT-e')}
+  return value
+}
+// Passa para a lista de entregas do lançamento o que a tela de comprovantes mostra. Sem ocorrência na
+// tela = ainda sem baixa ('p'). Devolve se mudou e quantas entregas da tela não estavam na lista.
+function lancAplicarComprovantes(lista,comp){
+  const por=new Map((comp?.itens||[]).map(i=>[sswCteKey(i.ctrc),i])),vistos=new Set();
+  let mudou=false;
+  for(const x of lista){
+    const k=x.k||sswCteKey(x.c),i=por.get(k);
+    if(!i)continue;
+    vistos.add(k);
+    if(!x.d&&i.destinatario){x.d=String(i.destinatario).slice(0,50);mudou=true}
+    if(!x.ci&&i.cidade){x.ci=lancNomeNorm(i.cidade);mudou=true}
+    if(i.codigo===null&&x.s==='e')continue;   // a tela do CT-e já disse "entregue": não volta atrás por falta de linha aqui
+    const s=i.codigo===1?'e':(i.codigo===null?'p':'o'),o=i.codigo===null?(x.s==='o'||x.s==='p'?x.o||'':''):i.texto;
+    if(x.s!==s||x.o!==o){x.s=s;x.o=o;mudou=true}
+    LANC_SIT_MEM.set(k,{s,o,at:Date.now()})
+  }
+  let novos=0;
+  for(const i of (comp?.itens||[])){
+    const k=sswCteKey(i.ctrc);
+    if(vistos.has(k))continue;
+    lista.push({c:i.ctrc,k,f:null,s:i.codigo===1?'e':(i.codigo===null?'p':'o'),o:i.texto,d:String(i.destinatario||'').slice(0,50),ci:lancNomeNorm(i.cidade)});
+    novos++;mudou=true
+  }
+  return{mudou,novos}
+}
 // Contas do lançamento a partir das entregas: feitas, desconto do frete e se o romaneio fechou
 // (dia já passou, todas entregues, ou o SSW não tem mais entrega sem baixa: falta===0).
 function lancContas(lista,data,entregas,falta){
@@ -4890,8 +4953,15 @@ async function lancEnriquecer(id,data,romaneioSsw,refazer=false){
     calc.lidos=lidos;
     if(lidos)calc.frete_vialog=Math.round(frete*100)/100;
     if(lidos<ctes.length){calc.status='parcial';avisos.push('frete lido de '+lidos+' de '+ctes.length+' CT-es')}
+    // romaneio aberto no SSW: a situação das entregas vem da tela de comprovantes (uma consulta para todas)
+    const aberto=data===spDateISO()?(await lancRomaneiosDeHoje().catch(()=>[])).find(r=>String(r.romaneio||'').toUpperCase().trim()===String(romaneioSsw).toUpperCase().trim()):null;
+    if(aberto?.seqRomaneio){
+      calc.seq=String(aberto.seqRomaneio);
+      const comp=await lancComprovantes(romaneioSsw,calc.seq).catch(e=>{console.log('LANCAMENTOS comprovantes '+romaneioSsw+' ERRO: '+String(e?.message||e));return null});
+      if(comp?.itens?.length){const r=lancAplicarComprovantes(calc.lista,comp);if(r.novos)avisos.push(r.novos+' entrega(s) do romaneio sem o frete lido')}
+    }
     if(calc.lista.length){
-      const falta=data===spDateISO()?await lancFaltaOcorr(romaneioSsw).catch(()=>null):null;
+      const falta=aberto&&Number(aberto.qtdeCtrcs||0)>0?Number(aberto.faltaOcorr||0):null;
       const contas=lancContas(calc.lista,data,calc.entregas,falta);
       if(contas.aviso)avisos.push(contas.aviso);
       delete contas.aviso;
@@ -4951,6 +5021,17 @@ async function lancDiagnosticoRun(out,key,digitado){
     }catch(e){item.erro=String(e?.message||e)}
     out.feitos++
   }
+  // tela de comprovantes do romaneio: o que veio e como o sistema leu
+  const seqD=String(aberto?.seqRomaneio||l?.seq||'');
+  if(seqD){
+    out.andamento='lendo a tela de comprovantes';
+    try{
+      const c=await lancComprovantes(l?.romaneio_ssw||aberto?.romaneio,seqD,true);
+      out.comprovantes=c?{seq:seqD,modo:c.modo,status:c.status,bytes:c.bytes,ehComprovantes:c.ehComprovantes,motorista:c.motorista,total:c.itens.length,itens:c.itens.slice(0,40).map(i=>[i.ctrc,i.codigo,i.texto,i.destinatario,i.cidade].join(' | ')),
+        inicio:String(c.html||'').replace(/\s+/g,' ').slice(0,1200),grade:(String(c.html||'').match(/<r\b[\s\S]{0,1500}/i)||[''])[0].replace(/\s+/g,' ')}:{seq:seqD,vazio:true}
+    }catch(e){out.comprovantes={seq:seqD,erro:String(e?.message||e)}}
+    out.feitos++
+  }
   // 2) opção 38: a tela e a linha do romaneio, como o SSW entrega (mesmas consultas que o sistema já faz)
   out.andamento='lendo a tela da opção 38';
   const rom=String(l?.romaneio_ssw||aberto?.romaneio||'').toUpperCase(),prefix=(rom.match(/^[A-Z]{3}/)||['AMR'])[0];
@@ -5000,15 +5081,19 @@ async function lancDiagnosticoRun(out,key,digitado){
   out.feitos++
 }
 // Relê no SSW a situação das entregas que ainda não constam como entregues e refaz as contas do lançamento.
-const LANC_SIT_BUSY=new Set();
-async function lancAtualizarSituacoes(l,falta){
+const LANC_SIT_BUSY=new Set(),LANC_FALTANDO=new Set();
+async function lancAtualizarSituacoes(l,falta,seq=''){
   const id=String(l.id);
   if(LANC_SIT_BUSY.has(id)||!Array.isArray(l.ctes)||!l.ctes.length||!l.calculo)return;
   LANC_SIT_BUSY.add(id);
   try{
     const lista=l.ctes.map(x=>({...x}));
-    let mudou=false;
-    for(const x of lista){
+    let mudou=false,novos=0;
+    seq=String(seq||l.seq||'');
+    const comp=seq?await lancComprovantes(l.romaneio_ssw,seq).catch(e=>{console.log('LANCAMENTOS comprovantes '+l.romaneio_ssw+' ERRO: '+String(e?.message||e));return null}):null;
+    if(comp?.itens?.length){const r=lancAplicarComprovantes(lista,comp);mudou=r.mudou;novos=r.novos}
+    // sem a tela de comprovantes: relê a tela de cada CT-e que ainda não consta como entregue
+    else for(const x of lista){
       if(x.s==='e')continue;
       const sit=await sswCteSituacao(x.c,LANC_PRIO).catch(()=>null);
       if(sit===null)continue;
@@ -5020,8 +5105,10 @@ async function lancAtualizarSituacoes(l,falta){
     delete contas.aviso;
     const fechado=!!contas.fechado||!!l.calculo.fechado;
     if(!mudou&&(fechado?l.realizadas:l.ao_vivo)===contas.realizadas&&Number(l.desconto_vialog||0)===contas.desconto_vialog&&fechado===!!l.calculo.fechado&&msg===String(l.calculo.msg||''))return;
-    await portalJson('/api/painel/lancamentos/'+encodeURIComponent(id),{method:'PATCH',timeout:20000,body:{calculo:{status:l.calculo.status,msg,ctes:l.calculo.ctes,lidos:l.calculo.lidos,romaneio_ssw:l.romaneio_ssw,lista,...contas}}});
+    await portalJson('/api/painel/lancamentos/'+encodeURIComponent(id),{method:'PATCH',timeout:20000,body:{calculo:{status:l.calculo.status,msg,ctes:l.calculo.ctes,lidos:l.calculo.lidos,romaneio_ssw:l.romaneio_ssw,seq,lista,...contas}}});
     lancMudou();
+    // a tela mostrou entrega que não estava na lista de CT-es do lançamento: completa de novo (frete e rota), uma vez
+    if(novos&&!LANC_FALTANDO.has(id)){LANC_FALTANDO.add(id);lancEnfileirar(id,l.data,l.romaneio_ssw,true)}
     console.log('LANCAMENTOS baixas: '+JSON.stringify({romaneio:l.romaneio_ssw,feitas:contas.realizadas,de:lista.length,desconto:contas.desconto_vialog,fechado}))
   }finally{LANC_SIT_BUSY.delete(id)}
 }
@@ -5103,15 +5190,19 @@ async function lancSincronizarAgora(){
     // ainda sem os dados, ou o romaneio mudou de tamanho depois: busca (de novo) quando parar de mudar
     if(st==='pendente'||(st!=='erro'&&Number(l.entregas||0)!==qtde)){if(estavel)lancEnfileirar(l.id,l.data,l.romaneio_ssw,st!=='pendente');continue}
     if(st==='erro')continue;
+    // a lista de CT-es guardada tem menos entregas que o romaneio (CT-e de outra série que ficou de fora): refaz, uma vez
+    if(Array.isArray(l.ctes)&&l.ctes.length<qtde&&estavel&&!LANC_FALTANDO.has(l.id)){LANC_FALTANDO.add(l.id);lancEnfileirar(l.id,l.data,l.romaneio_ssw,true);continue}
     // nem todos os CT-es foram lidos a tempo (a fila do SSW estava ocupada): tenta de novo a cada 5 min, até 6 vezes
     if(st==='parcial'&&(LANC_PARCIAL.get(key)?.n||0)<6&&Date.now()-(LANC_PARCIAL.get(key)?.at||0)>5*60*1000){LANC_PARCIAL.set(key,{n:(LANC_PARCIAL.get(key)?.n||0)+1,at:Date.now()});lancEnfileirar(l.id,l.data,l.romaneio_ssw);continue}
-    // baixas: relê as entregas que faltam quando o SSW mostra baixa nova no romaneio (no máximo a cada
-    // 20 min), quando acabam as baixas, e de 2 em 2 horas por garantia
+    // baixas: quando o SSW mostra baixa nova no romaneio, lê a tela de comprovantes (no máximo a cada
+    // 3 min; sem ela, a tela de cada CT-e que falta, a cada 20 min), quando acabam as baixas, e de 2 em 2 horas por garantia
     if(Array.isArray(l.ctes)&&(l.ctes.some(c=>c.s!=='e')||(falta===0&&!l.calculo.fechado))){
-      const ant=LANC_SIT.get(l.id),agora=Date.now();
-      const ler=!ant?falta<qtde:((falta!==ant.falta&&agora-ant.at>=LANC_SIT_MS)||(falta===0&&ant.falta!==0)||agora-ant.at>=2*60*60*1000);
-      if(!ant||ler)LANC_SIT.set(l.id,{falta,at:agora});
-      if(ler)lancAtualizarSituacoes(l,falta).catch(e=>console.log('LANCAMENTOS baixas '+l.romaneio_ssw+' ERRO: '+String(e?.message||e)))
+      const ant=LANC_SIT.get(l.id),agora=Date.now(),minimo=x.seqRomaneio?Math.min(LANC_SIT_MS,3*60*1000):LANC_SIT_MS;
+      // o SSW diz que não falta baixa, mas a lista ainda tem entrega sem ocorrência: relê logo (até 10 vezes)
+      const destoa=falta===0&&l.ctes.some(c=>c.s==='p'||c.s==='?')&&(ant?.n||0)<10;
+      const ler=!ant?falta<qtde:((falta!==ant.falta&&agora-ant.at>=minimo)||(falta===0&&ant.falta!==0)||(destoa&&agora-ant.at>=minimo)||agora-ant.at>=2*60*60*1000);
+      if(!ant||ler)LANC_SIT.set(l.id,{falta,at:agora,n:falta===0?(ant?.n||0)+1:0});
+      if(ler)lancAtualizarSituacoes(l,falta,x.seqRomaneio||'').catch(e=>console.log('LANCAMENTOS baixas '+l.romaneio_ssw+' ERRO: '+String(e?.message||e)))
     }
   }
   // 3) motorista com mais de um romaneio hoje e ainda sem o km da rota única
@@ -5153,7 +5244,7 @@ async function lancManutencao(force=false){
       const ant=LANC_SIT.get(l.id);
       if(ant&&Date.now()-ant.at<6*60*60*1000)continue;
       LANC_SIT.set(l.id,{falta:null,at:Date.now()});
-      await lancAtualizarSituacoes(l,null).catch(e=>console.log('LANCAMENTOS baixas '+l.romaneio_ssw+' ERRO: '+String(e?.message||e)))
+      await lancAtualizarSituacoes(l,null,l.seq||'').catch(e=>console.log('LANCAMENTOS baixas '+l.romaneio_ssw+' ERRO: '+String(e?.message||e)))
     }
   }
 }

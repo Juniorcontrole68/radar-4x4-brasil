@@ -154,7 +154,7 @@ function resumir(row){
     // auto = a linha entrou sozinha, a partir do romaneio feito no SSW (o usuário só informa o valor)
     auto:!!s.auto,cidades:Array.isArray(s.cidades)?s.cidades:null,
     // entregas do romaneio, uma a uma (frete e situação), e o km da rota única quando o motorista tem mais de um romaneio
-    ctes:Array.isArray(s.ctes)?s.ctes:null,conjunto:s.conjunto||null,
+    ctes:Array.isArray(s.ctes)?s.ctes:null,conjunto:s.conjunto||null,seq:s.seq||'',
     calculo:s.calculo||null,criado_por:row.created_by||'',atualizado_em:row.updated_at||null
   }
 }
@@ -411,7 +411,7 @@ async function atender(req,res,u,ctx){
           ssw.romaneio_ssw=limpo(b.romaneio_ssw,40).toUpperCase();ssw.placa=limpo(b.placa,12).toUpperCase();
           // romaneio trocado: o que tinha sido lido do SSW era do outro
           Object.assign(c,{entregas:b.entregas??null,realizadas:null,pend:null,retorno:null,km:null,frete_vialog:null,desconto_vialog:null,rota:''});
-          delete ssw.fretes;delete ssw.cidades;delete ssw.ctes;delete ssw.conjunto;
+          delete ssw.fretes;delete ssw.cidades;delete ssw.ctes;delete ssw.conjunto;delete ssw.seq;
           ssw.calculo={status:'pendente',em:new Date().toISOString()}
         }
       }
@@ -436,6 +436,8 @@ async function atender(req,res,u,ctx){
           delete ssw.fretes
         }
         if(Array.isArray(k.cidades))ssw.cidades=k.cidades.slice(0,80).map(x=>({c:limpo(x?.c,60).toUpperCase(),n:Math.max(0,Math.round(numero(x?.n))||0)})).filter(x=>x.c);
+        // número interno do romaneio no SSW (abre a tela de comprovantes mesmo depois de o romaneio sair da lista)
+        if(/^\d{1,12}$/.test(String(k.seq||'')))ssw.seq=String(k.seq);
         if(typeof k.rota==='string')c.rota=k.rota;
         if(typeof k.filial==='string'&&k.filial)c.filial=k.filial;
         if(typeof k.placa==='string'&&k.placa)ssw.placa=limpo(k.placa,12).toUpperCase();

@@ -8,9 +8,11 @@ let logins=0,seq=0,recusados=0;const tokens=new Map(),paths={};
 const HOJE=new Date().toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit',year:'2-digit'});
 const DATA={
   AMR:[['AMR001056-1','EYV3626',HOJE,'JAILSON MOREIRA DE SOUZA','12','5'],['AMR001057-1','FAB1A23',HOJE,'FABIANO TESTE','5','5']],
-  TBT:[['TBT000321-1','TBT9Z99',HOJE,'ROGER TESTE','2','2']]
+  TBT:[['TBT000321-1','TBT9Z99',HOJE,'ROGER TESTE','3','3']]
 };
-const page=rows=>'<html><body><form><input name="act" value=""><input name="dummy" value="1"></form><table><tr><th>Romaneio</th><th>Veículo</th><th>Inclusão</th><th>Motorista</th><th>Qtde CTRCs</th><th>Falta Ocorr.</th></tr>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</table></body></html>';
+const page=rows=>'<html><body><form><input name="act" value=""><input name="dummy" value="1"></form><table><tr><th>Romaneio</th><th>Veículo</th><th>Inclusão</th><th>Motorista</th><th>Qtde CTRCs</th><th>Falta Ocorr.</th><th></th></tr>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'<td><a href=# class=sra onclick="ajaxEnvia(\'\',1,\'ssw0198?act=ENV_ROM_COMPROV&seq_romaneio='+SEQ[r[0]]+'\');return(false)"><u>Imagens</u></a></td></tr>').join('')+'</table></body></html>';
+// número interno de cada romaneio (o link Imagens abre a tela de comprovantes por ele)
+const SEQ={'AMR001056-1':5056,'AMR001057-1':5057,'TBT000321-1':5321};
 const loginPage='<html><body><form action="ssw0422"><input name="f1"><input name="f2"><input name="f3"><input type="password" name="f4"></form></body></html>';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
@@ -24,7 +26,9 @@ const CTES={
   15327:{dv:3,nct:14792,nf:88120,nome:'DEPOSITO SAUDADE LTDA',doc:'11222333000144',lgr:'AVENIDA SAUDADE',nro:'516',cpl:'',bairro:'CENTRO',cid:'MOGI MIRIM',uf:'SP',cep:'13800000',lat:'-22,4288700',lon:'-46,9566500',vol:12,peso:'1.250,500'},
   15328:{dv:1,nct:14793,nf:4471,nome:'MADEIREIRA TRAVAGLIA',doc:'22333444000155',lgr:'RUA CONCEICAO TRAVAGLIA BLANCO',nro:'65',cpl:'GALPAO 2',bairro:'JARDIM SANTA CRUZ',cid:'MOGI GUACU',uf:'SP',cep:'13840000',lat:'-22,3212800',lon:'-46,9441100',vol:3,peso:'80,000'},
   15329:{dv:9,nct:14794,nf:9012,nome:'CERAMICA PEDREIRA',doc:'33444555000166',lgr:'RUA DAS PORCELANAS',nro:'100',cpl:'',bairro:'CENTRO',cid:'PEDREIRA',uf:'SP',cep:'13920000',lat:'',lon:'',vol:20,peso:'410,000'},
-  15330:{dv:7,nct:14795,nf:7001,nome:'CLIENTE DO RIO',doc:'44555666000177',lgr:'AVENIDA ATLANTICA',nro:'1702',cpl:'',bairro:'COPACABANA',cid:'RIO DE JANEIRO',uf:'RJ',cep:'22021001',lat:'-22,9711000',lon:'-43,1822000',vol:1,peso:'10,000'}
+  15330:{dv:7,nct:14795,nf:7001,nome:'CLIENTE DO RIO',doc:'44555666000177',lgr:'AVENIDA ATLANTICA',nro:'1702',cpl:'',bairro:'COPACABANA',cid:'RIO DE JANEIRO',uf:'RJ',cep:'22021001',lat:'-22,9711000',lon:'-43,1822000',vol:1,peso:'10,000'},
+  // CT-e de outra série: no romaneio aparece com o número curto (AMS769-2)
+  769:{ser:'AMS',dv:2,nct:14796,nf:4455,nome:'JONATAS GAMA DE ASSIS',doc:'55666777000188',lgr:'RUA FRANCISCO MESQUITA',nro:'77',cpl:'',bairro:'CENTRO',cid:'MOGI MIRIM',uf:'SP',cep:'13800000',lat:'-22,4300000',lon:'-46,9500000',vol:1,peso:'12,000'}
 };
 const chaveDe=c=>'35'+'2610'+'54582567000142'+'57'+'001'+String(c.nct).padStart(9,'0')+'1'+String(c.nct).padStart(8,'0')+'4';
 const porChave=k=>Object.entries(CTES).find(([,c])=>chaveDe(c)===k);
@@ -50,7 +54,7 @@ const FORM101='<html><body><form><input type="hidden" name="act" value="">'+
   '<input type="hidden" name="seq_ctrc" value=""><input type="hidden" name="FAMILIA" value="TST"><input type="hidden" name="web_sess" value="abc"></form></body></html>';
 const nenhum='<html><body>Nenhum CTRC selecionado para dados e per&iacute;odo informados</body></html>';
 const tela101=(nro,c)=>{
-  const ctrc='AMR'+String(nro).padStart(6,'0')+'-'+c.dv,mapa=(id,end,comPonto)=>'<A id="'+id+'" class="baselnk" href="#" onclick="showmapa(\'end='+end+'&nome='+encodeURIComponent(c.nome)+(comPonto&&c.lat?'&olat='+c.lat+'&olng='+c.lon:'')+'&cid='+c.cid+'&uf='+c.uf+'\');return false;">mapa</A> ';
+  const ctrc=(c.ser||'AMR')+String(nro).padStart(6,'0')+'-'+c.dv,mapa=(id,end,comPonto)=>'<A id="'+id+'" class="baselnk" href="#" onclick="showmapa(\'end='+end+'&nome='+encodeURIComponent(c.nome)+(comPonto&&c.lat?'&olat='+c.lat+'&olng='+c.lon:'')+'&cid='+c.cid+'&uf='+c.uf+'\');return false;">mapa</A> ';
   return'<html><head><title>101 - Situa&ccedil;&atilde;o do CTRC</title></head><body><form><input type="hidden" name="act" value=""><input type="hidden" name="g_ctrc_ser_ctrc" value="AMR"><input type="hidden" name="g_ctrc_nro_ctrc" value="'+nro+'"><input type="hidden" name="seq_ctrc" value="'+(22000+Number(nro)%1000)+'"><input type="hidden" name="FAMILIA" value="TST"><input type="hidden" name="web_sess" value="abc"></form>'+
     dv('texto','CTRC&nbsp;/Subc./RPS:')+dv('data','<b>'+ctrc+'</b>')+'<A id="link_imp_xml" class=baselnk href="#" onclick="ajaxEnvia(\'XML\', 0);return false;">XML</A>'+
     dv('texto','CT-e:')+dv('data','001 '+String(c.nct).padStart(9,'0'))+dv('texto','Previs&atilde;o de entrega:')+dv('data','09/10/26')+dv('texto','N&deg; da Nota Fiscal:')+dv('data','1/'+String(c.nf).padStart(9,'0'))+dv('texto','N&ordm; Pedido:')+dv('data','74236')+
@@ -74,10 +78,20 @@ function pdfDe(linhas){
   return Buffer.from(out,'latin1')
 }
 const ROMANEIO_PDF={'AMR|1057|1':['ROMANEIO DE ENTREGAS AMR001057-1   FABIANO TESTE   FAB1A23','CTRC         NF       DESTINATARIO',
-  ...Object.entries(CTES).map(([nro,c])=>'AMR'+String(nro).padStart(6,'0')+'-'+c.dv+'  '+String(c.nf).padStart(6,'0')+'  '+c.nome.slice(0,30))],
-  // o romaneio da outra filial leva dois CT-es (os mesmos de mentira, para ter rota)
+  ...Object.entries(CTES).filter(([,c])=>!c.ser).map(([nro,c])=>'AMR'+String(nro).padStart(6,'0')+'-'+c.dv+'  '+String(c.nf).padStart(6,'0')+'  '+c.nome.slice(0,30))],
+  // o romaneio da outra filial leva dois CT-es dos de mentira (para ter rota) e um de outra série
   'TBT|321|1':['ROMANEIO DE ENTREGAS TBT000321-1   ROGER TESTE   TBT9Z99','CTRC         NF       DESTINATARIO',
-  ...[15327,15328].map(nro=>'AMR'+String(nro).padStart(6,'0')+'-'+CTES[nro].dv+'  '+String(CTES[nro].nf).padStart(6,'0')+'  '+CTES[nro].nome.slice(0,30))]};
+  ...[15327,15328].map(nro=>'AMR'+String(nro).padStart(6,'0')+'-'+CTES[nro].dv+'  '+String(CTES[nro].nf).padStart(6,'0')+'  '+CTES[nro].nome.slice(0,30)),
+  'AMS769-2  004455  JONATAS GAMA DE ASSIS']};
+// Tela "038 - Baixa de Entregas > Comprovantes": as entregas do romaneio com a ocorrência de baixa (vazia = sem baixa).
+const COMPROV={5057:Object.keys(CTES).filter(n=>!CTES[n].ser),5321:['15327','15328','769']};
+const telaComprov=seq=>{
+  const nros=COMPROV[seq];
+  if(!nros)return'<html><body>Nenhum comprovante.</body></html>';
+  const oc=c=>{const m=String(c.sit||'').match(/^(\d{2}\/\d{2})\/\d{2}\s+(\d{2}:\d{2})\s+(\d+)-(.+)$/);return m?m[1]+'-'+m[3]+'-'+m[4]+' EM '+m[1]+'/26 '+m[2]:''};
+  return'<html><head><title>038 - Baixa de Entregas &gt; Comprovantes</title></head><body><div>Ve&iacute;culo: FAB1A23 Motorista: MOTORISTA DE TESTE Data: '+HOJE+'</div><xml id="xmlsr"><rs>'+
+    nros.map(n=>{const c=CTES[n];return'<r><f0>&lt;a href=# class=sra onclick=ajaxEnvia(\'\',1,\'ssw0053\');return(false);&gt;&lt;u&gt;'+(c.ser||'AMR')+String(n).padStart(6,'0')+'-'+c.dv+'&lt;/u&gt;&lt;/a&gt;</f0><f1>NAVAS E CIA LTDA</f1><f2>NAVAS E CIA LTDA</f2><f3>'+c.nome+'</f3><f4>'+c.lgr+','+c.nro+'</f4><f5>'+c.uf+' '+c.cid+'</f5><f6>'+oc(c)+'</f6><f7></f7><f8></f8></r>'}).join('')+'</rs></xml></body></html>'
+};
 const semCte='<html><body><form><input type="hidden" name="act" value=""></form><div class=texto>CTRC n&atilde;o encontrado.</div></body></html>';
 http.createServer(async(req,res)=>{
   const u=new URL(req.url,'http://x');paths[req.method+' '+u.pathname]=(paths[req.method+' '+u.pathname]||0)+1;
@@ -138,6 +152,7 @@ http.createServer(async(req,res)=>{
     res.writeHead(200,{'Content-Type':'application/ssw'});return res.end(zipDe(chaveDe(c)+'-cte.xml',xmlDe(c)))
   }
   if(u.pathname==='/bin/menu01'){st.unit=u.searchParams.get('f2');await sleep(150);return send(200,'<script>location="ssw0198"</script>')}
+  if(u.pathname==='/bin/ssw0198'&&u.searchParams.get('act')==='ENV_ROM_COMPROV')return send(200,telaComprov(Number(u.searchParams.get('seq_romaneio'))));
   if(u.pathname==='/bin/ssw0198'&&req.method==='GET'){await sleep(150);return send(200,page(DATA[st.unit]||[]))}
   if(u.pathname==='/bin/ssw0198'&&req.method==='POST')return send(200,'<xml></xml>');
   return send(404,'');

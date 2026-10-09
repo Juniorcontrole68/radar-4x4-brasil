@@ -191,5 +191,22 @@ console.log('Qual endereço usar na entrega');
   check('complemento comum: vai direto no endereço do destinatário',c[0].fonte==='XML do CT-e (destinatário)',c[0])
 }
 
+console.log('Tela de comprovantes do romaneio (opção 38)');
+{
+  // grade do SSW: células com o HTML escapado; ocorrência vazia = entrega ainda sem baixa
+  const tela='<html><title>038 - Baixa de Entregas &gt; Comprovantes</title><body>Ve&iacute;culo: DSS6I20 Motorista: VICTOR HUGO DA SILVA Data: 09/10/26<xml id=x><rs>'+
+    '<r><f0>&lt;a href=# onclick=x()&gt;&lt;u&gt;AMR015589-6&lt;/u&gt;&lt;/a&gt;</f0><f1>COMERCIAL LEAL</f1><f2>COMERCIAL LEAL</f2><f3>CONSTRUMIX HIDRA</f3><f4>RUA MANSOUR ASSIS, 1</f4><f5>SP CAMPINAS</f5><f6>09/10-01-MERCADORIA ENTREGUE EM 09/10/26 15:20</f6><f7></f7><f8></f8></r>'+
+    '<r><f0>&lt;u&gt;AMS000769-2&lt;/u&gt;</f0><f1>FAST SHOP S.A.</f1><f2>FAST SHOP S.A.</f2><f3>JONATAS GAMA</f3><f4>RUA FRANCISCO MESQUITA</f4><f5>SP CAMPINAS</f5><f6></f6></r>'+
+    '<r><f0><u>AMR015500-4</u></f0><f1>a</f1><f2>b</f2><f3>TEREZINHA</f3><f4>d</f4><f5>SP CAMPINAS</f5><f6>09/10-12-DESTINATARIO AUSENTE</f6></r></rs></xml></body></html>';
+  const p=cte.parseComprovantes(tela),i=p.itens;
+  check('uma linha por entrega, de qualquer série (AMR e AMS)',p.ehComprovantes&&i.length===3&&i.map(x=>x.ctrc).join()==='AMR015589-6,AMS000769-2,AMR015500-4'&&p.motorista==='VICTOR HUGO DA SILVA',p);
+  check('ocorrência 01 = entregue, com o texto da baixa',i[0].codigo===1&&i[0].texto==='01-MERCADORIA ENTREGUE EM 09/10/26 15:20'&&i[0].destinatario==='CONSTRUMIX HIDRA'&&i[0].cidade==='CAMPINAS',i[0]);
+  check('sem ocorrência = ainda sem baixa',i[1].codigo===null&&i[1].texto===''&&i[1].destinatario==='JONATAS GAMA',i[1]);
+  check('outra ocorrência vem com o código e o texto',i[2].codigo===12&&i[2].texto==='12-DESTINATARIO AUSENTE',i[2]);
+  const tab=cte.parseComprovantes('<table><tr><th>CTRC/Coleta</th><th>Ocorrência</th></tr><tr><td><a>AMR015589-6</a></td><td>r</td><td>e</td><td>d</td><td>end</td><td>SP CAMPINAS</td><td>09/10-01-MERCADORIA ENTREGUE</td></tr></table>');
+  check('a mesma tela em tabela comum também é lida',tab.itens.length===1&&tab.itens[0].codigo===1&&tab.itens[0].ctrc==='AMR015589-6',tab);
+  check('tela sem entregas: lista vazia',cte.parseComprovantes('<html><body>Nenhum comprovante.</body></html>').itens.length===0)
+}
+
 console.log('\n'+ok+' ok, '+bad+' falha(s)');
 process.exit(bad?1:0);

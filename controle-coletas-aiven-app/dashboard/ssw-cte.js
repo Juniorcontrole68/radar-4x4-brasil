@@ -253,4 +253,26 @@ function enderecosEntrega(info,romaneioEndereco=''){
   return out
 }
 
-module.exports={zipEntries,isZip,xmlFromDownload,parseCteXml,parseTela101,parseMapaCall,xmlValue,xmlBlock,entregaNoComplemento,enderecosEntrega,recebedorEhOutroLocal};
+// Tela "038 - Baixa de Entregas > Comprovantes" (link Imagens do romaneio): uma linha por entrega do
+// romaneio, com a ocorrência de baixa ("09/10-01-MERCADORIA ENTREGUE EM ..."; vazia = ainda sem baixa).
+// A grade do SSW vem em <r><f0>..</f0>..</r> (com o HTML das células escapado) ou em tabela comum.
+function parseComprovantes(body){
+  const dec=t=>String(t||'').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#39;/gi,"'").replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&');
+  const txt=t=>dec(dec(t)).replace(/<!--[\s\S]*?-->/g,' ').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
+  const src=String(body||'');
+  let linhas=[...src.matchAll(/<r\b[^>]*>([\s\S]*?)<\/r>/gi)].map(m=>[...m[1].matchAll(/<f(\d+)\b[^>]*>([\s\S]*?)<\/f\1>/gi)].map(f=>txt(f[2])));
+  if(!linhas.some(c=>c.length))linhas=[...src.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(m=>[...m[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(f=>txt(f[1])));
+  const itens=[];
+  for(const cols of linhas){
+    const iC=cols.findIndex(c=>/^[A-Z]{3}\s?0*\d{1,7}\s?-\s?\d$/i.test(c));
+    if(iC<0)continue;
+    const iO=cols.findIndex((c,i)=>i>iC&&/^\d{2}\/\d{2}\s*-\s*\d{1,3}\s*-/.test(c));
+    const oc=iO>=0?cols[iO]:'',m=oc.match(/^(\d{2}\/\d{2})\s*-\s*(\d{1,3})\s*-\s*(.*)$/);
+    itens.push({ctrc:cols[iC].replace(/\s+/g,'').toUpperCase(),remetente:cols[iC+1]||'',destinatario:cols[iC+3]||'',endereco:cols[iC+4]||'',cidade:String(cols[iC+5]||'').replace(/^[A-Z]{2}\s+/,''),
+      ocorrencia:oc,codigo:m?Number(m[2]):null,texto:m?(m[2].padStart(2,'0')+'-'+m[3]).slice(0,70):''})
+  }
+  const plano=txt(src.replace(/<xml[\s\S]*?<\/xml>/gi,' ')).slice(0,4000);
+  return{ehComprovantes:/Comprovantes/i.test(plano)||itens.length>0,motorista:((plano.match(/Motorista:\s*(.{0,60}?)\s+Data:/i)||[])[1]||'').trim(),veiculo:((plano.match(/Ve[ií]culo:\s*([A-Z0-9]{7})/i)||[])[1]||''),itens}
+}
+
+module.exports={parseComprovantes,zipEntries,isZip,xmlFromDownload,parseCteXml,parseTela101,parseMapaCall,xmlValue,xmlBlock,entregaNoComplemento,enderecosEntrega,recebedorEhOutroLocal};
