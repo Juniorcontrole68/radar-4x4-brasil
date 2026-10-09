@@ -1328,7 +1328,7 @@ async function deliveryProgramCreateSsw101Session(){
   const nav=await rr.text(),prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0053';
   rr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:hdr('https://sistema.ssw.inf.br/bin/menu01'),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
   const formHtml=await rr.text();
-  return{jar,apply,cookie,hdr,prog,baseParams:deliveryProgramFormParams(formHtml)}
+  return{jar,apply,cookie,hdr,prog,formHtml,baseParams:deliveryProgramFormParams(formHtml)}
 }
 async function deliveryProgramFetchSsw101Detail(session,row,force=false){
   const ctrc=String(row?.ctrc||'').trim().toUpperCase(),key=normCtrc(ctrc)||ctrc;
@@ -1512,17 +1512,94 @@ async function sswCteLer(session,ctrc){
 // Diagnóstico: para o CT-e pedido e os outros do mesmo romaneio, mostra o endereço que cada
 // fonte do SSW traz (romaneio, tela 101, XML do CT-e, ponto do mapa) e onde cada um cai no mapa.
 // Roda em segundo plano: o link do resultado já sai na hora e vai sendo preenchido.
-function sswDiagnosticoStart(ctrc,data){
-  const out={ok:true,versao:2,ctrc:String(ctrc||'').toUpperCase().trim(),data:/^\d{4}-\d{2}-\d{2}$/.test(String(data||''))?data:spDateISO(),
+// Chave de acesso de 44 dígitos (é o que o código de barras do DACTE traz).
+function sswChaveInfo(key){
+  const k=String(key||'').replace(/\D/g,'');
+  if(k.length!==44)return null;
+  return{chave:k,uf:k.slice(0,2),anoMes:k.slice(2,6),cnpj:k.slice(6,20),modelo:k.slice(20,22),serie:String(Number(k.slice(22,25))),numero:String(Number(k.slice(25,34)))}
+}
+function sswDiagnosticoStart(codigo,data){
+  const bruto=String(codigo||'').trim(),digitos=bruto.replace(/\D/g,''),comoCtrc=bruto.toUpperCase().replace(/\s+/g,'');
+  const out={ok:true,versao:3,lido:{texto:bruto.slice(0,120),caracteres:bruto.length,digitos:digitos.length},ctrc:'',chave:'',
+    data:/^\d{4}-\d{2}-\d{2}$/.test(String(data||''))?data:spDateISO(),
     geradoEm:new Date().toISOString(),pronto:false,andamento:'entrando no SSW',total:0,feitos:0,itens:[]};
-  if(!/^[A-Z]{3}0*\d+-\d$/.test(out.ctrc))return{ok:false,error:'CT-e inválido. Use o formato AMR15326-5.'};
+  if(/^[A-Z]{3}0*\d+-\d$/.test(comoCtrc))out.ctrc=comoCtrc;
+  else if(digitos.length===44){out.chave=digitos;out.chaveInfo=sswChaveInfo(digitos)}
+  else return{ok:false,error:'Não reconheci o código "'+bruto.slice(0,60)+'" ('+digitos.length+' dígitos). Bipe o código de barras do CT-e (44 dígitos) ou digite no formato AMR15326-5.'};
   if(!internalSswConfigured())return{ok:false,error:'Credenciais internas SSW não configuradas'};
   const token=sswDiagStore(out);
   sswDiagnosticoRun(out).catch(e=>{out.erro=String(e?.message||e);console.log('SSW DIAGNÓSTICO ERRO: '+out.erro)})
     .finally(()=>{out.pronto=true;out.andamento=out.erro?'parou com erro':'pronto';out.terminadoEm=new Date().toISOString()});
   return{ok:true,token,out}
 }
+// O relatório 174 do BI2 acha o CT-e pela chave? Mostra o que cada versão do relatório traz.
+async function sswDiagBi2(key,ctrc,day){
+  const digits=v=>String(v||'').replace(/\D/g,''),num=((String(ctrc||'').match(/^[A-Z]{3}0*(\d+)-\d$/)||[])[1])||'';
+  const cols=['sigla_ctrc','numero_ctrc','sigla_cte','numero_cte','nro_chave_acesso_cte','data_emissao','hora_emissao','numero_nf','destinatario_nome','dest_endereco','dest_cep','dest_cidade','dest_uf','entrega/redesp_nome','entr_endereco','entr_cep','entr_cidade','entr_uf','observ1','observ2'];
+  const corta=r=>r?Object.fromEntries(cols.filter(c=>c in r).map(c=>[c,String(r[c]??'').slice(0,160)])):null;
+  const fontes=[
+    ['pasta do dia '+day,async()=>{const x=await fetchBi2FolderDayParsed(174,'ctrc',day);return x.ok?(x.rows||[]):null}],
+    ['relatório geral',async()=>parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text).rows||[]]
+  ];
+  const out=[];
+  for(const [fonte,get] of fontes){
+    const f={fonte};
+    try{
+      const rows=await get();
+      if(!rows){f.existe=false;out.push(f);continue}
+      f.linhas=rows.length;
+      f.datasEmissao=[...new Set(rows.map(r=>String(r.data_emissao||'').trim()).filter(Boolean))].slice(0,60);
+      f.ultimas=rows.slice(-3).map(r=>({sigla_ctrc:r.sigla_ctrc,numero_ctrc:r.numero_ctrc,numero_cte:r.numero_cte,data_emissao:r.data_emissao,hora_emissao:r.hora_emissao,chaveDigitos:digits(r.nro_chave_acesso_cte).length}));
+      f.pelaChave=key?corta(rows.find(r=>digits(r.nro_chave_acesso_cte)===key)):null;
+      f.peloNumero=num?rows.filter(r=>{const d=digits(r.numero_ctrc).replace(/^0+/,'');return d===num||d.slice(0,-1)===num}).slice(0,2).map(corta):[]
+    }catch(e){f.erro=String(e?.message||e)}
+    out.push(f)
+  }
+  return out
+}
+// A opção 101 tem campo de busca pela chave / código de barras? Mostra o formulário inicial
+// e tenta a busca (é só consulta) nos campos que parecem servir.
+async function sswDiag101Busca(session,key){
+  const html=String(session.formHtml||''),out={};
+  out.campos=[...html.matchAll(/<input\b([^>]*)>/gi)].map(m=>{const a=m[1]||'';const g=n=>(a.match(new RegExp('\\b'+n+'=["\']?([^"\'\\s>]+)','i'))||[])[1]||'';
+    return{name:g('name'),id:g('id'),type:g('type'),maxlength:g('maxlength'),size:g('size'),eventos:[...a.matchAll(/\bon(\w+)="([^"]{0,160})"/gi)].map(e=>e[1]+': '+e[2]).join(' | ').slice(0,300),pos:m.index}}).slice(0,80);
+  out.texto=htmlText38(html).slice(0,4000);
+  out.acoes=sswDiagActions(html).slice(0,60);
+  out.tentativas=[];
+  if(!key)return out;
+  const candidatos=out.campos.filter(c=>/^(text|tel|number)?$/i.test(c.type)&&(/chave|barra|bar|cte|fis/i.test(c.name+' '+c.id)||Number(c.maxlength)>=44)).slice(0,4);
+  for(const c of candidatos){
+    const t={campo:c.name||c.id};
+    try{
+      // ação: a do próprio campo (onchange/onkeyup...) ou a primeira que aparece logo depois dele
+      const act=(c.eventos.match(/ajaxEnvia\(\s*['"]([^'"]+)['"]/i)||html.slice(c.pos,c.pos+900).match(/ajaxEnvia\(\s*['"]([^'"]+)['"]/i)||[])[1]||'';
+      t.act=act;
+      if(!act||!c.name){t.pulado='sem ação ou sem nome';out.tentativas.push(t);continue}
+      const p=new URLSearchParams(session.baseParams.toString());p.set(c.name,key);p.set('act',act);
+      const r=await sswPost101(session,p);
+      t.status=r.status;t.bytes=Buffer.byteLength(r.html);t.texto=htmlText38(r.html).slice(0,500);
+      t.ctrc=((htmlText38(r.html).match(/CTRC[^:]{0,20}:\s*([A-Z]{3}\d{5,7}-\d)/i)||[])[1])||'';
+      t.seq=((r.html.match(/name=["']?seq_ctrc["']?[^>]*value=["']?(\d+)/i)||[])[1])||''
+    }catch(e){t.erro=String(e?.message||e)}
+    out.tentativas.push(t)
+  }
+  return out
+}
 async function sswDiagnosticoRun(out){
+  // Bipou a chave: primeiro descobre qual é o CT-e (relatório 174 e busca da opção 101).
+  let sessaoBusca=null;
+  if(!out.ctrc&&out.chave){
+    out.andamento='procurando o CT-e pela chave';
+    try{out.bi2=await sswDiagBi2(out.chave,'',out.data)}catch(e){out.bi2={erro:String(e?.message||e)}}
+    try{sessaoBusca=await deliveryProgramCreateSsw101Session();out.busca101=await sswDiag101Busca(sessaoBusca,out.chave)}catch(e){out.busca101={erro:String(e?.message||e)}}
+    const pelo101=(out.busca101?.tentativas||[]).find(t=>t.ctrc)?.ctrc||'';
+    const linha=(Array.isArray(out.bi2)?out.bi2:[]).map(f=>f.pelaChave).find(Boolean);
+    const d=String(linha?.numero_ctrc||'').replace(/\D/g,'');
+    const peloBi2=linha&&/^[A-Z]{3}$/i.test(String(linha.sigla_ctrc||'').trim())&&d.length>=2?String(linha.sigla_ctrc).trim().toUpperCase()+d.slice(0,-1)+'-'+d.slice(-1):'';
+    out.achadoPor={opcao101:pelo101,relatorio174:peloBi2};
+    out.ctrc=(pelo101||peloBi2).toUpperCase();
+    if(!out.ctrc)throw new Error('Não achei o CT-e desta chave nem no relatório 174 nem na opção 101. O que foi tentado está neste resultado.')
+  }
   // CT-es do mesmo romaneio (no dia pedido). Se não achar, consulta só o CT-e informado.
   let metas=[{ctrc:out.ctrc}];
   try{
@@ -1537,7 +1614,7 @@ async function sswDiagnosticoRun(out){
   }catch(e){out.romaneio={erro:String(e?.message||e)}}
   out.total=metas.length;
   out.andamento='entrando na opção 101';
-  const session=await deliveryProgramCreateSsw101Session();
+  const session=sessaoBusca||await deliveryProgramCreateSsw101Session();
   out.programa=session.prog;
   const m1=v=>Math.round(Number(v));
   const ponto=l=>l?{lat:Number(l.lat.toFixed(6)),lon:Number(l.lon.toFixed(6)),precisao:l.precision||'',achou:l.displayName||'',busca:l.query||''}:null;
@@ -1609,6 +1686,13 @@ async function sswDiagnosticoRun(out){
         }catch(e){t.erro=String(e?.message||e)}
         item.sondagens.push(t)
       }
+    }
+    // Digitou o número: com a chave que veio no XML, testa como achar o CT-e pelo código de barras.
+    if(i===0&&!out.chave&&lido?.cte?.chave){
+      out.chaveDoXml=lido.cte.chave;out.chaveInfo=sswChaveInfo(lido.cte.chave);
+      out.andamento='testando a busca pelo código de barras';
+      try{out.bi2=await sswDiagBi2(lido.cte.chave,out.ctrc,out.data)}catch(e){out.bi2={erro:String(e?.message||e)}}
+      try{out.busca101=await sswDiag101Busca(session,lido.cte.chave)}catch(e){out.busca101={erro:String(e?.message||e)}}
     }
     out.feitos=i+1
   }
@@ -5063,11 +5147,16 @@ if(u.pathname==='/api/ssw/diagnostico-cte'&&req.method==='GET'){
   const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
   const page=(title,body)=>'<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Diagnóstico SSW</title><style>body{font-family:system-ui;margin:0;background:#f7f9fc;color:#16142f}.wrap{max-width:720px;margin:auto;padding:24px}.card{background:#fff;border-radius:16px;padding:20px;box-shadow:0 4px 20px #0001}input{width:100%;box-sizing:border-box;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-size:15px;margin-top:10px}.muted{color:#667085;font-size:14px;line-height:1.5}</style></head><body><div class="wrap"><div class="card"><h2 style="margin-top:0">'+esc(title)+'</h2>'+body+'</div></div></body></html>';
   try{
-    const x=sswDiagnosticoStart(u.searchParams.get('ctrc')||'',u.searchParams.get('data')||'');
+    const codigo=u.searchParams.get('codigo')||u.searchParams.get('ctrc')||'';
+    if(!codigo.trim()){
+      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+      return res.end(page('Diagnóstico do CT-e no SSW','<div class="muted">Clique no campo e <b>bipe o código de barras de um CT-e</b> com o leitor. Sem leitor por perto, digite o número (ex.: AMR15326-5) e aperte Enter.</div><form method="get" action="/api/ssw/diagnostico-cte"><input name="codigo" autofocus autocomplete="off" placeholder="Bipe ou digite o CT-e"><div class="muted" style="margin-top:10px">Só consulta: nada é alterado no SSW.</div></form>'))
+    }
+    const x=sswDiagnosticoStart(codigo,u.searchParams.get('data')||'');
     if(!x.ok){res.writeHead(400,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(page('Não deu para consultar','<div class="muted">'+esc(x.error)+'</div>'))}
     const link=String(process.env.PUBLIC_BASE_URL||'https://controle-coletas-jr.onrender.com').replace(/\/+$/,'')+'/dashboard/diag/'+x.token;
     res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
-    return res.end(page('Diagnóstico do CT-e '+x.out.ctrc,'<div class="muted">Copie o link abaixo e mande na conversa. Ele vale 30 minutos e mostra os endereços deste CT-e e dos outros do mesmo romaneio como o SSW guarda.</div><input readonly value="'+esc(link)+'" onclick="this.select()"><div class="muted" id="st" style="margin-top:12px;font-weight:600">Consultando o SSW… leva cerca de 1 minuto.</div>'+
+    return res.end(page('Diagnóstico do CT-e '+(x.out.ctrc||'bipado'),'<div class="muted">Copie o link abaixo e mande na conversa. Ele vale 30 minutos e mostra os endereços deste CT-e e dos outros do mesmo romaneio como o SSW guarda.</div><input readonly value="'+esc(link)+'" onclick="this.select()"><div class="muted" id="st" style="margin-top:12px;font-weight:600">Consultando o SSW… leva cerca de 1 minuto.</div>'+
       '<script>(function(){var st=document.getElementById("st");function v(){fetch('+JSON.stringify('/dashboard/diag/'+x.token)+',{cache:"no-store"}).then(function(r){return r.json()}).then(function(d){if(d.pronto){st.textContent=d.erro?("Parou com erro: "+d.erro+" — pode mandar o link mesmo assim."):("Pronto: "+d.feitos+" CT-e(s) lidos. Pode mandar o link.");st.style.color=d.erro?"#b42318":"#067647"}else{st.textContent="Consultando o SSW… "+(d.andamento||"")+".";setTimeout(v,3000)}}).catch(function(){setTimeout(v,5000)})}v()})()</script>'))
   }catch(e){
     res.writeHead(502,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
