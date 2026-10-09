@@ -15,6 +15,8 @@ function internalHeaders(extra={}){
 const GIDS={lancamentos:824972758,agendamentos:1232883750,ajudantes:438556395};
 const SHEET_NAMES={agendamentos:'Cópia de AGENDAMENTOS',agendamentos_copia:'Cópia de AGENDAMENTOS'};
 const PUB=path.join(__dirname,'public');
+// Tipo de cada arquivo da pasta public. Sem isto o navegador recusa a folha de estilo (.css servida como HTML).
+const STATIC_TYPES={'.js':'application/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.ico':'image/x-icon','.webmanifest':'application/manifest+json'};
 const COLETAS_PORTAL_URL=process.env.COLETAS_PORTAL_URL||'https://controle-coletas-jr.onrender.com';
 const SSW_TOKEN_URL=process.env.SSW_TOKEN_URL||'https://ssw.inf.br/api/generateToken';
 let SSW_CACHE={token:'',expires:0};
@@ -1495,8 +1497,13 @@ async function sswCteLer(session,ctrc){
   if(!mm)throw new Error('CT-e inválido: '+ctrc);
   const params=new URLSearchParams(session.baseParams.toString());
   params.set('t_ser_ctrc',mm[1]);params.set('t_nro_ctrc',mm[2]);params.set('act','P1');
-  const tela=await sswPost101(session,params),html=tela.html;
-  const out={ctrc:String(ctrc).toUpperCase(),html,status:tela.status,...sswCte.parseTela101(html),cte:null,xml:'',arquivo:null};
+  return sswCteDaTela(session,await sswPost101(session,params),String(ctrc).toUpperCase())
+}
+// Da tela do CT-e já aberta: lê os blocos e baixa o XML.
+async function sswCteDaTela(session,tela,ctrc=''){
+  const html=tela.html;
+  const out={ctrc,html,status:tela.status,...sswCte.parseTela101(html),cte:null,xml:'',arquivo:null};
+  if(!out.ctrc)out.ctrc=out.resumo?.ctrc||'';
   if(!/link_imp_xml|ajaxEnvia\(\s*['"]XML['"]/i.test(html))return out;
   const p2=deliveryProgramFormParams(html);p2.set('act','XML');
   const r2=await sswPost101(session,p2);
@@ -1509,6 +1516,28 @@ async function sswCteLer(session,ctrc){
   }
   return out
 }
+// Campo da opção 101 que aceita a chave de 44 dígitos (código de barras do DACTE) e a ação
+// que dispara a busca. Lido do próprio formulário, para não depender de nome fixo.
+function ssw101CampoChave(formHtml){
+  const html=String(formHtml||'');
+  const campos=[...html.matchAll(/<input\b([^>]*)>/gi)].map(m=>{const a=m[1]||'';const g=n=>(a.match(new RegExp('\\b'+n+'=["\']?([^"\'\\s>]+)','i'))||[])[1]||'';
+    return{name:g('name'),id:g('id'),type:g('type'),maxlength:Number(g('maxlength'))||0,attrs:a,pos:m.index}});
+  const c=campos.find(c=>c.name&&/^(text|tel|number)?$/i.test(c.type)&&/chave/i.test(c.name+' '+c.id))
+    ||campos.find(c=>c.name&&/^(text|tel|number)?$/i.test(c.type)&&c.maxlength>=44);
+  if(!c)return null;
+  const act=(c.attrs.match(/ajaxEnvia\(\s*['"]([^'"]+)['"]/i)||html.slice(c.pos,c.pos+900).match(/ajaxEnvia\(\s*['"]([^'"]+)['"]/i)||[])[1]||'';
+  return act?{name:c.name,act}:null
+}
+async function sswCteLerPorChave(session,key){
+  const campo=ssw101CampoChave(session.formHtml);
+  if(!campo)return null;
+  const params=new URLSearchParams(session.baseParams.toString());
+  params.set(campo.name,key);params.set('act',campo.act);
+  const tela=await sswPost101(session,params);
+  if(!/name=["']?seq_ctrc/i.test(tela.html))return null;
+  const lido=await sswCteDaTela(session,tela,'');
+  return lido.ctrc?lido:null
+}
 // Chave geral: a rota do romaneio só passa a usar o endereço lido do SSW quando isto for true.
 // Fica false até a leitura ser conferida com dados reais pelo diagnóstico (/api/ssw/diagnostico-cte).
 const ROTA_USA_ENDERECO_SSW=false;
@@ -1518,7 +1547,9 @@ const SSW_CTE_CACHE=new Map(),SSW_CTE_INFLIGHT=new Map();
 let SSW_CTE_CHAIN=Promise.resolve(),SSW_CTE_SESSION=null;
 function sswCteKey(ctrc){return normCtrcLoose(ctrc)||String(ctrc||'').toUpperCase().trim()}
 function sswCteCached(ctrc){const h=SSW_CTE_CACHE.get(sswCteKey(ctrc));return h&&Date.now()-h.at<h.ttl?h.value:undefined}
+const SSW_CHAVE_CTRC=new Map();   // chave de 44 dígitos -> número do CT-e no SSW
 function sswCteStore(ctrc,value){
+  if(value?.cte?.chave&&value.ctrc){SSW_CHAVE_CTRC.set(value.cte.chave,value.ctrc);if(SSW_CHAVE_CTRC.size>8000)SSW_CHAVE_CTRC.delete(SSW_CHAVE_CTRC.keys().next().value)}
   SSW_CTE_CACHE.set(sswCteKey(ctrc),{at:Date.now(),ttl:value?.cte?24*60*60*1000:(value?10*60*1000:3*60*1000),value});
   if(SSW_CTE_CACHE.size>4000)SSW_CTE_CACHE.delete(SSW_CTE_CACHE.keys().next().value)
 }
@@ -1561,6 +1592,82 @@ async function sswCteInfoMany(ctrcs,budgetMs=45000){
   for(const c of list){const v=sswCteCached(c);if(v)out.set(sswCteKey(c),v);else if(v===undefined)pendentes++}
   return{byKey:out,pendentes,total:list.length}
 }
+// CT-e a partir da chave bipada. 1º a memória; 2º a busca da opção 101 (já traz a tela, e
+// vale para CT-e emitido agora há pouco); 3º o relatório 174 do BI2.
+function sswCtePorChave(key){
+  const known=SSW_CHAVE_CTRC.get(key);
+  if(known)return sswCteInfo(known);
+  if(!internalSswConfigured())return Promise.resolve(null);
+  const inKey='K'+key;
+  if(SSW_CTE_INFLIGHT.has(inKey))return SSW_CTE_INFLIGHT.get(inKey);
+  const job=(SSW_CTE_CHAIN=SSW_CTE_CHAIN.catch(()=>{}).then(async()=>{
+    let value=null;
+    for(let attempt=0;attempt<2&&!value;attempt++){
+      try{
+        if(!SSW_CTE_SESSION||Date.now()-SSW_CTE_SESSION.at>8*60*1000)SSW_CTE_SESSION={at:Date.now(),s:await deliveryProgramCreateSsw101Session()};
+        const lido=await sswCteLerPorChave(SSW_CTE_SESSION.s,key);
+        value=lido?sswCteFromLido(lido,lido.ctrc):null;
+        if(!value&&!ssw101CampoChave(SSW_CTE_SESSION.s.formHtml))break;   // a opção 101 não tem busca pela chave
+        if(!value&&attempt===0)SSW_CTE_SESSION=null
+      }catch(e){SSW_CTE_SESSION=null;if(attempt)console.log('SSW CT-e pela chave ERRO: '+String(e?.message||e))}
+    }
+    if(value)sswCteStore(value.ctrc,value);
+    return value
+  })).then(async value=>{
+    if(value)return value;
+    // relatório 174: pasta do dia e, se preciso, o relatório geral
+    const digits=v=>String(v||'').replace(/\D/g,'');
+    const fontes=[async()=>{const x=await fetchBi2FolderDayParsed(174,'ctrc',spDateISO());return x.ok?(x.rows||[]):[]},async()=>parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text).rows||[]];
+    for(const get of fontes){
+      try{
+        const row=(await get()).find(r=>digits(routeField(r,[/^nro_chave_acesso_cte$/,/chave.*acesso.*cte/,/^chave_cte$/]))===key);
+        if(!row)continue;
+        const d=digits(row.numero_ctrc),sigla=String(row.sigla_ctrc||'').trim().toUpperCase();
+        if(/^[A-Z]{3}$/.test(sigla)&&d.length>=2){const v=await sswCteInfo(sigla+d.slice(0,-1)+'-'+d.slice(-1));if(v)return v}
+      }catch(e){console.log('SSW CT-e pela chave (BI2) ERRO: '+String(e?.message||e))}
+    }
+    return null
+  }).finally(()=>SSW_CTE_INFLIGHT.delete(inKey));
+  SSW_CTE_INFLIGHT.set(inKey,job);
+  return job
+}
+// Um CT-e bipado (ou digitado) vira uma parada: dados e endereço vêm do SSW (tela 101 + XML).
+async function routeBiparCte(codigo){
+  const raw=String(codigo||'').trim(),digits=raw.replace(/\D/g,''),up=raw.toUpperCase().replace(/\s+/g,'');
+  const fail=(status,msg)=>Object.assign(new Error(msg),{status});
+  let info=null,chave='';
+  if(/^[A-Z]{3}0*\d+-\d$/.test(up)){
+    info=await sswCteInfo(up);
+    if(!info)throw fail(404,'CT-e '+up+' não encontrado no SSW.')
+  }else if(digits.length===44&&digits.length>=raw.replace(/\s/g,'').length-2){
+    chave=digits;
+    const k=sswChaveInfo(digits);
+    if(k.modelo==='55')throw fail(400,'Este é o código da nota fiscal (DANFE). Bipe o código de barras do CT-e (DACTE).');
+    if(k.modelo!=='57')throw fail(400,'Este código de barras não é de um CT-e.');
+    info=await sswCtePorChave(digits);
+    if(!info)throw fail(404,'CT-e nº '+k.numero+' não encontrado no SSW. Se acabou de ser emitido, tente de novo em instantes ou digite o número (ex.: AMR15326-5).')
+  }else throw fail(400,'Não reconheci o código ('+digits.length+' dígitos). Bipe o código de barras do CT-e ou digite o número, ex.: AMR15326-5.');
+  const base=await routeBaseGeo();
+  if(!base)throw new Error('Não foi possível localizar a base de Americana.');
+  const loc=await routeLocateEntrega(info,'','','SP','');
+  const dest=info.cte?.recebedor?.logradouro?info.cte.recebedor:(info.cte?.destinatario||null);
+  const destinatario=info.cte?.destinatario?.nome||info.entrega?.nome||'Destinatário';
+  const nfs=[...new Set([info.resumo?.nf,...(info.cte?.nfChaves||[]).map(c=>String(Number(c.slice(25,34))))].filter(Boolean))];
+  const comum={
+    source:'cte',barcode:chave||info.cte?.chave||'',originalOrder:0,ctrc:info.ctrc,nf:nfs.slice(0,4).join(', '),destinatario,
+    complemento:String(dest?.complemento||info.entrega?.complemento||'').slice(0,120),
+    volumes:Number(info.resumo?.volumes||0)||0,peso:Number(info.resumo?.peso||0)||0,valorNf:Number(info.resumo?.valorNf||0)||0,
+    previsao:info.resumo?.previsao||'',situacao:info.resumo?.situacao||'',observacoes:(info.cte?.observacoes||[]).join(' | ').slice(0,300)
+  };
+  if(!loc)throw Object.assign(fail(422,'CT-e '+info.ctrc+' ('+destinatario+') encontrado, mas sem endereço ou cidade para localizar no mapa.'),{stop:comum});
+  const radius=routeHaversine(base,loc);
+  if(radius>ROUTE_MAX_RADIUS_METERS)throw fail(422,'O destino do CT-e '+info.ctrc+' fica a mais de 300 km da base ('+Math.round(radius/1000)+' km).');
+  const v=loc.mostra||{};
+  return{...comum,cidade:loc.cidade||dest?.cidade||'',uf:loc.uf||dest?.uf||'SP',
+    endereco:v.endereco||dest?.logradouro||'',numero:v.numero||'',bairro:v.outroLocal?(v.bairro||''):(v.bairro||dest?.bairro||''),cep:v.outroLocal?'':(v.cep||dest?.cep||''),enderecoFonte:v.fonte||'',
+    precision:loc.precision,coordinateSource:loc.coordinateSource||'',query:loc.query||'',lat:loc.lat,lon:loc.lon,
+    label:destinatario+((loc.cidade||dest?.cidade)?' • '+(loc.cidade||dest?.cidade):''),radiusKm:radius/1000}
+}
 // Acha a entrega no mapa: tenta os endereços do SSW do mais confiável para o menos e fica
 // com o primeiro que o mapa reconhece como rua da cidade certa. Sem rua, usa o ponto do
 // cliente no SSW; depois CEP; por último a sede do município.
@@ -1571,7 +1678,8 @@ async function routeLocateEntrega(info,romaneioEndereco,cidadePadrao,ufPadrao,ce
     // texto livre (complemento, romaneio) precisa de limpeza; campos do XML já vêm separados
     if(/^XML/.test(c.fonte))return{endereco:c.endereco,numero:c.numero,bairro:c.bairro,cep:c.cep,fonte:c.fonte};
     const k=geoEnd.cleanSswAddress(c.endereco,c.numero);
-    return{endereco:k.street||c.endereco,numero:k.number||'',bairro:c.bairro||k.bairro||'',cep:c.cep,fonte:c.fonte}
+    // entrega fora do endereço do cadastro: bairro e CEP do cadastro não valem para ela
+    return{endereco:k.street||c.endereco,numero:k.number||'',bairro:c.bairro||k.bairro||'',cep:c.cep,fonte:c.fonte,outroLocal:/^complemento/.test(c.fonte)}
   };
   let entregaFora=false;
   for(const c of cands){
@@ -3851,7 +3959,7 @@ async function buildRoutePlan(date='',romaneio=''){
     let {cidade,parts}=prepared[idx];
     const visto=located[idx]?.mostra||null;
     // Endereço que o motorista lê e que vai para o aplicativo de navegação: o do SSW, limpo.
-    if(visto)parts={endereco:visto.endereco||parts.endereco,numero:visto.numero||'',bairro:visto.bairro||parts.bairro,cep:visto.cep||parts.cep};
+    if(visto)parts={endereco:visto.endereco||parts.endereco,numero:visto.numero||'',bairro:visto.outroLocal?visto.bairro:(visto.bairro||parts.bairro),cep:visto.outroLocal?'':(visto.cep||parts.cep)};
     if(!cidade&&located[idx]?.cidade)cidade=located[idx].cidade;
     let query='',precision='cidade',geo=null,coordinateSource='';
     if(exactCoord){
@@ -5304,6 +5412,24 @@ if(u.pathname==='/api/roteirizador/cte'){try{
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:true,stop,radiusLimitKm:300}))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+if(u.pathname==='/api/roteirizador/bipar'){try{
+  // Carga por bipagem: um CT-e bipado vira uma parada, com o endereço lido do SSW.
+  if(!dashboardHasAny(authUser,['dashboard','roteirizador']))return dashboardDeny(res);
+  const stop=await routeBiparCte(u.searchParams.get('codigo')||'');
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:true,stop,radiusLimitKm:300}))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e),stop:e.stop||null}))}}
+if(req.method==='GET'&&u.pathname==='/api/roteirizador/motoristas'){try{
+  if(!dashboardHasAny(authUser,['dashboard','roteirizador']))return dashboardDeny(res);
+  const x=await portalAuth('/api/painel/roteirizador/motoristas',{token:authUser.token,timeout:15000});
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+if(req.method==='POST'&&u.pathname==='/api/roteirizador/enviar-carga'){try{
+  if(!dashboardHasAny(authUser,['dashboard','roteirizador']))return dashboardDeny(res);
+  const body=await readJsonLimited(req,2*1024*1024);
+  const x=await portalAuth('/api/painel/roteirizador/enviar-carga',{method:'POST',body,token:authUser.token,timeout:25000});
+  res.writeHead(201,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(req.method==='POST'&&u.pathname==='/api/roteirizador/geometria-order'){try{
   if(!dashboardHasAny(authUser,['dashboard','roteirizador','tracking']))return dashboardDeny(res);
   const body=await routeReadJson(req);
@@ -5417,7 +5543,7 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
     return res.end(html)
   }catch(e){}
 }
-let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.join(PUB,p));if(!p.startsWith(PUB)){res.writeHead(403);return res.end()}fs.readFile(p,(e,d)=>{if(e){res.writeHead(404);return res.end('Not found')}const ext=path.extname(p);res.writeHead(200,{'Content-Type':ext==='.js'?'application/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate','Pragma':'no-cache','Expires':'0'});res.end(d)})}catch(e){res.writeHead(500);res.end(e.message)}}).listen(PORT,'0.0.0.0',()=>{
+let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.join(PUB,p));if(!p.startsWith(PUB)){res.writeHead(403);return res.end()}fs.readFile(p,(e,d)=>{if(e){res.writeHead(404);return res.end('Not found')}const ext=path.extname(p).toLowerCase();res.writeHead(200,{'Content-Type':STATIC_TYPES[ext]||'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate','Pragma':'no-cache','Expires':'0'});res.end(d)})}catch(e){res.writeHead(500);res.end(e.message)}}).listen(PORT,'0.0.0.0',()=>{
   console.log('CONSTRULOG em '+PORT+(TEST_MODE?' *** AMBIENTE DE TESTE ***':''));
   if(TEST_MODE){console.log('TEST_MODE: sondas de inicialização, monitores BI2 e rotina de GPS desativados.');return}
   setInterval(()=>{trackingSyncTick()},TRACKING_SYNC_SECONDS*1000);

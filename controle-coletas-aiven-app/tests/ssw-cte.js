@@ -131,6 +131,8 @@ console.log('Dados da carga na tela 101');
   check('peso com milhar e vírgula',r.peso===1134.084,r.peso);
   check('valor da nota',r.valorNf===1580.62,r.valorNf);
   check('previsão e pedido',r.previsao==='09/10/26'&&r.pedido==='74236',r);
+  const sit=cte.parseTela101('<div>Observa&ccedil;&atilde;o: Instru&ccedil;&atilde;o Entrega: Situa&ccedil;&atilde;o Atual: CNG AMR 09/10/26 06:45 85-SAIDA PARA ENTREGA O corr&ecirc;ncias Fr e te D ANFEs</div>').resumo.situacao;
+  check('situação atual do CT-e (sem as siglas da frente)',sit==='09/10/26 06:45 85-SAIDA PARA ENTREGA',sit);
   const vazio=cte.parseTela101('<html>nada</html>').resumo;
   check('tela sem dados: tudo zerado, sem quebrar',vazio.ctrc===''&&vazio.volumes===0&&vazio.peso===0)
 }

@@ -105,7 +105,7 @@ function hasPerm(p){return !!(AUTH&&(AUTH.is_admin||AUTH.permissions?.includes('
 function hasAnyPerm(list){return list.some(hasPerm)}
 function tabAllowed(tab){
   const map={
-    dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao','roteirizador-teste':'roteirizador','roteirizador-v02':'roteirizador',rastreamento:'tracking',lotacao:'lotacao',frota:'frota','pdf-notas':'pdf_notas',
+    dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',carga:'roteirizador','roteirizador-teste':'roteirizador','roteirizador-v02':'roteirizador',rastreamento:'tracking',lotacao:'lotacao',frota:'frota','pdf-notas':'pdf_notas',
     agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes',
     'ssw-motoristas':'ssw_saidas','motoristas-evolucao':'evolucao',
     'ssw-atrasos':'ssw_atrasos','ssw-remetentes':'remetentes',
@@ -120,7 +120,7 @@ function tabAllowed(tab){
   return map[tab]?hasPerm(map[tab]):false
 }
 function applyPermissions(){
-  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao','roteirizador-teste':'roteirizador','roteirizador-v02':'roteirizador',rastreamento:'tracking',lotacao:'lotacao',frota:'frota',agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes'};
+  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',carga:'roteirizador','roteirizador-teste':'roteirizador','roteirizador-v02':'roteirizador',rastreamento:'tracking',lotacao:'lotacao',frota:'frota',agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes'};
   document.querySelectorAll('.nav button').forEach(b=>{
     let show=true;
     if(b.dataset.adminOnly==='1')show=!!AUTH?.is_admin;
@@ -4901,6 +4901,8 @@ function loadHeavyForTab(tab){
   }else if(tab==='agendamentos-copia'&&hasAnyPerm(['dashboard','agendamentos','agendamentos_copia'])){
     renderAgCopy();
     setTimeout(()=>refreshAgCopy(true),50);
+  }else if(tab==='carga'&&hasPerm('roteirizador')){
+    setTimeout(()=>window.cargaAbrir&&window.cargaAbrir(),50);
   }else if(tab==='roteirizador-v02'&&hasPerm('roteirizador')){
     setTimeout(()=>{rv2RenderList();rv2RenderMap()},50);
   }else if(tab==='roteirizador-teste'&&hasPerm('roteirizador')){
@@ -5046,6 +5048,7 @@ function openTab(tab){
     'lotacao':'Lotação',
     'frota':'Frota',
     'roteirizador':'Roteirizador SSW',
+    'carga':'Montar carga',
     'agendamentos-copia':'Consulta de Agendamentos','agendamento-teste':'Agendamento Teste',
     'usuarios':'Usuários e Acessos',
     'mapa-cidades':'Mapa de Cidades • SSW'

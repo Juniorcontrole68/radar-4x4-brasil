@@ -96,6 +96,7 @@ jobs:
             if curl -fs -o /dev/null http://127.0.0.1:10001/health && curl -fs -o /dev/null http://127.0.0.1:10000/; then echo "no ar em ${i}s"; break; fi
           done
           node tests/ssw-sessao.js
+          node tests/carga.js
       - name: Log do servidor
         if: always()
         run: cat servidor.log || true; echo ----; cat servidor-ssw.log || true

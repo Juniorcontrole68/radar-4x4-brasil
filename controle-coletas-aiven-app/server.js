@@ -1716,6 +1716,64 @@ async function start() {
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao exportar os romaneios.'})}
       }
 
+      // Carga por bipagem: motoristas conhecidos (aparelhos do rastreio e telefones), para
+      // escolher de quem é a carga na tela "Montar carga".
+      if (u.pathname === '/api/painel/roteirizador/motoristas' && req.method === 'GET') {
+        try{
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'roteirizador')||dashboardHas(user,'dashboard')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const q=await pool.query(
+            `SELECT DISTINCT ON (${sqlNome('driver_name')}) driver_name,vehicle_plate FROM (
+               SELECT driver_name,vehicle_plate,COALESCE(last_seen_at,enrolled_at) AS quando FROM driver_tracking_devices WHERE active=TRUE
+               UNION ALL
+               SELECT driver_name,''::text,updated_at FROM driver_tracking_contacts
+             ) t WHERE trim(COALESCE(driver_name,''))<>''
+             ORDER BY ${sqlNome('driver_name')},(COALESCE(vehicle_plate,'')<>'') DESC,quando DESC NULLS LAST LIMIT 500`);
+          return sendJson(res,200,{ok:true,rows:q.rows.map(r=>({driver_name:String(r.driver_name||'').trim(),vehicle_plate:String(r.vehicle_plate||'').trim()}))});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao listar motoristas.'})}
+      }
+      // Carga por bipagem: a rota montada na central vira (1) um link que abre no MOVIT e
+      // (2), se o motorista foi informado, a rota do dia dele no aplicativo.
+      if (u.pathname === '/api/painel/roteirizador/enviar-carga' && req.method === 'POST') {
+        try{
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'roteirizador')||dashboardHas(user,'dashboard')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const body=await readJsonBodyLimited(req,2*1024*1024);
+          const date=/^\d{4}-\d{2}-\d{2}$/.test(String(body.date||''))?String(body.date):spToday();
+          const driver=String(body.driver_name||'').trim().replace(/\s+/g,' ').slice(0,120);
+          const plate=String(body.vehicle_plate||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,10);
+          const plan=body.plan&&typeof body.plan==='object'?body.plan:{};
+          const day=movitDayFromPlan(plan);
+          if(!day.stops.length)return sendJson(res,400,{ok:false,error:'A carga não tem nenhuma entrega localizada no mapa.'});
+          if(day.stops.length>80)return sendJson(res,400,{ok:false,error:'Carga com mais de 80 entregas.'});
+          const stops=day.stops.map((st,i)=>({...st,seq:i+1,entregue:false,baixaAt:''}));
+          const [y,m,d]=date.split('-');
+          const title=('Carga • '+[driver,plate,d+'/'+m,stops.length+' entrega(s)'].filter(Boolean).join(' • ')).slice(0,180);
+          const routeData={stops,start:day.start,returnToStart:true,geometry:day.geometry,distanceMeters:day.distanceMeters,durationSeconds:day.durationSeconds,
+            carga:true,vehicle_plate:plate,criado_por:String(user.username||'')};
+          const token=crypto.randomBytes(10).toString('hex');
+          await pool.query("INSERT INTO router_shared_routes(share_token,title,driver_name,event_date,route_data) VALUES($1,$2,$3,$4::date,$5::jsonb)",
+            [token,title,driver,date,JSON.stringify(routeData)]);
+          let paraMotorista=false,phone='';
+          if(driver.length>=2){
+            // Uma carga por motorista por dia: reenviar substitui a anterior.
+            const rom=('CARGA '+driver.toUpperCase()).slice(0,80);
+            await pool.query(
+              `INSERT INTO movit_romaneio_routes(romaneio,driver_name,event_date,title,route_data,source,updated_at)
+               VALUES($1,$2,$3::date,$4,$5::jsonb,'CARGA',NOW())
+               ON CONFLICT (romaneio,event_date) DO UPDATE SET
+                 driver_name=EXCLUDED.driver_name,title=EXCLUDED.title,route_data=EXCLUDED.route_data,source=EXCLUDED.source,updated_at=NOW()`,
+              [rom,driver,date,title,JSON.stringify(routeData)]);
+            paraMotorista=true;
+            const c=await pool.query(`SELECT phone FROM driver_tracking_contacts WHERE ${sqlNome('driver_name')}=${sqlNome('$1')} ORDER BY updated_at DESC LIMIT 1`,[driver]).catch(()=>({rows:[]}));
+            phone=String(c.rows[0]?.phone||'').replace(/\D/g,'')
+          }
+          console.log('CARGA BIPADA enviada: '+JSON.stringify({por:user.username,date,motorista:driver,placa:plate,paradas:stops.length,km:Math.round(day.distanceMeters/1000)}));
+          return sendJson(res,201,{ok:true,token,title,date,stops:stops.length,driver_name:driver,vehicle_plate:plate,para_motorista:paraMotorista,phone,
+            open_url:DRIVER_PUBLIC_BASE+'/movit/rota/'+token,app_url:'movit://route/'+token,download_url:DRIVER_PUBLIC_BASE+'/downloads/MOVIT.apk'});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao enviar a carga.'})}
+      }
+
       // Simulação: a central abre no próprio celular a rota do dia de um motorista, sem ser
       // motorista cadastrado. Gera um código de uso único (30 min) para o aplicativo MOVIT.
       if (u.pathname === '/api/painel/tracking/movit-simulacao' && req.method === 'POST') {

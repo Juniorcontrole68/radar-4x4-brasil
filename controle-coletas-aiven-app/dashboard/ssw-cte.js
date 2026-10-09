@@ -184,7 +184,9 @@ function parseTela101(html){
     peso:num((plain.match(/Peso real[^:]{0,40}:\s*([\d.,]+)/i)||[])[1]),
     valorNf:num((plain.match(/Valor da Nota Fiscal:\s*([\d.,]+)/i)||[])[1]),
     previsao:(plain.match(/Previs[aã]o de entrega:\s*(\d{2}\/\d{2}\/\d{2,4})/i)||[])[1]||'',
-    pedido:(plain.match(/Pedido:\s*([A-Z0-9.\/-]{1,30})/i)||[])[1]||''
+    pedido:(plain.match(/Pedido:\s*([A-Z0-9.\/-]{1,30})/i)||[])[1]||'',
+    // "CNG AMR 09/10/26 06:45 85-SAIDA PARA ENTREGA": última ocorrência do CT-e
+    situacao:((plain.match(/Situa[cç][aã]o Atual:\s*(.{0,140}?)\s+(?:O\s?corr[eê]ncias|Fr\s?e\s?te|D\s?ANFEs)/i)||[])[1]||'').replace(/^[A-Z]{3}\s+[A-Z]{3}\s+/,'').trim()
   };
   return{entrega,mapas,resumo}
 }
