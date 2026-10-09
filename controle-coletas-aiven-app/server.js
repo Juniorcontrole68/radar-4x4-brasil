@@ -1721,7 +1721,7 @@ async function start() {
       if (u.pathname === '/api/painel/roteirizador/motoristas' && req.method === 'GET') {
         try{
           const user=await dashboardSession(req,false);
-          if(!(user.is_admin||dashboardHas(user,'roteirizador')||dashboardHas(user,'dashboard')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          if(!(user.is_admin||dashboardHas(user,'montar_carga')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
           const q=await pool.query(
             `SELECT DISTINCT ON (${sqlNome('driver_name')}) driver_name,vehicle_plate FROM (
                SELECT driver_name,vehicle_plate,COALESCE(last_seen_at,enrolled_at) AS quando FROM driver_tracking_devices WHERE active=TRUE
@@ -1737,7 +1737,7 @@ async function start() {
       if (u.pathname === '/api/painel/roteirizador/enviar-carga' && req.method === 'POST') {
         try{
           const user=await dashboardSession(req,false);
-          if(!(user.is_admin||dashboardHas(user,'roteirizador')||dashboardHas(user,'dashboard')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          if(!(user.is_admin||dashboardHas(user,'montar_carga')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
           const body=await readJsonBodyLimited(req,2*1024*1024);
           const date=/^\d{4}-\d{2}-\d{2}$/.test(String(body.date||''))?String(body.date):spToday();
           const driver=String(body.driver_name||'').trim().replace(/\s+/g,' ').slice(0,120);

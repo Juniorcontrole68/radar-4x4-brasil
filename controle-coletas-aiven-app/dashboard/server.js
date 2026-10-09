@@ -5481,24 +5481,24 @@ if(u.pathname==='/api/roteirizador/cte'){try{
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/roteirizador/bipar'){try{
   // Carga por bipagem: um CT-e bipado vira uma parada, com o endereço lido do SSW.
-  if(!dashboardHasAny(authUser,['dashboard','roteirizador']))return dashboardDeny(res);
+  if(!dashboardHasAny(authUser,['montar_carga']))return dashboardDeny(res);
   const stop=await routeBiparCte(u.searchParams.get('codigo')||'');
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:true,stop,radiusLimitKm:300}))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e),stop:e.stop||null}))}}
 if(req.method==='GET'&&u.pathname==='/api/roteirizador/motoristas'){try{
-  if(!dashboardHasAny(authUser,['dashboard','roteirizador']))return dashboardDeny(res);
+  if(!dashboardHasAny(authUser,['montar_carga']))return dashboardDeny(res);
   const x=await portalAuth('/api/painel/roteirizador/motoristas',{token:authUser.token,timeout:15000});
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(req.method==='POST'&&u.pathname==='/api/roteirizador/enviar-carga'){try{
-  if(!dashboardHasAny(authUser,['dashboard','roteirizador']))return dashboardDeny(res);
+  if(!dashboardHasAny(authUser,['montar_carga']))return dashboardDeny(res);
   const body=await readJsonLimited(req,2*1024*1024);
   const x=await portalAuth('/api/painel/roteirizador/enviar-carga',{method:'POST',body,token:authUser.token,timeout:25000});
   res.writeHead(201,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(req.method==='POST'&&u.pathname==='/api/roteirizador/geometria-order'){try{
-  if(!dashboardHasAny(authUser,['dashboard','roteirizador','tracking']))return dashboardDeny(res);
+  if(!dashboardHasAny(authUser,['dashboard','roteirizador','tracking','montar_carga']))return dashboardDeny(res);
   const body=await routeReadJson(req);
   const points=Array.isArray(body.points)?body.points.slice(0,81):[];
   const order=Array.isArray(body.order)?body.order.map(Number):[];
@@ -5522,7 +5522,7 @@ if(req.method==='POST'&&u.pathname==='/api/roteirizador/geometria-order'){try{
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
 if(req.method==='POST'&&u.pathname==='/api/roteirizador/recalcular'){try{
-  if(!dashboardHasAny(authUser,['dashboard','roteirizador','tracking']))return dashboardDeny(res);
+  if(!dashboardHasAny(authUser,['dashboard','roteirizador','tracking','montar_carga']))return dashboardDeny(res);
   const body=await routeReadJson(req);
   const stops=Array.isArray(body.stops)?body.stops.slice(0,80):[];
   if(!stops.length)throw Object.assign(new Error('Nenhuma parada enviada para recalcular.'),{status:400});

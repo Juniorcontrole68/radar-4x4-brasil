@@ -71,6 +71,29 @@ const chave=n=>'35'+'2610'+'54582567000142'+'57'+'001'+String(n).padStart(9,'0')
   check('lista de motoristas responde',r.status===200&&mot.ok&&Array.isArray(mot.rows),mot);
   r=await fetch(B+'/api/roteirizador/motoristas');check('lista de motoristas exige login',r.status===401,'veio '+r.status);
 
+  console.log('Permissão própria: Montar carga é liberada usuário a usuário');
+  {
+    const sufixo=Date.now().toString(36);
+    const cria=async(nome,permissions)=>{
+      const x=await fetch(B+'/api/painel/auth/users',{method:'POST',headers:{...H,'Content-Type':'application/json'},body:JSON.stringify({username:nome,password:'senha-teste-1',permissions})});
+      const l=await fetch(B+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:nome,password:'senha-teste-1'})});
+      return{criou:x.status,H:{Cookie:((l.headers.get('set-cookie')||'').match(/cl_session=[^;]+/)||[''])[0]}}
+    };
+    const com=await cria('carga_sim_'+sufixo,['montar_carga']),sem=await cria('carga_nao_'+sufixo,['roteirizador','dashboard','tracking','programacao']);
+    check('usuários de teste criados e logados',com.criou===201&&sem.criou===201&&!!com.H.Cookie&&!!sem.H.Cookie,{com:com.criou,sem:sem.criou});
+    const st=async(h,m,u,body)=>(await fetch(B+u,{method:m,headers:{...h,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined})).status;
+    check('só com "Montar carga": bipa, lista motoristas, roteiriza e envia',
+      await st(com.H,'GET','/api/roteirizador/bipar?codigo=AMR15327-3')===200&&await st(com.H,'GET','/api/roteirizador/motoristas')===200&&
+      await st(com.H,'POST','/api/roteirizador/recalcular',{date:'',stops})===200&&await st(com.H,'POST','/api/roteirizador/enviar-carga',corpo)===201);
+    check('  ...e não ganha acesso ao que não foi liberado (rastreio, programação)',await st(com.H,'GET','/api/tracking/contacts')===403&&await st(com.H,'GET','/api/programacao-entregas')===403,[await st(com.H,'GET','/api/tracking/contacts'),await st(com.H,'GET','/api/programacao-entregas')]);
+    check('com Roteirizador, Dashboard e Rastreio mas sem "Montar carga": não bipa, não lista, não envia',
+      await st(sem.H,'GET','/api/roteirizador/bipar?codigo=AMR15327-3')===403&&await st(sem.H,'GET','/api/roteirizador/motoristas')===403&&await st(sem.H,'POST','/api/roteirizador/enviar-carga',corpo)===403,
+      [await st(sem.H,'GET','/api/roteirizador/bipar?codigo=AMR15327-3'),await st(sem.H,'GET','/api/roteirizador/motoristas'),await st(sem.H,'POST','/api/roteirizador/enviar-carga',corpo)]);
+    check('  ...mas continua roteirizando nas telas que já tinha',await st(sem.H,'POST','/api/roteirizador/recalcular',{date:'',stops})===200);
+    r=await fetch(B+'/dashboard/app.js');
+    check('a permissão aparece na lista de acessos dos usuários',/\['montar_carga','Montar carga/.test(await r.text()))
+  }
+
   console.log('Diagnóstico do SSW');
   r=await fetch(B+'/api/ssw/diagnostico-cte',{headers:H});let t=await r.text();
   check('sem código: mostra o campo para bipar',r.status===200&&/name="codigo"/.test(t)&&/autofocus/.test(t));

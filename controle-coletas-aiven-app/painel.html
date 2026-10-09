@@ -168,10 +168,11 @@ function moduleAllowed(mod){
   if(mod==='coletas')return licensed('coletas')&&hasPerm('coletas');
   if(mod==='financeiro'||mod==='financeiro-lotacao')return licensed('financeiro_lotacao')&&hasPerm('financeiro');
   if(mod==='dashboard')return licensed('visao_geral')&&hasPerm('dashboard');
-  if(mod==='dashboards')return licensed('dashboards')&&(AUTH.is_admin||(AUTH.permissions||[]).some(p=>!['coletas','contas_pagar','dashboard'].includes(p)));
+  if(mod==='dashboards')return licensed('dashboards')&&(AUTH.is_admin||(AUTH.permissions||[]).some(p=>!['coletas','contas_pagar','dashboard','montar_carga'].includes(p)));
   if(mod==='usuarios')return licensed('usuarios')&&!!AUTH.is_admin;
   if(mod==='programacao')return licensed('programacao')&&hasPerm('programacao');
-  if(mod==='carga'||mod==='roteirizador-teste'||mod==='roteirizador-v02')return licensed('roteirizador')&&(hasPerm('roteirizador')||AUTH.is_admin);
+  if(mod==='carga')return licensed('roteirizador')&&(hasPerm('montar_carga')||AUTH.is_admin);   // permissão própria: liberada usuário a usuário
+  if(mod==='roteirizador-teste'||mod==='roteirizador-v02')return licensed('roteirizador')&&(hasPerm('roteirizador')||AUTH.is_admin);
   if(mod==='tracking')return licensed('rastreio')&&hasPerm('tracking');
   if(mod==='lotacao')return licensed('lotacao')&&(moduleAllowed('coletas')||moduleAllowed('financeiro-lotacao'));
   if(mod==='agendamento-teste')return licensed('agendamento')&&(hasPerm('agendamentos')||hasPerm('dashboard'));
@@ -638,7 +639,13 @@ async function entrarNoSistema(user){
   document.getElementById('authGate').classList.add('hide');
   const wanted=(location.hash||'').slice(1);
   let btn=wanted?document.querySelector('.tab[data-module="'+wanted+'"]'):null;
-  if(!btn||!moduleAllowed(btn.dataset.module))btn=[...document.querySelectorAll('.tab')].find(b=>moduleAllowed(b.dataset.module));
+  if(!btn||!moduleAllowed(btn.dataset.module)){
+    // "Dashboards" subiu para a barra principal, mas a tela de entrada continua a de antes:
+    // na escolha da primeira tela ele segue valendo como se estivesse depois da Visão Geral.
+    const ordem=[...document.querySelectorAll('.tab')],dash=ordem.find(b=>b.dataset.module==='dashboards');
+    if(dash){ordem.splice(ordem.indexOf(dash),1);const v=ordem.findIndex(b=>b.dataset.module==='dashboard');ordem.splice(v<0?ordem.length:v+1,0,dash)}
+    btn=ordem.find(b=>moduleAllowed(b.dataset.module))
+  }
   if(btn){
     if(btn.dataset.group)selectModuleGroup(btn.dataset.group);
     await abrirModulo(btn);
