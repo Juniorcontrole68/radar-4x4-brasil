@@ -121,5 +121,55 @@ console.log('Tela da opção 101 (como o SSW mostra)');
   check('tela sem o bloco Entrega não quebra',cte.parseTela101('<html>Sessão expirada</html>').entrega===null)
 }
 
+console.log('Dados da carga na tela 101');
+{
+  const TOPO='<div>Dados do CTRC: 000022119 Dom&iacute;nio: CNG Empresa: 01 CTRC&nbsp;/Subc./RPS: <b>AMR015326-5</b> DACTE XML SEFAZ CT-e: 001 000014791 07/10/26 14:43 AUTORIZADO Previs&atilde;o de entrega: 09/10/26 ajustar N&deg; da Nota Fiscal: 1/000525535 N&ordm; Pedido: 74236 Estou chegando: Qtde. de vol./pares: 5/0 Conferente coleta: Peso c&aacute;lculo (Kg): 134,084 Peso real /Peso real orig (Kg): 1.134,084 Cubagem/Cub Orig (m&sup3;): 0,0000 Valor da Nota Fiscal: 1.580,62 Frete original:</div>';
+  const r=cte.parseTela101(TOPO).resumo;
+  check('número do CT-e no SSW',r.ctrc==='AMR015326-5',r.ctrc);
+  check('nota fiscal sem a série e sem zeros',r.nf==='525535',r.nf);
+  check('volumes',r.volumes===5,r.volumes);
+  check('peso com milhar e vírgula',r.peso===1134.084,r.peso);
+  check('valor da nota',r.valorNf===1580.62,r.valorNf);
+  check('previsão e pedido',r.previsao==='09/10/26'&&r.pedido==='74236',r);
+  const vazio=cte.parseTela101('<html>nada</html>').resumo;
+  check('tela sem dados: tudo zerado, sem quebrar',vazio.ctrc===''&&vazio.volumes===0&&vazio.peso===0)
+}
+
+console.log('Qual endereço usar na entrega');
+{
+  const e=cte.entregaNoComplemento;
+  check('complemento com "ENDERECO ENTREGA RUA…"',e('SN ENDERECO ENTREGA RUA JULIA PERES APARECIDO NUM 30 BAIRRO PR')==='RUA JULIA PERES APARECIDO NUM 30 BAIRRO PR',e('SN ENDERECO ENTREGA RUA JULIA PERES APARECIDO NUM 30 BAIRRO PR'));
+  check('"End. de entrega: Av. …" (com acento e pontuação)',e('End. de Entrega: Av. Brasil, 100')==='AV. BRASIL, 100',e('End. de Entrega: Av. Brasil, 100'));
+  check('"ENTREGAR NA RUA …"',e('ENTREGAR NA RUA DAS FLORES 12')==='RUA DAS FLORES 12');
+  check('"LOCAL DE ENTREGA ROD …"',e('LOCAL DE ENTREGA ROD SP 340 KM 172')==='ROD SP 340 KM 172');
+  check('texto do romaneio começando por ENTREGA',e('ENTREGA RUA JULIA PERES APARECIDO NUM 30 BAIRRO PR')==='RUA JULIA PERES APARECIDO NUM 30 BAIRRO PR');
+  check('complemento comum não vira endereço',e('GALPAO 2 FUNDOS')===''&&e('SALA 3')===''&&e('')==='');
+  check('"entrega" sem logradouro depois não vira endereço',e('ENTREGA SOMENTE PELA MANHA')===''&&e('AGENDAR ENTREGA')==='');
+  check('rua citada sem dizer que é a entrega não vira endereço',e('ESQUINA COM RUA DAS FLORES')==='');
+
+  const p=cte.parseCteXml(XML);
+  const tela={endereco:'SITIO BAIRRO OL,3',logradouro:'SITIO BAIRRO OL',numero:'3',complemento:'SN ENDERECO ENTREGA RUA JULIA',bairro:'ZONA RURAL',cep:'13871-160',cidade:'SAO JOAO DA BOA VISTA',uf:'SP'};
+  const mapas={ent:{endereco:'SITIO BAIRRO OL, 3',logradouro:'SITIO BAIRRO OL',numero:'3',cidade:'SAO JOAO DA BOA VISTA',uf:'SP',lat:-21.97,lon:-46.78}};
+  const ROM='ENTREGA RUA JULIA PERES APARECIDO NUM 30 BAIRRO PR';
+  let c=cte.enderecosEntrega({cte:p,entrega:tela,mapas},ROM);
+  check('caso real (sítio + entrega no complemento): a entrega vem primeiro',c[0].fonte==='complemento (endereço de entrega)'&&c[0].endereco==='RUA JULIA PERES APARECIDO NUM 30 BAIRRO PR',c[0]);
+  check('usa o complemento mais completo, nunca o cortado da tela',!c.some(x=>x.endereco==='RUA JULIA'),c.map(x=>x.endereco));
+  check('depois vem o endereço do destinatário no XML',c[1].fonte==='XML do CT-e (destinatário)'&&c[1].endereco==='SITIO BAIRRO OLARIA'&&c[1].numero==='3'&&c[1].cep==='13871-160',c[1]);
+  check('todos levam a cidade e a UF do destinatário',c.every(x=>x.cidade==='SAO JOAO DA BOA VISTA'&&x.uf==='SP'),c.map(x=>x.cidade));
+  check('o texto do romaneio fica por último',c[c.length-1].fonte==='romaneio');
+  check('não repete o mesmo endereço',new Set(c.map(x=>x.endereco+'|'+x.numero)).size===c.length);
+  const comReceb=cte.parseCteXml(XML.replace('<dest>','<receb><CNPJ>1</CNPJ><xNome>OBRA</xNome><enderReceb><xLgr>RUA NOVA</xLgr><nro>7</nro><xMun>AGUAI</xMun><UF>SP</UF><CEP>13860000</CEP></enderReceb></receb><dest>'));
+  c=cte.enderecosEntrega({cte:comReceb,entrega:tela,mapas},ROM);
+  check('recebedor no XML ganha de tudo, com a cidade dele',c[0].fonte==='XML do CT-e (recebedor)'&&c[0].endereco==='RUA NOVA'&&c[0].cidade==='AGUAI'&&c[0].cep==='13860-000',c[0]);
+  c=cte.enderecosEntrega({cte:null,entrega:tela,mapas},'0007      AVENIDA SAUDADE, 516');
+  check('sem XML: complemento cortado da tela é ignorado; usa o cadastro do SSW e, por último, o romaneio',c[0].fonte==='cadastro do cliente no SSW'&&c[c.length-1].endereco==='0007 AVENIDA SAUDADE, 516',c);
+  c=cte.enderecosEntrega(null,'RUA A, 10');
+  check('sem nada do SSW: fica só o romaneio (como é hoje)',c.length===1&&c[0].fonte==='romaneio'&&c[0].cidade==='',c);
+  check('sem nada de nada: lista vazia',cte.enderecosEntrega(null,'').length===0);
+  const semCompl=cte.parseCteXml(XML.replace(/<xCpl>.*?<\/xCpl>/,'<xCpl>CASA</xCpl>'));
+  c=cte.enderecosEntrega({cte:semCompl,entrega:{...tela,complemento:'CASA'},mapas},'0007   SITIO BAIRRO OLARIA,3');
+  check('complemento comum: vai direto no endereço do destinatário',c[0].fonte==='XML do CT-e (destinatário)',c[0])
+}
+
 console.log('\n'+ok+' ok, '+bad+' falha(s)');
 process.exit(bad?1:0);

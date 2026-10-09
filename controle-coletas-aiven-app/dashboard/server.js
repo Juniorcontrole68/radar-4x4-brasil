@@ -1509,6 +1509,92 @@ async function sswCteLer(session,ctrc){
   }
   return out
 }
+// O que o SSW guarda de cada CT-e (endereço não muda): fica 24 h na memória. Uma leitura por
+// vez, todas na mesma sessão da opção 101, para não abrir vários logins no SSW.
+const SSW_CTE_CACHE=new Map(),SSW_CTE_INFLIGHT=new Map();
+let SSW_CTE_CHAIN=Promise.resolve(),SSW_CTE_SESSION=null;
+function sswCteKey(ctrc){return normCtrcLoose(ctrc)||String(ctrc||'').toUpperCase().trim()}
+function sswCteCached(ctrc){const h=SSW_CTE_CACHE.get(sswCteKey(ctrc));return h&&Date.now()-h.at<h.ttl?h.value:undefined}
+function sswCteStore(ctrc,value){
+  SSW_CTE_CACHE.set(sswCteKey(ctrc),{at:Date.now(),ttl:value?.cte?24*60*60*1000:(value?10*60*1000:3*60*1000),value});
+  if(SSW_CTE_CACHE.size>4000)SSW_CTE_CACHE.delete(SSW_CTE_CACHE.keys().next().value)
+}
+function sswCteFromLido(lido,ctrc){
+  if(!lido||!(lido.entrega||lido.cte||Object.keys(lido.mapas||{}).length||lido.resumo?.ctrc))return null;
+  return{ctrc:lido.resumo?.ctrc||String(ctrc||'').toUpperCase(),cte:lido.cte,entrega:lido.entrega,mapas:lido.mapas||{},resumo:lido.resumo||{}}
+}
+function sswCteInfo(ctrc){
+  const key=sswCteKey(ctrc),hit=sswCteCached(ctrc);
+  if(hit!==undefined)return Promise.resolve(hit);
+  if(!internalSswConfigured()||!/^[A-Z]{3}0*\d+-\d$/i.test(String(ctrc||'').trim()))return Promise.resolve(null);
+  if(SSW_CTE_INFLIGHT.has(key))return SSW_CTE_INFLIGHT.get(key);
+  const job=(SSW_CTE_CHAIN=SSW_CTE_CHAIN.catch(()=>{}).then(async()=>{
+    let value=null;
+    for(let attempt=0;attempt<2&&!value;attempt++){
+      try{
+        if(!SSW_CTE_SESSION||Date.now()-SSW_CTE_SESSION.at>8*60*1000)SSW_CTE_SESSION={at:Date.now(),s:await deliveryProgramCreateSsw101Session()};
+        value=sswCteFromLido(await sswCteLer(SSW_CTE_SESSION.s,String(ctrc).toUpperCase().trim()),ctrc);
+        if(!value)SSW_CTE_SESSION=null   // tela vazia: a sessão deve ter caído; tenta com outra
+      }catch(e){
+        SSW_CTE_SESSION=null;
+        if(attempt)console.log('SSW CT-e '+ctrc+' ERRO: '+String(e?.message||e))
+      }
+    }
+    sswCteStore(ctrc,value);
+    return value
+  })).finally(()=>SSW_CTE_INFLIGHT.delete(key));
+  SSW_CTE_INFLIGHT.set(key,job);
+  return job
+}
+// Lê vários CT-es esperando no máximo budgetMs. O que não der tempo continua sendo lido em
+// segundo plano e fica pronto para a próxima consulta. Devolve o que já está em mãos.
+async function sswCteInfoMany(ctrcs,budgetMs=45000){
+  const list=[...new Set((ctrcs||[]).map(c=>String(c||'').toUpperCase().trim()).filter(Boolean))];
+  const jobs=list.map(c=>sswCteInfo(c).catch(()=>null));
+  let timer;
+  await Promise.race([Promise.all(jobs),new Promise(r=>{timer=setTimeout(r,budgetMs)})]);
+  clearTimeout(timer);
+  const out=new Map();let pendentes=0;
+  for(const c of list){const v=sswCteCached(c);if(v)out.set(sswCteKey(c),v);else if(v===undefined)pendentes++}
+  return{byKey:out,pendentes,total:list.length}
+}
+// Acha a entrega no mapa: tenta os endereços do SSW do mais confiável para o menos e fica
+// com o primeiro que o mapa reconhece como rua da cidade certa. Sem rua, usa o ponto do
+// cliente no SSW; depois CEP; por último a sede do município.
+async function routeLocateEntrega(info,romaneioEndereco,cidadePadrao,ufPadrao,cepPadrao){
+  const cands=sswCte.enderecosEntrega(info,romaneioEndereco);
+  const mostra=c=>{
+    if(!c)return null;
+    // texto livre (complemento, romaneio) precisa de limpeza; campos do XML já vêm separados
+    if(/^XML/.test(c.fonte))return{endereco:c.endereco,numero:c.numero,bairro:c.bairro,cep:c.cep,fonte:c.fonte};
+    const k=geoEnd.cleanSswAddress(c.endereco,c.numero);
+    return{endereco:k.street||c.endereco,numero:k.number||'',bairro:c.bairro||k.bairro||'',cep:c.cep,fonte:c.fonte}
+  };
+  let entregaFora=false;
+  for(const c of cands){
+    const cid=c.cidade||cidadePadrao,u=c.uf||ufPadrao||'SP';
+    if(!cid)continue;
+    const loc=await routeLocateAddress({endereco:c.endereco,numero:c.numero,cidade:cid,uf:u,cep:''}).catch(()=>null);
+    if(loc&&(loc.precision==='endereco'||loc.precision==='rua')){
+      // O cliente pediu entrega em outro endereço (complemento) e o mapa não achou esse endereço:
+      // o endereço do cadastro vira só uma aproximação, e o motorista lê o endereço da entrega.
+      if(entregaFora)return{lat:loc.lat,lon:loc.lon,precision:'ssw-cliente',displayName:loc.displayName,query:loc.query,
+        coordinateSource:'Endereço do cadastro (entrega em outro local, ver endereço)',cidade:cid,uf:u,mostra:mostra(cands[0])};
+      return{...loc,cidade:cid,uf:u,mostra:mostra(c)}
+    }
+    if(/^complemento/.test(c.fonte)||/recebedor/.test(c.fonte))entregaFora=true
+  }
+  const cid=cands[0]?.cidade||cidadePadrao,u=cands[0]?.uf||ufPadrao||'SP';
+  const principal=mostra(cands[0]);
+  const pt=[info?.mapas?.ent,info?.mapas?.dest].find(p=>p&&p.lat!==null&&p.lat!==undefined);
+  if(pt&&geoEnd.insideCity(pt,cid,u)!==false)return{lat:pt.lat,lon:pt.lon,precision:'ssw-cliente',displayName:pt.endereco||'',query:'Ponto do cliente no SSW',
+    coordinateSource:'Ponto do cliente no SSW',cidade:cid,uf:u,mostra:principal};
+  const cep=cands.find(c=>c.cep)?.cep||cepPadrao||'';
+  if(!cid&&!cep)return null;
+  const loc=await routeLocateAddress({endereco:'',numero:'',cidade:cid,uf:u,cep}).catch(()=>null);
+  return loc?{...loc,cidade:cid,uf:u,mostra:principal}:null
+}
+
 // Diagnóstico: para o CT-e pedido e os outros do mesmo romaneio, mostra o endereço que cada
 // fonte do SSW traz (romaneio, tela 101, XML do CT-e, ponto do mapa) e onde cada um cai no mapa.
 // Roda em segundo plano: o link do resultado já sai na hora e vai sendo preenchido.
@@ -1625,24 +1711,26 @@ async function sswDiagnosticoRun(out){
     let lido=null;
     try{
       lido=await sswCteLer(session,item.ctrc);
-      item.tela={status:lido.status,bytes:Buffer.byteLength(lido.html),entrega:lido.entrega,mapas:lido.mapas};
+      item.tela={status:lido.status,bytes:Buffer.byteLength(lido.html),entrega:lido.entrega,mapas:lido.mapas,resumo:lido.resumo};
       item.arquivo=lido.arquivo;
       item.cte=lido.cte
     }catch(e){item.erro=String(e?.message||e)}
-    // Onde cada endereço cai no mapa, e a distância até o ponto que o SSW guarda do cliente.
+    // Onde cada endereço possível cai no mapa, a distância até o ponto que o SSW guarda do
+    // cliente, e qual a rota do dia escolheria (mesma regra da rota: routeLocateEntrega).
     try{
-      const parte=lido?.cte?.recebedor?.logradouro?lido.cte.recebedor:(lido?.cte?.destinatario||null);
-      const cidade=parte?.cidade||lido?.entrega?.cidade||lido?.mapas?.ent?.cidade||lido?.mapas?.dest?.cidade||'';
-      const uf=parte?.uf||lido?.entrega?.uf||lido?.mapas?.ent?.uf||'SP',cep=parte?.cep||meta.cep||'';
-      const mapaSsw=[lido?.mapas?.ent,lido?.mapas?.dest].find(p=>p&&p.lat!==null)||null;
-      const loc={ssw:mapaSsw?{lat:mapaSsw.lat,lon:mapaSsw.lon,endereco:mapaSsw.endereco}:null};
-      const tenta=async(endereco,numero)=>endereco?ponto(await routeLocateAddress({endereco,numero,cidade,uf,cep}).catch(()=>null)):null;
-      loc.peloRomaneio=await tenta(meta.endereco||'','');
-      loc.peloXml=parte?await tenta(parte.logradouro,parte.numero):null;
-      const compl=String(parte?.complemento||'');
-      loc.peloComplementoXml=/\b(RUA|R\.?|AV\.?|AVENIDA|ROD\.?|RODOVIA|ESTRADA|EST\.?|ALAMEDA|AL\.?|TRAVESSA|PRACA|PRAÇA)\s+\S/i.test(compl)?await tenta(compl.replace(/^.*?\b(?=(?:END(?:ERECO)?\.?\s*(?:DE\s+)?ENTREGA|ENTREGAR?\b))/i,''),''):null;
-      loc.cidade=cidade;loc.uf=uf;
-      if(loc.ssw)for(const k of ['peloRomaneio','peloXml','peloComplementoXml'])if(loc[k])loc[k].metrosDoPontoSsw=m1(routeHaversine(loc.ssw,loc[k]));
+      const info=sswCteFromLido(lido,item.ctrc);
+      if(info)sswCteStore(item.ctrc,info);
+      const mapaSsw=[lido?.mapas?.ent,lido?.mapas?.dest].find(p=>p&&p.lat!==null&&p.lat!==undefined)||null;
+      const loc={ssw:mapaSsw?{lat:mapaSsw.lat,lon:mapaSsw.lon,endereco:mapaSsw.endereco}:null,candidatos:[]};
+      for(const c of sswCte.enderecosEntrega(info,meta.endereco||'')){
+        const l=c.cidade?await routeLocateAddress({endereco:c.endereco,numero:c.numero,cidade:c.cidade,uf:c.uf||'SP',cep:''}).catch(()=>null):null;
+        const x={fonte:c.fonte,endereco:c.endereco,numero:c.numero,bairro:c.bairro,cidade:c.cidade,uf:c.uf,cep:c.cep,mapa:ponto(l)};
+        if(x.mapa&&loc.ssw)x.mapa.metrosDoPontoSsw=m1(routeHaversine(loc.ssw,x.mapa));
+        loc.candidatos.push(x)
+      }
+      const esc=await routeLocateEntrega(info,meta.endereco||'','','SP',meta.cep||'').catch(()=>null);
+      loc.escolhido=esc?{lat:esc.lat,lon:esc.lon,precisao:esc.precision,fonte:esc.coordinateSource,achou:esc.displayName||'',cidade:esc.cidade,uf:esc.uf,motoristaLe:esc.mostra}:null;
+      if(loc.escolhido&&loc.ssw)loc.escolhido.metrosDoPontoSsw=m1(routeHaversine(loc.ssw,loc.escolhido));
       item.mapa=loc
     }catch(e){item.mapaErro=String(e?.message||e)}
     // Só no CT-e pedido: o XML inteiro, o texto da tela e o que as telas "DANFEs" e
@@ -3359,7 +3447,7 @@ async function routeFinalizePlan(stops,meta={}){
     durationSeconds:Number.isFinite(geo.durationSeconds)?geo.durationSeconds:0,
     outboundDistanceMeters:Number.isFinite(geo.distanceMeters)?geo.distanceMeters:0,rejectedStops:rejected,
     fixedEnd:hasFixedEnd,endIndex:hasFixedEnd?points.length-1:null,
-    approximateStops:clean.filter(x=>['cidade','cliente','manual-aproximado','cte-aproximado'].includes(x.precision)).length
+    approximateStops:clean.filter(x=>['cidade','cliente','ssw-cliente','manual-aproximado','cte-aproximado'].includes(x.precision)).length
   }
 }
 function routeReadJson(req,maxBytes=1024*1024){
@@ -3695,6 +3783,9 @@ async function buildRoutePlan(date='',romaneio=''){
       console.log('ROTEIRIZADOR fallback de linhas ERRO: '+String(e.message||e))
     }
   }
+  // Endereço de entrega direto do SSW (XML do CT-e + tela 101). Começa já, para correr junto
+  // com as outras consultas; mais abaixo espera o que faltar, até 60 s contados daqui.
+  const cteJob=sswCteInfoMany(metas.map(m=>m.ctrc),60000).catch(e=>{console.log('ROTEIRIZADOR XML CT-e ERRO: '+String(e?.message||e));return null});
   // Fonte prioritária para cliente/cidade: pendências atuais da própria opção 38.
   // Ela já traz CT-e/NF + cliente + cidade e evita depender do BI2 para localizar a rota.
   const pendingByLoose=new Map(),pendingByNf=new Map();
@@ -3726,6 +3817,8 @@ async function buildRoutePlan(date='',romaneio=''){
   const stops=[],rejectedStops=[];
   // 1ª passada: junta os dados de cada entrega. 2ª: localiza todos os endereços de uma vez
   // (as consultas ao mapa rodam em paralelo). 3ª: monta as paradas na ordem do romaneio.
+  const cteInfo=await cteJob;
+  if(cteInfo)console.log('ROTEIRIZADOR XML CT-e '+String(selected.romaneio||'')+': '+JSON.stringify({ctes:cteInfo.total,lidos:cteInfo.byKey.size,comXml:[...cteInfo.byKey.values()].filter(v=>v.cte).length,aindaLendo:cteInfo.pendentes}));
   const prepared=metas.map((meta,idx)=>{
     const lk=normCtrcLoose(meta.ctrc),nf=normNf(meta.nf);
     const detail=detailByLoose.get(lk)||(!lk?detailByNf.get(nf):null)||null;
@@ -3735,15 +3828,28 @@ async function buildRoutePlan(date='',romaneio=''){
     // Completa o BI2 com os dados detalhados do SSW. Alguns CT-es chegam no BI2
     // sem endereço/coordenada; o SSW ainda pode trazer cidade, CEP ou GPS.
     const r={...(detail||{}),...(primary||{})};
-    const destinatario=r.destinatario_nome||r.destinatario||routeField(r,[/(destinatario|destinat)_?nome/,/^destinatario$/])||pending?.cliente||enriched?.cliente||('Entrega '+(idx+1));
-    const cidade=r.cidade_destino||r.dest_cidade||r.cidade||routeField(r,[/(cidade).*(dest|destinat)/,/(dest|destinat).*cidade/,/^cidade_destino$/])||pending?.cidade||enriched?.cidade||'';
-    const uf=r.uf_destino||r.dest_uf||r.uf||routeField(r,[/(uf).*(dest|destinat)/,/(dest|destinat).*uf/,/^uf_destino$/])||pending?.uf||enriched?.uf||'SP';
-    return{meta,detail,pending,destinatario,cidade,uf,parts:routeAddressParts(r,meta),exactCoord:routeSswCoordinates(r,meta)}
+    const info=cteInfo?.byKey?.get(sswCteKey(meta.ctrc))||null,xd=info?.cte?.recebedor?.logradouro?info.cte.recebedor:(info?.cte?.destinatario||null);
+    const destinatario=r.destinatario_nome||r.destinatario||routeField(r,[/(destinatario|destinat)_?nome/,/^destinatario$/])||pending?.cliente||enriched?.cliente||info?.cte?.destinatario?.nome||info?.entrega?.nome||('Entrega '+(idx+1));
+    const cidade=r.cidade_destino||r.dest_cidade||r.cidade||routeField(r,[/(cidade).*(dest|destinat)/,/(dest|destinat).*cidade/,/^cidade_destino$/])||pending?.cidade||enriched?.cidade||xd?.cidade||info?.entrega?.cidade||'';
+    const uf=r.uf_destino||r.dest_uf||r.uf||routeField(r,[/(uf).*(dest|destinat)/,/(dest|destinat).*uf/,/^uf_destino$/])||pending?.uf||enriched?.uf||xd?.uf||info?.entrega?.uf||'SP';
+    return{meta,detail,pending,destinatario,cidade,uf,info,parts:routeAddressParts(r,meta),exactCoord:routeSswCoordinates(r,meta)}
   });
-  const located=await Promise.all(prepared.map(p=>(p.exactCoord||!(p.parts.endereco||p.parts.cep))?null
-    :routeLocateAddress({endereco:p.parts.endereco,numero:p.parts.numero,cidade:p.cidade,uf:p.uf,cep:p.parts.cep}).catch(e=>{console.log('GEO localizar ERRO: '+String(e?.message||e));return null})));
+  // Com os dados do SSW: tenta os endereços do mais confiável para o menos (routeLocateEntrega).
+  // Sem eles (SSW fora do ar, leitura ainda em andamento): segue como era, pelo texto do romaneio.
+  const located=await Promise.all(prepared.map(p=>{
+    if(p.exactCoord)return null;
+    const erro=e=>{console.log('GEO localizar ERRO: '+String(e?.message||e));return null};
+    if(p.info)return routeLocateEntrega(p.info,p.parts.endereco,p.cidade,p.uf,p.parts.cep).catch(erro);
+    if(!(p.parts.endereco||p.parts.cep))return null;
+    return routeLocateAddress({endereco:p.parts.endereco,numero:p.parts.numero,cidade:p.cidade,uf:p.uf,cep:p.parts.cep}).catch(erro)
+  }));
   for(let idx=0;idx<metas.length;idx++){
-    const {meta,detail,pending,destinatario,cidade,uf,parts,exactCoord}=prepared[idx];
+    const {meta,detail,pending,destinatario,uf,info,exactCoord}=prepared[idx];
+    let {cidade,parts}=prepared[idx];
+    const visto=located[idx]?.mostra||null;
+    // Endereço que o motorista lê e que vai para o aplicativo de navegação: o do SSW, limpo.
+    if(visto)parts={endereco:visto.endereco||parts.endereco,numero:visto.numero||'',bairro:visto.bairro||parts.bairro,cep:visto.cep||parts.cep};
+    if(!cidade&&located[idx]?.cidade)cidade=located[idx].cidade;
     let query='',precision='cidade',geo=null,coordinateSource='';
     if(exactCoord){
       geo=exactCoord;precision='ssw-coordenada';coordinateSource='SSW';
@@ -3787,6 +3893,8 @@ async function buildRoutePlan(date='',romaneio=''){
     stops.push({
       originalOrder:idx+1,ctrc:meta.ctrc||'',nf:meta.nf||'',destinatario,cidade,uf,
       endereco:parts.endereco,numero:parts.numero,bairro:parts.bairro,cep:parts.cep,
+      complemento:String((info?.cte?.recebedor?.logradouro?info.cte.recebedor.complemento:info?.cte?.destinatario?.complemento)||'').slice(0,120),
+      enderecoFonte:visto?.fonte||'romaneio',volumes:Number(info?.resumo?.volumes||0)||0,peso:Number(info?.resumo?.peso||0)||0,
       precision,coordinateSource,query,lat:geo.lat,lon:geo.lon,radiusKm:radius/1000,label:destinatario+(cidade?' • '+cidade:''),
       entregue:!!detail?.entregue,
       baixaAt:detail?.entregue
@@ -3809,7 +3917,8 @@ async function buildRoutePlan(date='',romaneio=''){
   });
   value.rejectedStops=[...(value.rejectedStops||[]),...rejectedStops];
   value.expectedDeliveries=Number(selected.qtdeCtrcs||metas.length||0);
-  ROUTE_PLAN_CACHE.set(cacheKey,{at:Date.now(),value});
+  // Se ainda há CT-e sendo lido no SSW, guarda a rota por 1 minuto só: a próxima consulta já vem completa.
+  ROUTE_PLAN_CACHE.set(cacheKey,{at:Date.now()-(cteInfo?.pendentes?9*60*1000:0),value});
   return await routeRefreshCachedDeliveryStatus(value,target)
 }
 

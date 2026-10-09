@@ -174,7 +174,66 @@ function parseTela101(html){
       if(nm)entrega.nome=nm[1]
     }
   }
-  return{entrega,mapas}
+  // Dados da carga, para a lista de carregamento.
+  const num=v=>{const n=Number(String(v||'').replace(/\./g,'').replace(',','.'));return Number.isFinite(n)?n:0};
+  const ctrc=((plain.match(/CTRC[^:]{0,20}:\s*([A-Z]{3}\d{5,7}-\d)/i)||[])[1]||'').toUpperCase();
+  const nfTxt=(plain.match(/da Nota Fiscal:\s*(?:\d{1,3}\/)?0*(\d{1,12})/i)||[])[1]||'';
+  const resumo={
+    ctrc,nf:nfTxt,
+    volumes:Number((plain.match(/Qtde\.?\s*de\s*vol\.?[^:]{0,12}:\s*(\d+)/i)||[])[1]||0),
+    peso:num((plain.match(/Peso real[^:]{0,40}:\s*([\d.,]+)/i)||[])[1]),
+    valorNf:num((plain.match(/Valor da Nota Fiscal:\s*([\d.,]+)/i)||[])[1]),
+    previsao:(plain.match(/Previs[aã]o de entrega:\s*(\d{2}\/\d{2}\/\d{2,4})/i)||[])[1]||'',
+    pedido:(plain.match(/Pedido:\s*([A-Z0-9.\/-]{1,30})/i)||[])[1]||''
+  };
+  return{entrega,mapas,resumo}
 }
 
-module.exports={zipEntries,isZip,xmlFromDownload,parseCteXml,parseTela101,parseMapaCall,xmlValue,xmlBlock};
+// ---------------------------------------------------------------- qual endereço usar na entrega
+const semAcento=v=>String(v||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/\s+/g,' ').trim();
+const TIPO_RUA=/^(?:RUA|R|AVENIDA|AV|ALAMEDA|AL|TRAVESSA|TRAV|TV|ESTRADA|ESTR|EST|RODOVIA|ROD|PRACA|PCA|PC|LARGO|VIELA|VIA|VICINAL)\b\.?\s*\S/;
+// "SN ENDERECO ENTREGA RUA JULIA PERES APARECIDO NUM 30 BAIRRO PR" -> "RUA JULIA PERES APARECIDO NUM 30 BAIRRO PR"
+// Só vale quando o texto diz que é o local de entrega E o que vem depois começa como um logradouro.
+function entregaNoComplemento(texto){
+  const t=semAcento(texto);
+  const m=t.match(/\b(?:END(?:ERECO)?\.?\s*(?:DE\s+|P\/\s*|PARA\s+)?ENTREGA|LOCAL\s+(?:DE\s+|DA\s+)?ENTREGA|ENTREGAR?(?:\s+(?:EM|NA|NO|A))?)\s*[:\-]?\s*(.+)$/);
+  if(!m)return'';
+  const resto=m[1].replace(/^[\s:,\-]+/,'').trim();
+  return TIPO_RUA.test(resto)?resto:''
+}
+// Endereços possíveis de uma entrega, do mais confiável para o menos. Quem chama tenta achar
+// cada um no mapa, nesta ordem, e fica com o primeiro que o mapa reconhece.
+//   info: {cte (XML), entrega e mapas (tela 101)}   romaneioEndereco: texto do romaneio (pode vir cortado)
+function enderecosEntrega(info,romaneioEndereco=''){
+  const cte=info?.cte||null,dest=cte?.destinatario||null,receb=cte?.recebedor||null,tela=info?.entrega||null;
+  const mapa=info?.mapas?.ent||info?.mapas?.dest||null;
+  const cidade=receb?.cidade||dest?.cidade||tela?.cidade||mapa?.cidade||'',uf=receb?.uf||dest?.uf||tela?.uf||mapa?.uf||'';
+  const out=[],seen=new Set();
+  const add=(fonte,endereco,numero='',extra={})=>{
+    endereco=String(endereco||'').replace(/\s+/g,' ').trim();numero=String(numero||'').trim();
+    if(endereco.length<4)return;
+    const key=semAcento(endereco)+'|'+semAcento(numero);
+    if(seen.has(key))return;seen.add(key);
+    out.push({fonte,endereco,numero,bairro:extra.bairro||'',cidade:extra.cidade||cidade,uf:extra.uf||uf,cep:extra.cep||''})
+  };
+  // 1) recebedor: o CT-e diz que a entrega é em outro lugar
+  if(receb?.logradouro)add('XML do CT-e (recebedor)',receb.logradouro,receb.numero,{bairro:receb.bairro,cidade:receb.cidade,uf:receb.uf,cep:receb.cep});
+  // 2) "endereço de entrega" escrito no complemento: usa a versão mais completa do texto
+  // (a tela do SSW corta o complemento em 28 letras: cortado, ele pode casar com a rua errada)
+  const telaCompl=String(tela?.complemento||'').length<26?tela?.complemento:'';
+  const textos=[dest?.complemento,telaCompl,romaneioEndereco].map(entregaNoComplemento).filter(Boolean).sort((a,b)=>b.length-a.length);
+  if(textos[0])add('complemento (endereço de entrega)',textos[0],'');
+  // 3) endereço do destinatário
+  if(dest?.logradouro)add('XML do CT-e (destinatário)',dest.logradouro,dest.numero,{bairro:dest.bairro,cep:dest.cep});
+  // (com o XML em mãos, cadastro e tela só repetem o mesmo endereço, às vezes cortado)
+  if(!dest?.logradouro){
+    if(mapa?.logradouro)add('cadastro do cliente no SSW',mapa.logradouro,mapa.numero,{cep:tela?.cep||''});
+    if(tela?.logradouro)add('tela do CT-e no SSW',tela.logradouro,tela.numero,{bairro:tela.bairro,cep:tela.cep})
+  }
+  // 4) o que já se usava: texto do romaneio
+  if(romaneioEndereco)add('romaneio',romaneioEndereco,'');
+  return out
+}
+
+
+module.exports={zipEntries,isZip,xmlFromDownload,parseCteXml,parseTela101,parseMapaCall,xmlValue,xmlBlock,entregaNoComplemento,enderecosEntrega};

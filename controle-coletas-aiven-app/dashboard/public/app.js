@@ -2302,8 +2302,8 @@ function routeRenderMap(){
   setTimeout(()=>ROUTE_MAP.invalidateSize(),80)
 }
 function routePrecision(p){
-  const approx=p.precision==='cidade'||p.precision==='cliente';
-  const label=p.precision==='endereco'?'endereço':p.precision==='rua'?'rua':p.precision==='cep'?'CEP':p.precision==='cliente'?'cliente/cidade':'cidade';
+  const approx=p.precision==='cidade'||p.precision==='cliente'||p.precision==='ssw-cliente';
+  const label=p.precision==='endereco'?'endereço':p.precision==='rua'?'rua':p.precision==='cep'?'CEP':p.precision==='ssw-cliente'?'ponto do cliente':p.precision==='cliente'?'cliente/cidade':'cidade';
   return '<span class="precision-badge '+(approx?'approx':'')+'">'+label+'</span>'
 }
 function routeRenderBest(){
@@ -3125,7 +3125,7 @@ function trackingVisitWindow(stop,history,allowCepApprox=false,baixaAt=null){
   })).filter(p=>Number.isFinite(p._distanceKm));
 
   // 'rua': achou a via mas não a porta. Como o CEP, não serve para confirmar visita a 100 metros.
-  const isCep=precision==='cep'||precision==='rua'||source.includes('cep');
+  const isCep=precision==='cep'||precision==='rua'||precision==='ssw-cliente'||source.includes('cep');
   if(!isCep){
     let arrival=null,departure=null,inside=false;
     if(valid.length){
