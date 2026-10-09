@@ -1422,6 +1422,9 @@ async function start() {
   await pool.query('CREATE INDEX IF NOT EXISTS idx_tracking_requests_status ON driver_tracking_requests (status, created_at DESC)');
   await pool.query("ALTER TABLE driver_tracking_requests ADD COLUMN IF NOT EXISTS issued_token TEXT");
   await pool.query("ALTER TABLE driver_tracking_requests ADD COLUMN IF NOT EXISTS approved_device_id BIGINT");
+  // O que o motorista digitou no celular, quando a central escolheu outro nome/placa ao aprovar.
+  await pool.query("ALTER TABLE driver_tracking_requests ADD COLUMN IF NOT EXISTS typed_driver_name TEXT");
+  await pool.query("ALTER TABLE driver_tracking_requests ADD COLUMN IF NOT EXISTS typed_vehicle_plate TEXT");
   await pool.query("ALTER TABLE driver_tracking_requests ADD COLUMN IF NOT EXISTS decided_at TIMESTAMPTZ");
   await pool.query("ALTER TABLE driver_tracking_requests ADD COLUMN IF NOT EXISTS decided_by BIGINT");
   await pool.query(`
@@ -3923,6 +3926,13 @@ async function start() {
           const user=await dashboardSession(req,false);
           if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
           const id=(u.pathname.match(/requests\/(\d+)\/approve$/)||[])[1];
+          // A central pode escolher, ao aprovar, o motorista e a placa do romaneio do dia. O cadastro
+          // do celular fica com esses dados, e não com o que o motorista digitou no aplicativo.
+          const body=await readJsonBodyLimited(req,8*1024).catch(()=>({}));
+          const chosenName=String(body?.driver_name||'').trim().replace(/\s+/g,' ').slice(0,120);
+          const chosenPlate=String(body?.vehicle_plate||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,10);
+          if(chosenName&&chosenName.length<2)return sendJson(res,400,{ok:false,error:'Motorista inválido.'});
+          if(chosenPlate&&chosenPlate.length<7)return sendJson(res,400,{ok:false,error:'Placa inválida.'});
           const client=await pool.connect();
           try{
             await client.query('BEGIN');
@@ -3930,6 +3940,10 @@ async function start() {
             if(!rq.rowCount){await client.query('ROLLBACK');return sendJson(res,404,{ok:false,error:'Solicitação não encontrada.'})}
             const row=rq.rows[0];
             if(row.status==='approved'){await client.query('COMMIT');return sendJson(res,200,{ok:true,status:'approved'})}
+            const typedName=row.driver_name,typedPlate=row.vehicle_plate||'';
+            if(chosenName)row.driver_name=chosenName;
+            if(chosenPlate)row.vehicle_plate=chosenPlate;
+            const corrected=row.driver_name!==typedName||(row.vehicle_plate||'')!==typedPlate;
             const token=crypto.randomBytes(32).toString('hex');
             // Aparelhos anteriores do mesmo motorista (mesmo nome, sem acento/caixa) que estão PARADOS são desativados.
             // Quem está enviando sinal agora continua valendo: se o novo aparelho conectar de
@@ -3949,11 +3963,16 @@ async function start() {
             // A sessão do dia nasce no primeiro sinal do aplicativo (trackingEnsureTodaySession).
             // Criá-la aqui fazia o motorista aparecer "Em rota" sem o celular ter conectado.
             await client.query(
-              "UPDATE driver_tracking_requests SET status='approved',issued_token=$1,approved_device_id=$2,decided_at=NOW(),decided_by=$3 WHERE id=$4",
-              [token,dev.rows[0].id,user.id,id]
+              `UPDATE driver_tracking_requests
+               SET status='approved',issued_token=$1,approved_device_id=$2,decided_at=NOW(),decided_by=$3,
+                   driver_name=$5,vehicle_plate=$6,
+                   typed_driver_name=CASE WHEN $7::boolean THEN $8 ELSE typed_driver_name END,
+                   typed_vehicle_plate=CASE WHEN $7::boolean THEN $9 ELSE typed_vehicle_plate END
+               WHERE id=$4`,
+              [token,dev.rows[0].id,user.id,id,row.driver_name,row.vehicle_plate||'',corrected,typedName,typedPlate]
             );
             await client.query('COMMIT');
-            console.log('TRACKING APROVACAO aprovada: '+JSON.stringify({id,driver:row.driver_name,plate:row.vehicle_plate||'',deviceId:dev.rows[0].id}));
+            console.log('TRACKING APROVACAO aprovada: '+JSON.stringify({id,driver:row.driver_name,plate:row.vehicle_plate||'',deviceId:dev.rows[0].id,...(corrected?{digitado:typedName+' / '+typedPlate}:{})}));
             return sendJson(res,200,{ok:true,status:'approved',driver_name:row.driver_name,vehicle_plate:row.vehicle_plate||'',device_id:dev.rows[0].id});
           }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao aprovar dispositivo.'})}

@@ -208,6 +208,30 @@ async function call(method,path,{body,cookie,bearer,headers}={}){
     r=await hb(troca); check('recém-aprovado conecta',r.status===200,r.status+' '+r.text.slice(0,120));
     r=await hb(novo); check('  ...e o anterior cede a vez',r.status===401&&await ativos()==='Terceiro celular do Carlos',r.status+' '+await ativos());
   }else console.log('  (pulado: precisa de acesso direto ao banco para simular aparelho parado)');
+
+  // A central escolhe, ao aprovar, a qual motorista do dia pertence o celular.
+  console.log('G. Aprovação: a central escolhe o motorista do romaneio');
+  const pedido=async(nome,placa,modelo)=>{
+    let x=await call('POST','/api/tracking/register-request',{body:{driver_name:nome,vehicle_plate:placa,device_name:modelo}});const tk=x.json?.request_token;
+    x=await call('GET','/api/painel/tracking/requests',{cookie});return{tk,row:x.json?.rows?.find(y=>y.status==='pending'&&y.device_name===modelo)}};
+  r=await call('POST','/api/painel/tracking/assignment',{cookie,body:{driver_name:'FABIANO ROGERIO ELIAS',vehicle_plate:'EIJ9C59',romaneios:['AMR001062-6'],work_date:spHoje}});
+  let pd=await pedido('fabiano','EIJ9C95','Celular do Fabiano');
+  check('pedido com apelido e placa trocada entra na fila',!!pd.row&&pd.row.driver_name==='fabiano',JSON.stringify(pd.row||{}).slice(0,160));
+  r=await call('POST','/api/painel/tracking/requests/'+pd.row.id+'/approve',{cookie,body:{driver_name:'Fabiano Rogerio Elias',vehicle_plate:'123'}});
+  check('placa escolhida inválida é recusada (400) e o pedido continua pendente',r.status===400,r.status+' '+r.text.slice(0,120));
+  r=await call('POST','/api/tracking/requests/'+pd.row.id+'/approve',{cookie,body:{driver_name:'Fabiano Rogerio Elias',vehicle_plate:'eij-9c59'}});
+  check('aprovação pelo dashboard com o motorista escolhido',r.status===200&&r.json?.status==='approved'&&r.json?.driver_name==='Fabiano Rogerio Elias'&&r.json?.vehicle_plate==='EIJ9C59',r.status+' '+r.text.slice(0,160));
+  r=await call('GET','/api/tracking/register-status?request_token='+pd.tk); const fab=r.json?.token;
+  check('aplicativo recebe a credencial com o nome e a placa do romaneio',!!fab&&r.json?.driver_name==='Fabiano Rogerio Elias'&&r.json?.vehicle_plate==='EIJ9C59',r.text.slice(0,160));
+  r=await call('GET','/api/tracking/assignment/current',{bearer:fab});
+  check('celular recebe o romaneio do dia mesmo tendo digitado "fabiano" e a placa errada',JSON.stringify(r.json?.assignment?.romaneios)==='["AMR001062-6"]',r.text.slice(0,160));
+  if(db){
+    const g=(await db.query("SELECT r.driver_name,r.vehicle_plate,r.typed_driver_name,r.typed_vehicle_plate,d.driver_name AS dn,d.vehicle_plate AS dp FROM driver_tracking_requests r JOIN driver_tracking_devices d ON d.id=r.approved_device_id WHERE r.device_name='Celular do Fabiano'")).rows[0]||{};
+    check('cadastro do celular fica com o motorista escolhido; o que foi digitado fica guardado',g.dn==='Fabiano Rogerio Elias'&&g.dp==='EIJ9C59'&&g.typed_driver_name==='fabiano'&&g.typed_vehicle_plate==='EIJ9C95',JSON.stringify(g));
+  }
+  pd=await pedido('Motorista Sem Romaneio','QWE1R23','Celular sem romaneio');
+  r=await call('POST','/api/tracking/requests/'+pd.row.id+'/approve',{cookie,body:{}});
+  check('sem escolha, vale o que o motorista digitou (como antes)',r.status===200&&r.json?.driver_name==='Motorista Sem Romaneio'&&r.json?.vehicle_plate==='QWE1R23',r.status+' '+r.text.slice(0,160));
   if(db)await db.end();
   console.log('\nResultado: '+pass+' OK, '+fail+' falha(s)');
   process.exit(fail?1:0);

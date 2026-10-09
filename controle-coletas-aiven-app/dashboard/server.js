@@ -4481,7 +4481,12 @@ if(u.pathname==='/api/tracking/requests'&&req.method==='GET'){try{
 if(/^\/api\/tracking\/requests\/\d+\/(approve|reject)$/.test(u.pathname)&&req.method==='POST'){try{
   if(!dashboardHasAny(authUser,['tracking']))return dashboardDeny(res);
   const tail=u.pathname.replace('/api/tracking','/api/painel/tracking');
-  const x=await portalAuth(tail,{method:'POST',body:{},token:authUser.token,timeout:25000});
+  // Na aprovação, a central pode mandar o motorista/placa escolhidos na lista do dia.
+  const sent=await readJsonLimited(req,8*1024).catch(()=>({}));
+  const fwd={};
+  if(typeof sent?.driver_name==='string'&&sent.driver_name.trim())fwd.driver_name=sent.driver_name.trim().slice(0,120);
+  if(typeof sent?.vehicle_plate==='string'&&sent.vehicle_plate.trim())fwd.vehicle_plate=sent.vehicle_plate.trim().slice(0,20);
+  const x=await portalAuth(tail,{method:'POST',body:fwd,token:authUser.token,timeout:25000});
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/tracking/contacts'&&(req.method==='GET'||req.method==='PUT')){try{

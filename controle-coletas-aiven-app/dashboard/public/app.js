@@ -3546,6 +3546,8 @@ function renderTrackingMap(rows){
 }
 // ===== Quadro "Motoristas de hoje": situação em linguagem simples + uma ação por linha =====
 let TRACKING_CONTACTS=new Map(),TRACKING_CONTACTS_AT=0,TRACKING_REQUEST_ROWS=[],TRACKING_CONTACT_EDIT=null,TRACKING_BOARD_ITEMS=[],TRACKING_BOARD_NOTE='';
+// Pedidos de aparelho: motorista do dia escolhido pela central para cada pedido (id do pedido -> chave).
+const TRACKING_REQUEST_CHOICE=new Map();
 function trackingPhoneLabel(d){
   const m=String(d||'').match(/^55(\d{2})(\d{4,5})(\d{4})$/);
   return m?'('+m[1]+') '+m[2]+'-'+m[3]:String(d||'')
@@ -3681,8 +3683,31 @@ function trackingBoardMsg(text,isErr=false){
 function trackingBoardRows(){
   return Array.isArray(TRACKING_DATA)?TRACKING_DATA:[]
 }
+// Motoristas com romaneio hoje, para a central escolher a quem pertence o celular que pediu acesso.
+function trackingRequestOptions(){
+  const seen=new Set(),out=[];
+  for(const x of (Array.isArray(TRACKING_DRIVER_ROWS)?TRACKING_DRIVER_ROWS:[])){
+    const name=driverDisplayName(x.motorista||x.driver_name||''),plate=String(x.veiculo||x.vehicle_plate||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    if(!name||plate.length<7)continue;
+    const key=trackingDriverKey(name,plate);if(seen.has(key))continue;seen.add(key);
+    out.push({key,name,plate})
+  }
+  return out.sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'))
+}
+// Escolha em vigor para um pedido: a que a central marcou; senão, o motorista do dia que bate
+// com o que foi digitado (placa ou nome, sem acento); senão, o que o motorista digitou ('').
+function trackingRequestChoice(req,options){
+  const id=String(req.id);
+  if(TRACKING_REQUEST_CHOICE.has(id)){const k=TRACKING_REQUEST_CHOICE.get(id);if(k===''||options.some(o=>o.key===k))return k}
+  const op=trackingMatchOperationRow({driver_name:req.driver_name,vehicle_plate:req.vehicle_plate});
+  if(!op)return'';
+  const key=trackingDriverKey(driverDisplayName(op.motorista||op.driver_name||''),String(op.veiculo||op.vehicle_plate||'').toUpperCase().replace(/[^A-Z0-9]/g,''));
+  return options.some(o=>o.key===key)?key:''
+}
 function renderTrackingBoard(rows,extraRows){
   const table=$('#trackingBoardTable');if(!table)return;
+  // Não redesenha o quadro com a lista de motoristas de um pedido aberta: a escolha se perderia.
+  if(document.activeElement?.matches?.('[data-tb-req-choice]')&&table.contains(document.activeElement))return;
   const list=[...(Array.isArray(rows)?rows:[]),...(Array.isArray(extraRows)?extraRows:[])];
   const pending=(TRACKING_REQUEST_ROWS||[]).filter(x=>String(x.status||'')==='pending');
   const order={stopped:0,noapp:1,warn:2,ok:3,off:4};
@@ -3701,11 +3726,24 @@ function renderTrackingBoard(rows,extraRows){
   const info=$('#trackingBoardInfo');
   if(info)info.textContent=(TRACKING_BOARD_NOTE?TRACKING_BOARD_NOTE+' ':nf(items.length)+' motorista(s) com romaneio hoje. ')+'Atualizado às '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})+' • atualiza sozinho a cada '+TRACKING_AUTO_SECONDS+' s.';
   const notified=trackingNotifiedStore().items;
+  const reqOptions=trackingRequestOptions();
   const reqHtml=pending.map(x=>{
     const when=trackingWhen(x.created_at);
-    const warn=x.has_live_device?'<div class="tb-detail"><b>Atenção:</b> este motorista já tem um celular funcionando agora. Aprove só se ele trocou de aparelho.</div>':'<div class="tb-detail">Confira nome e placa. Depois de aprovado, o celular começa a rastrear sozinho.</div>';
-    return '<tr class="tb-new"><td><div class="tb-name">'+safe(driverDisplayName(x.driver_name||'')||'Motorista')+'</div><div class="tb-sub">'+safe(x.vehicle_plate||'placa não informada')+' • '+safe(x.device_name||'Android')+'</div></td>'+
-      '<td><div class="tb-title new">📲 Novo aparelho pedindo acesso'+(when?' ('+safe(when)+')':'')+'</div>'+warn+'</td>'+
+    const chosen=trackingRequestChoice(x,reqOptions),pick=reqOptions.find(o=>o.key===chosen);
+    const typed=(driverDisplayName(x.driver_name||'')||'Motorista')+' • '+(x.vehicle_plate||'sem placa');
+    const differs=pick&&(trackingNorm(pick.name)!==trackingNorm(x.driver_name)||trackingNorm(pick.plate)!==trackingNorm(x.vehicle_plate));
+    const choiceHtml=reqOptions.length
+      ?'<div class="tb-req-choice"><label>De quem é este celular?<select data-tb-req-choice="'+safe(x.id)+'">'+
+        reqOptions.map(o=>'<option value="'+safe(o.key)+'"'+(o.key===chosen?' selected':'')+'>'+safe(o.name+' • '+o.plate)+'</option>').join('')+
+        '<option value=""'+(chosen===''?' selected':'')+'>Não está na lista — usar o que ele digitou</option></select></label></div>'
+      :'';
+    const warn=(x.has_live_device?'<div class="tb-detail"><b>Atenção:</b> este motorista já tem um celular funcionando agora. Aprove só se ele trocou de aparelho.</div>':'')+
+      (pick
+        ?'<div class="tb-detail">'+(differs?'O motorista digitou diferente do romaneio. O cadastro vai ficar como <b>'+safe(pick.name+' • '+pick.plate)+'</b>.':'Confere com o romaneio de hoje.')+' Depois de aprovado, o celular começa a rastrear sozinho.</div>'
+        :'<div class="tb-detail">'+(reqOptions.length?'<b>Não achei este nome nem esta placa nos romaneios de hoje.</b> Escolha o motorista na lista, se ele estiver nela.':'Confira nome e placa.')+' Depois de aprovado, o celular começa a rastrear sozinho.</div>');
+    return '<tr class="tb-new"><td><div class="tb-name">'+safe(pick?pick.name:(driverDisplayName(x.driver_name||'')||'Motorista'))+'</div><div class="tb-sub">'+safe(pick?pick.plate:(x.vehicle_plate||'placa não informada'))+' • '+safe(x.device_name||'Android')+'</div>'+
+      '<div class="tb-sub">Digitado no celular: '+safe(typed)+'</div></td>'+
+      '<td><div class="tb-title new">📲 Novo aparelho pedindo acesso'+(when?' ('+safe(when)+')':'')+'</div>'+choiceHtml+warn+'</td>'+
       '<td><div class="tb-actions"><button type="button" class="tb-btn primary" data-tb-req="'+safe(x.id)+'" data-tb-decide="approve">Aprovar</button><button type="button" class="tb-btn" data-tb-req="'+safe(x.id)+'" data-tb-decide="reject">Recusar</button></div></td></tr>'
   }).join('');
   const rowHtml=items.map((it,i)=>{
@@ -4052,11 +4090,20 @@ async function trackingDecideRequest(id,action,button=null){
   if(button){button.disabled=true;button.textContent=action==='approve'?'Aprovando…':'Recusando…'}
   if(info)info.textContent=(action==='approve'?'Aprovando':'Recusando')+' aparelho…';
   try{
-    const r=await fetch('/api/tracking/requests/'+encodeURIComponent(id)+'/'+action,{method:'POST',headers:{'Accept':'application/json'},cache:'no-store'});
+    // Na aprovação vai o motorista do dia escolhido no quadro (se houver); o servidor grava o
+    // cadastro do celular com esse nome e essa placa.
+    const payload={};
+    if(action==='approve'){
+      const reqRow=(TRACKING_REQUEST_ROWS||[]).find(x=>String(x.id)===String(id));
+      const options=trackingRequestOptions(),pick=reqRow?options.find(o=>o.key===trackingRequestChoice(reqRow,options)):null;
+      if(pick){payload.driver_name=pick.name;payload.vehicle_plate=pick.plate}
+    }
+    const r=await fetch('/api/tracking/requests/'+encodeURIComponent(id)+'/'+action,{method:'POST',headers:{'Accept':'application/json','Content-Type':'application/json'},body:JSON.stringify(payload),cache:'no-store'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||('Falha ao '+verb+' aparelho.'));
     if(info)info.textContent=action==='approve'?'Aparelho aprovado. O celular será liberado automaticamente.':'Solicitação recusada.';
-    trackingBoardMsg(action==='approve'?'Aparelho aprovado. O celular começa a rastrear sozinho em até 1 minuto.':'Pedido recusado.');
+    TRACKING_REQUEST_CHOICE.delete(String(id));
+    trackingBoardMsg(action==='approve'?'Aparelho aprovado'+(j.driver_name?' para '+j.driver_name+(j.vehicle_plate?' • '+j.vehicle_plate:''):'')+'. O celular começa a rastrear sozinho em até 1 minuto.':'Pedido recusado.');
     await refreshTrackingRequests();
     TRACKING_NEXT_REFRESH=0;
     refreshTracking().catch(()=>{})
@@ -4190,6 +4237,11 @@ function setupTracking(){
   const boardTable=$('#trackingBoardTable');
   if(boardTable){
     boardTable.onclick=trackingBoardClick;
+    boardTable.onchange=e=>{
+      const sel=e.target?.closest?.('[data-tb-req-choice]');if(!sel)return;
+      TRACKING_REQUEST_CHOICE.set(String(sel.dataset.tbReqChoice||''),String(sel.value||''));
+      sel.blur();trackingBoardRerender()
+    };
     boardTable.oninput=e=>{if(e.target?.matches?.('[data-tb-phone-input]')&&TRACKING_CONTACT_EDIT)TRACKING_CONTACT_EDIT.value=e.target.value};
     boardTable.onkeydown=e=>{
       if(!e.target?.matches?.('[data-tb-phone-input]'))return;
