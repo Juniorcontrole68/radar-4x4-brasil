@@ -50,7 +50,7 @@ const temPdf=!require('child_process').spawnSync('pdftotext',['-v']).error;
   console.log('Romaneios feitos hoje no SSW entram sozinhos na lista');
   let autos=await espera(rs=>rs.length>=3,40000);
   check('os três romaneios de hoje aparecem sem ninguém lançar, em ordem de romaneio',autos.map(x=>x.romaneio).join()==='321-1,1056-1,1057-1',autos.map(x=>x.romaneio));
-  check('  ...com motorista, placa, filial e entregas do SSW, na data de hoje',autos.map(x=>[x.motorista,x.placa,x.filial,x.entregas,x.data].join('|')).join(';')===['ROGER TESTE|TBT9Z99|TBT|6|'+hoje,'JAILSON MOREIRA DE SOUZA|EYV3626|AMR|12|'+hoje,'FABIANO TESTE|FAB1A23|AMR|5|'+hoje].join(';'),autos);
+  check('  ...com motorista, placa, filial e entregas do SSW, na data de hoje',autos.map(x=>[x.motorista,x.placa,x.filial,x.entregas,x.data].join('|')).join(';')===['ROGER TESTE|TBT9Z99|TBT|2|'+hoje,'JAILSON MOREIRA DE SOUZA|EYV3626|AMR|12|'+hoje,'FABIANO TESTE|FAB1A23|AMR|5|'+hoje].join(';'),autos);
   check('  ...sem valor e sem operação (ficam para o usuário), marcados como vindos do SSW',autos.every(x=>x.auto===true&&x.valor===null&&x.operacao===''&&x.criado_por==='SSW (automático)'&&x.romaneio_ssw),autos);
   a=await api('POST','/api/painel/lancamentos',{auto:true,data:hoje,motorista:'Intruso',romaneio:'4444-4'});
   check('só o próprio sistema cria linha sem valor (o administrador, pela tela, não)',a.status===400&&/valor/.test(a.j.error),a);
@@ -119,9 +119,8 @@ const temPdf=!require('child_process').spawnSync('pdftotext',['-v']).error;
   if(temPdf){
     check('km da rota (saindo e voltando para a base)',c1.km>100&&c1.km<600,c1.km);
     check('frete do romaneio: soma do "Valor frete" dos 5 CT-es lidos no SSW',c1.frete_vialog===395.15&&c1.calculo?.ctes===5&&c1.calculo?.lidos===5,c1);
-    check('  ...dia aberto: frete líquido ainda igual ao do romaneio (nada descontado)',c1.frete_vialog_liq===395.15&&!c1.desconto_vialog,c1);
-    const comFretes=((await api('GET','/api/painel/lancamentos?fretes=1&de='+hoje+'&ate='+hoje)).j.rows||[]).find(x=>x.id===l1.id)||{};
-    check('  ...e o frete de cada CT-e fica guardado para descontar as entregas não feitas',Object.keys(comFretes.fretes||{}).length===5&&Object.values(comFretes.fretes).every(v=>v===79.03),comFretes.fretes);
+    check('  ...cada entrega guardada com o frete e a situação atual no SSW',Array.isArray(c1.ctes)&&c1.ctes.length===5&&c1.ctes.every(x=>x.f===79.03&&x.s==='o'&&x.o==='85-SAIDA PARA ENTREGA'&&x.c&&x.d&&x.ci),c1.ctes);
+    check('  ...frete líquido só conta entrega com ocorrência 01: nenhuma ainda, tudo descontado',c1.desconto_vialog===395.15&&c1.frete_vialog_liq===0&&c1.ao_vivo===0,c1);
     check('cidades na ordem da rota, sem repetir (a que ficou sem localização vai no fim)',c1.rota.split(',').slice(0,4).sort().join()==='MOGI GUACU,MOGI MIRIM,PEDREIRA,SAO JOAO DA BOA VISTA'&&c1.rota.split(',')[4]==='RIO DE JANEIRO',c1.rota);
     check('entregas do romaneio e baixas até agora (dia aberto: Realizadas ainda em branco)',c1.entregas===5&&c1.ao_vivo===0&&c1.realizadas===null,c1);
     check('avisa a entrega sem localização e as aproximadas',c1.calculo?.status==='ok'&&/1 entrega\(s\) sem localização/.test(c1.calculo.msg)&&/aproximado/.test(c1.calculo.msg),c1.calculo)
@@ -141,7 +140,7 @@ const temPdf=!require('child_process').spawnSync('pdftotext',['-v']).error;
   a=await api('PATCH','/api/lancamentos/'+l3.id,{romaneio:'1056-1'});check('trocar para um romaneio que já tem lançamento: 409',a.status===409,a);
   a=await api('PATCH','/api/lancamentos/'+l3.id,{romaneio:'8888-8',data:hoje});check('trocar para um romaneio que não está no SSW: 404 pedindo para conferir',a.status===404&&a.j.naoEncontrado===true,a);
   a=await api('PATCH','/api/lancamentos/'+l3.id,{romaneio:'321-1',data:hoje});
-  check('trocar o romaneio: pega os dados do novo e busca de novo',a.status===200&&a.j.row.romaneio==='321-1'&&a.j.row.romaneio_ssw==='TBT000321-1'&&a.j.row.entregas===6&&a.j.row.filial==='TBT'&&a.j.row.placa==='TBT9Z99'&&a.j.row.calculo.status==='pendente',a);
+  check('trocar o romaneio: pega os dados do novo e busca de novo',a.status===200&&a.j.row.romaneio==='321-1'&&a.j.row.romaneio_ssw==='TBT000321-1'&&a.j.row.entregas===2&&a.j.row.filial==='TBT'&&a.j.row.placa==='TBT9Z99'&&a.j.row.calculo.status==='pendente',a);
   a=await api('PATCH','/api/lancamentos/999999',{valor:10});check('lançamento que não existe: 404',a.status===404,a);
 
   console.log('Baixas: a coluna Realizadas só é gravada com o dia fechado');
@@ -156,12 +155,13 @@ const temPdf=!require('child_process').spawnSync('pdftotext',['-v']).error;
   check('todas entregues: Realizadas gravada',p2.realizadas===12&&p2.ao_vivo===12&&p2.km===210,p2);
   const ontem=new Date(Date.now()-864e5).toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
   a=await api('PATCH','/api/lancamentos/'+l2.id,{data:ontem});
-  a=await api('PATCH','/api/painel/lancamentos/'+l2.id,{calculo:{status:'ok',realizadas:10,pend:2,desconto_vialog:500.4,fretes:{'amr15326':79.03,'AMR15327':'421,37',ruim:'abc'}}});p2=a.j.row||{};
+  a=await api('PATCH','/api/painel/lancamentos/'+l2.id,{calculo:{status:'ok',ctes:3,realizadas:10,pend:2,desconto_vialog:500.4,lista:[{c:'amr015326-5',k:'amr15326',f:79.03,s:'e',o:'01-mercadoria entregue',d:'Cliente A',ci:'limeira'},{c:'AMR015327-3',k:'AMR15327',f:'421,37',s:'o',o:'12-DESTINATARIO AUSENTE'},{f:'abc',s:'zzz'}]}});p2=a.j.row||{};
   check('dia já fechado: grava as realizadas e as pendentes mesmo incompleto',p2.data===ontem&&p2.realizadas===10&&p2.pend===2,p2);
   check('  ...e o frete líquido desconta o frete das entregas não feitas',p2.frete_vialog===3500.4&&p2.desconto_vialog===500.4&&p2.frete_vialog_liq===3000,p2);
-  a=await api('GET','/api/painel/lancamentos?fretes=1&de='+ontem+'&ate='+ontem);
-  check('  ...frete por CT-e guardado só com valores válidos',JSON.stringify((a.j.rows||[])[0]?.fretes)===JSON.stringify({AMR15326:79.03,AMR15327:421.37}),a.j.rows);
-  a=await api('GET','/api/lancamentos?de='+ontem+'&ate='+ontem);check('  ...a tela não recebe a lista de fretes por CT-e',a.j.rows.length===1&&!('fretes' in a.j.rows[0]),a.j.rows);
+  a=await api('GET','/api/lancamentos?de='+ontem+'&ate='+ontem);const cts=(a.j.rows||[])[0]?.ctes||[];
+  check('  ...a tela recebe as entregas (frete e situação de cada uma), só com valores válidos',cts.length===2&&cts[0].c==='AMR015326-5'&&cts[0].f===79.03&&cts[0].s==='e'&&cts[0].ci==='LIMEIRA'&&cts[1].f===421.37&&cts[1].s==='o'&&cts[1].o==='12-DESTINATARIO AUSENTE'&&p2.calculo.ctes===3,cts);
+  const ct=lib.contasDasEntregas([{f:79.03,s:'e'},{f:100,s:'o'},{f:50,s:'p'},{f:30,s:'?'},{f:null,s:'o'}]);
+  check('contas das entregas: desconta tudo o que não é "entregue"; sem informação fica de fora',ct.total===5&&ct.feitas===1&&ct.naoFeitas===3&&ct.semInfo===1&&ct.desconto===150,ct);
   a=await api('PATCH','/api/lancamentos/'+l2.id,{valor:1300});
   check('  ...e alterar o valor do motorista não mexe no frete nem no desconto',a.j.row.valor===1300&&a.j.row.frete_vialog_liq===3000&&a.j.row.desconto_vialog===500.4,a);
   a=await api('PATCH','/api/painel/lancamentos/'+l2.id,{calculo:{status:'ok',realizadas:12,pend:0,desconto_vialog:0}});
@@ -247,11 +247,43 @@ const temPdf=!require('child_process').spawnSync('pdftotext',['-v']).error;
   await mock('rom=AMR001057-1&qtde=6');
   let r57=(await espera(rs=>rs.some(x=>x.romaneio==='1057-1'&&x.entregas===6),90000,2500)).find(x=>x.romaneio==='1057-1')||{};
   check('romaneio ganhou uma entrega no SSW: o lançamento acompanha, sem perder valor e conferente',r57.entregas===6&&r57.valor===900.5&&r57.conferente==='MARIA'&&r57.calculo?.status!=='pendente',r57);
-  check('  ...ainda aberto: nada descontado do frete',!r57.calculo?.fechado&&!r57.desconto_vialog&&r57.realizadas===null,r57);
-  await mock('rom=AMR001057-1&falta=0');
-  r57=(await espera(rs=>rs.some(x=>x.romaneio==='1057-1'&&x.calculo?.fechado),90000,2500)).find(x=>x.romaneio==='1057-1')||{};
-  check('todas as entregas com baixa no SSW: o romaneio fecha (realizadas e pendentes gravadas)',r57.calculo?.fechado===true&&r57.realizadas!==null&&r57.pend===r57.entregas-r57.realizadas,r57);
-  if(temPdf)check('  ...e, sem nenhuma entrega feita à vista, não inventa desconto: avisa para conferir',r57.realizadas===0&&!r57.desconto_vialog&&/frete líquido não calculado/.test(r57.calculo.msg),r57.calculo);
+  check('  ...ainda aberto, nenhuma entregue: romaneio não fechou',!r57.calculo?.fechado&&r57.realizadas===null,r57);
+  if(temPdf){
+    const cte=(nro,sit)=>fetch(M+'/__mock/cte?nro='+nro+'&sit='+encodeURIComponent(sit));
+    // o motorista baixa duas entregas: o SSW passa a mostrar 3 sem ocorrência
+    await cte(15326,'09/10/26 15:20 01-MERCADORIA ENTREGUE');await cte(15327,'09/10/26 15:40 01-MERCADORIA ENTREGUE');
+    await mock('rom=AMR001057-1&falta=3');
+    r57=(await espera(rs=>rs.some(x=>x.romaneio==='1057-1'&&x.ao_vivo===2),120000,2500)).find(x=>x.romaneio==='1057-1')||{};
+    check('duas entregas baixadas como 01: o sistema relê a situação e o frete líquido passa a contar só as duas',r57.ao_vivo===2&&r57.frete_vialog===395.15&&r57.desconto_vialog===237.09&&r57.frete_vialog_liq===158.06&&!r57.calculo.fechado,r57);
+    check('  ...as entregues ficam marcadas; as outras continuam com a ocorrência que têm',r57.ctes.filter(x=>x.s==='e').map(x=>x.c).join()==='AMR015326-5,AMR015327-3'&&r57.ctes.filter(x=>x.s==='o').every(x=>x.o==='85-SAIDA PARA ENTREGA'),r57.ctes);
+    // fim da rota: uma ficou com outra ocorrência (não entregue), as demais entregues
+    await cte(15328,'09/10/26 16:05 12-DESTINATARIO AUSENTE');await cte(15329,'09/10/26 16:30 01-MERCADORIA ENTREGUE');await cte(15330,'09/10/26 17:10 01-MERCADORIA ENTREGUE');
+    await mock('rom=AMR001057-1&falta=0');
+    r57=(await espera(rs=>rs.some(x=>x.romaneio==='1057-1'&&x.calculo?.fechado),120000,2500)).find(x=>x.romaneio==='1057-1')||{};
+    check('ocorrência diferente de 01 é descontada: frete líquido = frete do romaneio menos o frete daquela entrega',r57.desconto_vialog===79.03&&r57.frete_vialog_liq===316.12&&r57.ctes.find(x=>x.c==='AMR015328-1')?.o==='12-DESTINATARIO AUSENTE'&&r57.ctes.filter(x=>x.s==='e').length===4,r57);
+    check('  ...sem mais entrega sem baixa: o romaneio fecha (realizadas e pendentes gravadas)',r57.calculo.fechado===true&&r57.realizadas===4&&r57.pend===r57.entregas-4,r57);
+
+    console.log('Motorista com mais de um romaneio no dia: um lançamento só');
+    const soltos=async()=>(await api('GET','/api/painel/lancamentos?soltos=1&de='+hoje+'&ate='+hoje)).j.rows||[];
+    let s321=(await espera(rs=>rs.some(x=>x.romaneio==='321-1'&&x.calculo?.status==='ok'),120000,2500)).find(x=>x.romaneio==='321-1')||{};
+    check('o outro romaneio de hoje está completo (2 entregas)',s321.calculo?.status==='ok'&&s321.entregas===2&&s321.km>0&&s321.frete_vialog===158.06&&s321.valor===700,s321);
+    a=await api('PATCH','/api/lancamentos/'+s321.id,{motorista:'Fabiano Teste'});
+    let g=a.j.row||{};
+    check('mesmo motorista com dois romaneios: aparecem lado a lado, numa linha só',a.status===200&&g.romaneio==='321-1 / 1057-1'&&g.ids.length===2&&g.partes.length===2&&((await lista()).rows||[]).length===1,g);
+    check('  ...com entregas, feitas e fretes somados',g.entregas===2+r57.entregas&&g.frete_vialog===553.21&&g.frete_vialog_liq===Math.round((316.12+(s321.frete_vialog_liq||0))*100)/100&&g.ctes.length===7&&g.cidades.length===5,g);
+    check('  ...e um valor só (o primeiro informado), sem somar os dois',g.valor===700&&g.frete_mot_liq===700,g);
+    a=await api('PATCH','/api/lancamentos/'+g.id,{valor:'950,00'});
+    check('  ...que se altera na linha',a.j.row.valor===950&&a.j.row.romaneio==='321-1 / 1057-1',a);
+    g=(await espera(rs=>rs.length===1&&rs[0].km_soma===false,120000,2500))[0]||{};
+    check('km de uma rota só com as entregas dos dois romaneios (menor que a soma das duas rotas)',g.km_soma===false&&g.km>=Math.max(r57.km,s321.km)&&g.km<r57.km+s321.km,{km:g.km,partes:[r57.km,s321.km]});
+    await api('POST','/api/lancamentos/fonte',{fonte:'sistema'});
+    const exp=((await api('GET','/api/sheet/lancamentos')).j.rows||[]).filter(x=>x.Motorista==='FABIANO TESTE');
+    check('os painéis recebem uma linha só para o motorista, com os dois romaneios e o valor uma vez',exp.length===1&&exp[0].Romaneio==='321-1 / 1057-1'&&exp[0]['Frete Comb']==='950,00'&&exp[0].Entregas===String(g.entregas)&&exp[0].KM===String(g.km)&&exp[0]['Frete Vialog']==='553,21',exp);
+    await api('POST','/api/lancamentos/fonte',{fonte:'planilha'});
+    a=await api('PATCH','/api/lancamentos/'+g.id,{motorista:'Fabiano T Silva',grupo:true});
+    check('alterar o motorista do lançamento leva os dois romaneios juntos',a.j.row.motorista==='FABIANO T SILVA'&&a.j.row.ids.length===2&&(await soltos()).filter(x=>x.motorista==='FABIANO T SILVA').length===2,a);
+    for(const nro of [15326,15327,15328,15329,15330])await cte(nro,'')
+  }
   await mock('rom=AMR001057-1&qtde=5&falta=5');
 
   console.log('\n'+pass+' passaram, '+fail+' falharam');

@@ -8,7 +8,7 @@ let logins=0,seq=0,recusados=0;const tokens=new Map(),paths={};
 const HOJE=new Date().toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit',year:'2-digit'});
 const DATA={
   AMR:[['AMR001056-1','EYV3626',HOJE,'JAILSON MOREIRA DE SOUZA','12','5'],['AMR001057-1','FAB1A23',HOJE,'FABIANO TESTE','5','5']],
-  TBT:[['TBT000321-1','TBT9Z99',HOJE,'ROGER TESTE','6','2']]
+  TBT:[['TBT000321-1','TBT9Z99',HOJE,'ROGER TESTE','2','2']]
 };
 const page=rows=>'<html><body><form><input name="act" value=""><input name="dummy" value="1"></form><table><tr><th>Romaneio</th><th>Veículo</th><th>Inclusão</th><th>Motorista</th><th>Qtde CTRCs</th><th>Falta Ocorr.</th></tr>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</table></body></html>';
 const loginPage='<html><body><form action="ssw0422"><input name="f1"><input name="f2"><input name="f3"><input type="password" name="f4"></form></body></html>';
@@ -59,7 +59,7 @@ const tela101=(nro,c)=>{
     dv('texto','Expedidor:')+dv('texto','Entrega:')+dv('texto','Nome:')+dv('data','NAVAS E CIA LTDA B2')+dv('texto','Nome:')+dv('data',c.nome)+dv('texto','CNPJ:')+dv('data','44530855000108')+dv('texto','CNPJ:')+dv('data',c.doc)+mapa('link_mapa_setor_cli_ent',c.lgr.slice(0,15)+', '+c.nro,true)+
     dv('texto','Endere&ccedil;o:')+dv('data','ROD. LINS/GUAIMBE,50')+dv('texto','Endere&ccedil;o:')+dv('data',c.lgr.slice(0,15)+','+c.nro)+dv('texto','Complemento:')+dv('texto','Complemento:')+dv('data',c.cpl.slice(0,28))+
     dv('texto','Bairro:')+dv('data','JARDIM GUANABARA')+dv('texto','Bairro:')+dv('data',c.bairro)+dv('texto','CEP:')+dv('data','16403-266 LINS/SP')+dv('texto','CEP:')+dv('data',c.cep.slice(0,5)+'-'+c.cep.slice(5)+' '+c.cid+'/'+c.uf)+dv('texto','Telefone:')+dv('texto','Pagador:')+
-    dv('texto','Situa&ccedil;&atilde;o Atual:')+dv('data','TST AMR 09/10/26 06:45 85-SAIDA PARA ENTREGA')+'<A id="link_ocor" href="#" onclick="ajaxEnvia(\'O\', 1);return false;"><u>O</u>corr&ecirc;ncias</A> <A id="link_danfe" href="#" onclick="ajaxEnvia(\'A\', 1);return false;">DANFEs</A> <A id="link_arq" href="#" onclick="ajaxEnvia(\'ARQ\', 1);return false;">Arquivos EDI</A></body></html>'
+    dv('texto','Situa&ccedil;&atilde;o Atual:')+dv('data','TST AMR '+(c.sit||'09/10/26 06:45 85-SAIDA PARA ENTREGA'))+'<A id="link_ocor" href="#" onclick="ajaxEnvia(\'O\', 1);return false;"><u>O</u>corr&ecirc;ncias</A> <A id="link_danfe" href="#" onclick="ajaxEnvia(\'A\', 1);return false;">DANFEs</A> <A id="link_arq" href="#" onclick="ajaxEnvia(\'ARQ\', 1);return false;">Arquivos EDI</A></body></html>'
 };
 // PDF do romaneio (opção 38 -> ssw0146): uma linha por CT-e, começando por "CTRC  NF", como o do SSW.
 // O romaneio AMR001057-1 leva os cinco CT-es de mentira (um deles a mais de 300 km).
@@ -74,7 +74,10 @@ function pdfDe(linhas){
   return Buffer.from(out,'latin1')
 }
 const ROMANEIO_PDF={'AMR|1057|1':['ROMANEIO DE ENTREGAS AMR001057-1   FABIANO TESTE   FAB1A23','CTRC         NF       DESTINATARIO',
-  ...Object.entries(CTES).map(([nro,c])=>'AMR'+String(nro).padStart(6,'0')+'-'+c.dv+'  '+String(c.nf).padStart(6,'0')+'  '+c.nome.slice(0,30))]};
+  ...Object.entries(CTES).map(([nro,c])=>'AMR'+String(nro).padStart(6,'0')+'-'+c.dv+'  '+String(c.nf).padStart(6,'0')+'  '+c.nome.slice(0,30))],
+  // o romaneio da outra filial leva dois CT-es (os mesmos de mentira, para ter rota)
+  'TBT|321|1':['ROMANEIO DE ENTREGAS TBT000321-1   ROGER TESTE   TBT9Z99','CTRC         NF       DESTINATARIO',
+  ...[15327,15328].map(nro=>'AMR'+String(nro).padStart(6,'0')+'-'+CTES[nro].dv+'  '+String(CTES[nro].nf).padStart(6,'0')+'  '+CTES[nro].nome.slice(0,30))]};
 const semCte='<html><body><form><input type="hidden" name="act" value=""></form><div class=texto>CTRC n&atilde;o encontrado.</div></body></html>';
 http.createServer(async(req,res)=>{
   const u=new URL(req.url,'http://x');paths[req.method+' '+u.pathname]=(paths[req.method+' '+u.pathname]||0)+1;
@@ -83,6 +86,13 @@ http.createServer(async(req,res)=>{
   const send=(code,txt,h={})=>{res.writeHead(code,{'Content-Type':'text/html; charset=utf-8',...h});res.end(txt)};
   if(u.pathname==='/__mock/stats')return send(200,JSON.stringify({logins,recusados,activeTokens:tokens.size,paths}),{'Content-Type':'application/json'});
   if(u.pathname==='/__mock/expire'){tokens.clear();return send(200,'{}')}
+  // /__mock/cte?nro=15326&sit=09/10/26 15:20 01-MERCADORIA ENTREGUE  muda a situação atual do CT-e (sit vazio volta ao normal)
+  if(u.pathname==='/__mock/cte'){
+    const c=CTES[Number(u.searchParams.get('nro'))];
+    if(!c)return send(404,'{}');
+    c.sit=u.searchParams.get('sit')||'';
+    return send(200,JSON.stringify({sit:c.sit}),{'Content-Type':'application/json'})
+  }
   if(u.pathname==='/__mock/romaneio'){
     const linha=[...DATA.AMR,...DATA.TBT].find(r=>r[0]===u.searchParams.get('rom'));
     if(!linha)return send(404,'{}');

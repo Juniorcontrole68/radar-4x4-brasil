@@ -56,6 +56,66 @@ function freteNaoEntregue(fretes,entregues){
   for(const[ct,v]of Object.entries(fretes||{}))if(!feitos.has(ct))soma+=Number(v||0);
   return Math.round(soma*100)/100
 }
+// Situação de cada entrega (CT-e) do romaneio: 'e' entregue (ocorrência 01), 'o' outra ocorrência,
+// 'p' ainda sem baixa, '?' o sistema não achou a entrega no acompanhamento do SSW.
+// Regra da Construlog: tudo o que não for "mercadoria entregue" é descontado do frete do romaneio.
+// As sem informação ficam de fora do desconto (não dá para afirmar que não foram entregues).
+function contasDasEntregas(ctes){
+  let feitas=0,naoFeitas=0,semInfo=0,desconto=0,semBaixa=0;
+  for(const x of ctes||[]){
+    if(x.s==='e')feitas++;
+    else if(x.s==='o'||x.s==='p'){naoFeitas++;if(x.s==='p')semBaixa++;desconto+=Number(x.f||0)}
+    else semInfo++
+  }
+  return{total:(ctes||[]).length,feitas,naoFeitas,semBaixa,semInfo,desconto:Math.round(desconto*100)/100}
+}
+// Motorista com mais de um romaneio no mesmo dia = um lançamento só (o valor pago é um só):
+// os romaneios aparecem lado a lado e entregas, frete e cidades são somados.
+const PIOR={pendente:4,erro:3,parcial:2,ok:1};
+function juntar(rs){
+  rs=rs.slice().sort((a,b)=>(Number(romaneioKey(a.romaneio))||0)-(Number(romaneioKey(b.romaneio))||0)||Number(a.id)-Number(b.id));
+  const p=rs[0];
+  if(rs.length===1)return{...p,ids:[p.id],partes:null,km_soma:false};
+  const prim=f=>{for(const r of rs){const v=f(r);if(v!==null&&v!==undefined&&v!=='')return v}return null};
+  const soma=f=>{let t=null;for(const r of rs){const v=f(r);if(v!==null&&v!==undefined)t=(t||0)+Number(v)}return t===null?null:Math.round(t*100)/100};
+  const valor=prim(r=>r.valor),desconto=prim(r=>r.desconto);
+  // km da rota única com as entregas de todos os romaneios (calculado à parte); enquanto não vem, a soma das rotas
+  const keys=rs.map(r=>romaneioKey(r.romaneio)).sort().join(',');
+  const cj=p.conjunto&&p.conjunto.keys===keys&&Number(p.conjunto.km)>0?Number(p.conjunto.km):null;
+  const cid=new Map();
+  for(const r of rs)for(const c of (r.cidades||String(r.rota||'').split(',').map(x=>({c:x.trim(),n:0}))))if(c.c)cid.set(c.c,(cid.get(c.c)||0)+Number(c.n||0));
+  const status=rs.map(r=>r.calculo?.status||'pendente').sort((a,b)=>(PIOR[b]||0)-(PIOR[a]||0))[0];
+  const frete=soma(r=>r.frete_vialog),descV=soma(r=>r.desconto_vialog);
+  return{
+    ...p,ids:rs.map(r=>r.id),
+    romaneio:rs.map(r=>r.romaneio).join(' / '),romaneio_ssw:rs.map(r=>r.romaneio_ssw).filter(Boolean).join(' / '),
+    veiculo_tipo:prim(r=>r.veiculo_tipo)||'',placa:prim(r=>r.placa)||'',filial:prim(r=>r.filial)||'',operacao:prim(r=>r.operacao)||'',conferente:prim(r=>r.conferente)||'',
+    erros:soma(r=>r.erros),entregas:soma(r=>r.entregas),realizadas:rs.every(r=>r.realizadas!==null)?soma(r=>r.realizadas):null,pend:soma(r=>r.pend),retorno:soma(r=>r.retorno),
+    km:cj??soma(r=>r.km),km_soma:cj===null&&rs.filter(r=>r.km).length>1,
+    valor,desconto,frete_mot_liq:valor===null?null:Math.round((valor-(desconto||0))*100)/100,
+    frete_vialog:frete,desconto_vialog:descV,frete_vialog_liq:frete===null?null:Math.round((frete-(descV||0))*100)/100,
+    rota:[...cid.keys()].join(','),cidades:[...cid].map(([c,n])=>({c,n})),
+    ctes:rs.some(r=>r.ctes)?rs.flatMap(r=>(r.ctes||[]).map(x=>({...x,r:r.romaneio}))):null,
+    ao_vivo:rs.some(r=>r.realizadas!==null||r.ao_vivo!==null)?rs.reduce((t,r)=>t+Number(r.realizadas??r.ao_vivo??0),0):null,
+    auto:rs.every(r=>r.auto),
+    calculo:{status,msg:rs.map(r=>r.calculo?.msg?r.romaneio+': '+r.calculo.msg:'').filter(Boolean).join(' • ').slice(0,500),fechado:rs.every(r=>r.calculo?.fechado),tentativas:Math.max(...rs.map(r=>Number(r.calculo?.tentativas||0)))},
+    partes:rs.map(r=>({id:r.id,romaneio:r.romaneio,romaneio_ssw:r.romaneio_ssw,entregas:r.entregas,km:r.km,frete_vialog:r.frete_vialog,status:r.calculo?.status||''})),
+    conjunto:undefined
+  }
+}
+function agrupar(lista){
+  const grupos=new Map();
+  for(const r of lista){
+    const m=limpo(r.motorista,120).toUpperCase();
+    const k=r.origem==='sistema'&&m&&m!=='SEM MOTORISTA'?r.data+'|'+m:'#'+r.id;
+    if(!grupos.has(k))grupos.set(k,[]);
+    grupos.get(k).push(r)
+  }
+  return[...grupos.values()].map(juntar).sort((a,b)=>a.data.localeCompare(b.data)||(Number(romaneioKey(a.partes?a.partes[0].romaneio:a.romaneio))||0)-(Number(romaneioKey(b.partes?b.partes[0].romaneio:b.romaneio))||0)||Number(a.id)-Number(b.id))
+}
+// Campos de um lançamento (um romaneio ou vários do mesmo motorista) para virar linha da planilha.
+const camposDoGrupo=g=>({data:g.data,motorista:g.motorista,veiculo_tipo:g.veiculo_tipo,filial:g.filial,romaneio:g.romaneio,operacao:g.operacao,entregas:g.entregas,realizadas:g.realizadas,
+  pend:g.pend,retorno:g.retorno,km:g.km,valor:g.valor,desconto:g.desconto,frete_vialog:g.frete_vialog,desconto_vialog:g.desconto_vialog,conferente:g.conferente,erros:g.erros,rota:g.rota});
 const dataLinha=r=>dataIso(r?.Data||r?.DATA||r?.ENTREGUE||r?.Entregue||r?.['  Data']||'');
 
 // Linha no formato da planilha a partir dos campos do lançamento do sistema.
@@ -67,7 +127,7 @@ function montarDados(c){
   const o={};for(const k of COLUNAS)o[k]='';
   Object.assign(o,{
     'Data':dataBr(c.data),'Motorista':limpo(c.motorista,120).toUpperCase(),'Veiculo':limpo(c.veiculo_tipo,40).toUpperCase(),'Filial':limpo(c.filial,10).toUpperCase(),
-    'Romaneio':limpo(c.romaneio,40),'Operação':limpo(c.operacao,40).toUpperCase(),
+    'Romaneio':limpo(c.romaneio,80),'Operação':limpo(c.operacao,40).toUpperCase(),
     'Entregas':inteiro(numero(c.entregas)),'Realizadas':inteiro(numero(c.realizadas)),'Pend':inteiro(numero(c.pend)),'Retorno':inteiro(numero(c.retorno)),
     'KM':inteiro(km),'Valor KM':(Number.isFinite(liq)&&km>0)?dinheiro(liq/km):'',
     'Frete Comb':dinheiro(comb),'Desc.':Number.isFinite(desc)&&desc?dinheiro(desc):'','Frete Mot Liq':dinheiro(liq),
@@ -93,6 +153,8 @@ function resumir(row){
     ao_vivo:Number.isFinite(Number(s.calculo?.ao_vivo))&&s.calculo?.ao_vivo!==null?Number(s.calculo.ao_vivo):null,
     // auto = a linha entrou sozinha, a partir do romaneio feito no SSW (o usuário só informa o valor)
     auto:!!s.auto,cidades:Array.isArray(s.cidades)?s.cidades:null,
+    // entregas do romaneio, uma a uma (frete e situação), e o km da rota única quando o motorista tem mais de um romaneio
+    ctes:Array.isArray(s.ctes)?s.ctes:null,conjunto:s.conjunto||null,
     calculo:s.calculo||null,criado_por:row.created_by||'',atualizado_em:row.updated_at||null
   }
 }
@@ -146,6 +208,15 @@ async function gravarIgnorados(pool,keys){
   await pool.query("INSERT INTO operacao_config(chave,valor,updated_at) VALUES('ignorados',$1::jsonb,NOW()) ON CONFLICT(chave) DO UPDATE SET valor=EXCLUDED.valor,updated_at=NOW()",[JSON.stringify({keys:limpo2})])
 }
 
+// O que as gravações devolvem: "linha" é o romaneio gravado; "row" é o lançamento como a tela mostra
+// (com os outros romaneios do mesmo motorista no dia, quando houver).
+async function resposta(pool,row){
+  const linha=resumir(row);
+  if(row.origem!=='sistema')return{row:{...linha,ids:[linha.id],partes:null},linha};
+  const q=await pool.query(SEL+" WHERE origem='sistema' AND event_date=$1::date AND upper(trim(motorista))=upper(trim($2))",[row.event_date,row.motorista]);
+  const g=agrupar(q.rows.map(resumir)).find(x=>x.ids.includes(linha.id));
+  return{row:g||{...linha,ids:[linha.id],partes:null},linha}
+}
 // Atende as rotas /api/painel/lancamentos*. Devolve true quando a rota era daqui (a resposta já foi
 // enviada: quem chamou não pode seguir para as outras rotas).
 async function handle(req,res,u,ctx){
@@ -164,8 +235,12 @@ async function atender(req,res,u,ctx){
       if(!user.internal&&!user.is_admin)return nega();
       const f=await fonteAtual(pool);
       if(f.fonte!=='sistema'&&u.searchParams.get('sempre')!=='1')return sendJson(res,200,{ok:true,...f,rows:[]});
-      const q=await pool.query("SELECT dados FROM operacao_lancamentos ORDER BY event_date NULLS LAST,(origem='sistema'),linha NULLS LAST,id");
-      return sendJson(res,200,{ok:true,...f,rows:q.rows.map(r=>r.dados),total:q.rowCount})
+      const q=await pool.query(SEL+" ORDER BY event_date NULLS LAST,(origem='sistema'),linha NULLS LAST,id");
+      // histórico da planilha como veio; lançamentos do sistema já com os romaneios do mesmo motorista juntos
+      const linhas=q.rows.filter(r=>r.origem!=='sistema').map(r=>({d:r.event_date||'',o:0,dados:r.dados}));
+      for(const g of agrupar(q.rows.filter(r=>r.origem==='sistema').map(resumir)))linhas.push({d:g.data||'',o:1,dados:montarDados(camposDoGrupo(g))});
+      linhas.sort((a,b)=>(a.d||'9999').localeCompare(b.d||'9999')||a.o-b.o);
+      return sendJson(res,200,{ok:true,...f,rows:linhas.map(x=>x.dados),total:linhas.length})
     }
     if(p==='/api/painel/lancamentos/config'&&req.method==='GET'){
       const user=await sessionOrInternal(req);
@@ -255,8 +330,9 @@ async function atender(req,res,u,ctx){
       const hoje=spToday(),de=dataIso(u.searchParams.get('de'))||hoje,ate=dataIso(u.searchParams.get('ate'))||de;
       const origem=u.searchParams.get('origem')==='todas'?null:'sistema';
       const q=await pool.query(SEL+" WHERE event_date BETWEEN $1::date AND $2::date AND ($3::text IS NULL OR origem=$3) ORDER BY event_date,id LIMIT 3000",[de,ate,origem]);
-      const comFretes=u.searchParams.get('fretes')==='1';
-      const rows=q.rows.map(r=>comFretes?{...resumir(r),fretes:r.ssw?.fretes||null}:resumir(r)).sort((a,b)=>a.data.localeCompare(b.data)||(Number(romaneioKey(a.romaneio))||0)-(Number(romaneioKey(b.romaneio))||0)||Number(a.id)-Number(b.id));
+      // soltos=1: uma linha por romaneio (uso do próprio sistema); a tela recebe os romaneios do mesmo motorista juntos
+      if(u.searchParams.get('soltos')!=='1')return sendJson(res,200,{ok:true,de,ate,rows:agrupar(q.rows.map(resumir))});
+      const rows=q.rows.map(resumir).sort((a,b)=>a.data.localeCompare(b.data)||(Number(romaneioKey(a.romaneio))||0)-(Number(romaneioKey(b.romaneio))||0)||Number(a.id)-Number(b.id));
       return sendJson(res,200,{ok:true,de,ate,rows})
     }
     // ---- novo lançamento
@@ -281,7 +357,7 @@ async function atender(req,res,u,ctx){
       const ja=await pool.query(SEL+" WHERE origem='sistema' AND romaneio_key=$1 LIMIT 1",[key]);
       if(ja.rowCount){
         const row=ja.rows[0],r=resumir(row);
-        if(auto)return sendJson(res,200,{ok:true,existente:true,row:r});
+        if(auto)return sendJson(res,200,{ok:true,existente:true,row:r,linha:r});
         // linha que veio do SSW e ainda está sem valor: o formulário completa essa mesma linha
         if(r.valor===null){
           const c2=campos(row);
@@ -292,7 +368,7 @@ async function atender(req,res,u,ctx){
             "UPDATE operacao_lancamentos SET event_date=$2::date,motorista=$3,dados=$4::jsonb,updated_at=NOW() WHERE id=$1 RETURNING id::text AS id,origem,to_char(event_date,'YYYY-MM-DD') AS event_date,romaneio,romaneio_key,motorista,dados,ssw,linha,created_by,updated_at",
             [row.id,c2.data,c2.motorista.toUpperCase(),JSON.stringify(montarDados(c2))]);
           console.log('LANCAMENTO completado pelo formulário: '+JSON.stringify({por:user.username,romaneio:r.romaneio,valor:c.valor}));
-          return sendJson(res,200,{ok:true,atualizado:true,row:resumir(up.rows[0])})
+          return sendJson(res,200,{ok:true,atualizado:true,...await resposta(pool,up.rows[0])})
         }
         return sendJson(res,409,{ok:false,error:'O romaneio '+r.romaneio+' já foi lançado em '+dataBr(r.data)+' para '+r.motorista+'. Edite o lançamento que já existe.',existente:r})
       }
@@ -304,7 +380,7 @@ async function atender(req,res,u,ctx){
         "INSERT INTO operacao_lancamentos(origem,event_date,romaneio,romaneio_key,motorista,dados,ssw,created_by) VALUES('sistema',$1::date,$2,$3,$4,$5::jsonb,$6::jsonb,$7) RETURNING id::text AS id,origem,to_char(event_date,'YYYY-MM-DD') AS event_date,romaneio,romaneio_key,motorista,dados,ssw,linha,created_by,updated_at",
         [c.data,c.romaneio,key,c.motorista.toUpperCase(),JSON.stringify(montarDados(c)),JSON.stringify(ssw),por]);
       console.log('LANCAMENTO novo: '+JSON.stringify({por,data:c.data,romaneio:c.romaneio,motorista:c.motorista,valor:auto?null:c.valor}));
-      return sendJson(res,201,{ok:true,row:resumir(q.rows[0])})
+      return sendJson(res,201,{ok:true,...await resposta(pool,q.rows[0])})
     }
     const m=p.match(/^\/api\/painel\/lancamentos\/(\d+)$/);
     // ---- alterar (pelo usuário) ou completar com o que veio do SSW (campo "calculo")
@@ -335,10 +411,12 @@ async function atender(req,res,u,ctx){
           ssw.romaneio_ssw=limpo(b.romaneio_ssw,40).toUpperCase();ssw.placa=limpo(b.placa,12).toUpperCase();
           // romaneio trocado: o que tinha sido lido do SSW era do outro
           Object.assign(c,{entregas:b.entregas??null,realizadas:null,pend:null,retorno:null,km:null,frete_vialog:null,desconto_vialog:null,rota:''});
-          delete ssw.fretes;delete ssw.cidades;
+          delete ssw.fretes;delete ssw.cidades;delete ssw.ctes;delete ssw.conjunto;
           ssw.calculo={status:'pendente',em:new Date().toISOString()}
         }
       }
+      // km da rota única dos romaneios do mesmo motorista (só o próprio sistema grava)
+      if(user.internal&&b.conjunto&&typeof b.conjunto==='object'){const kmc=numero(b.conjunto.km);ssw.conjunto=Number.isFinite(kmc)&&kmc>0?{km:Math.round(kmc),keys:limpo(b.conjunto.keys,200),em:new Date().toISOString()}:undefined}
       if(b.calculo&&typeof b.calculo==='object'){
         const k=b.calculo;
         for(const f of['entregas','pend','retorno','km','frete_vialog','desconto_vialog'])if(Object.prototype.hasOwnProperty.call(k,f)){const v=numero(k[f]);c[f]=Number.isFinite(v)?v:null}
@@ -351,9 +429,11 @@ async function atender(req,res,u,ctx){
           c.realizadas=fechado&&Number.isFinite(v)?v:null
         }
         // frete de cada CT-e do romaneio: é com ele que se desconta o das entregas não feitas
-        if(k.fretes&&typeof k.fretes==='object'&&!Array.isArray(k.fretes)){
-          const f={};for(const[ct,v]of Object.entries(k.fretes).slice(0,600)){const x=numero(v);if(Number.isFinite(x)&&x>=0)f[limpo(ct,24).toUpperCase()]=Math.round(x*100)/100}
-          ssw.fretes=f
+        // entregas do romaneio, uma a uma ("ctes" sozinho é a contagem)
+        if(Array.isArray(k.lista)){
+          ssw.ctes=k.lista.slice(0,400).map(x=>{const f=numero(x?.f);return{c:limpo(x?.c,20).toUpperCase(),k:limpo(x?.k,24).toUpperCase(),f:Number.isFinite(f)&&f>=0?Math.round(f*100)/100:null,
+            s:['e','o','p','?'].includes(x?.s)?x.s:'?',d:limpo(x?.d,50),ci:limpo(x?.ci,40).toUpperCase(),o:limpo(x?.o,70)}}).filter(x=>x.c||x.k);
+          delete ssw.fretes
         }
         if(Array.isArray(k.cidades))ssw.cidades=k.cidades.slice(0,80).map(x=>({c:limpo(x?.c,60).toUpperCase(),n:Math.max(0,Math.round(numero(x?.n))||0)})).filter(x=>x.c);
         if(typeof k.rota==='string')c.rota=k.rota;
@@ -370,7 +450,15 @@ async function atender(req,res,u,ctx){
         "UPDATE operacao_lancamentos SET event_date=$2::date,romaneio=$3,romaneio_key=$4,motorista=$5,dados=$6::jsonb,ssw=$7::jsonb,updated_at=NOW() WHERE id=$1 RETURNING id::text AS id,origem,to_char(event_date,'YYYY-MM-DD') AS event_date,romaneio,romaneio_key,motorista,dados,ssw,linha,created_by,updated_at",
         [m[1],c.data,c.romaneio,key,c.motorista.toUpperCase(),JSON.stringify(montarDados(c)),JSON.stringify(ssw)]);
       if(!b.calculo)console.log('LANCAMENTO alterado: '+JSON.stringify({por:user.username,id:m[1],romaneio:c.romaneio,valor:c.valor}));
-      return sendJson(res,200,{ok:true,row:resumir(r.rows[0])})
+      // alterou data ou motorista de um lançamento com vários romaneios: os outros romaneios acompanham
+      if(b.grupo===true&&(tem('data')||tem('motorista'))&&(c.data!==row.event_date||c.motorista.toUpperCase()!==String(row.motorista).toUpperCase())){
+        const irm=await pool.query(SEL+" WHERE origem='sistema' AND event_date=$1::date AND upper(trim(motorista))=upper(trim($2)) AND id<>$3",[row.event_date,row.motorista,m[1]]);
+        for(const o of irm.rows){
+          const co=campos(o);co.data=c.data;co.motorista=c.motorista;
+          await pool.query("UPDATE operacao_lancamentos SET event_date=$2::date,motorista=$3,dados=$4::jsonb,updated_at=NOW() WHERE id=$1",[o.id,co.data,co.motorista.toUpperCase(),JSON.stringify(montarDados(co))])
+        }
+      }
+      return sendJson(res,200,{ok:true,...await resposta(pool,r.rows[0])})
     }
     if(m&&req.method==='DELETE'){
       const user=await sessionOrInternal(req);
@@ -390,4 +478,4 @@ async function atender(req,res,u,ctx){
   }
 }
 
-module.exports={COLUNAS,OPERACOES,freteNaoEntregue,numero,dinheiro,dataIso,dataBr,romaneioKey,romaneioCurto,montarDados,resumir,ensureSchema,handle};
+module.exports={COLUNAS,OPERACOES,freteNaoEntregue,contasDasEntregas,agrupar,numero,dinheiro,dataIso,dataBr,romaneioKey,romaneioCurto,montarDados,resumir,ensureSchema,handle};

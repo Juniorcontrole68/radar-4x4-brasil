@@ -59,6 +59,13 @@
 .lc-pop-list li{padding:8px 0;border-bottom:1px solid var(--line)}
 .lc-pop-list li span{display:inline-block;min-width:60%}
 .lc-pop-list li b{float:right;font-size:12.5px;color:#475569;font-weight:700}
+.lc-link.n{text-align:right;display:inline;font-weight:700}
+.lc-pop-contas{padding:0 18px 4px;font-size:14px}
+.lc-pop-contas div{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--line)}
+.lc-pop-sub{padding:12px 18px 4px;font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.04em}
+.lc-pop-ctes{list-style:none;margin:0;padding:0 18px;max-height:38vh;overflow-y:auto;font-size:13px}
+.lc-pop-ctes li{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--line)}
+.lc-pop-ctes li small{display:block;color:#b45309;font-size:11.5px;font-weight:700;margin-top:2px}
 .lc-pop-foot{padding:12px 18px 16px;font-size:12.5px;color:#475569;font-weight:700}
 .lc-admin{margin-top:14px;display:flex;justify-content:space-between;gap:14px;align-items:center;flex-wrap:wrap;font-size:13px}
 .lc-admin .muted{margin-top:3px;font-size:12px;max-width:760px}

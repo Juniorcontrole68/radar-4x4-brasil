@@ -79,7 +79,7 @@ function limparFormulario(manterData=true){
   const d=q('#lcData').value;
   q('#lcForm').reset();
   q('#lcData').value=manterData&&d?d:hoje();
-  rom=null;editando=null;autoMotorista='';mexeuTipo=false;romSeq++;
+  rom=null;editando=null;autoMotorista='';mexeuTipo=false;romSeq++;q('#lcRom').readOnly=false;
   mostrarRomaneio();
   q('#lcSave').textContent='Lançar';q('#lcCancel').hidden=true;q('#lcFormTitle').textContent='Novo lançamento'
 }
@@ -94,7 +94,7 @@ async function salvar(e){
   if(!corpo.veiculo_tipo){msg('Escolha o tipo de carro.','warn');q('#lcTipo').focus();return}
   const btn=q('#lcSave');btn.disabled=true;
   const enviar=async forcar=>editando
-    ?api('/api/lancamentos/'+editando.id,{method:'PATCH',body:JSON.stringify({...corpo,...(norm(corpo.romaneio)===norm(editando.romaneio)?{romaneio:undefined}:{}),forcar})})
+    ?api('/api/lancamentos/'+editando.id,{method:'PATCH',body:JSON.stringify({...corpo,...(editando.partes||norm(corpo.romaneio)===norm(editando.romaneio)?{romaneio:undefined}:{}),grupo:!!editando.partes,forcar})})
     :api('/api/lancamentos',{method:'POST',body:JSON.stringify({...corpo,forcar})});
   try{
     let j;
@@ -124,6 +124,7 @@ function editar(id){
   q('#lcTipo').value=r.veiculo_tipo||'';q('#lcOper').value=operacoes.includes(r.operacao)?r.operacao:'';
   q('#lcConf').value=r.conferente||'';q('#lcErros').value=r.erros||'';
   mexeuTipo=true;autoMotorista='';rom=null;mostrarRomaneio();
+  q('#lcRom').readOnly=!!r.partes;   // vários romaneios no mesmo lançamento: o número não se altera por aqui
   q('#lcSave').textContent='Salvar alteração';q('#lcCancel').hidden=false;q('#lcFormTitle').textContent='Alterando o romaneio '+r.romaneio;
   msg('Altere o que precisar e clique em Salvar alteração.');
   q('#lcForm').scrollIntoView({behavior:'smooth',block:'nearest'});q('#lcValor').focus()
@@ -131,11 +132,12 @@ function editar(id){
 async function excluir(id){
   const r=linhas.find(x=>x.id===id);if(!r)return;
   if(!confirm('Excluir o lançamento do romaneio '+r.romaneio+' ('+r.motorista+(r.valor===null?'':', '+reais(r.valor))+')?'+(r.romaneio_ssw?'\n\nEle não volta sozinho para a lista. Para lançar de novo, use o formulário de cima.':'')))return;
-  try{await api('/api/lancamentos/'+id,{method:'DELETE'});msg('Lançamento do romaneio '+r.romaneio+' excluído.','ok');if(editando?.id===id)limparFormulario();await carregarLista()}
+  try{for(const i of (r.ids||[id]))await api('/api/lancamentos/'+i,{method:'DELETE'});msg('Lançamento do romaneio '+r.romaneio+' excluído.','ok');if(editando?.id===id)limparFormulario();await carregarLista()}
   catch(e){msg('✗ '+e.message,'bad')}
 }
 async function recalcular(id){
-  try{await api('/api/lancamentos/'+id+'/recalcular',{method:'POST'});msg('Buscando de novo os dados do romaneio no SSW…','ok');naFila.push(id);renderLista();agendar(4000)}
+  const r=linhas.find(x=>x.id===id);
+  try{for(const i of (r?.ids||[id])){await api('/api/lancamentos/'+i+'/recalcular',{method:'POST'});naFila.push(i)}msg('Buscando de novo os dados do romaneio no SSW…','ok');renderLista();agendar(4000)}
   catch(e){msg('✗ '+e.message,'bad')}
 }
 
@@ -144,7 +146,7 @@ function situacao(r){
   if(r.valor===null)return'<span class="lc-tag bad" title="Informe o valor negociado com o motorista">falta o valor</span>';
   if(!r.operacao)return'<span class="lc-tag warn" title="Escolha a operação">falta a operação</span>';
   if(!r.veiculo_tipo)return'<span class="lc-tag warn" title="Escolha o tipo de carro">falta o carro</span>';
-  if(naFila.includes(r.id))return'<span class="lc-tag wait" title="Buscando km, frete e cidades no SSW">buscando no SSW…</span>';
+  if((r.ids||[r.id]).some(i=>naFila.includes(i)))return'<span class="lc-tag wait" title="Buscando km, frete e cidades no SSW">buscando no SSW…</span>';
   if(r.calculo?.status==='pendente')return r.romaneio_ssw?'<span class="lc-tag wait" title="O sistema busca km, frete e cidades alguns minutos depois de o romaneio parar de mudar no SSW">aguardando o SSW</span>':'<span class="lc-tag warn" title="O romaneio não foi encontrado no SSW na data do lançamento">sem SSW</span>';
   if(!r.romaneio_ssw)return'<span class="lc-tag warn" title="O romaneio não foi encontrado no SSW na data do lançamento">sem SSW</span>';
   if(r.calculo?.status==='erro')return'<span class="lc-tag bad" title="'+esc(r.calculo.msg||'')+'">não completou</span>';
@@ -169,12 +171,12 @@ function renderLista(){
     const feitas=r.realizadas??r.ao_vivo,id=esc(r.id);
     const liq=r.frete_vialog_liq??r.frete_vialog,pct=liq>0&&r.valor!==null?Math.round((r.frete_mot_liq??r.valor)/liq*100)+'%':'—';
     return'<tr data-lc-row="'+id+'"'+(editando?.id===r.id?' class="editing"':'')+'>'+(varios?'<td>'+br(r.data).slice(0,5)+'</td>':'')+
-      '<td><b>'+esc(r.romaneio)+'</b></td><td>'+esc(r.motorista)+'</td>'+
+      '<td><b>'+esc(r.romaneio)+'</b>'+(r.partes?'<small>'+r.partes.length+' romaneios, um valor</small>':'')+'</td><td>'+esc(r.motorista)+'</td>'+
       '<td><select data-lc-campo="veiculo_tipo" data-id="'+id+'" aria-label="Tipo de carro do romaneio '+esc(r.romaneio)+'"'+(r.veiculo_tipo?'':' class="falta"')+'>'+opcoes(tp,r.veiculo_tipo)+'</select>'+(r.placa?'<small>'+esc(r.placa)+'</small>':'')+'</td>'+
       '<td><select data-lc-campo="operacao" data-id="'+id+'" aria-label="Operação do romaneio '+esc(r.romaneio)+'"'+(r.operacao?'':' class="falta"')+'>'+opcoes(operacoes,r.operacao)+'</select></td>'+
-      '<td class="n" title="Entregas feitas / entregas do romaneio">'+(feitas===null||feitas===undefined?int(r.entregas):'<b>'+int(feitas)+'</b> / '+int(r.entregas)+(r.realizadas===null&&r.ao_vivo!==null?'<small>até agora</small>':''))+'</td><td class="n">'+(r.km?int(r.km):'—')+'</td>'+
+      '<td class="n" title="Entregas feitas / entregas do romaneio">'+(feitas===null||feitas===undefined?int(r.entregas):'<b>'+int(feitas)+'</b> / '+int(r.entregas)+(r.realizadas===null&&r.ao_vivo!==null?'<small>até agora</small>':''))+'</td><td class="n"'+(r.km_soma?' title="Soma das rotas de cada romaneio. O km da rota única ainda está sendo calculado."':'')+'>'+(r.km?int(r.km)+(r.km_soma?'<small>soma</small>':''):'—')+'</td>'+
       '<td class="n"><input data-lc-campo="valor" data-id="'+id+'" data-no-titlecase="true" type="text" inputmode="decimal" autocomplete="off" maxlength="12" placeholder="0,00" value="'+valorTexto(r.valor)+'" aria-label="Valor negociado do romaneio '+esc(r.romaneio)+'"'+(r.valor===null?' class="falta"':'')+'></td>'+
-      '<td class="n">'+reais(r.frete_vialog)+'</td><td class="n"'+(r.desconto_vialog>0?' title="Descontado o frete das entregas não feitas: '+reais(r.desconto_vialog)+'"':'')+'>'+reais(r.frete_vialog===null?null:liq)+(r.desconto_vialog>0?'<small>− '+reais(r.desconto_vialog)+'</small>':'')+'</td><td class="n">'+pct+'</td>'+
+      '<td class="n">'+reais(r.frete_vialog)+'</td><td class="n"'+(r.desconto_vialog>0?' title="Descontado o frete das entregas não feitas: '+reais(r.desconto_vialog)+'"':'')+'>'+(r.frete_vialog===null?'—':r.ctes&&r.ctes.length?'<button type="button" class="lc-link n" data-lc-frete="'+id+'" title="Ver as entregas descontadas">'+reais(liq)+'</button>':reais(liq))+(r.desconto_vialog>0?'<small>− '+reais(r.desconto_vialog)+'</small>':'')+'</td><td class="n">'+pct+'</td>'+
       '<td class="rota">'+(r.rota?'<button type="button" class="lc-link" data-lc-cidades="'+id+'" title="Ver as cidades do romaneio">'+esc(r.rota)+'</button>':'—')+'</td>'+(comConf?'<td>'+esc(r.conferente||'—')+(r.erros?'<small>'+int(r.erros)+' erro(s)</small>':'')+'</td>':'')+'<td>'+situacao(r)+'</td>'+
       '<td class="acts"><button type="button" data-lc-edit="'+id+'" title="Alterar data, motorista, conferente" aria-label="Alterar o romaneio '+esc(r.romaneio)+'">✎</button><button type="button" data-lc-calc="'+id+'" title="Buscar de novo no SSW" aria-label="Buscar de novo no SSW">↻</button><button type="button" class="rm" data-lc-del="'+id+'" title="Excluir" aria-label="Excluir o romaneio '+esc(r.romaneio)+'">✕</button></td></tr>'
   }).join('');
@@ -194,7 +196,7 @@ async function salvarCampo(el){
   }else if(v===(r[campo]||''))return;
   try{
     const j=await api('/api/lancamentos/'+id,{method:'PATCH',body:JSON.stringify({[campo]:v})});
-    const i=linhas.findIndex(x=>x.id===id);if(i>=0)linhas[i]=j.row;
+    const i=linhas.findIndex(x=>(x.ids||[x.id]).includes(id));if(i>=0)linhas[i]=j.row;
     msg('Gravado: romaneio '+j.row.romaneio+' • '+j.row.motorista+' • '+(campo==='valor'?reais(j.row.valor):campo==='operacao'?'operação '+(j.row.operacao||'em branco'):'carro '+(j.row.veiculo_tipo||'em branco'))+'.','ok');
     if(campo==='valor')el.value=valorTexto(j.row.valor);
     el.classList.toggle('falta',campo==='valor'?j.row.valor===null:!v);
@@ -210,6 +212,19 @@ function abrirCidades(id){
     '<div class="lc-pop-foot">'+int(lista.length)+' cidade'+(lista.length>1?'s':'')+(r.entregas?' • '+int(r.entregas)+' entregas':'')+(r.km?' • '+int(r.km)+' km':'')+'</div>';
   if(d.showModal){if(!d.open)d.showModal()}else d.setAttribute('open','')
 }
+// Frete líquido: o frete do romaneio menos o frete de cada entrega que não está como "01 - mercadoria entregue".
+function abrirFrete(id){
+  const r=linhas.find(x=>x.id===id),d=q('#lcCidades');
+  if(!r||!d||!r.ctes)return;
+  const fora=r.ctes.filter(x=>x.s==='o'||x.s==='p'),sem=r.ctes.filter(x=>x.s==='?'),feitas=r.ctes.filter(x=>x.s==='e').length;
+  d.innerHTML='<div class="lc-pop-head"><div><b>Frete líquido • romaneio '+esc(r.romaneio)+'</b><div class="muted">'+esc(r.motorista)+' • '+br(r.data)+' • só conta a entrega com ocorrência 01 (mercadoria entregue)</div></div><button type="button" class="lc-pop-x" data-lc-fechar aria-label="Fechar">✕</button></div>'+
+    '<div class="lc-pop-contas"><div><span>Frete do romaneio ('+int(r.ctes.length)+' entregas)</span><b>'+reais(r.frete_vialog)+'</b></div><div><span>Entregues ('+int(feitas)+')</span><b>'+reais(freteLiq(r))+'</b></div><div><span>Descontado ('+int(fora.length)+')</span><b>− '+reais(r.desconto_vialog||0)+'</b></div></div>'+
+    (fora.length?'<div class="lc-pop-sub">Entregas descontadas</div><ul class="lc-pop-ctes">'+fora.map(x=>'<li><div><b>'+esc(x.c)+'</b> '+esc(x.d||'')+(x.ci?' • '+esc(x.ci):'')+'<small>'+esc(x.o||'sem ocorrência no SSW')+'</small></div><b>'+(x.f===null||x.f===undefined?'—':reais(x.f))+'</b></li>').join('')+'</ul>':'<div class="lc-pop-sub">Nenhuma entrega descontada.</div>')+
+    (sem.length?'<div class="lc-pop-sub">Sem a situação lida no SSW (não descontadas): '+sem.map(x=>esc(x.c)).join(', ')+'</div>':'')+
+    '<div class="lc-pop-foot">Frete líquido '+reais(freteLiq(r))+'</div>';
+  if(d.showModal){if(!d.open)d.showModal()}else d.setAttribute('open','')
+}
+const freteLiq=r=>r.frete_vialog_liq??r.frete_vialog;
 function fecharCidades(){const d=q('#lcCidades');if(!d)return;if(d.close&&d.open)d.close();else d.removeAttribute('open')}
 function agendar(ms){clearTimeout(timerLista);timerLista=setTimeout(()=>{if(q('#lancamentos')?.classList.contains('active'))carregarLista(true)},ms)}
 async function carregarLista(silencioso=false){
@@ -277,7 +292,7 @@ function setup(){
   q('#lcAte').onchange=()=>carregarLista();
   q('#lcHoje').onclick=()=>{q('#lcDe').value=hoje();q('#lcAte').value=hoje();carregarLista()};
   const tab=q('#lcTable');
-  tab.onclick=e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.lcEdit){editar(b.dataset.lcEdit);renderLista()}else if(b.dataset.lcDel)excluir(b.dataset.lcDel);else if(b.dataset.lcCalc)recalcular(b.dataset.lcCalc);else if(b.dataset.lcCidades)abrirCidades(b.dataset.lcCidades)};
+  tab.onclick=e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.lcEdit){editar(b.dataset.lcEdit);renderLista()}else if(b.dataset.lcDel)excluir(b.dataset.lcDel);else if(b.dataset.lcCalc)recalcular(b.dataset.lcCalc);else if(b.dataset.lcCidades)abrirCidades(b.dataset.lcCidades);else if(b.dataset.lcFrete)abrirFrete(b.dataset.lcFrete)};
   tab.onchange=e=>{if(e.target.dataset.lcCampo)salvarCampo(e.target)};
   // Enter no valor: grava e desce para o valor do próximo romaneio
   tab.onkeydown=e=>{
