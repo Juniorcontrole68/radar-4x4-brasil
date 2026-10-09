@@ -81,6 +81,7 @@ jobs:
           SSW_INTERNAL_USUARIO: usuario
           SSW_INTERNAL_SENHA: senha
           TRACKING_SYNC_SECONDS: '3600'
+          LANC_ESTAVEL_SEGUNDOS: '3'
         run: |
           pkill -f "node server.js" || true
           pkill -f "dashboard/server.js" || true

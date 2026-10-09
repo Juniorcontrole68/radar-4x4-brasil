@@ -1,7 +1,8 @@
 // Lançamentos da operação: o card que substitui a aba de lançamentos da planilha.
 // Roda contra o SSW de mentira (tests/apoio/ssw-falso.js), sem rede externa; nunca toca no SSW real.
-// Pré-requisitos: os mesmos de tests/ssw-sessao.js (servidor sem TEST_MODE, com sem-rede.js e ssw-desvio.js).
-const B=process.env.BASE_URL||'http://127.0.0.1:10000';
+// Pré-requisitos: os mesmos de tests/ssw-sessao.js (servidor sem TEST_MODE, com sem-rede.js e ssw-desvio.js),
+// LANC_ESTAVEL_SEGUNDOS=3 no servidor e banco sem lançamentos (os romaneios do SSW de mentira entram sozinhos).
+const B=process.env.BASE_URL||'http://127.0.0.1:10000',M='http://127.0.0.1:'+(process.env.MOCK_PORT||10555);
 const ADMIN_USER=process.env.ADMIN_USER||'admin_teste',ADMIN_PASS=process.env.ADMIN_PASS||'senha-de-teste-123';
 const lib=require('../lancamentos.js');
 const fs=require('fs'),path=require('path');
@@ -34,8 +35,8 @@ const temPdf=!require('child_process').spawnSync('pdftotext',['-v']).error;
   const api=async(method,url,body,h=HJ)=>{const x=await fetch(B+url,{method,headers:h,body:body===undefined?undefined:JSON.stringify(body)});return{status:x.status,j:await x.json().catch(()=>({}))}};
   const lista=async(q='')=>(await api('GET','/api/lancamentos'+q)).j;
 
-  // começa limpo (o banco do teste pode ter sobras de uma rodada anterior)
-  for(const x of ((await lista('?de=2000-01-01&ate=2100-01-01')).rows||[]))await api('DELETE','/api/lancamentos/'+x.id);
+  const mock=async q=>(await fetch(M+'/__mock/romaneio?'+q)).json();
+  const espera=async(cond,limite=60000,passo=1500)=>{const t=Date.now();for(;;){const rs=(await lista()).rows||[];if(cond(rs)||Date.now()-t>limite)return rs;await sleep(passo)}};
   await api('POST','/api/lancamentos/fonte',{fonte:'planilha'});
 
   console.log('Acesso');
@@ -45,6 +46,35 @@ const temPdf=!require('child_process').spawnSync('pdftotext',['-v']).error;
   check('começa com os painéis lendo a planilha e as três operações',a.status===200&&a.j.fonte==='planilha'&&a.j.is_admin===true&&a.j.operacoes.join()==='MATCOM,ECOM,MATCOM/ECOM',a);
   a=await api('POST','/api/lancamentos/fonte',{fonte:'sistema'});
   check('não deixa passar os painéis para o sistema antes de trazer o histórico',a.status===400&&/histórico/.test(a.j.error),a);
+
+  console.log('Romaneios feitos hoje no SSW entram sozinhos na lista');
+  let autos=await espera(rs=>rs.length>=3,40000);
+  check('os três romaneios de hoje aparecem sem ninguém lançar, em ordem de romaneio',autos.map(x=>x.romaneio).join()==='321-1,1056-1,1057-1',autos.map(x=>x.romaneio));
+  check('  ...com motorista, placa, filial e entregas do SSW, na data de hoje',autos.map(x=>[x.motorista,x.placa,x.filial,x.entregas,x.data].join('|')).join(';')===['ROGER TESTE|TBT9Z99|TBT|6|'+hoje,'JAILSON MOREIRA DE SOUZA|EYV3626|AMR|12|'+hoje,'FABIANO TESTE|FAB1A23|AMR|5|'+hoje].join(';'),autos);
+  check('  ...sem valor e sem operação (ficam para o usuário), marcados como vindos do SSW',autos.every(x=>x.auto===true&&x.valor===null&&x.operacao===''&&x.criado_por==='SSW (automático)'&&x.romaneio_ssw),autos);
+  a=await api('POST','/api/painel/lancamentos',{auto:true,data:hoje,motorista:'Intruso',romaneio:'4444-4'});
+  check('só o próprio sistema cria linha sem valor (o administrador, pela tela, não)',a.status===400&&/valor/.test(a.j.error),a);
+  autos=await espera(rs=>rs.length>=3&&rs.every(x=>x.calculo?.status!=='pendente'),150000,2500);
+  const a57=autos.find(x=>x.romaneio==='1057-1')||{},a56=autos.find(x=>x.romaneio==='1056-1')||{},a321=autos.find(x=>x.romaneio==='321-1')||{};
+  if(temPdf){
+    check('depois que o romaneio para de mudar, o sistema busca km, frete e cidades',a57.calculo?.status==='ok'&&a57.km>100&&a57.frete_vialog===395.15&&a57.valor===null,a57);
+    check('  ...com as entregas de cada cidade (para o quadro de cidades)',Array.isArray(a57.cidades)&&a57.cidades.length===5&&a57.cidades.every(c=>c.n===1)&&a57.cidades[4].c==='RIO DE JANEIRO'&&a57.rota.split(',').length===5,a57.cidades)
+  }else check('sem ler o romaneio: fica "não completou"',a57.calculo?.status==='erro',a57.calculo);
+  a=await api('PATCH','/api/lancamentos/'+a57.id,{valor:'850,00'});
+  check('o usuário informa só o valor, na linha',a.status===200&&a.j.row.valor===850&&a.j.row.frete_mot_liq===850&&a.j.row.km===a57.km&&a.j.row.motorista==='FABIANO TESTE',a);
+  a=await api('PATCH','/api/lancamentos/'+a57.id,{operacao:'MATCOM'});const b57=await api('PATCH','/api/lancamentos/'+a57.id,{veiculo_tipo:'van com tubo'});
+  check('  ...e escolhe a operação e o carro (Van com tubo)',a.j.row?.operacao==='MATCOM'&&b57.j.row?.veiculo_tipo==='VAN COM TUBO'&&b57.j.row.valor===850,b57);
+  a=await api('POST','/api/lancamentos',{data:hoje,motorista:'Jailson Souza',romaneio:'1056',valor:1200,operacao:'ECOM',veiculo_tipo:'VAN'});
+  check('lançar pelo formulário um romaneio que já está na lista sem valor: completa a mesma linha',a.status===200&&a.j.atualizado===true&&a.j.row.id===a56.id&&a.j.row.valor===1200&&a.j.row.motorista==='JAILSON SOUZA'&&a.j.row.operacao==='ECOM'&&a.j.row.veiculo_tipo==='VAN'&&a.j.row.entregas===12,a);
+  a=await api('POST','/api/lancamentos',{data:hoje,motorista:'Jailson Souza',romaneio:'1056',valor:1300,operacao:'ECOM',veiculo_tipo:'VAN'});
+  check('  ...mas depois que tem valor, lançar de novo é recusado',a.status===409,a);
+  a=await api('DELETE','/api/lancamentos/'+a321.id);
+  await sleep(4500);await lista();await sleep(4500);
+  autos=(await lista()).rows||[];
+  check('linha excluída pelo usuário não volta sozinha',a.status===200&&autos.length===2&&!autos.some(x=>x.romaneio==='321-1'),autos.map(x=>x.romaneio));
+  // daqui em diante o teste lança tudo pelo formulário: tira o que entrou sozinho
+  for(const x of autos)await api('DELETE','/api/lancamentos/'+x.id);
+  check('lista vazia depois de excluir tudo (e continua vazia)',((await lista()).rows||[]).length===0);
 
   console.log('Romaneio no SSW');
   a=await api('GET','/api/lancamentos/romaneio?numero=1057-1');
@@ -92,7 +122,7 @@ const temPdf=!require('child_process').spawnSync('pdftotext',['-v']).error;
     check('  ...dia aberto: frete líquido ainda igual ao do romaneio (nada descontado)',c1.frete_vialog_liq===395.15&&!c1.desconto_vialog,c1);
     const comFretes=((await api('GET','/api/painel/lancamentos?fretes=1&de='+hoje+'&ate='+hoje)).j.rows||[]).find(x=>x.id===l1.id)||{};
     check('  ...e o frete de cada CT-e fica guardado para descontar as entregas não feitas',Object.keys(comFretes.fretes||{}).length===5&&Object.values(comFretes.fretes).every(v=>v===79.03),comFretes.fretes);
-    check('cidades na ordem da rota, sem repetir',c1.rota.split(',').sort().join()==='MOGI GUACU,MOGI MIRIM,PEDREIRA,SAO JOAO DA BOA VISTA',c1.rota);
+    check('cidades na ordem da rota, sem repetir (a que ficou sem localização vai no fim)',c1.rota.split(',').slice(0,4).sort().join()==='MOGI GUACU,MOGI MIRIM,PEDREIRA,SAO JOAO DA BOA VISTA'&&c1.rota.split(',')[4]==='RIO DE JANEIRO',c1.rota);
     check('entregas do romaneio e baixas até agora (dia aberto: Realizadas ainda em branco)',c1.entregas===5&&c1.ao_vivo===0&&c1.realizadas===null,c1);
     check('avisa a entrega sem localização e as aproximadas',c1.calculo?.status==='ok'&&/1 entrega\(s\) sem localização/.test(c1.calculo.msg)&&/aproximado/.test(c1.calculo.msg),c1.calculo)
   }else{
@@ -211,7 +241,18 @@ const temPdf=!require('child_process').spawnSync('pdftotext',['-v']).error;
   a=await api('DELETE','/api/lancamentos/'+l3.id);check('exclui o lançamento',a.status===200,a);
   a=await api('DELETE','/api/lancamentos/'+l3.id);check('  ...que some',a.status===404,a);
   a=await api('POST','/api/lancamentos',{data:hoje,motorista:'Roger Teste',romaneio:'321-1',valor:700,operacao:'MATCOM',veiculo_tipo:'VAN'});
-  check('  ...e o romaneio fica livre para lançar de novo',a.status===201,a);
+  check('  ...e o romaneio fica livre para lançar de novo pelo formulário',a.status===201,a);
+
+  console.log('O romaneio muda ao longo do dia');
+  await mock('rom=AMR001057-1&qtde=6');
+  let r57=(await espera(rs=>rs.some(x=>x.romaneio==='1057-1'&&x.entregas===6),90000,2500)).find(x=>x.romaneio==='1057-1')||{};
+  check('romaneio ganhou uma entrega no SSW: o lançamento acompanha, sem perder valor e conferente',r57.entregas===6&&r57.valor===900.5&&r57.conferente==='MARIA'&&r57.calculo?.status!=='pendente',r57);
+  check('  ...ainda aberto: nada descontado do frete',!r57.calculo?.fechado&&!r57.desconto_vialog&&r57.realizadas===null,r57);
+  await mock('rom=AMR001057-1&falta=0');
+  r57=(await espera(rs=>rs.some(x=>x.romaneio==='1057-1'&&x.calculo?.fechado),90000,2500)).find(x=>x.romaneio==='1057-1')||{};
+  check('todas as entregas com baixa no SSW: o romaneio fecha (realizadas e pendentes gravadas)',r57.calculo?.fechado===true&&r57.realizadas!==null&&r57.pend===r57.entregas-r57.realizadas,r57);
+  if(temPdf)check('  ...e, sem nenhuma entrega feita à vista, não inventa desconto: avisa para conferir',r57.realizadas===0&&!r57.desconto_vialog&&/frete líquido não calculado/.test(r57.calculo.msg),r57.calculo);
+  await mock('rom=AMR001057-1&qtde=5&falta=5');
 
   console.log('\n'+pass+' passaram, '+fail+' falharam');
   process.exit(fail?1:0)

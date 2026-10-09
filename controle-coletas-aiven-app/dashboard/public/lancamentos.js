@@ -29,11 +29,11 @@ async function api(url,opts){
 }
 
 // ---------------------------------------------------------------- formulário
+// os tipos de carro da casa primeiro; depois os que já apareceram nos lançamentos
+const tiposLista=()=>[...new Set(['FIORINO','VAN','VAN COM TUBO','3/4',...tipos].map(t=>String(t||'').toUpperCase().replace(/\s+/g,' ').trim()).filter(Boolean))];
 function preencherListas(){
   q('#lcDriverList').innerHTML=motoristas.map(m=>'<option value="'+esc(m.motorista)+'">'+esc([m.veiculo_tipo,m.ultimo?'último em '+br(m.ultimo):m.origem==='ssw'?'no SSW hoje':''].filter(Boolean).join(' • '))+'</option>').join('');
-  const sel=q('#lcTipo'),atual=sel.value;
-  // os tipos da casa primeiro; depois os que já apareceram nos lançamentos
-  const lista=[...new Set(['FIORINO','VAN','VAN COM TUBO','3/4',...tipos].map(t=>String(t||'').toUpperCase().replace(/\s+/g,' ').trim()).filter(Boolean))];
+  const sel=q('#lcTipo'),atual=sel.value,lista=tiposLista();
   sel.innerHTML='<option value="">Escolha</option>'+lista.map(t=>'<option>'+esc(t)+'</option>').join('');
   if(lista.includes(atual))sel.value=atual;
   const op=q('#lcOper'),oa=op.value;
@@ -130,7 +130,7 @@ function editar(id){
 }
 async function excluir(id){
   const r=linhas.find(x=>x.id===id);if(!r)return;
-  if(!confirm('Excluir o lançamento do romaneio '+r.romaneio+' ('+r.motorista+', '+reais(r.valor)+')?'))return;
+  if(!confirm('Excluir o lançamento do romaneio '+r.romaneio+' ('+r.motorista+(r.valor===null?'':', '+reais(r.valor))+')?'+(r.romaneio_ssw?'\n\nEle não volta sozinho para a lista. Para lançar de novo, use o formulário de cima.':'')))return;
   try{await api('/api/lancamentos/'+id,{method:'DELETE'});msg('Lançamento do romaneio '+r.romaneio+' excluído.','ok');if(editando?.id===id)limparFormulario();await carregarLista()}
   catch(e){msg('✗ '+e.message,'bad')}
 }
@@ -141,42 +141,88 @@ async function recalcular(id){
 
 // ---------------------------------------------------------------- lista
 function situacao(r){
-  if(naFila.includes(r.id)||r.calculo?.status==='pendente')return'<span class="lc-tag wait" title="Buscando km, frete e cidades no SSW">buscando no SSW…</span>';
+  if(r.valor===null)return'<span class="lc-tag bad" title="Informe o valor negociado com o motorista">falta o valor</span>';
+  if(!r.operacao)return'<span class="lc-tag warn" title="Escolha a operação">falta a operação</span>';
+  if(!r.veiculo_tipo)return'<span class="lc-tag warn" title="Escolha o tipo de carro">falta o carro</span>';
+  if(naFila.includes(r.id))return'<span class="lc-tag wait" title="Buscando km, frete e cidades no SSW">buscando no SSW…</span>';
+  if(r.calculo?.status==='pendente')return r.romaneio_ssw?'<span class="lc-tag wait" title="O sistema busca km, frete e cidades alguns minutos depois de o romaneio parar de mudar no SSW">aguardando o SSW</span>':'<span class="lc-tag warn" title="O romaneio não foi encontrado no SSW na data do lançamento">sem SSW</span>';
   if(!r.romaneio_ssw)return'<span class="lc-tag warn" title="O romaneio não foi encontrado no SSW na data do lançamento">sem SSW</span>';
   if(r.calculo?.status==='erro')return'<span class="lc-tag bad" title="'+esc(r.calculo.msg||'')+'">não completou</span>';
   if(r.calculo?.status==='parcial'||r.calculo?.msg)return'<span class="lc-tag warn" title="'+esc(r.calculo.msg||'')+'">conferir</span>';
   return'<span class="lc-tag ok">completo</span>'
 }
+const valorTexto=v=>v===null||v===undefined?'':Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+const opcoes=(lista,atual)=>'<option value="">—</option>'+[...new Set([...lista,atual].filter(Boolean))].map(t=>'<option'+(t===atual?' selected':'')+'>'+esc(t)+'</option>').join('');
+// Enquanto o usuário está digitando numa linha, a lista não é redesenhada (perderia o que foi digitado).
+let renderPendente=false;
+function tabelaOcupada(){const a=document.activeElement;return!!(a&&a.closest&&a.closest('#lcTable')&&/^(INPUT|SELECT)$/.test(a.tagName))}
 function renderLista(){
-  const box=q('#lcTable'),tot=q('#lcTotais'),de=q('#lcDe').value,ate=q('#lcAte').value,varios=de!==ate;
-  q('#lcListTitle').textContent='Lançamentos '+(varios?'de '+br(de)+' a '+br(ate):'de '+br(de));
-  if(!linhas.length){box.innerHTML='<div class="lc-empty">Nenhum lançamento '+(varios?'neste período':'nesta data')+'.</div>';tot.innerHTML='';return}
-  const s={ent:0,real:0,km:0,valor:0,frete:0,liq:0,valorComFrete:0};
+  if(tabelaOcupada()){renderPendente=true;return}
+  renderPendente=false;
+  const box=q('#lcTable'),de=q('#lcDe').value,ate=q('#lcAte').value,varios=de!==ate;
+  const semValor=linhas.filter(r=>r.valor===null).length;
+  q('#lcListTitle').innerHTML='Lançamentos '+(varios?'de '+br(de)+' a '+br(ate):'de '+br(de))+(semValor?' <span class="lc-tag bad">'+int(semValor)+' sem valor</span>':'');
+  if(!linhas.length){box.innerHTML='<div class="lc-empty">Nenhum lançamento '+(varios?'neste período':'nesta data')+'.</div>';return}
+  // a coluna do conferente só aparece quando alguém usou
+  const tp=tiposLista(),comConf=linhas.some(r=>r.conferente||r.erros);
   const corpo=linhas.map(r=>{
-    const feitas=r.realizadas??r.ao_vivo;
-    s.ent+=Number(r.entregas||0);s.real+=Number(feitas||0);s.km+=Number(r.km||0);s.valor+=Number(r.frete_mot_liq??r.valor??0);s.frete+=Number(r.frete_vialog||0);s.liq+=Number(r.frete_vialog_liq??r.frete_vialog??0);if(r.frete_vialog>0)s.valorComFrete+=Number(r.frete_mot_liq??r.valor??0);
+    const feitas=r.realizadas??r.ao_vivo,id=esc(r.id);
     const liq=r.frete_vialog_liq??r.frete_vialog,pct=liq>0&&r.valor!==null?Math.round((r.frete_mot_liq??r.valor)/liq*100)+'%':'—';
-    return'<tr data-lc-row="'+esc(r.id)+'"'+(editando?.id===r.id?' class="editing"':'')+'>'+(varios?'<td>'+br(r.data).slice(0,5)+'</td>':'')+
-      '<td><b>'+esc(r.romaneio)+'</b></td><td>'+esc(r.motorista)+'</td><td>'+esc(r.veiculo_tipo||'—')+(r.placa?'<small>'+esc(r.placa)+'</small>':'')+'</td><td>'+esc(r.operacao||'—')+'</td>'+
-      '<td class="n">'+int(r.entregas)+'</td><td class="n">'+(feitas===null||feitas===undefined?'—':int(feitas)+(r.realizadas===null&&r.ao_vivo!==null?'<small>até agora</small>':''))+'</td><td class="n">'+(r.km?int(r.km):'—')+'</td>'+
-      '<td class="n"><b>'+reais(r.valor)+'</b></td><td class="n">'+reais(r.frete_vialog)+'</td><td class="n"'+(r.desconto_vialog>0?' title="Descontado o frete das entregas não feitas: '+reais(r.desconto_vialog)+'"':'')+'>'+reais(r.frete_vialog===null?null:liq)+(r.desconto_vialog>0?'<small>− '+reais(r.desconto_vialog)+'</small>':'')+'</td><td class="n">'+pct+'</td>'+
-      '<td class="rota" title="'+esc(r.rota||'')+'">'+esc(r.rota||'—')+'</td><td>'+esc(r.conferente||'—')+(r.erros?'<small>'+int(r.erros)+' erro(s)</small>':'')+'</td><td>'+situacao(r)+'</td>'+
-      '<td class="acts"><button type="button" data-lc-edit="'+esc(r.id)+'" title="Alterar" aria-label="Alterar o romaneio '+esc(r.romaneio)+'">✎</button><button type="button" data-lc-calc="'+esc(r.id)+'" title="Buscar de novo no SSW" aria-label="Buscar de novo no SSW">↻</button><button type="button" class="rm" data-lc-del="'+esc(r.id)+'" title="Excluir" aria-label="Excluir o romaneio '+esc(r.romaneio)+'">✕</button></td></tr>'
+    return'<tr data-lc-row="'+id+'"'+(editando?.id===r.id?' class="editing"':'')+'>'+(varios?'<td>'+br(r.data).slice(0,5)+'</td>':'')+
+      '<td><b>'+esc(r.romaneio)+'</b></td><td>'+esc(r.motorista)+'</td>'+
+      '<td><select data-lc-campo="veiculo_tipo" data-id="'+id+'" aria-label="Tipo de carro do romaneio '+esc(r.romaneio)+'"'+(r.veiculo_tipo?'':' class="falta"')+'>'+opcoes(tp,r.veiculo_tipo)+'</select>'+(r.placa?'<small>'+esc(r.placa)+'</small>':'')+'</td>'+
+      '<td><select data-lc-campo="operacao" data-id="'+id+'" aria-label="Operação do romaneio '+esc(r.romaneio)+'"'+(r.operacao?'':' class="falta"')+'>'+opcoes(operacoes,r.operacao)+'</select></td>'+
+      '<td class="n" title="Entregas feitas / entregas do romaneio">'+(feitas===null||feitas===undefined?int(r.entregas):'<b>'+int(feitas)+'</b> / '+int(r.entregas)+(r.realizadas===null&&r.ao_vivo!==null?'<small>até agora</small>':''))+'</td><td class="n">'+(r.km?int(r.km):'—')+'</td>'+
+      '<td class="n"><input data-lc-campo="valor" data-id="'+id+'" data-no-titlecase="true" type="text" inputmode="decimal" autocomplete="off" maxlength="12" placeholder="0,00" value="'+valorTexto(r.valor)+'" aria-label="Valor negociado do romaneio '+esc(r.romaneio)+'"'+(r.valor===null?' class="falta"':'')+'></td>'+
+      '<td class="n">'+reais(r.frete_vialog)+'</td><td class="n"'+(r.desconto_vialog>0?' title="Descontado o frete das entregas não feitas: '+reais(r.desconto_vialog)+'"':'')+'>'+reais(r.frete_vialog===null?null:liq)+(r.desconto_vialog>0?'<small>− '+reais(r.desconto_vialog)+'</small>':'')+'</td><td class="n">'+pct+'</td>'+
+      '<td class="rota">'+(r.rota?'<button type="button" class="lc-link" data-lc-cidades="'+id+'" title="Ver as cidades do romaneio">'+esc(r.rota)+'</button>':'—')+'</td>'+(comConf?'<td>'+esc(r.conferente||'—')+(r.erros?'<small>'+int(r.erros)+' erro(s)</small>':'')+'</td>':'')+'<td>'+situacao(r)+'</td>'+
+      '<td class="acts"><button type="button" data-lc-edit="'+id+'" title="Alterar data, motorista, conferente" aria-label="Alterar o romaneio '+esc(r.romaneio)+'">✎</button><button type="button" data-lc-calc="'+id+'" title="Buscar de novo no SSW" aria-label="Buscar de novo no SSW">↻</button><button type="button" class="rm" data-lc-del="'+id+'" title="Excluir" aria-label="Excluir o romaneio '+esc(r.romaneio)+'">✕</button></td></tr>'
   }).join('');
-  box.innerHTML='<table><thead><tr>'+(varios?'<th>Data</th>':'')+'<th>Romaneio</th><th>Motorista</th><th>Carro</th><th>Operação</th><th class="n">Entregas</th><th class="n">Realizadas</th><th class="n">Km</th><th class="n">Valor negociado</th><th class="n">Frete Construlog</th><th class="n" title="Frete do romaneio menos o frete das entregas não feitas">Frete líquido</th><th class="n" title="Valor do motorista sobre o frete líquido">% do frete</th><th>Cidades</th><th>Conferente</th><th>Situação</th><th></th></tr></thead><tbody>'+corpo+'</tbody></table>';
-  tot.innerHTML='<span><b>'+int(linhas.length)+'</b> romaneio(s)</span><span><b>'+int(s.ent)+'</b> entregas</span><span><b>'+int(s.real)+'</b> realizadas</span><span><b>'+int(s.km)+'</b> km</span><span>Motoristas <b>'+reais(s.valor)+'</b></span><span>Frete Construlog <b>'+reais(s.frete)+'</b></span><span>Frete líquido <b>'+reais(s.liq)+'</b></span>'+(s.liq>0?'<span title="Só os romaneios que já têm o frete">Motoristas = <b>'+Math.round(s.valorComFrete/s.liq*100)+'%</b> do frete líquido</span>':'')
+  box.innerHTML='<table><thead><tr>'+(varios?'<th>Data</th>':'')+'<th>Romaneio</th><th>Motorista</th><th>Carro</th><th>Operação</th><th class="n" title="Entregas feitas / entregas do romaneio">Entregas</th><th class="n">Km</th><th class="n">Valor negociado</th><th class="n">Frete Construlog</th><th class="n" title="Frete do romaneio menos o frete das entregas não feitas">Frete líquido</th><th class="n" title="Valor do motorista sobre o frete líquido">% do frete</th><th>Cidades</th>'+(comConf?'<th>Conferente</th>':'')+'<th>Situação</th><th></th></tr></thead><tbody>'+corpo+'</tbody></table>'
 }
+// Valor, operação e carro são gravados direto na linha.
+async function salvarCampo(el){
+  const id=el.dataset.id,campo=el.dataset.lcCampo,r=linhas.find(x=>x.id===id);
+  if(!r)return;
+  const volta=()=>{el.value=campo==='valor'?valorTexto(r.valor):(r[campo]||'')};
+  let v=el.value;
+  if(campo==='valor'){
+    if(!v.trim()){volta();return}
+    v=valorDigitado(v);
+    if(!Number.isFinite(v)){msg('Não entendi o valor do romaneio '+r.romaneio+'. Digite assim: 850,00','warn');volta();return}
+    if(v===r.valor){volta();return}
+  }else if(v===(r[campo]||''))return;
+  try{
+    const j=await api('/api/lancamentos/'+id,{method:'PATCH',body:JSON.stringify({[campo]:v})});
+    const i=linhas.findIndex(x=>x.id===id);if(i>=0)linhas[i]=j.row;
+    msg('Gravado: romaneio '+j.row.romaneio+' • '+j.row.motorista+' • '+(campo==='valor'?reais(j.row.valor):campo==='operacao'?'operação '+(j.row.operacao||'em branco'):'carro '+(j.row.veiculo_tipo||'em branco'))+'.','ok');
+    if(campo==='valor')el.value=valorTexto(j.row.valor);
+    el.classList.toggle('falta',campo==='valor'?j.row.valor===null:!v);
+    renderLista()
+  }catch(e){msg('✗ '+e.message,'bad');volta()}
+}
+function abrirCidades(id){
+  const r=linhas.find(x=>x.id===id),d=q('#lcCidades');
+  if(!r||!d)return;
+  const lista=r.cidades&&r.cidades.length?r.cidades:String(r.rota||'').split(',').map(c=>({c:c.trim(),n:0})).filter(x=>x.c);
+  d.innerHTML='<div class="lc-pop-head"><div><b>Cidades do romaneio '+esc(r.romaneio)+'</b><div class="muted">'+esc(r.motorista)+' • '+br(r.data)+' • na ordem da rota</div></div><button type="button" class="lc-pop-x" data-lc-fechar aria-label="Fechar">✕</button></div>'+
+    '<ol class="lc-pop-list">'+lista.map(x=>'<li><span>'+esc(x.c)+'</span>'+(x.n?'<b>'+int(x.n)+' entrega'+(x.n>1?'s':'')+'</b>':'')+'</li>').join('')+'</ol>'+
+    '<div class="lc-pop-foot">'+int(lista.length)+' cidade'+(lista.length>1?'s':'')+(r.entregas?' • '+int(r.entregas)+' entregas':'')+(r.km?' • '+int(r.km)+' km':'')+'</div>';
+  if(d.showModal){if(!d.open)d.showModal()}else d.setAttribute('open','')
+}
+function fecharCidades(){const d=q('#lcCidades');if(!d)return;if(d.close&&d.open)d.close();else d.removeAttribute('open')}
 function agendar(ms){clearTimeout(timerLista);timerLista=setTimeout(()=>{if(q('#lancamentos')?.classList.contains('active'))carregarLista(true)},ms)}
 async function carregarLista(silencioso=false){
   const de=q('#lcDe').value||hoje(),ate=q('#lcAte').value>=de?q('#lcAte').value:de;
   q('#lcAte').value=ate;
   try{
     const j=await api('/api/lancamentos?de='+encodeURIComponent(de)+'&ate='+encodeURIComponent(ate));
+    // a resposta chegou depois de o usuário gravar algo numa linha? fica o que ele gravou mais a novidade
     linhas=j.rows||[];naFila=j.naFila||[];
     renderLista();
-    // enquanto o sistema busca no SSW, olha de novo a cada 6 s; depois, a cada minuto (baixas)
-    agendar(linhas.some(r=>naFila.includes(r.id)||r.calculo?.status==='pendente')?6000:60000)
-  }catch(e){if(!silencioso)msg('✗ '+e.message,'bad')}
+    // buscando no SSW: olha de novo em 6 s; esperando o romaneio: 20 s; senão a cada minuto (baixas e romaneios novos)
+    agendar(naFila.length?6000:linhas.some(r=>r.calculo?.status==='pendente'&&r.romaneio_ssw)?20000:60000)
+  }catch(e){if(!silencioso)msg('✗ '+e.message,'bad');agendar(60000)}
 }
 async function carregarMotoristas(){
   try{
@@ -230,7 +276,20 @@ function setup(){
   q('#lcDe').onchange=()=>{if(q('#lcAte').value<q('#lcDe').value)q('#lcAte').value=q('#lcDe').value;carregarLista()};
   q('#lcAte').onchange=()=>carregarLista();
   q('#lcHoje').onclick=()=>{q('#lcDe').value=hoje();q('#lcAte').value=hoje();carregarLista()};
-  q('#lcTable').onclick=e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.lcEdit){editar(b.dataset.lcEdit);renderLista()}else if(b.dataset.lcDel)excluir(b.dataset.lcDel);else if(b.dataset.lcCalc)recalcular(b.dataset.lcCalc)};
+  const tab=q('#lcTable');
+  tab.onclick=e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.lcEdit){editar(b.dataset.lcEdit);renderLista()}else if(b.dataset.lcDel)excluir(b.dataset.lcDel);else if(b.dataset.lcCalc)recalcular(b.dataset.lcCalc);else if(b.dataset.lcCidades)abrirCidades(b.dataset.lcCidades)};
+  tab.onchange=e=>{if(e.target.dataset.lcCampo)salvarCampo(e.target)};
+  // Enter no valor: grava e desce para o valor do próximo romaneio
+  tab.onkeydown=e=>{
+    if(e.key!=='Enter'||e.target.dataset.lcCampo!=='valor')return;
+    e.preventDefault();
+    const todos=[...tab.querySelectorAll('input[data-lc-campo="valor"]')],prox=todos[todos.indexOf(e.target)+1];
+    if(prox){prox.focus();prox.select()}else e.target.blur()
+  };
+  tab.addEventListener('focusout',()=>setTimeout(()=>{if(renderPendente&&!tabelaOcupada())renderLista()},0));
+  tab.addEventListener('focusin',e=>{if(e.target.dataset.lcCampo==='valor')e.target.select()});
+  const pop=q('#lcCidades');
+  if(pop)pop.onclick=e=>{if(e.target===pop||e.target.closest('[data-lc-fechar]'))fecharCidades()};
   q('#lcAdmin').onclick=e=>{const b=e.target.closest('[data-lc-admin]');if(b)acaoAdmin(b.dataset.lcAdmin)}
 }
 // Chamado pelo painel quando a aba "Lançamentos" é aberta.

@@ -4759,7 +4759,8 @@ async function lancMotoristas(token){
   return value
 }
 async function lancMotoristasAgora(token){
-  const base=await portalAuth('/api/painel/lancamentos/motoristas?dias=30',{token,timeout:15000});
+  // sem token = chamada do próprio sistema (romaneios que entram sozinhos)
+  const base=token?await portalAuth('/api/painel/lancamentos/motoristas?dias=30',{token,timeout:15000}):await portalJson('/api/painel/lancamentos/motoristas?dias=30',{timeout:15000});
   const mapa=new Map(),tipos=new Set(base.tipos||[]);
   const add=(nome,x,origem)=>{const k=lancNomeNorm(nome);if(!k)return;const a=mapa.get(k);if(!a||(x.ultimo||'')>(a.ultimo||''))mapa.set(k,{motorista:String(nome).toUpperCase().replace(/\s+/g,' ').trim(),veiculo_tipo:x.veiculo_tipo||a?.veiculo_tipo||'',operacao:x.operacao||a?.operacao||'',filial:x.filial||a?.filial||'',ultimo:x.ultimo||'',origem})};
   for(const r of (base.rows||[]))add(r.motorista,r,'sistema');
@@ -4792,23 +4793,28 @@ async function lancMotoristasAgora(token){
 // Completa um lançamento com o que o SSW sabe do romaneio. Um por vez, em segundo plano.
 let LANC_FILA=Promise.resolve();
 const LANC_NA_FILA=new Set();
-function lancEnfileirar(id,data,romaneioSsw){
+function lancEnfileirar(id,data,romaneioSsw,refazer=false){
   const k=String(id);
   if(!romaneioSsw||LANC_NA_FILA.has(k))return;
   LANC_NA_FILA.add(k);
-  LANC_FILA=LANC_FILA.catch(()=>{}).then(()=>lancEnriquecer(id,data,romaneioSsw)).catch(e=>console.log('LANCAMENTOS completar '+romaneioSsw+' ERRO: '+String(e?.message||e))).finally(()=>LANC_NA_FILA.delete(k))
+  LANC_FILA=LANC_FILA.catch(()=>{}).then(()=>lancEnriquecer(id,data,romaneioSsw,refazer)).catch(e=>console.log('LANCAMENTOS completar '+romaneioSsw+' ERRO: '+String(e?.message||e))).finally(()=>LANC_NA_FILA.delete(k))
 }
-async function lancEnriquecer(id,data,romaneioSsw){
+async function lancEnriquecer(id,data,romaneioSsw,refazer=false){
   const calc={status:'ok',msg:'',romaneio_ssw:romaneioSsw,filial:(String(romaneioSsw).match(/^[A-Z]{3}/)||[''])[0]};
   const avisos=[];
   try{
+    // o romaneio mudou de tamanho no SSW: não serve a rota nem a lista de CT-es guardadas
+    if(refazer){ROUTE_PLAN_CACHE.delete(data+'|'+romaneioSsw);SSW38_ROM_DETAIL_CACHE.delete(String(romaneioSsw).toUpperCase())}
     // rota: km, cidades na ordem de entrega e baixas (a montagem já lê os CT-es no SSW)
     const plan=await buildRoutePlan(data,romaneioSsw,1);
     const pts=plan.points||[],ordem=(plan.optimizedOrder||[]).map(i=>pts[i]).filter(Boolean);
     const paradas=ordem.length?ordem:(plan.stops||[]);
     calc.km=Math.round(Number(plan.optimizedDistanceMeters||0)/1000)||null;
-    const cidades=[];for(const p of paradas){const c=lancNomeNorm(p.cidade);if(c&&cidades[cidades.length-1]!==c&&!cidades.includes(c))cidades.push(c)}
-    calc.rota=cidades.join(',');
+    // cidades na ordem da rota, com quantas entregas em cada uma (as sem localização vão no fim)
+    const porCidade=new Map();
+    for(const p of [...paradas,...(plan.rejectedStops||[])]){const c=lancNomeNorm(p.cidade);if(c)porCidade.set(c,(porCidade.get(c)||0)+1)}
+    calc.cidades=[...porCidade].map(([c,n])=>({c,n}));
+    calc.rota=[...porCidade.keys()].join(',');
     const ctes=[...new Set([...(plan.stops||[]),...(plan.rejectedStops||[])].map(x=>String(x.ctrc||'').toUpperCase().trim()).filter(Boolean))];
     calc.entregas=Number(plan.expectedDeliveries||0)||ctes.length||null;
     calc.ctes=ctes.length;
@@ -4826,14 +4832,20 @@ async function lancEnriquecer(id,data,romaneioSsw){
     const st=(plan.stops||[]);
     if(st.length){
       calc.realizadas=st.filter(x=>x.entregue).length;calc.baixas_em=new Date().toISOString();
-      const todas=calc.realizadas>=(calc.entregas||st.length);
-      // frete líquido = frete do romaneio menos o frete das entregas não feitas (só com o dia fechado)
-      if(data<spDateISO()){
-        calc.pend=Math.max(0,(calc.entregas||st.length)-calc.realizadas);
-        // só entre as entregas que o sistema conseguiu acompanhar (as sem localização ficam de fora da conta)
-        const acompanhadas={};for(const x of st){const k=sswCteKey(x.ctrc);if(k in fretes)acompanhadas[k]=fretes[k]}
-        calc.desconto_vialog=lancFreteNaoEntregue(acompanhadas,new Set(st.filter(x=>x.entregue).map(x=>sswCteKey(x.ctrc))))
-      }else if(todas)calc.desconto_vialog=0
+      const entregasN=calc.entregas||st.length,todasFeitas=calc.realizadas>=entregasN;
+      // Fecha quando todas as entregas do romaneio já têm baixa no SSW (feita ou não), ou quando o dia passou.
+      // Aí o frete líquido = frete do romaneio menos o frete das entregas não feitas.
+      const falta=data===spDateISO()?await lancFaltaOcorr(romaneioSsw).catch(()=>null):null;
+      if(todasFeitas){calc.fechado=true;calc.pend=0;calc.desconto_vialog=0}
+      else if(data<spDateISO()||falta===0){
+        calc.fechado=true;calc.pend=Math.max(0,entregasN-calc.realizadas);
+        if(calc.realizadas===0&&entregasN>=3)avisos.push('frete líquido não calculado: o SSW não mostra nenhuma entrega feita neste romaneio');   // quase sempre é falta de informação, não romaneio inteiro devolvido
+        else{
+          // só entre as entregas que o sistema conseguiu acompanhar (as sem localização ficam de fora da conta)
+          const acompanhadas={};for(const x of st){const k=sswCteKey(x.ctrc);if(k in fretes)acompanhadas[k]=fretes[k]}
+          calc.desconto_vialog=lancFreteNaoEntregue(acompanhadas,new Set(st.filter(x=>x.entregue).map(x=>sswCteKey(x.ctrc))))
+        }
+      }
     }
   }catch(e){
     calc.status='erro';avisos.push(String(e?.message||e).slice(0,160))
@@ -4844,6 +4856,62 @@ async function lancEnriquecer(id,data,romaneioSsw){
   console.log('LANCAMENTOS completado: '+JSON.stringify({id,romaneio:romaneioSsw,status:calc.status,km:calc.km,frete:calc.frete_vialog,entregas:calc.entregas,realizadas:calc.realizadas,msg:calc.msg}))
 }
 const lancFreteNaoEntregue=lancLib.freteNaoEntregue;
+// Romaneios abertos hoje no SSW (opção 38), das duas filiais.
+async function lancRomaneiosDeHoje(){
+  const quick=await Promise.allSettled([fetchSsw38QuickPrefix('AMR'),fetchSsw38QuickPrefix('TBT')]),lista=[];
+  for(const q of quick)if(q.status==='fulfilled')lista.push(...(q.value?.rows||[]));
+  return lista
+}
+// Quantas entregas do romaneio ainda estão sem baixa no SSW ("Falta Ocorr." da opção 38). null = não sei.
+async function lancFaltaOcorr(romaneioSsw){
+  const alvo=String(romaneioSsw||'').toUpperCase().trim();
+  const x=(await lancRomaneiosDeHoje()).find(r=>String(r.romaneio||'').toUpperCase().trim()===alvo);
+  return x&&Number(x.qtdeCtrcs||0)>0?Number(x.faltaOcorr||0):null
+}
+// Romaneio feito hoje no SSW entra sozinho na lista de lançamentos (sem valor: esse o usuário informa).
+// O romaneio costuma ser montado aos poucos: a linha aparece na hora, mas km, frete e cidades só são
+// buscados depois que a quantidade de CT-es parar de mudar por um tempo.
+const LANC_ESTAVEL_MS=Math.max(1,Number(process.env.LANC_ESTAVEL_SEGUNDOS)||600)*1000,LANC_SYNC_MS=Math.min(60000,LANC_ESTAVEL_MS);
+const LANC_VISTO=new Map(),LANC_FECHAR_AT=new Map();
+let LANC_SYNC_AT=0,LANC_SYNC_JOB=null;
+function lancSincronizarRomaneios(force=false){
+  if(LANC_SYNC_JOB)return LANC_SYNC_JOB;
+  if(!force&&Date.now()-LANC_SYNC_AT<LANC_SYNC_MS)return Promise.resolve();
+  LANC_SYNC_AT=Date.now();
+  LANC_SYNC_JOB=lancSincronizarAgora().catch(e=>console.log('LANCAMENTOS romaneios do SSW ERRO: '+String(e?.message||e))).finally(()=>{LANC_SYNC_JOB=null});
+  return LANC_SYNC_JOB
+}
+async function lancSincronizarAgora(){
+  if(!internalSswConfigured())return;
+  const hoje=spDateISO(),doDia=(await lancRomaneiosDeHoje()).filter(x=>lancLib.dataIso(x.inclusao)===hoje&&Number(x.qtdeCtrcs||0)>0&&lancLib.romaneioKey(x.romaneio));
+  if(!doDia.length)return;
+  const desde=spDateISO(new Date(Date.now()-10*864e5));
+  const j=await portalJson('/api/painel/lancamentos?de='+desde+'&ate='+hoje,{timeout:20000});
+  const porKey=new Map((j.rows||[]).map(r=>[lancLib.romaneioKey(r.romaneio_ssw||r.romaneio),r]));
+  let mot=null,criados=0;
+  for(const x of doDia){
+    const rom=String(x.romaneio).toUpperCase().trim(),key=lancLib.romaneioKey(rom),qtde=Number(x.qtdeCtrcs||0);
+    const v=LANC_VISTO.get(key);
+    if(!v||v.qtde!==qtde)LANC_VISTO.set(key,{qtde,desde:Date.now()});
+    let l=porKey.get(key);
+    if(!l){
+      if(!mot)mot=await lancMotoristas('').catch(()=>({rows:[]}));
+      const nomeSsw=String(x.motorista||'').trim(),nome=lancMotoristaConhecido(nomeSsw,(mot.rows||[]).map(r=>r.motorista))||nomeSsw.toUpperCase()||'SEM MOTORISTA';
+      const dele=(mot.rows||[]).find(r=>r.motorista===nome);
+      const r=await portalJson('/api/painel/lancamentos',{method:'POST',timeout:20000,body:{auto:true,data:hoje,motorista:nome,romaneio:lancLib.romaneioCurto(rom),romaneio_ssw:rom,
+        placa:String(x.veiculo||'').trim().toUpperCase(),filial:(rom.match(/^[A-Z]{3}/)||[''])[0],entregas:qtde,veiculo_tipo:dele?.veiculo_tipo||''}}).catch(e=>{console.log('LANCAMENTOS romaneio '+rom+' ERRO: '+String(e?.message||e));return null});
+      if(r?.row&&!r.existente)criados++;
+      l=r?.row||null
+    }
+    if(!l||!l.romaneio_ssw||!l.calculo)continue;
+    const st=l.calculo.status,estavel=Date.now()-LANC_VISTO.get(key).desde>=LANC_ESTAVEL_MS;
+    // ainda sem os dados, ou o romaneio mudou de tamanho depois: busca (de novo) quando parar de mudar
+    if(estavel&&(st==='pendente'||(st!=='erro'&&Number(l.entregas||0)!==qtde)))lancEnfileirar(l.id,l.data,l.romaneio_ssw,st!=='pendente');
+    // todas as entregas já têm baixa no SSW: fecha o romaneio (realizadas, pendentes e frete líquido)
+    else if(st!=='pendente'&&st!=='erro'&&Number(x.faltaOcorr||0)===0&&!l.calculo.fechado&&Date.now()-(LANC_FECHAR_AT.get(key)||0)>30*60*1000){LANC_FECHAR_AT.set(key,Date.now());lancEnfileirar(l.id,l.data,l.romaneio_ssw)}
+  }
+  if(criados){lancMudou();console.log('LANCAMENTOS romaneios do SSW: '+criados+' novo(s) na lista')}
+}
 // Baixas do dia (e do dia anterior) para os lançamentos do sistema, sem remontar rota.
 let LANC_BAIXAS_AT=0;
 const LANC_BAIXAS_DIA=new Map();
@@ -4873,17 +4941,18 @@ async function lancAtualizarBaixas(force=false){
     for(const l of doDia){
       // lançamento que ainda não foi completado (servidor reiniciou no meio): tenta de novo
       // ...e o que deu erro, até 3 vezes (depois só pelo botão ↻ da tela)
-      if(!l.calculo||l.calculo.status==='pendente'){lancEnfileirar(l.id,l.data,l.romaneio_ssw);continue}
+      if(!l.calculo||l.calculo.status==='pendente'){if(!(l.auto&&dia===hoje))lancEnfileirar(l.id,l.data,l.romaneio_ssw);continue}   // as que entraram sozinhas hoje esperam o romaneio parar de mudar
       if(l.calculo.status==='erro'){if(Number(l.calculo.tentativas||0)<3)lancEnfileirar(l.id,l.data,l.romaneio_ssw);continue}
       const b=porRom.get(String(l.romaneio_ssw).toUpperCase());
       if(!b||!b.total)continue;
-      const entregas=l.entregas||b.total,pend=dia<hoje?Math.max(0,entregas-b.ok):null;
-      const fechado=dia<hoje||b.ok>=entregas;
+      const jaFechado=dia<hoje||!!l.calculo.fechado;
+      const entregas=l.entregas||b.total,pend=jaFechado?Math.max(0,entregas-b.ok):null;
+      const fechado=jaFechado||b.ok>=entregas;
       // frete das entregas não feitas: descontado quando o dia fecha (ou zerado quando todas foram feitas)
       let desconto=null,aviso='';
       if(l.fretes&&Object.keys(l.fretes).length){
         if(b.ok>=entregas)desconto=0;
-        else if(dia<hoje){
+        else if(jaFechado){
           // as baixas precisam casar com os CT-es do romaneio; se não casarem, não inventa desconto
           const casadas=Object.keys(l.fretes).filter(k=>b.entregues.has(k)).length;
           if(casadas>=b.ok)desconto=lancFreteNaoEntregue(l.fretes,b.entregues);
@@ -4901,6 +4970,8 @@ async function lancAtualizarBaixas(force=false){
   }
 }
 if(!TEST_MODE)setInterval(()=>{lancAtualizarBaixas().catch(e=>console.log('LANCAMENTOS baixas ERRO: '+String(e?.message||e)))},10*60*1000).unref();
+// Romaneios novos do SSW: a cada 5 minutos, das 5h às 21h (fora disso, só quando alguém abre a tela).
+if(!TEST_MODE)setInterval(()=>{const h=Number(new Date().toLocaleString('en-GB',{timeZone:'America/Sao_Paulo',hour:'2-digit',hour12:false}));if(h>=5&&h<21)lancSincronizarRomaneios()},5*60*1000).unref();
 
 async function buildRoteirizadorLista(date){
   let romRows=[],operation=null;
@@ -5687,6 +5758,10 @@ if(u.pathname.startsWith('/api/lancamentos')){try{
   const sai=(code,x)=>{res.writeHead(code,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))};
   const tk={token:authUser.token,timeout:20000},sub=u.pathname.slice('/api/lancamentos'.length);
   if(sub===''&&req.method==='GET'){
+    // romaneios feitos hoje no SSW entram sozinhos; espera um pouco para a primeira lista já vir com eles
+    const hojeIso=spDateISO(),de=u.searchParams.get('de')||hojeIso,ate=u.searchParams.get('ate')||de;
+    if(de<=hojeIso&&ate>=hojeIso)await Promise.race([lancSincronizarRomaneios(),new Promise(r=>setTimeout(r,5000))]);
+    u.searchParams.delete('fretes');
     const x=await portalAuth('/api/painel/lancamentos?'+u.searchParams.toString(),tk);
     lancAtualizarBaixas().catch(()=>{});
     return sai(200,{...x,naFila:[...LANC_NA_FILA]})
@@ -5708,8 +5783,8 @@ if(u.pathname.startsWith('/api/lancamentos')){try{
       placa:rom.placa||'',filial:rom.filial||b.filial||'',entregas:rom.entregas||'',conferente:b.conferente,erros:b.erros,por:authUser.username};
     const x=await portalAuth('/api/painel/lancamentos',{...tk,method:'POST',body:corpo});
     lancMudou();
-    if(rom.encontrado)lancEnfileirar(x.row.id,data,rom.romaneio_ssw);
-    return sai(201,x)
+    if(x.row?.romaneio_ssw&&(!x.atualizado||x.row.calculo?.status==='pendente'))lancEnfileirar(x.row.id,x.row.data,x.row.romaneio_ssw);
+    return sai(x.atualizado?200:201,x)
   }
   if(sub==='/importar-planilha'&&req.method==='POST'){
     if(!authUser.is_admin)return dashboardDeny(res,'Só o administrador pode trazer o histórico da planilha.');

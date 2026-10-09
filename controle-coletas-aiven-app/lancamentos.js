@@ -91,6 +91,8 @@ function resumir(row){
     // durante o dia as baixas ficam só aqui; a coluna Realizadas só é gravada com o dia fechado (os
     // painéis tratam Realizadas em branco como "ainda sem fechamento")
     ao_vivo:Number.isFinite(Number(s.calculo?.ao_vivo))&&s.calculo?.ao_vivo!==null?Number(s.calculo.ao_vivo):null,
+    // auto = a linha entrou sozinha, a partir do romaneio feito no SSW (o usuário só informa o valor)
+    auto:!!s.auto,cidades:Array.isArray(s.cidades)?s.cidades:null,
     calculo:s.calculo||null,criado_por:row.created_by||'',atualizado_em:row.updated_at||null
   }
 }
@@ -132,6 +134,18 @@ async function fonteAtual(pool){
   return{fonte:v.fonte==='sistema'?'sistema':'planilha',importado_em:v.importado_em||null,importado_por:v.importado_por||'',linhas_importadas:Number(v.linhas_importadas||0)}
 }
 
+// Romaneios cujo lançamento foi excluído pelo usuário: o sistema não recria sozinho (só pelo formulário).
+async function lerIgnorados(pool){
+  const q=await pool.query("SELECT valor FROM operacao_config WHERE chave='ignorados' LIMIT 1");
+  const k=q.rows[0]?.valor?.keys;
+  return k&&typeof k==='object'?k:{}
+}
+async function gravarIgnorados(pool,keys){
+  const limite=new Date(Date.now()-15*864e5).toISOString(),limpo2={};
+  for(const[k,em]of Object.entries(keys))if(String(em)>=limite)limpo2[k]=em;
+  await pool.query("INSERT INTO operacao_config(chave,valor,updated_at) VALUES('ignorados',$1::jsonb,NOW()) ON CONFLICT(chave) DO UPDATE SET valor=EXCLUDED.valor,updated_at=NOW()",[JSON.stringify({keys:limpo2})])
+}
+
 // Atende as rotas /api/painel/lancamentos*. Devolve true quando a rota era daqui (a resposta já foi
 // enviada: quem chamou não pode seguir para as outras rotas).
 async function handle(req,res,u,ctx){
@@ -165,12 +179,17 @@ async function atender(req,res,u,ctx){
       const user=await sessionOrInternal(req);
       if(!dashboardHas(user,'lancamentos'))return nega();
       const dias=Math.min(120,Math.max(1,Number(u.searchParams.get('dias'))||30));
-      const q=await pool.query(
-        `SELECT DISTINCT ON (upper(trim(motorista))) upper(trim(motorista)) AS motorista,upper(trim(dados->>'Veiculo')) AS veiculo_tipo,upper(trim(dados->>'Operação')) AS operacao,
-                upper(trim(dados->>'Filial')) AS filial,to_char(event_date,'YYYY-MM-DD') AS ultimo
+      const todos=await pool.query(
+        `SELECT upper(trim(motorista)) AS motorista,upper(trim(COALESCE(dados->>'Veiculo',''))) AS veiculo_tipo,upper(trim(COALESCE(dados->>'Operação',''))) AS operacao,
+                upper(trim(COALESCE(dados->>'Filial',''))) AS filial,to_char(event_date,'YYYY-MM-DD') AS ultimo
          FROM operacao_lancamentos
          WHERE event_date>=($1::date-$2::int) AND event_date<=$1::date AND trim(motorista)<>''
-         ORDER BY upper(trim(motorista)),event_date DESC,id DESC`,[spToday(),dias]);
+         ORDER BY event_date DESC,id DESC LIMIT 6000`,[spToday(),dias]);
+      // um por motorista: a data do último lançamento e o último tipo de carro informado (linhas que
+      // entraram sozinhas do SSW podem ainda estar sem o carro)
+      const por=new Map();
+      for(const r of todos.rows){const a=por.get(r.motorista);if(!a)por.set(r.motorista,{...r});else{if(!a.veiculo_tipo&&r.veiculo_tipo)a.veiculo_tipo=r.veiculo_tipo;if(!a.operacao&&r.operacao)a.operacao=r.operacao;if(!a.filial&&r.filial)a.filial=r.filial}}
+      const q={rows:[...por.values()].sort((a,b)=>a.motorista.localeCompare(b.motorista,'pt-BR'))};
       const t=await pool.query("SELECT upper(trim(dados->>'Veiculo')) AS tipo,COUNT(*)::int AS n FROM operacao_lancamentos WHERE event_date>=($1::date-120) AND trim(COALESCE(dados->>'Veiculo',''))<>'' GROUP BY 1 ORDER BY n DESC LIMIT 12",[spToday()]);
       return sendJson(res,200,{ok:true,dias,rows:q.rows,tipos:t.rows.map(r=>r.tipo)})
     }
@@ -248,18 +267,43 @@ async function atender(req,res,u,ctx){
       const c={data:dataIso(b.data)||spToday(),motorista:limpo(b.motorista,120),romaneio:romaneioCurto(b.romaneio_ssw||b.romaneio),valor:numero(b.valor),
         veiculo_tipo:b.veiculo_tipo,filial:b.filial,operacao:b.operacao,entregas:b.entregas,conferente:b.conferente,erros:b.erros,desconto:b.desconto};
       const key=romaneioKey(b.romaneio_ssw||b.romaneio);
+      // auto: o próprio sistema cria a linha quando o romaneio aparece no SSW; o valor fica para o usuário
+      const auto=!!user.internal&&b.auto===true;
       if(c.motorista.length<2)return sendJson(res,400,{ok:false,error:'Informe o motorista.'});
       if(!key)return sendJson(res,400,{ok:false,error:'Informe o número do romaneio.'});
-      if(!Number.isFinite(c.valor)||c.valor<0)return sendJson(res,400,{ok:false,error:'Informe o valor negociado com o motorista.'});
-      if(c.valor>100000)return sendJson(res,400,{ok:false,error:'Valor negociado alto demais. Confira os números.'});
+      if(auto)c.valor=NaN;
+      else{
+        if(!Number.isFinite(c.valor)||c.valor<0)return sendJson(res,400,{ok:false,error:'Informe o valor negociado com o motorista.'});
+        if(c.valor>100000)return sendJson(res,400,{ok:false,error:'Valor negociado alto demais. Confira os números.'})
+      }
+      const ign=await lerIgnorados(pool);
+      if(auto&&ign[key])return sendJson(res,200,{ok:true,ignorado:true});
       const ja=await pool.query(SEL+" WHERE origem='sistema' AND romaneio_key=$1 LIMIT 1",[key]);
-      if(ja.rowCount){const r=resumir(ja.rows[0]);return sendJson(res,409,{ok:false,error:'O romaneio '+r.romaneio+' já foi lançado em '+dataBr(r.data)+' para '+r.motorista+'. Edite o lançamento que já existe.',existente:r})}
+      if(ja.rowCount){
+        const row=ja.rows[0],r=resumir(row);
+        if(auto)return sendJson(res,200,{ok:true,existente:true,row:r});
+        // linha que veio do SSW e ainda está sem valor: o formulário completa essa mesma linha
+        if(r.valor===null){
+          const c2=campos(row);
+          Object.assign(c2,{valor:c.valor,motorista:c.motorista,data:c.data});
+          for(const k of['veiculo_tipo','operacao','conferente'])if(limpo(b[k],80))c2[k]=limpo(b[k],80);
+          const er=numero(b.erros);if(Number.isFinite(er)&&er>0)c2.erros=er;
+          const up=await pool.query(
+            "UPDATE operacao_lancamentos SET event_date=$2::date,motorista=$3,dados=$4::jsonb,updated_at=NOW() WHERE id=$1 RETURNING id::text AS id,origem,to_char(event_date,'YYYY-MM-DD') AS event_date,romaneio,romaneio_key,motorista,dados,ssw,linha,created_by,updated_at",
+            [row.id,c2.data,c2.motorista.toUpperCase(),JSON.stringify(montarDados(c2))]);
+          console.log('LANCAMENTO completado pelo formulário: '+JSON.stringify({por:user.username,romaneio:r.romaneio,valor:c.valor}));
+          return sendJson(res,200,{ok:true,atualizado:true,row:resumir(up.rows[0])})
+        }
+        return sendJson(res,409,{ok:false,error:'O romaneio '+r.romaneio+' já foi lançado em '+dataBr(r.data)+' para '+r.motorista+'. Edite o lançamento que já existe.',existente:r})
+      }
       const ssw={romaneio_ssw:limpo(b.romaneio_ssw,40).toUpperCase(),placa:limpo(b.placa,12).toUpperCase(),calculo:{status:'pendente',em:new Date().toISOString()}};
-      const por=limpo(b.por||user.username,80);
+      if(auto)ssw.auto=true;
+      else if(ign[key]){delete ign[key];await gravarIgnorados(pool,ign)}
+      const por=auto?'SSW (automático)':limpo(b.por||user.username,80);
       const q=await pool.query(
         "INSERT INTO operacao_lancamentos(origem,event_date,romaneio,romaneio_key,motorista,dados,ssw,created_by) VALUES('sistema',$1::date,$2,$3,$4,$5::jsonb,$6::jsonb,$7) RETURNING id::text AS id,origem,to_char(event_date,'YYYY-MM-DD') AS event_date,romaneio,romaneio_key,motorista,dados,ssw,linha,created_by,updated_at",
         [c.data,c.romaneio,key,c.motorista.toUpperCase(),JSON.stringify(montarDados(c)),JSON.stringify(ssw),por]);
-      console.log('LANCAMENTO novo: '+JSON.stringify({por,data:c.data,romaneio:c.romaneio,motorista:c.motorista,valor:c.valor}));
+      console.log('LANCAMENTO novo: '+JSON.stringify({por,data:c.data,romaneio:c.romaneio,motorista:c.motorista,valor:auto?null:c.valor}));
       return sendJson(res,201,{ok:true,row:resumir(q.rows[0])})
     }
     const m=p.match(/^\/api\/painel\/lancamentos\/(\d+)$/);
@@ -291,7 +335,7 @@ async function atender(req,res,u,ctx){
           ssw.romaneio_ssw=limpo(b.romaneio_ssw,40).toUpperCase();ssw.placa=limpo(b.placa,12).toUpperCase();
           // romaneio trocado: o que tinha sido lido do SSW era do outro
           Object.assign(c,{entregas:b.entregas??null,realizadas:null,pend:null,retorno:null,km:null,frete_vialog:null,desconto_vialog:null,rota:''});
-          delete ssw.fretes;
+          delete ssw.fretes;delete ssw.cidades;
           ssw.calculo={status:'pendente',em:new Date().toISOString()}
         }
       }
@@ -302,7 +346,8 @@ async function atender(req,res,u,ctx){
         if(Object.prototype.hasOwnProperty.call(k,'realizadas')){
           const v=numero(k.realizadas),ent=numero(c.entregas);
           aoVivo=Number.isFinite(v)?v:null;
-          const fechado=c.data<spToday()||(Number.isFinite(v)&&Number.isFinite(ent)&&ent>0&&v>=ent);
+          // fechado = dia já passou, todas entregues, ou o SSW já tem baixa de todas as entregas do romaneio
+          const fechado=c.data<spToday()||k.fechado===true||(k.fechado===undefined&&ssw.calculo?.fechado===true)||(Number.isFinite(v)&&Number.isFinite(ent)&&ent>0&&v>=ent);
           c.realizadas=fechado&&Number.isFinite(v)?v:null
         }
         // frete de cada CT-e do romaneio: é com ele que se desconta o das entregas não feitas
@@ -310,6 +355,7 @@ async function atender(req,res,u,ctx){
           const f={};for(const[ct,v]of Object.entries(k.fretes).slice(0,600)){const x=numero(v);if(Number.isFinite(x)&&x>=0)f[limpo(ct,24).toUpperCase()]=Math.round(x*100)/100}
           ssw.fretes=f
         }
+        if(Array.isArray(k.cidades))ssw.cidades=k.cidades.slice(0,80).map(x=>({c:limpo(x?.c,60).toUpperCase(),n:Math.max(0,Math.round(numero(x?.n))||0)})).filter(x=>x.c);
         if(typeof k.rota==='string')c.rota=k.rota;
         if(typeof k.filial==='string'&&k.filial)c.filial=k.filial;
         if(typeof k.placa==='string'&&k.placa)ssw.placa=limpo(k.placa,12).toUpperCase();
@@ -317,6 +363,7 @@ async function atender(req,res,u,ctx){
         const status=limpo(k.status,20)||'ok';
         // tentativas seguidas sem conseguir completar: o sistema para de insistir sozinho depois de algumas
         ssw.calculo={status,msg:limpo(k.msg,240),em:new Date().toISOString(),ctes:Number(k.ctes||0)||0,lidos:Number(k.lidos||0)||0,baixas_em:k.baixas_em||ssw.calculo?.baixas_em||null,ao_vivo:aoVivo,
+          fechado:k.fechado===undefined?!!ssw.calculo?.fechado:k.fechado===true,
           tentativas:status==='erro'?Number(ssw.calculo?.tentativas||0)+1:0}
       }
       const r=await pool.query(
@@ -328,8 +375,11 @@ async function atender(req,res,u,ctx){
     if(m&&req.method==='DELETE'){
       const user=await sessionOrInternal(req);
       if(!dashboardHas(user,'lancamentos'))return nega();
-      const q=await pool.query("DELETE FROM operacao_lancamentos WHERE id=$1 AND origem='sistema' RETURNING romaneio,motorista",[m[1]]);
+      const q=await pool.query("DELETE FROM operacao_lancamentos WHERE id=$1 AND origem='sistema' RETURNING romaneio,motorista,romaneio_key",[m[1]]);
       if(!q.rowCount)return sendJson(res,404,{ok:false,error:'Lançamento não encontrado (linhas que vieram da planilha não são excluídas por aqui).'});
+      // excluído pelo usuário: o sistema não traz de volta sozinho (só lançando pelo formulário)
+      const rk=q.rows[0].romaneio_key;delete q.rows[0].romaneio_key;
+      if(rk){const ign=await lerIgnorados(pool);ign[rk]=new Date().toISOString();await gravarIgnorados(pool,ign)}
       console.log('LANCAMENTO excluído: '+JSON.stringify({por:user.username,id:m[1],...q.rows[0]}));
       return sendJson(res,200,{ok:true})
     }

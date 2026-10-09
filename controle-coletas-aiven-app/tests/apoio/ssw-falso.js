@@ -3,9 +3,12 @@
 const http=require('http');
 const PORT=Number(process.env.MOCK_PORT||10555);
 let logins=0,seq=0,recusados=0;const tokens=new Map(),paths={};
+// Romaneios incluídos hoje (colunas da opção 38: romaneio, veículo, inclusão, motorista, qtde de CTRCs, falta ocorrência).
+// /__mock/romaneio?rom=AMR001057-1&qtde=6&falta=0 muda a quantidade e as baixas que faltam, como acontece ao longo do dia.
+const HOJE=new Date().toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit',year:'2-digit'});
 const DATA={
-  AMR:[['AMR001056-1','EYV3626','08/10/26','JAILSON MOREIRA DE SOUZA','12','5'],['AMR001057-1','FAB1A23','08/10/26','FABIANO TESTE','5','5']],
-  TBT:[['TBT000321-1','TBT9Z99','08/10/26','ROGER TESTE','6','2']]
+  AMR:[['AMR001056-1','EYV3626',HOJE,'JAILSON MOREIRA DE SOUZA','12','5'],['AMR001057-1','FAB1A23',HOJE,'FABIANO TESTE','5','5']],
+  TBT:[['TBT000321-1','TBT9Z99',HOJE,'ROGER TESTE','6','2']]
 };
 const page=rows=>'<html><body><form><input name="act" value=""><input name="dummy" value="1"></form><table><tr><th>Romaneio</th><th>Veículo</th><th>Inclusão</th><th>Motorista</th><th>Qtde CTRCs</th><th>Falta Ocorr.</th></tr>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</table></body></html>';
 const loginPage='<html><body><form action="ssw0422"><input name="f1"><input name="f2"><input name="f3"><input type="password" name="f4"></form></body></html>';
@@ -80,6 +83,13 @@ http.createServer(async(req,res)=>{
   const send=(code,txt,h={})=>{res.writeHead(code,{'Content-Type':'text/html; charset=utf-8',...h});res.end(txt)};
   if(u.pathname==='/__mock/stats')return send(200,JSON.stringify({logins,recusados,activeTokens:tokens.size,paths}),{'Content-Type':'application/json'});
   if(u.pathname==='/__mock/expire'){tokens.clear();return send(200,'{}')}
+  if(u.pathname==='/__mock/romaneio'){
+    const linha=[...DATA.AMR,...DATA.TBT].find(r=>r[0]===u.searchParams.get('rom'));
+    if(!linha)return send(404,'{}');
+    if(u.searchParams.has('qtde'))linha[4]=String(u.searchParams.get('qtde'));
+    if(u.searchParams.has('falta'))linha[5]=String(u.searchParams.get('falta'));
+    return send(200,JSON.stringify({rom:linha[0],qtde:linha[4],falta:linha[5]}),{'Content-Type':'application/json'})
+  }
   if(u.pathname==='/bin/ssw0422'&&req.method==='GET')return send(200,loginPage,{'Set-Cookie':'sid=s'+(++seq)+'; Path=/'});
   if(u.pathname==='/bin/ssw0422'&&req.method==='POST'){
     const p=new URLSearchParams(body);
