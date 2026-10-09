@@ -6,6 +6,18 @@ const GIDS={lancamentos:824972758,agendamentos:1232883750,ajudantes:438556395};
 const SHEET_NAMES={agendamentos:'Cópia de AGENDAMENTOS',agendamentos_copia:'Cópia de AGENDAMENTOS'};
 const PUB=path.join(__dirname,'public');
 const COLETAS_PORTAL_URL=process.env.COLETAS_PORTAL_URL||'https://controle-coletas-jr.onrender.com';
+// O servidor principal exige sessão em /api/painel/ (coletas, carregamentos, fotos, notas, resumo).
+// Este dashboard roda em serviço separado, então repassa o login do usuário que fez o pedido.
+// REQ_USER guarda esse login só durante o atendimento daquele pedido (cada pedido tem o seu),
+// para as chamadas feitas em funções internas que não recebem o usuário.
+const {AsyncLocalStorage}=require('async_hooks');
+const REQ_USER=new AsyncLocalStorage();
+function portalHeaders(token=''){
+  const h={'User-Agent':'CONSTRULOG-Dashboard/1.0','Cache-Control':'no-cache'};
+  const t=token||REQ_USER.getStore()?.token||'';
+  if(t)h.Authorization='Bearer '+t;
+  return h
+}
 const SSW_TOKEN_URL=process.env.SSW_TOKEN_URL||'https://ssw.inf.br/api/generateToken';
 let SSW_CACHE={token:'',expires:0};
 let BI2_STATE={configured:false,connected:false,fileCount:0,lastCheck:null,message:'BI2 aguardando verificação'};
@@ -32,18 +44,18 @@ const TRACKING_AUTO_ASSIGN_CACHE=new Map();
 let SSW101_NF_CACHE=new Map();
 let SSW101_CTRC_CACHE=new Map();
 const SSW101_DETAIL_CACHE=new Map();
-async function fetchMotoristasVeiculos(){
+async function fetchMotoristasVeiculos(token=''){
   const u=new URL('/api/painel/motoristas-veiculos',COLETAS_PORTAL_URL);
-  const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Dashboard/1.0','Cache-Control':'no-cache'},signal:AbortSignal.timeout(15000)});
+  const r=await fetch(u,{headers:portalHeaders(token),signal:AbortSignal.timeout(15000)});
   const j=await r.json().catch(()=>({}));
   if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
   return j.rows||[];
 }
-async function fetchColetasStatus(from='',to=''){
+async function fetchColetasStatus(from='',to='',token=''){
   const u=new URL('/api/painel/coletas-status-resumo',COLETAS_PORTAL_URL);
   if(from)u.searchParams.set('from',from);
   if(to)u.searchParams.set('to',to);
-  const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Dashboard/1.0','Cache-Control':'no-cache'},signal:AbortSignal.timeout(15000)});
+  const r=await fetch(u,{headers:portalHeaders(token),signal:AbortSignal.timeout(15000)});
   const j=await r.json().catch(()=>({}));
   if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
   return j;
@@ -60,9 +72,9 @@ async function readJsonLimited(req,maxBytes=2*1024*1024){
   try{return JSON.parse(Buffer.concat(chunks).toString('utf8'))}
   catch{const e=new Error('Dados inválidos.');e.status=400;throw e}
 }
-async function portalJson(pathname,{method='GET',body=null,timeout=45000}={}){
+async function portalJson(pathname,{method='GET',body=null,token='',timeout=45000}={}){
   const u=new URL(pathname,COLETAS_PORTAL_URL);
-  const headers={'User-Agent':'CONSTRULOG-Dashboard/1.0','Cache-Control':'no-cache'};
+  const headers=portalHeaders(token);
   let payload;
   if(body!==null){headers['Content-Type']='application/json';payload=JSON.stringify(body)}
   let lastErr=null;
@@ -4080,7 +4092,7 @@ async function rowsByName(sheetName){
   }
   throw e
 }
-http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.pathname==='/health'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:true}))}if(req.method==='GET'&&u.pathname==='/'&&u.searchParams.get('ticket')){try{
+http.createServer((req,res)=>REQ_USER.run({token:''},async()=>{try{const u=new URL(req.url,'http://x');if(u.pathname==='/health'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:true}))}if(req.method==='GET'&&u.pathname==='/'&&u.searchParams.get('ticket')){try{
   const ticket=String(u.searchParams.get('ticket')||'').trim();
   const x=await portalAuth('/api/painel/auth/embed-exchange',{method:'POST',body:{ticket}});
   const indexPath=path.join(PUB,'index.html');
@@ -4106,7 +4118,7 @@ http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://x');if(u.
   res.writeHead(401,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
   return res.end('<!doctype html><meta charset="utf-8"><style>body{font-family:Segoe UI,Arial;padding:30px;color:#334155}h2{color:#991b1b}</style><h2>Não foi possível autorizar o dashboard</h2><p>'+String(e.message||e).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]))+'</p>')
 }}
-if(u.pathname==='/api/auth/login'&&req.method==='POST'){try{  const body=await readJsonLimited(req,64*1024);  const x=await portalAuth('/api/painel/auth/login',{method:'POST',body});  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Set-Cookie':dashboardCookie(x.token)});  return res.end(JSON.stringify({ok:true,user:x.user,token:x.token}))}catch(e){res.writeHead(e.status||500,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/auth/me'&&req.method==='GET'){try{  const user=await dashboardUserFromReq(req);  return res.end(JSON.stringify({ok:true,user:{id:user.id,username:user.username,is_admin:user.is_admin,permissions:user.permissions}}))}catch(e){res.writeHead(e.status||401,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/auth/logout'&&req.method==='POST'){  const token=dashboardRequestToken(req);  try{if(token)await portalAuth('/api/painel/auth/logout',{method:'POST',token})}catch{}  if(token)DASH_AUTH_CACHE.delete(token);  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Set-Cookie':dashboardCookie('',0)});  return res.end(JSON.stringify({ok:true}))}if(u.pathname==='/api/auth/users'&&req.method==='GET'){try{  const user=await dashboardUserFromReq(req);if(!user.is_admin)return dashboardDeny(res);  const x=await portalAuth('/api/painel/auth/users',{token:user.token});  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(e.status||500,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/auth/users'&&req.method==='POST'){try{  const user=await dashboardUserFromReq(req);if(!user.is_admin)return dashboardDeny(res);  const body=await readJsonLimited(req,128*1024);  const x=await portalAuth('/api/painel/auth/users',{method:'POST',body,token:user.token});  res.writeHead(201,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(e.status||500,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname.startsWith('/api/auth/users/')&&req.method==='PATCH'){try{  const user=await dashboardUserFromReq(req);if(!user.is_admin)return dashboardDeny(res);  const id=u.pathname.slice('/api/auth/users/'.length);  if(!/^[0-9]+$/.test(id)){res.writeHead(404);return res.end()}  const body=await readJsonLimited(req,128*1024);  const x=await portalAuth('/api/painel/auth/users/'+id,{method:'PATCH',body,token:user.token});  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(e.status||500,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}let authUser=null;if(u.pathname.startsWith('/api/')){try{authUser=await dashboardUserFromReq(req)}catch(e){res.writeHead(e.status||401,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/frota-state'&&req.method==='GET'){try{
+if(u.pathname==='/api/auth/login'&&req.method==='POST'){try{  const body=await readJsonLimited(req,64*1024);  const x=await portalAuth('/api/painel/auth/login',{method:'POST',body});  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Set-Cookie':dashboardCookie(x.token)});  return res.end(JSON.stringify({ok:true,user:x.user,token:x.token}))}catch(e){res.writeHead(e.status||500,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/auth/me'&&req.method==='GET'){try{  const user=await dashboardUserFromReq(req);  return res.end(JSON.stringify({ok:true,user:{id:user.id,username:user.username,is_admin:user.is_admin,permissions:user.permissions}}))}catch(e){res.writeHead(e.status||401,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/auth/logout'&&req.method==='POST'){  const token=dashboardRequestToken(req);  try{if(token)await portalAuth('/api/painel/auth/logout',{method:'POST',token})}catch{}  if(token)DASH_AUTH_CACHE.delete(token);  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Set-Cookie':dashboardCookie('',0)});  return res.end(JSON.stringify({ok:true}))}if(u.pathname==='/api/auth/users'&&req.method==='GET'){try{  const user=await dashboardUserFromReq(req);if(!user.is_admin)return dashboardDeny(res);  const x=await portalAuth('/api/painel/auth/users',{token:user.token});  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(e.status||500,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/auth/users'&&req.method==='POST'){try{  const user=await dashboardUserFromReq(req);if(!user.is_admin)return dashboardDeny(res);  const body=await readJsonLimited(req,128*1024);  const x=await portalAuth('/api/painel/auth/users',{method:'POST',body,token:user.token});  res.writeHead(201,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(e.status||500,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname.startsWith('/api/auth/users/')&&req.method==='PATCH'){try{  const user=await dashboardUserFromReq(req);if(!user.is_admin)return dashboardDeny(res);  const id=u.pathname.slice('/api/auth/users/'.length);  if(!/^[0-9]+$/.test(id)){res.writeHead(404);return res.end()}  const body=await readJsonLimited(req,128*1024);  const x=await portalAuth('/api/painel/auth/users/'+id,{method:'PATCH',body,token:user.token});  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(e.status||500,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}let authUser=null;if(u.pathname.startsWith('/api/')){try{authUser=await dashboardUserFromReq(req);const reqCtx=REQ_USER.getStore();if(reqCtx)reqCtx.token=authUser.token}catch(e){res.writeHead(e.status||401,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/frota-state'&&req.method==='GET'){try{
   const x=await portalAuth('/api/painel/frota-state',{token:authUser.token});
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
@@ -4166,19 +4178,19 @@ if(u.pathname==='/api/lotacao'&&req.method==='GET'){try{
   const q=new URLSearchParams();
   const from=String(u.searchParams.get('from')||'').trim(),to=String(u.searchParams.get('to')||'').trim();
   if(from)q.set('from',from);if(to)q.set('to',to);
-  const x=await portalJson('/api/painel/coletas-resumo?'+q.toString());
+  const x=await portalJson('/api/painel/coletas-resumo?'+q.toString(),{token:authUser.token});
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){
   res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
-if(u.pathname==='/api/coletas/status'){try{if(!dashboardHasAny(authUser,['dashboard','operacional']))return dashboardDeny(res);const x=await fetchColetasStatus(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/carregamentos-count'&&req.method==='GET'){try{
+if(u.pathname==='/api/coletas/status'){try{if(!dashboardHasAny(authUser,['dashboard','operacional']))return dashboardDeny(res);const x=await fetchColetasStatus(u.searchParams.get('from')||'',u.searchParams.get('to')||'',authUser.token);res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/carregamentos-count'&&req.method==='GET'){try{
   if(!dashboardHasAny(authUser,['dashboard','ajudantes','final_carregamento']))return dashboardDeny(res);
   const data=String(u.searchParams.get('data')||'').trim();
   const q=new URLSearchParams({limit:'100',tipo:'carregamento'});
   if(data)q.set('data',data);
-  const x=await portalJson('/api/painel/carregamentos-finais?'+q.toString());
+  const x=await portalJson('/api/painel/carregamentos-finais?'+q.toString(),{token:authUser.token});
   const rows=Array.isArray(x.rows)?x.rows:[];
   const unique=new Set(rows.map(r=>String(r.vehicle_plate||r.placa||r.veiculo||r.motorista||r.id||'').trim()).filter(Boolean));
   const total=unique.size||rows.length;
@@ -4197,7 +4209,7 @@ if(u.pathname==='/api/carregamentos-finais'&&req.method==='GET'){try{if(!dashboa
   if(motorista)q.set('motorista',motorista);
   if(data)q.set('data',data);
   if(tipo)q.set('tipo',tipo);
-  const x=await portalJson('/api/painel/carregamentos-finais?'+q.toString());
+  const x=await portalJson('/api/painel/carregamentos-finais?'+q.toString(),{token:authUser.token});
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){
@@ -4207,7 +4219,7 @@ if(u.pathname==='/api/carregamentos-finais'&&req.method==='GET'){try{if(!dashboa
 const carregamentoColetaDev=u.pathname.match(/^\/api\/carregamentos-finais\/(\d+)\/coleta-devolucao$/);
 if(carregamentoColetaDev&&req.method==='PATCH'){try{if(!dashboardHas(authUser,'final_carregamento'))return dashboardDeny(res);
   const body=await readJsonLimited(req,3*1024*1024);
-  const x=await portalJson('/api/painel/carregamentos-finais/'+carregamentoColetaDev[1]+'/coleta-devolucao',{method:'PATCH',body,timeout:30000});
+  const x=await portalJson('/api/painel/carregamentos-finais/'+carregamentoColetaDev[1]+'/coleta-devolucao',{method:'PATCH',body,token:authUser.token,timeout:30000});
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){
@@ -4217,7 +4229,7 @@ if(carregamentoColetaDev&&req.method==='PATCH'){try{if(!dashboardHas(authUser,'f
 
 if(u.pathname==='/api/carregamentos-finais'&&req.method==='POST'){try{if(!dashboardHas(authUser,'final_carregamento'))return dashboardDeny(res);
   const body=await readJsonLimited(req,14*1024*1024);
-  const x=await portalJson('/api/painel/carregamentos-finais',{method:'POST',body,timeout:30000});
+  const x=await portalJson('/api/painel/carregamentos-finais',{method:'POST',body,token:authUser.token,timeout:30000});
   res.writeHead(201,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){
@@ -4227,7 +4239,7 @@ if(u.pathname==='/api/carregamentos-finais'&&req.method==='POST'){try{if(!dashbo
 const carregamentoAvaria=u.pathname.match(/^\/api\/carregamentos-finais\/(\d+)\/avaria\/(\d+)$/);
 if(carregamentoAvaria&&req.method==='GET'){try{if(!dashboardHas(authUser,'final_carregamento'))return dashboardDeny(res);
   const ru=new URL('/api/painel/carregamentos-finais/'+carregamentoAvaria[1]+'/avaria/'+carregamentoAvaria[2],COLETAS_PORTAL_URL);
-  const rr=await fetch(ru,{headers:{'User-Agent':'CONSTRULOG-Dashboard/1.0'},signal:AbortSignal.timeout(20000)});
+  const rr=await fetch(ru,{headers:portalHeaders(authUser.token),signal:AbortSignal.timeout(20000)});
   if(!rr.ok)throw Object.assign(new Error('Foto de avaria não encontrada.'),{status:rr.status});
   const buf=Buffer.from(await rr.arrayBuffer());
   res.writeHead(200,{'Content-Type':rr.headers.get('content-type')||'image/jpeg','Content-Length':buf.length,'Cache-Control':'private, max-age=3600'});
@@ -4240,7 +4252,7 @@ const carregamentoFoto=u.pathname.match(/^\/api\/carregamentos-finais\/(\d+)\/fo
 if(carregamentoFoto&&req.method==='GET'){try{if(!dashboardHas(authUser,'final_carregamento'))return dashboardDeny(res);
   const slot=carregamentoFoto[2]||'';
   const ru=new URL('/api/painel/carregamentos-finais/'+carregamentoFoto[1]+'/foto'+(slot?'/'+slot:''),COLETAS_PORTAL_URL);
-  const rr=await fetch(ru,{headers:{'User-Agent':'CONSTRULOG-Dashboard/1.0'},signal:AbortSignal.timeout(20000)});
+  const rr=await fetch(ru,{headers:portalHeaders(authUser.token),signal:AbortSignal.timeout(20000)});
   if(!rr.ok)throw Object.assign(new Error('Foto não encontrada.'),{status:rr.status});
   const buf=Buffer.from(await rr.arrayBuffer());
   res.writeHead(200,{'Content-Type':rr.headers.get('content-type')||'image/jpeg','Content-Length':buf.length,'Cache-Control':'private, max-age=3600'});
@@ -4318,7 +4330,7 @@ if(u.pathname==='/api/nf-materiais'&&req.method==='GET'){try{
   const q=new URLSearchParams();
   if(u.searchParams.get('special')==='1')q.set('special','1');
   q.set('limit',String(Math.max(1,Math.min(3000,Number(u.searchParams.get('limit')||1500)))));
-  const x=await portalJson('/api/painel/nf-materiais?'+q.toString(),{timeout:30000});
+  const x=await portalJson('/api/painel/nf-materiais?'+q.toString(),{token:authUser.token,timeout:30000});
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){
@@ -4328,7 +4340,7 @@ if(u.pathname==='/api/nf-materiais'&&req.method==='GET'){try{
 if(u.pathname==='/api/nf-materiais/import'&&req.method==='POST'){try{
   if(!dashboardHasAny(authUser,['programacao','dashboard']))return dashboardDeny(res);
   const body=await readJsonLimited(req,4*1024*1024);
-  const x=await portalJson('/api/painel/nf-materiais/import',{method:'POST',body,timeout:45000});
+  const x=await portalJson('/api/painel/nf-materiais/import',{method:'POST',body,token:authUser.token,timeout:45000});
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){
@@ -4851,7 +4863,7 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
     return res.end(html)
   }catch(e){}
 }
-let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.join(PUB,p));if(!p.startsWith(PUB)){res.writeHead(403);return res.end()}fs.readFile(p,(e,d)=>{if(e){res.writeHead(404);return res.end('Not found')}const ext=path.extname(p);res.writeHead(200,{'Content-Type':ext==='.js'?'application/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate','Pragma':'no-cache','Expires':'0'});res.end(d)})}catch(e){res.writeHead(500);res.end(e.message)}}).listen(PORT,'0.0.0.0',()=>{
+let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.join(PUB,p));if(!p.startsWith(PUB)){res.writeHead(403);return res.end()}fs.readFile(p,(e,d)=>{if(e){res.writeHead(404);return res.end('Not found')}const ext=path.extname(p);res.writeHead(200,{'Content-Type':ext==='.js'?'application/javascript; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate','Pragma':'no-cache','Expires':'0'});res.end(d)})}catch(e){res.writeHead(500);res.end(e.message)}})).listen(PORT,'0.0.0.0',()=>{
   console.log('CONSTRULOG em '+PORT);probeSswAbrirScripts().then(x=>console.log('SSW abrir probe isolado: '+JSON.stringify(x))).catch(()=>{});
   setTimeout(async()=>{try{
     const p=await fetchSswPendingDeliveries();
