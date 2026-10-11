@@ -1,0 +1,3 @@
+# Servidor, tarefas e agenda: apenas biblioteca padrão do Python 3.11+
+# Dependência opcional para PDFs:
+pypdf>=6,<7
