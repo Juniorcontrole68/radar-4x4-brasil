@@ -20,8 +20,43 @@ $('memoryEnabled').onchange=safe(async()=>{await api('/api/memory','POST',{enabl
 function bubble(t,user=false){const e=element('div','','bubble'+(user?' user':''));e.append(element('small',user?'Chefe':'J.A.R.V.I.S.'),document.createTextNode(t));$('messages').append(e);e.scrollIntoView({block:'nearest'})}
 async function send(message){if(busy){toast('Aguarde a resposta atual.');return}busy=true;bubble(message,true);try{const r=await api('/api/chat','POST',{message});bubble(r.reply);speak(r.reply);if(r.action)tab(r.action);if(r.date){$('agendaDate').value=r.date;await loadEvents()}}finally{busy=false}}
 $('chatForm').onsubmit=safe(async()=>{const m=$('message').value;$('message').value='';await send(m)});
-function populateVoices(){if(!('speechSynthesis'in window))return;const voices=speechSynthesis.getVoices();$('voice').replaceChildren(element('option','Voz padrão do dispositivo'));$('voice').firstChild.value='';for(const v of voices.filter(v=>v.lang.startsWith('pt'))){const o=element('option',v.name+' ('+v.lang+')');o.value=v.name;$('voice').append(o)}$('voice').value=localStorage.getItem('jarvis-voice')||''}
-function speak(t){if(!$('speak').checked||!('speechSynthesis'in window))return;speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang='pt-BR';u.voice=speechSynthesis.getVoices().find(v=>v.name===$('voice').value)||null;u.onstart=()=>{speaking=true;$('orb').classList.add('active')};u.onend=u.onerror=()=>{speaking=false;$('orb').classList.remove('active');if($('continuous').checked&&!listening)startListening()};speechSynthesis.speak(u)}
+// Perfil inspirado no assistente dos filmes; usa as vozes instaladas no dispositivo.
+function jarvisVoice(voices){
+ const portuguese=voices.filter(v=>/^pt(?:-|$)/i.test(v.lang));
+ const male=/\b(antonio|antônio|daniel|duarte|ricardo|felipe|fabio|fábio|joao|joão|male|masculin[oa])\b/i;
+ return portuguese.find(v=>/^pt-BR$/i.test(v.lang)&&male.test(v.name))||
+ portuguese.find(v=>male.test(v.name))||portuguese.find(v=>/^pt-BR$/i.test(v.lang))||portuguese[0]||null;
+}
+function populateVoices(){
+ if(!('speechSynthesis'in window))return;
+ if(localStorage.getItem('jarvis-voice-profile')!=='cinematic-v1'){
+  localStorage.setItem('jarvis-voice','');localStorage.setItem('jarvis-voice-profile','cinematic-v1');
+ }
+ const voices=speechSynthesis.getVoices();
+ $('voice').replaceChildren(element('option','Estilo J.A.R.V.I.S. — automático'));$('voice').firstChild.value='';
+ for(const v of voices.filter(v=>/^pt(?:-|$)/i.test(v.lang))){
+  const o=element('option',v.name+' ('+v.lang+')');o.value=v.name;$('voice').append(o);
+ }
+ const saved=localStorage.getItem('jarvis-voice')||'';
+ $('voice').value=voices.some(v=>v.name===saved)?saved:'';
+ if(!$('voicePreview')){
+  const label=$('voice').parentElement;
+  const note=element('p','Tom mais grave e fala pausada. A voz masculina é usada quando disponível no aparelho; não é a voz oficial dos filmes.','muted');
+  const preview=element('button','▶ Testar voz','secondary');preview.id='voicePreview';preview.type='button';
+  preview.onclick=()=>speak('Às suas ordens, chefe. Sistemas prontos. Como posso ajudar?',true);
+  label.after(note,preview);
+ }
+}
+function speak(t,preview=false){
+ if((!preview&&!$('speak').checked)||!('speechSynthesis'in window))return;
+ speechSynthesis.cancel();
+ const u=new SpeechSynthesisUtterance(t);
+ u.voice=speechSynthesis.getVoices().find(v=>v.name===$('voice').value)||jarvisVoice(speechSynthesis.getVoices());
+ u.lang=u.voice?.lang||'pt-BR';u.rate=0.92;u.pitch=0.85;u.volume=1;
+ u.onstart=()=>{speaking=true;$('orb').classList.add('active')};
+ u.onend=u.onerror=()=>{speaking=false;$('orb').classList.remove('active');if(!preview&&$('continuous').checked&&!listening)startListening()};
+ speechSynthesis.speak(u);
+}
 function endListening(){listening=false;if(recognition)recognition.stop();$('mic').textContent='🎙 Falar com Jarvis';$('orb').classList.remove('active');$('voiceStatus').textContent='Microfone desligado.'}
 function startListening(){const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){toast('Reconhecimento de voz indisponível neste navegador. Use texto.');return}if(listening)return;recognition=new SR();recognition.lang='pt-BR';recognition.continuous=true;recognition.interimResults=false;listening=true;$('mic').textContent='■ Desligar microfone';$('orb').classList.add('active');$('voiceStatus').textContent='Ouvindo… diga “parar” para interromper.';recognition.onresult=safe(async e=>{for(let i=e.resultIndex;i<e.results.length;i++){if(!e.results[i].isFinal)continue;let m=e.results[i][0].transcript.trim();if(/^(jarvis[, ]*)?(parar|pare|silêncio|interromper)[.!]?$/i.test(m)){speechSynthesis.cancel();speaking=false;continue}if(speaking||busy)continue;if($('wake').checked){if(!/^jarvis\b/i.test(m))continue;m=m.replace(/^jarvis[, ]*/i,'')}if(m)await send(m)}});recognition.onerror=e=>{toast('Microfone: '+e.error);endListening()};recognition.onend=()=>{if(listening&&$('continuous').checked&&!document.hidden){listening=false;setTimeout(startListening,300)}else endListening()};try{recognition.start()}catch(e){endListening();toast(e.message)}}
 $('mic').onclick=()=>{if(listening)endListening();else{speechSynthesis.cancel();speaking=false;startListening()}};
