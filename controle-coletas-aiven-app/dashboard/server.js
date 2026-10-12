@@ -5842,6 +5842,20 @@ if(u.pathname==='/api/agendamento-teste'&&req.method==='POST'){try{
   res.writeHead(201,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+// CTRCs disponíveis para entrega (SSW opção 038, pendências), com peso, m³ e frete cruzados no BI2.
+// Usado pelo Roteirizador de Cargas para trazer as notas sem planilha.
+if(u.pathname==='/api/programacao-entregas/disponiveis'&&req.method==='GET'){try{
+  if(!dashboardHasAny(authUser,['programacao','roteirizador','dashboard','ssw_saidas']))return dashboardDeny(res);
+  if(u.searchParams.get('force')==='1')SSW_PENDING_CACHE={at:0,value:null};
+  const base=await fetchSswPendingDeliveries();
+  let rows=await deliveryProgramEnrich(base.rows||[]);
+  try{rows=await fillFreightByNf(rows)}catch(e){console.log('DISPONIVEIS FRETE: '+String(e.message||e))}
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:true,fonte:base.source||'SSW opção 38',at:base.at||new Date().toISOString(),total:rows.length,rows:rows.map(r=>({ctrc:r.ctrc||'',nf:r.nf||'',remetente:r.remetente||'',cliente:r.cliente||'',cidade:r.cidade||'',uf:r.uf||'SP',volumes:Number(r.volumes)||0,peso:Number(r.peso)||0,m3:Number(r.m3)||0,previsao:r.previsao||'',diasAtraso:Number(r.diasAtraso)||0,status:r.status||'',mercadoria:r.mercadoria||'',detalhes:String(r.detalhes||'').slice(0,300),frete:Number(r.frete)||0}))}))
+}catch(e){
+  res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}
 if(u.pathname==='/api/programacao-entregas'&&req.method==='GET'){try{
   if(!dashboardHasAny(authUser,['programacao','roteirizador','dashboard','ssw_saidas']))return dashboardDeny(res);
   const x=await buildDeliveryProgram(u.searchParams.get('date')||'',u.searchParams.get('force')==='1');

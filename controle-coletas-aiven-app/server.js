@@ -27,6 +27,7 @@ Module.Module._initPaths();
 const { initDb, pool } = require('../contas-a-pagar-v3/src/db');
 const { initColetasDb } = require('../contas-a-pagar-v3/src/coletas');
 const lancamentos = require('./lancamentos');
+const roteirizadorCargas = require('./roteirizador-cargas');
 const { handler } = require('../contas-a-pagar-v3/src/handler');
 
 const PORT = process.env.PORT || 10000;
@@ -36,6 +37,7 @@ const DRIVER_INSTALL_PAGE = path.join(__dirname, 'motorista-instalar.html');
 const DRIVER_TEST_INSTALL_PAGE = path.join(__dirname, 'motorista-teste-instalar.html');
 const LOTACAO_PAGE = path.join(__dirname, 'lotacao.html');
 const FROTA_PAGE = path.join(__dirname, 'frota.html');
+const ROTEIRIZADOR_CARGAS_PAGE = path.join(__dirname, 'roteirizador-cargas.html');
 const PDF_UNIFIER_PAGE = path.join(__dirname, 'pdf-unificador.html');
 const MOVIT_PC_PAGE = path.join(__dirname, 'movit-pc.html');
 const MOVIT_CENTRAL_PAGE = path.join(__dirname, 'movit-central.html');
@@ -1534,6 +1536,7 @@ async function start() {
   )`);
   await pool.query(`INSERT INTO fleet_state(id,data) VALUES(1,'{"vehicles":[],"fuel":[],"maintenance":[],"tires":[],"people":[],"documents":[],"checklists":[]}'::jsonb) ON CONFLICT (id) DO NOTHING`);
   await lancamentos.ensureSchema(pool);
+  await roteirizadorCargas.ensureSchema(pool);
   await pool.query(`CREATE TABLE IF NOT EXISTS fleet_maintenance_files (
     maintenance_id TEXT PRIMARY KEY,
     nome_arquivo TEXT NOT NULL,
@@ -2618,6 +2621,8 @@ async function start() {
 
       // Lançamentos da operação (substitui a aba de lançamentos da planilha): ver lancamentos.js
       if (await lancamentos.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,sessionOrInternal,dashboardSession,dashboardHas,spToday})) return;
+      // Roteirizador de Cargas (substitui o Roteirizador Teste e o Roteirizador V02): ver roteirizador-cargas.js
+      if (await roteirizadorCargas.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
 
       if (u.pathname === '/api/painel/frota-state' && req.method === 'GET') {
         try {
@@ -3375,6 +3380,17 @@ async function start() {
           return sendJson(res,e.status||(authLike?401:500),{ok:false,error:msg});
         }finally{
           try{if(client)await client.logout()}catch(e){try{client?.close()}catch(_){}}
+        }
+      }
+
+      if (req.method === 'GET' && (u.pathname === '/roteirizador-cargas' || u.pathname === '/roteirizador-cargas/')) {
+        try {
+          const ru=await dashboardSession(req,false);
+          if(!dashboardHas(ru,'roteirizador')){res.writeHead(403,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end('<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;padding:32px;color:#16142f"><h2>Roteirizador</h2><p>Seu usuário não tem acesso ao Roteirizador. Peça a liberação a um administrador.</p></body>')}
+          return sendHtml(res,ROTEIRIZADOR_CARGAS_PAGE);
+        } catch(e){
+          res.writeHead(302,{Location:'/?login=1#roteirizador-cargas','Cache-Control':'no-store'});
+          return res.end();
         }
       }
 

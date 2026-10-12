@@ -56,6 +56,7 @@ jobs:
           node --check controle-coletas-aiven-app/lancamentos.js
           node --check controle-coletas-aiven-app/dashboard/public/lancamentos.js
           node --check contas-a-pagar-v3/src/coletas.js
+          node --check controle-coletas-aiven-app/roteirizador-cargas.js
       - name: Subir o servidor em modo teste
         run: |
           cd controle-coletas-aiven-app
@@ -67,6 +68,10 @@ jobs:
           echo "Servidor não subiu"; cat ../servidor.log; exit 1
       - name: Testes ponta a ponta
         run: node controle-coletas-aiven-app/tests/e2e.js
+      - name: Roteirizador de Cargas (motor e servidor)
+        run: |
+          node controle-coletas-aiven-app/roteirizador-cargas-fonte/test.js
+          node controle-coletas-aiven-app/tests/roteirizador-cargas.js
       - name: Leitores de valor e data da planilha
         run: TZ=America/Sao_Paulo node controle-coletas-aiven-app/tests/leitores.js
       - name: Localização de endereços no mapa (respostas gravadas, sem rede)
