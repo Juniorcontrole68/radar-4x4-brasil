@@ -755,6 +755,7 @@
     return true;
   };
 
+  RE.dBR = (s) => (s && /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) : s || '');
   RE.proximoDiaPermitido = (cidade, apartir, limiteDias = 21) => {
     for (let i = 0; i <= limiteDias; i++) { const d = RE.addDays(apartir, i); if ((cidade.dias || []).includes(RE.weekday(d))) return d; }
     return null;
@@ -795,10 +796,10 @@
       if (['entregue', 'cancelada', 'roteirizada'].includes(n.status) || !n.prazoEfetivo || !n.cidadeId) continue;
       const cid = ctx.cidades[n.cidadeId];
       if (!cid) continue;
-      if (n.prazoEfetivo < hoje) { al.push({ nota: n, tipo: 'atrasada', msg: 'Prazo vencido em ' + n.prazoEfetivo }); continue; }
+      if (n.prazoEfetivo < hoje) { al.push({ nota: n, tipo: 'atrasada', msg: 'Prazo vencido em ' + RE.dBR(n.prazoEfetivo) }); continue; }
       const prox = RE.proximoDiaPermitido(cid, hoje);
-      if (!prox || prox > n.prazoEfetivo) al.push({ nota: n, tipo: 'sem_dia', msg: 'Nenhum dia de rota de ' + cid.nome + ' até o prazo ' + n.prazoEfetivo + (prox ? ' (próximo: ' + prox + ')' : '') });
-      else if (n.bloqueada) al.push({ nota: n, tipo: 'pendente', msg: 'Dados pendentes impedem a roteirização (prazo ' + n.prazoEfetivo + ')' });
+      if (!prox || prox > n.prazoEfetivo) al.push({ nota: n, tipo: 'sem_dia', msg: 'Nenhum dia de rota de ' + cid.nome + ' até o prazo ' + RE.dBR(n.prazoEfetivo) + (prox ? ' (próximo: ' + RE.dBR(prox) + ')' : '') });
+      else if (n.bloqueada) al.push({ nota: n, tipo: 'pendente', msg: 'Dados pendentes impedem a roteirização (prazo ' + RE.dBR(n.prazoEfetivo) + ')' });
     }
     return al;
   };
