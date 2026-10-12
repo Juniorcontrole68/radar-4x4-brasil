@@ -212,6 +212,7 @@ details>summary{cursor:pointer;font-weight:600}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 .dsp-q{width:100%;padding:8px 10px;border:1px solid var(--line,#d5dbe3);border-radius:8px;font:inherit;margin-bottom:10px;background:var(--surface,#fff);color:inherit}.dsp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px}.dsp{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:7px 9px;border:1px solid var(--line,#d5dbe3);border-radius:8px}.dsp label{display:flex;gap:8px;align-items:flex-start;cursor:pointer;min-width:0;flex:1}.dsp input{margin-top:3px}.dsp.com-rota{border-color:var(--info,#2b6cb0);background:rgba(43,108,176,.07)}.dsp span{display:flex;flex-direction:column;min-width:0}.dsp small{opacity:.7;font-size:11.5px}.dsp:has(input:checked){border-color:#2f9e61;background:rgba(47,158,97,.07)}
+.escala-cols{display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:18px}@media(max-width:760px){.escala-cols{grid-template-columns:1fr}}.dsp-list{display:flex;flex-direction:column;gap:5px;max-height:460px;overflow:auto}.dsp-list .dsp{cursor:pointer;justify-content:flex-start}.escala{margin-bottom:14px}.ideia{border:1px solid var(--line,#d5dbe3);border-left:4px solid var(--info,#2b6cb0);border-radius:8px;padding:8px 10px;margin-bottom:8px}.ideia .row{gap:8px;align-items:center}.rota-cid{margin-top:3px;opacity:.85}.escala .empty{padding:18px;text-align:center}
 </style>
 <div id="app"></div>
 
@@ -2225,7 +2226,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       }
       const p = RE.planejar(notas, d, ctx(), { consolidar: !!ST.cfg.consolidar, cidades: filtroCidades(), tempoMs: 3500 });
       // motoristas padrão
-      for (const r of p.rotas) { const v = veic(r.veiculoId); r.motoristaId = (v && v.motoristaId) || ''; }
+      { const cv = new Map(ctx().veiculos.map((x) => [x.id, x])); for (const r of p.rotas) { const v = cv.get(r.veiculoId) || veic(r.veiculoId); r.motoristaId = (v && v.motoristaId) || ''; } }
       const semMot = ctx().veiculos.filter((v) => (v.motoristaIndisponivel || v.indispDia) && v.ativo !== false);
       if (semMot.length) p.decisoes = semMot.map((v) => v.nome + ' fora do plano: ' + (v.indispDia ? 'marcado como indisponível no Painel' : 'motorista ' + v.motoristaIndisponivel + ' indisponível') + ' em ' + dBR(d) + '.').concat(p.decisoes || []);
       p.status = 'rascunho'; p.autor = ST.uid; p.versao = ((atual && atual.versao) || 0) + 1;
@@ -2236,7 +2237,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       await registrar('Otimização', dBR(d) + ': ' + p.totais.veiculos + ' veículo(s), ' + p.totais.entregas + ' entrega(s), lucro ' + brl(p.totais.lucro) + (modo === 'encaixar' ? ' (rotas anteriores mantidas)' : ''));
       ui.cenarios = null;
     } catch (e) { console.error(e); toast('Falha na otimização: ' + e.message, true); }
-    ui.calc = null; render();
+    ui.calc = null; ui.escalaSuja = false; render();
   }
   async function compararCenarios() {
     ui.calc = 'Comparando cenários de frota…'; render();
@@ -2635,7 +2636,8 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     const pend = ativas.filter((n) => n.bloqueada);
     const { notas: eleg } = RE.elegiveis(enr, ui.data, ctx());
     let h = topo('Painel do dia', p ? 'Plano ' + (p.status === 'aprovado' ? '<span class="chip ok">aprovado</span>' : '<span class="chip warn">rascunho</span>') + ' calculado em ' + new Date(p.editadoEm || p.criadoEm).toLocaleString('pt-BR') : eleg.length + ' nota(s) liberadas para ' + dBR(ui.data) + ' · ainda sem plano', true);
-    if (!ST.notas.size) return h + vVazio() + '<div style="margin-top:14px;max-width:760px">' + vDisponibilidade() + '</div>';
+    h += vEscala();
+    if (!ST.notas.size) return h;
     const t = p ? p.totais : null;
     const pesoEleg = eleg.reduce((s, n) => s + (n.pesoKg || 0), 0), volEleg = eleg.reduce((s, n) => s + (n.volOutrosM3 || 0) + (n.volTubosM3 || 0), 0), tubEleg = eleg.reduce((s, n) => s + n.qtdTubos, 0);
     const volPlano = p ? p.rotas.reduce((s, r) => s + r.m3, 0) : null;
@@ -2651,32 +2653,64 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     h += '<div class="split" style="margin-top:14px"><div class="card"><div class="card-h"><h2>Rotas de ' + dBR(ui.data) + '</h2><div class="row">' + (p ? '' : '<button class="btn go" data-a="otimizar">' + I.play + 'Otimizar agora</button>') + '<button class="btn" data-a="tab" data-v="rotas">Abrir rotas</button></div></div>' + mapaHTML(p, null) + '</div>' +
       '<div class="stack"><div class="card"><div class="card-h"><h2>Alertas de prazo</h2><span class="chip ' + (al.length ? 'bad' : 'ok') + '">' + al.length + '</span></div>' +
       (al.length ? '<div class="tbl-wrap"><table><tbody>' + al.slice(0, 10).map((a) => '<tr class="click" data-a="nota" data-v="' + esc(a.nota.id) + '"><td><b>NF ' + esc(a.nota.numero) + '</b><div class="tiny">' + esc(a.nota.destNome) + ' · ' + esc(a.nota.cidadeNome) + '</div></td><td class="small">' + esc(a.msg) + '</td></tr>').join('') + '</tbody></table></div>' + (al.length > 10 ? '<p class="tiny">+ ' + (al.length - 10) + ' alertas</p>' : '') : '<p class="muted small">Todas as notas têm dia de rota disponível dentro do prazo.</p>') + '</div>' +
-      vDisponibilidade() +
       (p ? '<div class="card"><h2>Veículos</h2><div class="stack" style="margin-top:10px">' + p.rotas.map((r) => '<div class="row small"><i style="width:10px;height:10px;border-radius:2px;background:' + corRota(p, r.veiculoId) + '"></i><b>' + esc(r.veiculoNome) + '</b><span class="muted">' + r.paradas.length + ' parada(s) · ' + nf(r.km, 0) + ' km</span><span class="spacer"></span><span class="num ' + (r.lucro >= 0 ? 'pos' : 'neg') + '">' + brl(r.lucro) + '</span></div>').join('') + '</div></div>' : '') +
       '</div></div>';
     return h;
   }
-  function vDisponibilidade() {
+  // Escala do dia: marcar motoristas -> ideia de rota de cada um (recalcula sozinho)
+  function vEscala() {
     const d = ui.data, dd = dispDia(d);
     if (window.RC_HOST && ST.admin && !ui.frotaAuto) { ui.frotaAuto = true; setTimeout(() => importarFrota(), 50); }
+    if (window.RC_HOST && !ui.sswSync) { ui.sswSync = true; setTimeout(() => sincronizarSSW(), 80); }
     const todos = [...ST.motoristas.values()];
     const q = RE.norm(ui.motQ || '');
     const lista = (q ? todos.filter((m) => RE.norm(m.nome).includes(q)) : todos.filter((m) => motRecente(m, d) || dd.motoristas[m.id] === true))
       .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
     const pl = plano();
-    const noPlano = new Set(pl ? pl.rotas.map((r) => r.motoristaId || (ST.veiculos.get(r.veiculoId) || {}).motoristaId).filter(Boolean) : []);
     const nm = todos.filter((m) => motDisp(m, d)).length;
-    const rotaDe = new Map(pl ? pl.rotas.filter((r) => r.motoristaId).map((r) => [r.motoristaId, r]) : []);
-    const item = (m) => { const r = rotaDe.get(m.id); return '<div class="dsp' + (r ? ' com-rota' : '') + '"><label><input type="checkbox" data-disp="m|' + esc(m.id) + '"' + (motDisp(m, d) ? ' checked' : '') + '><span><b>' + esc(m.nome) + '</b><small>' + (r ? esc(r.veiculoNome) + ' · ' + r.paradas.length + ' entregas · ' + nf(r.kg, 0) + ' kg' : pl && motDisp(m, d) ? 'reserva: não precisou sair' : m.ultimoUso ? 'rodou ' + dBR(m.ultimoUso) : 'sem registro recente') + '</small></span></label>' + (r ? '<button class="btn sm pri" data-a="verCarga" data-v="' + esc(r.veiculoId) + '">Ver carga</button>' : '') + '</div>'; };
-    const carregando = ui.frotaImp && ui.frotaImp.carregando;
-    let h = '<div class="card"><div class="card-h"><h2>Motoristas em ' + dBR(d) + '</h2><span class="small muted">' + nm + ' disponível(is)' + (pl ? ' · ' + noPlano.size + ' escalado(s)' : '') + (carregando ? ' · atualizando…' : '') + '</span></div>';
-    h += '<input id="fMotQ" class="dsp-q" placeholder="Procurar motorista que não rodou nos últimos 30 dias" value="' + esc(ui.motQ || '') + '">';
     const nNotas = RE.elegiveis(notasEnr(), d, ctx()).notas.length;
-    h += '<div class="row" style="margin-bottom:10px"><button class="btn go" data-a="otimizar"' + (nNotas && nm ? '' : ' disabled') + '>' + I.play + (pl ? 'Remontar rotas' : 'Montar rotas do dia') + '</button><span class="small muted">' + (!nNotas ? 'Nenhuma nota liberada para este dia. Traga as notas do SSW em Notas.' : !nm ? 'Marque ao menos um motorista.' : nNotas + ' nota(s) liberadas. ' + (pl ? 'Mudou alguém? Remonte para atualizar.' : 'Cada motorista marcado pode levar um veículo; o sistema usa só os necessários.')) + '</span></div>';
-    h += lista.length ? '<div class="dsp-grid">' + lista.map(item).join('') + '</div>'
-      : '<p class="muted small" style="margin-top:8px">' + (q ? 'Nenhum motorista com esse nome.' : carregando ? 'Lendo o Rastreio de carga…' : 'Nenhum motorista rodou nos últimos 30 dias.' + (window.RC_HOST && ST.admin ? ' <button class="btn sm pri" data-a="importarFrota">Buscar no Rastreio de carga</button>' : '')) + '</p>';
-    h += '</div>';
+    // recalcular sozinho quando muda a escala (plano aprovado só com clique)
+    if (nNotas && nm && !ui.calc && (!pl || ui.escalaSuja) && !(pl && pl.status === 'aprovado') && ui.autoEm !== VER) { ui.autoEm = VER; setTimeout(() => { if (!ui.calc) otimizar(); }, 400); }
+    const rotaDe = new Map(pl ? pl.rotas.filter((r) => r.motoristaId).map((r) => [r.motoristaId, r]) : []);
+    const marca = (m) => '<label class="dsp"><input type="checkbox" data-disp="m|' + esc(m.id) + '"' + (motDisp(m, d) ? ' checked' : '') + '><span><b>' + esc(m.nome) + '</b><small>' + (m.ultimoUso ? 'rodou em ' + dBR(m.ultimoUso) : 'sem registro recente') + '</small></span></label>';
+    let h = '<div class="card escala"><div class="card-h"><h2>Escala de ' + dBR(d) + '</h2><span class="small muted">' + (ui.sswLendo ? 'buscando CTRCs no SSW… · ' : '') + nNotas + ' nota(s) para este dia · ' + nm + ' motorista(s) marcado(s)</span></div>';
+    h += '<div class="escala-cols"><div><p class="small" style="margin:0 0 8px"><b>1. Quem trabalha hoje?</b></p>' +
+      '<input id="fMotQ" class="dsp-q" placeholder="Procurar motorista mais antigo" value="' + esc(ui.motQ || '') + '">' +
+      (lista.length ? '<div class="dsp-list">' + lista.map(marca).join('') + '</div>' : '<p class="muted small">' + (q ? 'Nenhum motorista com esse nome.' : ui.frotaImp && ui.frotaImp.carregando ? 'Lendo o Rastreio de carga…' : 'Nenhum motorista rodou nos últimos 30 dias.') + '</p>') + '</div>';
+    h += '<div><p class="small" style="margin:0 0 8px"><b>2. Ideia de rota de cada um</b></p>';
+    if (ui.calc) h += '<div class="empty small">Montando as rotas…</div>';
+    else if (!nNotas) h += '<div class="empty small">Nenhuma nota liberada para ' + dBR(d) + '.' + (window.RC_HOST ? (ui.sswLendo ? ' Buscando os CTRCs disponíveis no SSW…' : ' <button class="btn sm pri" data-a="sswSync">Buscar CTRCs no SSW</button>') : '') + '</div>';
+    else if (!nm) h += '<div class="empty small">Marque ao lado os motoristas disponíveis.</div>';
+    else if (!pl) h += '<div class="empty small">Montando as rotas…</div>';
+    else {
+      const usados = todos.filter((m) => rotaDe.has(m.id)).sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+      const sobra = todos.filter((m) => motDisp(m, d) && !rotaDe.has(m.id));
+      h += usados.map((m) => {
+        const r = rotaDe.get(m.id);
+        const cid = []; for (const p of r.paradas) { const c = cid[cid.length - 1]; if (c && c.n === p.cidadeNome) c.k++; else cid.push({ n: p.cidadeNome, k: 1 }); }
+        return '<div class="ideia"><div class="row"><b>' + esc(m.nome) + '</b><span class="muted small">' + esc(r.veiculoNome) + '</span><span class="spacer"></span><button class="btn sm" data-a="verCarga" data-v="' + esc(r.veiculoId) + '">Ver carga</button></div>' +
+          '<div class="small">' + r.paradas.length + ' entregas · ' + nf(r.kg, 0) + ' kg · ' + nf(r.km, 0) + ' km</div>' +
+          '<div class="small rota-cid">Base → ' + cid.map((c) => esc(c.n) + (c.k > 1 ? ' (' + c.k + ')' : '')).join(' → ') + ' → Base</div></div>';
+      }).join('') || '<div class="empty small">Nenhum veículo precisou sair.</div>';
+      if (sobra.length) h += '<p class="small muted" style="margin-top:8px">Não precisam sair: ' + sobra.map((m) => esc(m.nome)).join(', ') + '.</p>';
+      const fora = (pl.naoRoteirizadas || []).length;
+      if (fora) h += '<p class="small" style="margin-top:6px"><span class="chip ' + (pl.naoRoteirizadas.some((u) => u.obrigatoria) ? 'bad' : 'warn') + '">' + fora + '</span> entrega(s) ficam de fora. <a href="#" data-a="tab" data-v="rotas">Ver por quê</a></p>';
+      if (pl.status === 'aprovado' && ui.escalaSuja) h += '<p class="small" style="margin-top:6px">Plano aprovado. A escala mudou: <button class="btn sm go" data-a="otimizar">Remontar</button></p>';
+    }
+    h += '</div></div></div>';
     return h;
+  }
+  async function sincronizarSSW() {
+    if (!window.RC_HOST || ui.sswLendo) return;
+    ui.sswLendo = true; render();
+    try {
+      const info = sswInfo();
+      if (!info || Date.now() - Date.parse(info.em) > 30 * 60000) { const j = await window.RC_HOST.sswDisponiveis(false); await gravarSSW(j.rows || [], (j.fonte || 'SSW opção 038') + ' via CONSTRULOG'); }
+      const novas = sswLinhas().filter((r) => !notaDaLinhaSSW(r));
+      for (const r of novas) await criarNotaDeSSW(r);
+      if (novas.length) registrar('SSW', novas.length + ' CTRC(s) disponíveis trazidos automaticamente');
+    } catch (e) { toast('Não foi possível ler o SSW: ' + e.message, true); }
+    ui.sswLendo = false; render();
   }
   function vVazio() {
     if (window.RC_HOST) return '<div class="card empty"><h3>Nenhuma nota no roteirizador</h3><p>Traga os CTRCs disponíveis para entrega do SSW, importe XMLs, ZIPs, DANFEs em PDF ou planilhas, ou insira notas à mão.</p><div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-a="irSSW">Buscar no SSW</button><button class="btn" data-a="tab" data-v="notas">' + I.up2 + 'Importar notas</button></div></div>';
@@ -3358,6 +3392,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       case 'sbLimpar': ui.sb = null; render(); setTimeout(() => { const i = $('#sbNF'); if (i) i.focus(); }, 30); break;
       case 'sbRegistrar': await registrarSobra(); break;
       case 'sswAtualizar': await atualizarSSW(true); break;
+      case 'sswSync': ui.sswSync = true; await sincronizarSSW(); break;
       case 'dispTodos': { const d = ui.data, dd = dispDia(d), mm = {}; for (const m of ST.motoristas.values()) mm[m.id] = v === '1' ? (RE.motoristaDisponivel(m, d) ? undefined : true) : false; for (const k in mm) if (mm[k] === undefined) delete mm[k]; await salvar('disponibilidade', d, { data: d, veiculos: Object.assign({}, dd.veiculos), motoristas: mm }); registrar('Disponibilidade', (v === '1' ? 'Todos os motoristas marcados' : 'Todos os motoristas desmarcados') + ' em ' + dBR(d)); render(); break; }
       case 'importarFrota': await importarFrota(); break;
       case 'conferido': { const vv = ST.veiculos.get(v); if (vv) { const q = Object.assign({}, vv); delete q.conferir; await salvar('veiculos', v, q); render(); } break; }
@@ -3388,7 +3423,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       const o = { data: d, veiculos: Object.assign({}, dd.veiculos), motoristas: Object.assign({}, dd.motoristas) };
       const k = t === 'v' ? 'veiculos' : 'motoristas';
       if (!el.checked) o[k][id] = false; else if (t === 'm' && !(RE.motoristaDisponivel(ST.motoristas.get(id), d) && motRecente(ST.motoristas.get(id), d))) { o[k][id] = true; ui.motQ = ''; } else delete o[k][id];
-      await salvar('disponibilidade', d, o);
+      await salvar('disponibilidade', d, o); ui.escalaSuja = true;
       const nome = t === 'v' ? (ST.veiculos.get(id) || {}).nome : (ST.motoristas.get(id) || {}).nome;
       registrar('Disponibilidade', (nome || id) + (el.checked ? ' disponível' : ' fora') + ' em ' + dBR(d));
       render(); return;
