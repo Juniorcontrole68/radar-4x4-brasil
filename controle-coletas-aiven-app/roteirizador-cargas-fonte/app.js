@@ -745,7 +745,7 @@
     const pend = ativas.filter((n) => n.bloqueada);
     const { notas: eleg } = RE.elegiveis(enr, ui.data, ctx());
     let h = topo('Painel do dia', p ? 'Plano ' + (p.status === 'aprovado' ? '<span class="chip ok">aprovado</span>' : '<span class="chip warn">rascunho</span>') + ' calculado em ' + new Date(p.editadoEm || p.criadoEm).toLocaleString('pt-BR') : eleg.length + ' nota(s) liberadas para ' + dBR(ui.data) + ' · ainda sem plano', true);
-    if (!ST.notas.size) return h + vVazio();
+    if (!ST.notas.size) return h + vVazio() + '<div style="margin-top:14px;max-width:760px">' + vDisponibilidade() + '</div>';
     const t = p ? p.totais : null;
     const pesoEleg = eleg.reduce((s, n) => s + (n.pesoKg || 0), 0), volEleg = eleg.reduce((s, n) => s + (n.volOutrosM3 || 0) + (n.volTubosM3 || 0), 0), tubEleg = eleg.reduce((s, n) => s + n.qtdTubos, 0);
     const volPlano = p ? p.rotas.reduce((s, r) => s + r.m3, 0) : null;
@@ -787,7 +787,7 @@
     const nm = ms.filter((m) => motDisp(m, d)).length;
     return '<div class="card"><div class="card-h"><h2>Disponíveis em ' + dBR(d).slice(0, 5) + '</h2><span class="small muted">' + nv + ' de ' + vs.length + ' veículos · ' + nm + ' de ' + ms.length + ' motoristas</span></div>' +
       '<p class="tiny" style="margin-bottom:8px">Desmarque quem não roda neste dia. Veículo cujo motorista fixo está fora não entra no plano.</p>' +
-      '<h3 style="font-size:14px;text-transform:uppercase;letter-spacing:.04em;margin:6px 0">Veículos</h3>' + (vs.length ? '<div class="tbl-wrap"><table><tbody>' + vs.map(linhaV).join('') + '</tbody></table></div>' : '<p class="muted small">Nenhum veículo cadastrado.</p>') +
+      '<h3 style="font-size:14px;text-transform:uppercase;letter-spacing:.04em;margin:6px 0">Veículos</h3>' + (vs.length ? '<div class="tbl-wrap"><table><tbody>' + vs.map(linhaV).join('') + '</tbody></table></div>' : '<p class="muted small">Nenhum veículo cadastrado.' + (window.RC_HOST && ST.admin ? ' <button class="btn sm pri" data-a="importarFrota"' + (ui.frotaImp && ui.frotaImp.carregando ? ' disabled' : '') + '>' + (ui.frotaImp && ui.frotaImp.carregando ? 'Lendo o CONSTRULOG…' : 'Importar da Frota e do Rastreio de carga') + '</button>' : window.RC_HOST ? ' Peça a um administrador para importar a frota.' : '') + '</p>') +
       '<h3 style="font-size:14px;text-transform:uppercase;letter-spacing:.04em;margin:14px 0 6px">Motoristas</h3>' + (ms.length ? '<div class="tbl-wrap"><table><tbody>' + ms.map(linhaM).join('') + '</tbody></table></div>' : '<p class="muted small">Nenhum motorista cadastrado. Cadastre em Cadastros › Motoristas.</p>') + '</div>';
   }
   function vVazio() {
