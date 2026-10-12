@@ -114,7 +114,8 @@
   // ---------------- dados derivados ----------------
   // disponibilidade marcada no Painel para cada dia (operadores podem alterar)
   const dispDia = (d) => { const x = ST.disponibilidade.get(d) || {}; return { veiculos: x.veiculos || {}, motoristas: x.motoristas || {} }; };
-  const motDisp = (m, d) => { const x = dispDia(d).motoristas[m.id]; return x === true ? true : x === false ? false : RE.motoristaDisponivel(m, d); };
+  const motRecente = (m, d) => (m.ultimoUso ? m.ultimoUso >= RE.addDays(d, -30) : !m.origem);
+  const motDisp = (m, d) => { const x = dispDia(d).motoristas[m.id]; return x === true ? true : x === false ? false : RE.motoristaDisponivel(m, d) && motRecente(m, d); };
   const cidadeCoord = (c) => { const m = RE.findMun(c.id); return Object.assign({}, c, { lat: c.lat != null ? c.lat : m && m.lat, lon: c.lon != null ? c.lon : m && m.lon }); };
   let CTX = null, CTX_V = -1;
   function ctx() {
@@ -769,30 +770,22 @@
   }
   function vDisponibilidade() {
     const d = ui.data, dd = dispDia(d);
-    const vs = [...ST.veiculos.values()].sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR', { numeric: true }));
-    const ms = [...ST.motoristas.values()].sort((a, b) => (motDisp(b, d) - motDisp(a, d)) || (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+    if (window.RC_HOST && ST.admin && !ui.frotaAuto) { ui.frotaAuto = true; setTimeout(() => importarFrota(), 50); }
+    const todos = [...ST.motoristas.values()];
+    const q = RE.norm(ui.motQ || '');
+    const lista = (q ? todos.filter((m) => RE.norm(m.nome).includes(q)) : todos.filter((m) => motRecente(m, d) || dd.motoristas[m.id] === true))
+      .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
     const pl = plano();
     const noPlano = new Set(pl ? pl.rotas.map((r) => r.motoristaId || (ST.veiculos.get(r.veiculoId) || {}).motoristaId).filter(Boolean) : []);
-    const linhaV = (v) => {
-      const m = v.motoristaId ? ST.motoristas.get(v.motoristaId) : null;
-      let bloq = v.ativo === false ? 'inativo' : (v.manutIni && v.manutFim && d >= v.manutIni && d <= v.manutFim) ? 'manutenção' : '';
-      const marcado = !bloq && dd.veiculos[v.id] !== false;
-      const semMot = m && !motDisp(m, d);
-      return '<tr><td style="width:30px"><input type="checkbox" data-disp="v|' + esc(v.id) + '"' + (marcado ? ' checked' : '') + (bloq ? ' disabled' : '') + ' aria-label="' + esc(v.nome) + ' disponível"></td><td><b>' + esc(v.nome) + '</b>' + (v.placa ? ' <span class="plate">' + esc(v.placa) + '</span>' : '') + '<div class="tiny">' + TIPO[v.tipo] + (m ? ' · ' + esc(m.nome) : '') + '</div></td><td class="r">' + (bloq ? '<span class="chip bad">' + bloq + '</span>' : !marcado ? '<span class="chip bad">fora hoje</span>' : semMot ? '<span class="chip warn">sem motorista</span>' : '<span class="chip ok">disponível</span>') + '</td></tr>';
-    };
-    const linhaM = (m) => {
-      const base = RE.motoristaDisponivel(m, d);
-      const marcado = motDisp(m, d);
-      const motivo = m.ativo === false ? 'inativo no cadastro' : m.disponivel === false ? 'indisponível no cadastro' : !base ? 'ausente no cadastro' : '';
-      const vf = vs.filter((v) => v.motoristaId === m.id).map((v) => v.nome).join(', ');
-      return '<tr><td style="width:30px"><input type="checkbox" data-disp="m|' + esc(m.id) + '"' + (marcado ? ' checked' : '') + ' aria-label="' + esc(m.nome) + ' disponível"></td><td><b>' + esc(m.nome) + '</b><div class="tiny">' + esc(vf || 'sem veículo fixo') + (m.telefone ? ' · ' + esc(m.telefone) : '') + (m.ultimoUso ? ' · rodou em ' + dBR(m.ultimoUso).slice(0, 5) : '') + (motivo ? ' · ' + motivo : '') + '</div></td><td class="r">' + (noPlano.has(m.id) ? '<span class="chip info">escalado</span> ' : '') + (marcado ? '<span class="chip ok">pode contar</span>' : '<span class="chip bad">não conta</span>') + '</td></tr>';
-    };
-    const nv = vs.filter((v) => RE.veicDisponivel(ctx().veiculos.find((x) => x.id === v.id) || v, d)).length;
-    const nm = ms.filter((m) => motDisp(m, d)).length;
-    return '<div class="card"><div class="card-h"><h2>Disponíveis em ' + dBR(d).slice(0, 5) + '</h2><span class="small muted">' + nv + ' de ' + vs.length + ' veículos · ' + nm + ' de ' + ms.length + ' motoristas</span></div>' +
-      '<p class="tiny" style="margin-bottom:8px">Marque os motoristas com quem você pode contar neste dia. O roteirizador usa o <b>menor número possível</b> deles: só abre mais um veículo quando as entregas não cabem nos que já saem. Nunca escala mais motoristas do que os marcados. Veículo cujo motorista fixo não foi marcado fica de fora.</p>' +
-      '<h3 style="font-size:14px;text-transform:uppercase;letter-spacing:.04em;margin:6px 0">Veículos</h3>' + (vs.length ? '<div class="tbl-wrap"><table><tbody>' + vs.map(linhaV).join('') + '</tbody></table></div>' : '<p class="muted small">Nenhum veículo cadastrado.' + (window.RC_HOST && ST.admin ? ' <button class="btn sm pri" data-a="importarFrota"' + (ui.frotaImp && ui.frotaImp.carregando ? ' disabled' : '') + '>' + (ui.frotaImp && ui.frotaImp.carregando ? 'Lendo o CONSTRULOG…' : 'Importar da Frota e do Rastreio de carga') + '</button>' : window.RC_HOST ? ' Peça a um administrador para importar a frota.' : '') + '</p>') +
-      '<div class="row" style="margin:14px 0 6px"><h3 style="font-size:14px;text-transform:uppercase;letter-spacing:.04em;margin:0">Motoristas</h3><span class="spacer"></span>' + (ms.length ? '<span class="small muted">' + nm + ' marcado(s)' + (pl ? ' · ' + noPlano.size + ' escalado(s) no plano' : '') + '</span><button class="btn sm" data-a="dispTodos" data-v="1">Marcar todos</button><button class="btn sm" data-a="dispTodos" data-v="0">Desmarcar todos</button>' : '') + '</div>' + (ms.length ? '<div class="tbl-wrap"><table><tbody>' + ms.map(linhaM).join('') + '</tbody></table></div>' : '<p class="muted small">Nenhum motorista cadastrado.' + (window.RC_HOST && ST.admin && ST.veiculos.size ? ' <button class="btn sm pri" data-a="importarFrota">Importar da Frota e do Rastreio de carga</button>' : window.RC_HOST ? '' : ' Cadastre em Cadastros › Motoristas.') + '</p>') + '</div>';
+    const nm = todos.filter((m) => motDisp(m, d)).length;
+    const item = (m) => '<label class="dsp"><input type="checkbox" data-disp="m|' + esc(m.id) + '"' + (motDisp(m, d) ? ' checked' : '') + '><span><b>' + esc(m.nome) + '</b>' + (noPlano.has(m.id) ? ' <span class="chip info">escalado</span>' : '') + '<small>' + (m.ultimoUso ? 'rodou ' + dBR(m.ultimoUso).slice(0, 5) : 'sem registro recente') + '</small></span></label>';
+    const carregando = ui.frotaImp && ui.frotaImp.carregando;
+    let h = '<div class="card"><div class="card-h"><h2>Motoristas em ' + dBR(d).slice(0, 5) + '</h2><span class="small muted">' + nm + ' disponível(is)' + (pl ? ' · ' + noPlano.size + ' escalado(s)' : '') + (carregando ? ' · atualizando…' : '') + '</span></div>';
+    h += '<input id="fMotQ" class="dsp-q" placeholder="Procurar motorista que não rodou nos últimos 30 dias" value="' + esc(ui.motQ || '') + '">';
+    h += lista.length ? '<div class="dsp-grid">' + lista.map(item).join('') + '</div>'
+      : '<p class="muted small" style="margin-top:8px">' + (q ? 'Nenhum motorista com esse nome.' : carregando ? 'Lendo o Rastreio de carga…' : 'Nenhum motorista rodou nos últimos 30 dias.' + (window.RC_HOST && ST.admin ? ' <button class="btn sm pri" data-a="importarFrota">Buscar no Rastreio de carga</button>' : '')) + '</p>';
+    h += '</div>';
+    return h;
   }
   function vVazio() {
     if (window.RC_HOST) return '<div class="card empty"><h3>Nenhuma nota no roteirizador</h3><p>Traga os CTRCs disponíveis para entrega do SSW, importe XMLs, ZIPs, DANFEs em PDF ou planilhas, ou insira notas à mão.</p><div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-a="irSSW">Buscar no SSW</button><button class="btn" data-a="tab" data-v="notas">' + I.up2 + 'Importar notas</button></div></div>';
@@ -1011,10 +1004,10 @@
   const TIPO_FROTA = { FIORINO: 'fiorino', VAN: 'van', 'UTILITARIO': 'van', 'VAN COM TUBO': 'tubos', 'VAN TUBO': 'tubos', 'VAN DE TUBOS': 'tubos' };
   const titulo = (s) => String(s || '').toLowerCase().replace(/(^|\s)(\S)/g, (m, a, b) => a + b.toUpperCase()).replace(/\b(De|Da|Do|Dos|Das|E)\b/g, (m) => m.toLowerCase());
   async function importarFrota() {
-    if (!window.RC_HOST) return;
+    if (!window.RC_HOST || (ui.frotaImp && ui.frotaImp.carregando)) return;
     ui.frotaImp = { carregando: true }; render();
     let r;
-    try { r = await window.RC_HOST.frotaERastreio(14); } catch (e) { ui.frotaImp = null; toast('Falha ao ler o CONSTRULOG: ' + e.message, true); render(); return; }
+    try { r = await window.RC_HOST.frotaERastreio(30); } catch (e) { ui.frotaImp = null; toast('Falha ao ler o CONSTRULOG: ' + e.message, true); render(); return; }
     const res = { novosV: 0, novosM: 0, atual: 0, avisos: r.avisos || [] };
     const tel = new Map((r.contatos || []).map((c) => [RE.norm(c.driver_name), c.phone]));
     // motoristas: rastreio dos últimos dias + pessoas da Frota com função de motorista
@@ -1039,7 +1032,7 @@
         await salvar('motoristas', ex.id, q); res.atual++; idDoMot.set(k, ex.id);
       } else {
         const id = 'm-' + hash(k);
-        await salvar('motoristas', id, { id, nome: titulo(o.nome), telefone: fone, diaria: 0, ativo: true, disponivel: true, ultimoUso: o.ultimo || null, ultimaPlaca: o.placa, cnh: (o.pessoa && o.pessoa.cnh) || '', cnhValidade: (o.pessoa && o.pessoa.cnhExpiry) || '', origem: o.dias ? 'Rastreio de carga (' + o.dias + ' dia(s) em 14)' : o.daFrota ? 'Motorista habitual na Frota' : 'Frota' });
+        await salvar('motoristas', id, { id, nome: titulo(o.nome), telefone: fone, diaria: 0, ativo: true, disponivel: true, ultimoUso: o.ultimo || null, ultimaPlaca: o.placa, cnh: (o.pessoa && o.pessoa.cnh) || '', cnhValidade: (o.pessoa && o.pessoa.cnhExpiry) || '', origem: o.dias ? 'Rastreio de carga (' + o.dias + ' dia(s) em 30)' : o.daFrota ? 'Motorista habitual na Frota' : 'Frota' });
         res.novosM++; idDoMot.set(k, id);
       }
     }
@@ -1312,7 +1305,7 @@
     const d = !ST.admin;
     if (window.RC_HOST && ST.admin && (ui.cadTab === 'veiculos' || ui.cadTab === 'motoristas')) {
       const fi = ui.frotaImp;
-      h += '<div class="card" style="margin-bottom:14px"><div class="row"><div style="flex:1;min-width:240px"><b>Frota e Rastreio de carga do CONSTRULOG</b><div class="small muted">Traz as placas da tela Frota e os motoristas que rodaram nos últimos 14 dias, com telefone e última placa usada. Capacidade e medidas entram com o padrão do tipo, marcadas para conferir.</div></div><button class="btn pri" data-a="importarFrota"' + (fi && fi.carregando ? ' disabled' : '') + '>' + (fi && fi.carregando ? 'Lendo o CONSTRULOG…' : 'Importar agora') + '</button></div>' +
+      h += '<div class="card" style="margin-bottom:14px"><div class="row"><div style="flex:1;min-width:240px"><b>Frota e Rastreio de carga do CONSTRULOG</b><div class="small muted">Traz as placas da tela Frota e os motoristas que rodaram nos últimos 30 dias, com telefone e última placa usada. Capacidade e medidas entram com o padrão do tipo, marcadas para conferir.</div></div><button class="btn pri" data-a="importarFrota"' + (fi && fi.carregando ? ' disabled' : '') + '>' + (fi && fi.carregando ? 'Lendo o CONSTRULOG…' : 'Importar agora') + '</button></div>' +
         (fi && !fi.carregando ? '<div class="note ' + (fi.avisos.length ? 'warn' : 'ok') + ' small" style="margin-top:10px">' + fi.novosV + ' veículo(s) e ' + fi.novosM + ' motorista(s) novos, ' + fi.atual + ' atualizado(s).' + (fi.avisos.length ? ' ' + esc(fi.avisos.join(' · ')) : '') + '</div>' : '') + '</div>';
     }
     if (ui.cadTab === 'veiculos') {
@@ -1503,7 +1496,7 @@
       const [t, id] = el.dataset.disp.split('|'); const d = ui.data; const dd = dispDia(d);
       const o = { data: d, veiculos: Object.assign({}, dd.veiculos), motoristas: Object.assign({}, dd.motoristas) };
       const k = t === 'v' ? 'veiculos' : 'motoristas';
-      if (!el.checked) o[k][id] = false; else if (t === 'm' && !RE.motoristaDisponivel(ST.motoristas.get(id), d)) o[k][id] = true; else delete o[k][id];
+      if (!el.checked) o[k][id] = false; else if (t === 'm' && !(RE.motoristaDisponivel(ST.motoristas.get(id), d) && motRecente(ST.motoristas.get(id), d))) { o[k][id] = true; ui.motQ = ''; } else delete o[k][id];
       await salvar('disponibilidade', d, o);
       const nome = t === 'v' ? (ST.veiculos.get(id) || {}).nome : (ST.motoristas.get(id) || {}).nome;
       registrar('Disponibilidade', (nome || id) + (el.checked ? ' disponível' : ' fora') + ' em ' + dBR(d));
@@ -1550,6 +1543,7 @@
   let qT = null;
   document.addEventListener('input', (e) => {
     if (e.target.id === 'fSSWq') { clearTimeout(qT); const v = e.target.value; qT = setTimeout(() => { ui.sswFiltro.q = v; render(); const i = $('#fSSWq'); if (i) { i.focus(); i.setSelectionRange(v.length, v.length); } }, 250); return; }
+    if (e.target.id === 'fMotQ') { clearTimeout(qT); const v = e.target.value; qT = setTimeout(() => { ui.motQ = v; render(); const i = $('#fMotQ'); if (i) { i.focus(); i.setSelectionRange(v.length, v.length); } }, 200); return; }
     if (e.target.id === 'fQ') { clearTimeout(qT); const v = e.target.value; qT = setTimeout(() => { ui.notasFiltro.q = v; ui.notasPag = 0; render(); const i = $('#fQ'); if (i) { i.focus(); i.setSelectionRange(v.length, v.length); } }, 250); }
   });
   document.addEventListener('keydown', (e) => {
