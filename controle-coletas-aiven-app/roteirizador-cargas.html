@@ -211,7 +211,7 @@ details>summary{cursor:pointer;font-weight:600}
   .stop .act{grid-column:1/-1;justify-content:flex-start}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
-.dsp-q{width:100%;padding:8px 10px;border:1px solid var(--line,#d5dbe3);border-radius:8px;font:inherit;margin-bottom:10px;background:var(--surface,#fff);color:inherit}.dsp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px}.dsp{display:flex;gap:8px;align-items:flex-start;padding:7px 9px;border:1px solid var(--line,#d5dbe3);border-radius:8px;cursor:pointer}.dsp input{margin-top:3px}.dsp span{display:flex;flex-direction:column;min-width:0}.dsp small{opacity:.7;font-size:11.5px}.dsp:has(input:checked){border-color:#2f9e61;background:rgba(47,158,97,.07)}
+.dsp-q{width:100%;padding:8px 10px;border:1px solid var(--line,#d5dbe3);border-radius:8px;font:inherit;margin-bottom:10px;background:var(--surface,#fff);color:inherit}.dsp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px}.dsp{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:7px 9px;border:1px solid var(--line,#d5dbe3);border-radius:8px}.dsp label{display:flex;gap:8px;align-items:flex-start;cursor:pointer;min-width:0;flex:1}.dsp input{margin-top:3px}.dsp.com-rota{border-color:var(--info,#2b6cb0);background:rgba(43,108,176,.07)}.dsp span{display:flex;flex-direction:column;min-width:0}.dsp small{opacity:.7;font-size:11.5px}.dsp:has(input:checked){border-color:#2f9e61;background:rgba(47,158,97,.07)}
 </style>
 <div id="app"></div>
 
@@ -1975,6 +1975,30 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
   const motDisp = (m, d) => { const x = dispDia(d).motoristas[m.id]; return x === true ? true : x === false ? false : RE.motoristaDisponivel(m, d) && motRecente(m, d); };
   const cidadeCoord = (c) => { const m = RE.findMun(c.id); return Object.assign({}, c, { lat: c.lat != null ? c.lat : m && m.lat, lon: c.lon != null ? c.lon : m && m.lon }); };
   let CTX = null, CTX_V = -1;
+  // Cada motorista marcado no dia leva um veículo: o fixo dele, ou um veículo livre (de preferência a última placa que ele usou)
+  function veiculosComMotorista(d) {
+    const vs = [...ST.veiculos.values()].sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR', { numeric: true }));
+    const dd = dispDia(d);
+    const usavel = (v) => RE.veicDisponivel(v, d) && dd.veiculos[v.id] !== false;
+    if (!ST.motoristas.size) return vs.map((v) => (dd.veiculos[v.id] === false ? Object.assign({}, v, { indispDia: true }) : v));
+    const disp = [...ST.motoristas.values()].filter((m) => motDisp(m, d));
+    const comVeic = new Set(vs.filter((v) => usavel(v) && v.motoristaId && disp.some((m) => m.id === v.motoristaId)).map((v) => v.motoristaId));
+    const pool = disp.filter((m) => !comVeic.has(m.id));
+    const placa = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const out = new Map();
+    for (const v of vs) {
+      if (!usavel(v)) { out.set(v.id, dd.veiculos[v.id] === false ? Object.assign({}, v, { indispDia: true }) : v); continue; }
+      if (v.motoristaId && comVeic.has(v.motoristaId)) out.set(v.id, v);
+    }
+    const livres = vs.filter((v) => usavel(v) && !out.has(v.id));
+    for (const m of pool.slice()) {
+      const k = livres.findIndex((v) => m.ultimaPlaca && placa(v.placa) === placa(m.ultimaPlaca));
+      if (k >= 0) { const v = livres.splice(k, 1)[0]; out.set(v.id, Object.assign({}, v, { motoristaId: m.id, motoristaDoDia: true })); pool.splice(pool.indexOf(m), 1); }
+    }
+    for (const m of pool) { if (!livres.length) break; const v = livres.shift(); out.set(v.id, Object.assign({}, v, { motoristaId: m.id, motoristaDoDia: true })); }
+    for (const v of livres) out.set(v.id, Object.assign({}, v, { motoristaIndisponivel: (v.motoristaId && (ST.motoristas.get(v.motoristaId) || {}).nome) || 'sem motorista no dia' }));
+    return vs.map((v) => out.get(v.id));
+  }
   function ctx() {
     if (CTX_V === VER && CTX && CTX.data === ui.data) return CTX;
     const cidades = {};
@@ -1982,7 +2006,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     CTX = {
       cfg: ST.cfg, cidades, motoristas: Object.fromEntries(ST.motoristas), clientes: Object.fromEntries(ST.clientes),
       produtos: [...ST.produtos.values()],
-      veiculos: [...ST.veiculos.values()].map((v) => { const m = v.motoristaId ? ST.motoristas.get(v.motoristaId) : null; let o = v; if (m && !motDisp(m, ui.data)) o = Object.assign({}, o, { motoristaIndisponivel: m.nome || true }); if (dispDia(ui.data).veiculos[v.id] === false) o = Object.assign({}, o, { indispDia: true }); return o; }).sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR', { numeric: true })),
+      veiculos: veiculosComMotorista(ui.data),
       base: ST.cfg.base, data: ui.data,
       maxMotoristas: ST.motoristas.size ? [...ST.motoristas.values()].filter((m) => motDisp(m, ui.data)).length : undefined,
     };
@@ -2635,10 +2659,13 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     const pl = plano();
     const noPlano = new Set(pl ? pl.rotas.map((r) => r.motoristaId || (ST.veiculos.get(r.veiculoId) || {}).motoristaId).filter(Boolean) : []);
     const nm = todos.filter((m) => motDisp(m, d)).length;
-    const item = (m) => '<label class="dsp"><input type="checkbox" data-disp="m|' + esc(m.id) + '"' + (motDisp(m, d) ? ' checked' : '') + '><span><b>' + esc(m.nome) + '</b>' + (noPlano.has(m.id) ? ' <span class="chip info">escalado</span>' : '') + '<small>' + (m.ultimoUso ? 'rodou ' + dBR(m.ultimoUso).slice(0, 5) : 'sem registro recente') + '</small></span></label>';
+    const rotaDe = new Map(pl ? pl.rotas.filter((r) => r.motoristaId).map((r) => [r.motoristaId, r]) : []);
+    const item = (m) => { const r = rotaDe.get(m.id); return '<div class="dsp' + (r ? ' com-rota' : '') + '"><label><input type="checkbox" data-disp="m|' + esc(m.id) + '"' + (motDisp(m, d) ? ' checked' : '') + '><span><b>' + esc(m.nome) + '</b><small>' + (r ? esc(r.veiculoNome) + ' · ' + r.paradas.length + ' entregas · ' + nf(r.kg, 0) + ' kg' : pl && motDisp(m, d) ? 'reserva: não precisou sair' : m.ultimoUso ? 'rodou ' + dBR(m.ultimoUso).slice(0, 5) : 'sem registro recente') + '</small></span></label>' + (r ? '<button class="btn sm pri" data-a="verCarga" data-v="' + esc(r.veiculoId) + '">Ver carga</button>' : '') + '</div>'; };
     const carregando = ui.frotaImp && ui.frotaImp.carregando;
     let h = '<div class="card"><div class="card-h"><h2>Motoristas em ' + dBR(d).slice(0, 5) + '</h2><span class="small muted">' + nm + ' disponível(is)' + (pl ? ' · ' + noPlano.size + ' escalado(s)' : '') + (carregando ? ' · atualizando…' : '') + '</span></div>';
     h += '<input id="fMotQ" class="dsp-q" placeholder="Procurar motorista que não rodou nos últimos 30 dias" value="' + esc(ui.motQ || '') + '">';
+    const nNotas = RE.elegiveis(notasEnr(), d, ctx()).notas.length;
+    h += '<div class="row" style="margin-bottom:10px"><button class="btn go" data-a="otimizar"' + (nNotas && nm ? '' : ' disabled') + '>' + I.play + (pl ? 'Remontar rotas' : 'Montar rotas do dia') + '</button><span class="small muted">' + (!nNotas ? 'Nenhuma nota liberada para este dia. Traga as notas do SSW em Notas.' : !nm ? 'Marque ao menos um motorista.' : nNotas + ' nota(s) liberadas. ' + (pl ? 'Mudou alguém? Remonte para atualizar.' : 'Cada motorista marcado pode levar um veículo; o sistema usa só os necessários.')) + '</span></div>';
     h += lista.length ? '<div class="dsp-grid">' + lista.map(item).join('') + '</div>'
       : '<p class="muted small" style="margin-top:8px">' + (q ? 'Nenhum motorista com esse nome.' : carregando ? 'Lendo o Rastreio de carga…' : 'Nenhum motorista rodou nos últimos 30 dias.' + (window.RC_HOST && ST.admin ? ' <button class="btn sm pri" data-a="importarFrota">Buscar no Rastreio de carga</button>' : '')) + '</p>';
     h += '</div>';
