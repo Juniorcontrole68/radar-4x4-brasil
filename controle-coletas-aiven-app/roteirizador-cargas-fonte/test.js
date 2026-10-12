@@ -202,5 +202,26 @@ console.log('400 notas:', Date.now() - t1, 'ms; veículos', pb.totais.veiculos, 
 ok(Date.now() - t1 < 15000, 'desempenho com 400 notas');
 for (const r of pb.rotas) ok(r.ok, 'rota viável (grande) ' + r.motivos.join(';'));
 
+// menos motoristas: com frota sobrando, usa o menor número de veículos; nunca passa do número de motoristas marcados
+{
+  const cfgX = Object.assign({}, RE.CFG_PADRAO, { minEntregas: 0 });
+  const vs = [];
+  for (let k = 1; k <= 8; k++) vs.push(Object.assign({}, RE.VEICULOS_PADRAO[1], { id: 'van-x' + k, nome: 'Van X' + k, exemplo: false }));
+  const ctxX = Object.assign({}, ctx, { cfg: cfgX, veiculos: vs });
+  const todas = xmlsTodos.map((x) => { const n = RE.parseNFeXML(x.xml).nota; n.id = n.chave; n.status = 'pronta'; n.prazoEfetivo = '2026-10-12'; return RE.enriquecer(n, ctxX); });
+  const pA = RE.planejar(todas, '2026-10-12', ctxX, { tempoMs: 4000 });
+  const pB = RE.planejar(todas, '2026-10-12', Object.assign({}, ctxX, { cfg: Object.assign({}, cfgX, { minimizarMotoristas: false }) }), { tempoMs: 4000 });
+  console.log('menos motoristas:', pA.rotas.length, 'veículos (sem a regra:', pB.rotas.length + ')', 'fora', pA.naoRoteirizadas.length);
+  ok(pA.rotas.length <= pB.rotas.length, 'regra de menos motoristas não usa mais veículos');
+  ok(pA.naoRoteirizadas.length <= pB.naoRoteirizadas.length, 'menos motoristas sem deixar entrega a mais de fora');
+  const kgTot = pA.rotas.reduce((s, r) => s + r.kg, 0);
+  ok(pA.rotas.length <= Math.ceil(kgTot / 1500) + 2, 'número de veículos perto do mínimo pela carga');
+  const pC = RE.planejar(todas, '2026-10-12', Object.assign({}, ctxX, { maxMotoristas: 2 }), { tempoMs: 3000 });
+  ok(pC.rotas.length <= 2, 'não escala mais motoristas do que os marcados (' + pC.rotas.length + ')');
+  eq(pC.motoristasDisponiveis, 2, 'plano informa motoristas disponíveis');
+  const pD = RE.planejar(todas, '2026-10-12', Object.assign({}, ctxX, { maxMotoristas: 0 }), {});
+  ok(pD.rotas.length === 0 && pD.naoRoteirizadas.every((u) => /motorista/.test(u.motivo)), 'sem motorista marcado ninguém sai e o motivo diz isso');
+}
+
 console.log('\n' + (total - falhas) + '/' + total + ' verificações passaram');
 process.exit(falhas ? 1 : 0);

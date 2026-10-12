@@ -957,17 +957,19 @@
     opcoes.sort((x, y) => (x.ops.length - y.ops.length) || (this.peso(y.r.seq) - this.peso(x.r.seq)));
     const semVeic = [];
     for (const o of opcoes) {
-      const op = o.ops.find((p) => livres.includes(p.v));
+      const op = (this.ctx.maxMotoristas >= 0 && this.V.length - livres.length >= this.ctx.maxMotoristas) ? null : o.ops.find((p) => livres.includes(p.v));
       if (op) { o.r.veic = op.v; o.r.a = op.a; livres.splice(livres.indexOf(op.v), 1); }
       else { o.r.veic = null; semVeic.push(o.r); }
     }
     return { livres, semVeic };
   };
+  Solver.prototype.pv = function () { const p = +this.cfg.pesoVeiculo || 0; return this.cfg.minimizarMotoristas === false ? p : Math.max(p, 30000); };
+  Solver.prototype.cabeNova = function (rotas) { const mx = this.ctx.maxMotoristas; return !(mx >= 0) || rotas.filter((r) => r.veic && r.seq.length).length < mx; };
   Solver.prototype.peso = function (seq) { return seq.reduce((s, i) => s + this.S[i].kg + this.S[i].m3 * 300, 0); };
   Solver.prototype.penal = function (i) { const s = this.S[i]; return s.obrigatoria ? (s.atrasada || s.prioridade ? 2e6 : 1e6) : (this.opts.consolidar ? 0 : 5e4 + s.receita); };
   Solver.prototype.objetivo = function (rotas, fora) {
     let v = 0;
-    for (const r of rotas) if (r.veic && r.seq.length) v += r.a.lucro - (this.cfg.pesoVeiculo || 0);
+    for (const r of rotas) if (r.veic && r.seq.length) v += r.a.lucro - this.pv();
     for (const i of fora) v -= this.penal(i);
     return v;
   };
@@ -1071,7 +1073,7 @@
         const usados = outras.map((r) => r.veic);
         if (new Set(usados).size !== usados.length) continue;
         const novo = this.objetivo(outras, fora);
-        if (novo > obj + 1e-6) { decisoes.push('Viagem de ' + (alvo.veic ? alvo.veic.nome : 'um veículo') + ' eliminada: ' + alvo.seq.length + ' parada(s) redistribuída(s), ganho de R$ ' + round(novo - obj, 2).toFixed(2).replace('.', ',') + '.'); rotas = outras; obj = novo; melhorou = true; break; }
+        if (novo > obj + 1e-6) { decisoes.push('Viagem de ' + (alvo.veic ? alvo.veic.nome : 'um veículo') + ' eliminada: ' + alvo.seq.length + ' parada(s) redistribuída(s), ' + (this.cfg.minimizarMotoristas === false ? '' : 'um motorista a menos no dia, ') + 'ganho de R$ ' + round(novo - obj - (this.pv() - (+this.cfg.pesoVeiculo || 0)), 2).toFixed(2).replace('.', ',') + '.'); rotas = outras; obj = novo; melhorou = true; break; }
       }
       if (melhorou) continue;
       // 4b) realocar uma parada para outra rota
@@ -1085,7 +1087,7 @@
             if (rb === ra) continue;
             const ins = this.melhorInsercao(rb.veic, rb.seq, i);
             if (!ins) continue;
-            const delta = (aA.vazio ? 0 : aA.lucro) + ins.a.lucro - ra.a.lucro - rb.a.lucro + (aA.vazio ? (this.cfg.pesoVeiculo || 0) : 0);
+            const delta = (aA.vazio ? 0 : aA.lucro) + ins.a.lucro - ra.a.lucro - rb.a.lucro + (aA.vazio ? this.pv() : 0);
             if (delta > 0.5) {
               ra.seq = semI; ra.a = aA; rb.seq = ins.seq; rb.a = ins.a;
               if (!semI.length) rotas = rotas.filter((r) => r !== ra);
@@ -1101,8 +1103,8 @@
         for (const r of rotas) { const ins = this.melhorInsercao(r.veic, r.seq, i); if (ins && (!best || ins.a.lucro - r.a.lucro > best.d)) best = { r, ins, d: ins.a.lucro - r.a.lucro }; }
         if (!best) {
           // abrir veículo livre
-          const livres = this.V.filter((v) => !rotas.some((r) => r.veic === v));
-          for (const v of livres) { const a = this.avaliar(v, [i]); if (a.ok && (!best || a.lucro > best.d)) best = { nova: { seq: [i], veic: v, a }, d: a.lucro }; }
+          const livres = this.cabeNova(rotas) ? this.V.filter((v) => !rotas.some((r) => r.veic === v)) : [];
+          for (const v of livres) { const a = this.avaliar(v, [i]); if (a.ok && (!best || a.lucro > best.d)) best = { nova: { seq: [i], veic: v, a }, d: a.lucro - this.pv() }; }
         }
         if (best && best.d + this.penal(i) > 0) {
           if (best.nova) rotas.push(best.nova); else { best.r.seq = best.ins.seq; best.r.a = best.ins.a; }
@@ -1111,7 +1113,7 @@
         }
         // troca em cadeia: tirar uma parada j de uma rota para abrir espaço para i, e levar j para outra rota ou veículo livre
         let troca = null;
-        const livres = this.V.filter((v) => !rotas.some((r) => r.veic === v));
+        const livres = this.cabeNova(rotas) ? this.V.filter((v) => !rotas.some((r) => r.veic === v)) : [];
         for (const r of rotas) {
           if (Date.now() - t0 > limite) break;
           for (const j of r.seq) {
@@ -1125,7 +1127,7 @@
               const insJ = this.melhorInsercao(r2.veic, r2.seq, j);
               if (insJ && (!dest || insJ.a.lucro - r2.a.lucro > dest.d)) dest = { r2, insJ, d: insJ.a.lucro - r2.a.lucro };
             }
-            for (const v of livres) { const a = this.avaliar(v, [j]); if (a.ok && (!dest || a.lucro - (this.cfg.pesoVeiculo || 0) > dest.d)) dest = { nova: { seq: [j], veic: v, a }, d: a.lucro - (this.cfg.pesoVeiculo || 0) }; }
+            for (const v of livres) { const a = this.avaliar(v, [j]); if (a.ok && (!dest || a.lucro - this.pv() > dest.d)) dest = { nova: { seq: [j], veic: v, a }, d: a.lucro - this.pv() }; }
             if (!dest) continue;
             const ganho = insI.a.lucro - r.a.lucro + dest.d + this.penal(i);
             if (ganho > 0.5 && (!troca || ganho > troca.ganho)) troca = { r, insI, dest, ganho };
@@ -1274,6 +1276,7 @@
       const s = stops[i];
       let motivo = (solver.motivoFora && solver.motivoFora[i]) || (s.obrigatoria ? 'Sem veículo ou capacidade disponível' : 'Pode aguardar o próximo dia de rota');
       if (!veics.length) motivo = 'Nenhum veículo disponível';
+      else if (ctx.maxMotoristas === 0) motivo = 'Nenhum motorista marcado como disponível no dia';
       else {
         const viavel = (solver.motivoFora && solver.motivoFora[i]) || solver.tipos.some((v) => solver.avaliar(v, [i]).ok);
         if (!viavel) motivo = (solver.avaliar(solver.tipos[0], [i]).motivos || ['Não cabe em nenhum veículo']).join('; ');
@@ -1285,7 +1288,7 @@
       data, criadoEm: new Date().toISOString(), rotas, naoRoteirizadas,
       pendentes: pendentes.map((p) => ({ nota: p.nota.id, motivo: p.motivo })),
       decisoes: res.decisoes, totais: tot, estimativa: rotas.some((r) => r.estimativa),
-      veiculosDisponiveis: veics.length, tempoMs: res.tempoMs, opcoes: { consolidar: !!opts.consolidar, tipos: opts.tipos || null, cidades: opts.cidades || null },
+      veiculosDisponiveis: veics.length, motoristasDisponiveis: ctx.maxMotoristas >= 0 ? ctx.maxMotoristas : null, tempoMs: res.tempoMs, opcoes: { consolidar: !!opts.consolidar, tipos: opts.tipos || null, cidades: opts.cidades || null },
     };
   };
   RE.totais = (rotas) => {
@@ -1320,7 +1323,8 @@
       res.push({ nome: c.nome, veiculos: p.totais.veiculos, entregas: p.totais.entregas, foraTotal: p.naoRoteirizadas.length, obrigFora, km: p.totais.km, receita: p.totais.receita, custo: p.totais.custo, lucro: p.totais.lucro, margem: p.totais.margem, frota: c.frota.map((v) => v.nome) });
     }
     // ordenação: atende todas as obrigatórias, depois mais entregas, depois lucro, depois menos veículos
-    res.sort((a, b) => (a.obrigFora - b.obrigFora) || (b.entregas - a.entregas) || (b.lucro - a.lucro) || (a.veiculos - b.veiculos));
+    const menosMot = !ctx.cfg || ctx.cfg.minimizarMotoristas !== false;
+    res.sort((a, b) => (a.obrigFora - b.obrigFora) || (b.entregas - a.entregas) || (menosMot ? (a.veiculos - b.veiculos) || (b.lucro - a.lucro) : (b.lucro - a.lucro) || (a.veiculos - b.veiculos)));
     if (res.length) {
       const m = res[0];
       m.melhor = true;
@@ -1328,6 +1332,7 @@
       for (const o of res.slice(1)) {
         if (o.obrigFora > m.obrigFora) motivos.push(o.nome + ': deixa ' + o.obrigFora + ' entrega(s) obrigatória(s) sem rota');
         else if (o.entregas < m.entregas) motivos.push(o.nome + ': atende ' + (m.entregas - o.entregas) + ' entrega(s) a menos');
+        else if (menosMot && o.veiculos > m.veiculos) motivos.push(o.nome + ': usa ' + (o.veiculos - m.veiculos) + ' motorista(s) a mais');
         else if (o.lucro < m.lucro) motivos.push(o.nome + ': lucro R$ ' + round(m.lucro - o.lucro, 2).toFixed(2).replace('.', ',') + ' menor');
       }
       m.porque = 'Atende ' + m.entregas + ' entrega(s) com ' + m.veiculos + ' veículo(s), lucro de R$ ' + m.lucro.toFixed(2).replace('.', ',') + (m.margem != null ? ' (margem ' + String(m.margem).replace('.', ',') + '%)' : '') + '.';
@@ -1367,7 +1372,7 @@
     fatorRodoviario: 1.25, velocidadeMedia: 55, kmUrbano: 4, inicioJornada: '07:00', jornadaMaxHoras: 10,
     descargaPorNotaMin: 5, precoDiesel: 6.19, precoGasolina: 6.29, precoEtanol: 4.39,
     folgaEncaixeMm: 10, folgaSecaoMm: 5, niveisEncaixe: 3, cargaInternaKgM: 25, aproveitamento: 0.85,
-    cubagemKgM3: 0, prazoPadraoDias: 0, pesoVeiculo: 50, consolidar: false, combos: [], minEntregas: 20, minExcecaoPrazo: true,
+    cubagemKgM3: 0, prazoPadraoDias: 0, pesoVeiculo: 50, consolidar: false, combos: [], minEntregas: 20, minExcecaoPrazo: true, minimizarMotoristas: true,
   };
   RE.VEICULOS_PADRAO = [
     { id: 'fiorino-1', nome: 'Fiorino 1', tipo: 'fiorino', placa: '', capKg: 600, capM3: 3, custoDiaria: 400, kmL: 11, combustivel: 'gasolina', compr: 1.9, larg: 1.3, alt: 1.2, aceitaTubos: true, custoKm: 0, custoAjudante: 0, diariaMotorista: 0, multPedagio: 1, ativo: true },

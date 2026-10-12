@@ -114,7 +114,7 @@
   // ---------------- dados derivados ----------------
   // disponibilidade marcada no Painel para cada dia (operadores podem alterar)
   const dispDia = (d) => { const x = ST.disponibilidade.get(d) || {}; return { veiculos: x.veiculos || {}, motoristas: x.motoristas || {} }; };
-  const motDisp = (m, d) => RE.motoristaDisponivel(m, d) && dispDia(d).motoristas[m.id] !== false;
+  const motDisp = (m, d) => { const x = dispDia(d).motoristas[m.id]; return x === true ? true : x === false ? false : RE.motoristaDisponivel(m, d); };
   const cidadeCoord = (c) => { const m = RE.findMun(c.id); return Object.assign({}, c, { lat: c.lat != null ? c.lat : m && m.lat, lon: c.lon != null ? c.lon : m && m.lon }); };
   let CTX = null, CTX_V = -1;
   function ctx() {
@@ -126,6 +126,7 @@
       produtos: [...ST.produtos.values()],
       veiculos: [...ST.veiculos.values()].map((v) => { const m = v.motoristaId ? ST.motoristas.get(v.motoristaId) : null; let o = v; if (m && !motDisp(m, ui.data)) o = Object.assign({}, o, { motoristaIndisponivel: m.nome || true }); if (dispDia(ui.data).veiculos[v.id] === false) o = Object.assign({}, o, { indispDia: true }); return o; }).sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR', { numeric: true })),
       base: ST.cfg.base, data: ui.data,
+      maxMotoristas: ST.motoristas.size ? [...ST.motoristas.values()].filter((m) => motDisp(m, ui.data)).length : undefined,
     };
     CTX_V = VER;
     return CTX;
@@ -769,7 +770,9 @@
   function vDisponibilidade() {
     const d = ui.data, dd = dispDia(d);
     const vs = [...ST.veiculos.values()].sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR', { numeric: true }));
-    const ms = [...ST.motoristas.values()].filter((m) => m.ativo !== false).sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+    const ms = [...ST.motoristas.values()].sort((a, b) => (motDisp(b, d) - motDisp(a, d)) || (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+    const pl = plano();
+    const noPlano = new Set(pl ? pl.rotas.map((r) => r.motoristaId || (ST.veiculos.get(r.veiculoId) || {}).motoristaId).filter(Boolean) : []);
     const linhaV = (v) => {
       const m = v.motoristaId ? ST.motoristas.get(v.motoristaId) : null;
       let bloq = v.ativo === false ? 'inativo' : (v.manutIni && v.manutFim && d >= v.manutIni && d <= v.manutFim) ? 'manutenção' : '';
@@ -779,16 +782,17 @@
     };
     const linhaM = (m) => {
       const base = RE.motoristaDisponivel(m, d);
-      const marcado = base && dd.motoristas[m.id] !== false;
+      const marcado = motDisp(m, d);
+      const motivo = m.ativo === false ? 'inativo no cadastro' : m.disponivel === false ? 'indisponível no cadastro' : !base ? 'ausente no cadastro' : '';
       const vf = vs.filter((v) => v.motoristaId === m.id).map((v) => v.nome).join(', ');
-      return '<tr><td style="width:30px"><input type="checkbox" data-disp="m|' + esc(m.id) + '"' + (marcado ? ' checked' : '') + (base ? '' : ' disabled') + ' aria-label="' + esc(m.nome) + ' disponível"></td><td><b>' + esc(m.nome) + '</b><div class="tiny">' + esc(vf || 'sem veículo fixo') + (m.telefone ? ' · ' + esc(m.telefone) : '') + '</div></td><td class="r">' + (!base ? '<span class="chip bad">' + (m.disponivel === false ? 'indisponível' : 'ausente') + '</span>' : marcado ? '<span class="chip ok">disponível</span>' : '<span class="chip bad">fora hoje</span>') + '</td></tr>';
+      return '<tr><td style="width:30px"><input type="checkbox" data-disp="m|' + esc(m.id) + '"' + (marcado ? ' checked' : '') + ' aria-label="' + esc(m.nome) + ' disponível"></td><td><b>' + esc(m.nome) + '</b><div class="tiny">' + esc(vf || 'sem veículo fixo') + (m.telefone ? ' · ' + esc(m.telefone) : '') + (m.ultimoUso ? ' · rodou em ' + dBR(m.ultimoUso).slice(0, 5) : '') + (motivo ? ' · ' + motivo : '') + '</div></td><td class="r">' + (noPlano.has(m.id) ? '<span class="chip info">escalado</span> ' : '') + (marcado ? '<span class="chip ok">pode contar</span>' : '<span class="chip bad">não conta</span>') + '</td></tr>';
     };
     const nv = vs.filter((v) => RE.veicDisponivel(ctx().veiculos.find((x) => x.id === v.id) || v, d)).length;
     const nm = ms.filter((m) => motDisp(m, d)).length;
     return '<div class="card"><div class="card-h"><h2>Disponíveis em ' + dBR(d).slice(0, 5) + '</h2><span class="small muted">' + nv + ' de ' + vs.length + ' veículos · ' + nm + ' de ' + ms.length + ' motoristas</span></div>' +
-      '<p class="tiny" style="margin-bottom:8px">Desmarque quem não roda neste dia. Veículo cujo motorista fixo está fora não entra no plano.</p>' +
+      '<p class="tiny" style="margin-bottom:8px">Marque os motoristas com quem você pode contar neste dia. O roteirizador usa o <b>menor número possível</b> deles: só abre mais um veículo quando as entregas não cabem nos que já saem. Nunca escala mais motoristas do que os marcados. Veículo cujo motorista fixo não foi marcado fica de fora.</p>' +
       '<h3 style="font-size:14px;text-transform:uppercase;letter-spacing:.04em;margin:6px 0">Veículos</h3>' + (vs.length ? '<div class="tbl-wrap"><table><tbody>' + vs.map(linhaV).join('') + '</tbody></table></div>' : '<p class="muted small">Nenhum veículo cadastrado.' + (window.RC_HOST && ST.admin ? ' <button class="btn sm pri" data-a="importarFrota"' + (ui.frotaImp && ui.frotaImp.carregando ? ' disabled' : '') + '>' + (ui.frotaImp && ui.frotaImp.carregando ? 'Lendo o CONSTRULOG…' : 'Importar da Frota e do Rastreio de carga') + '</button>' : window.RC_HOST ? ' Peça a um administrador para importar a frota.' : '') + '</p>') +
-      '<h3 style="font-size:14px;text-transform:uppercase;letter-spacing:.04em;margin:14px 0 6px">Motoristas</h3>' + (ms.length ? '<div class="tbl-wrap"><table><tbody>' + ms.map(linhaM).join('') + '</tbody></table></div>' : '<p class="muted small">Nenhum motorista cadastrado. Cadastre em Cadastros › Motoristas.</p>') + '</div>';
+      '<div class="row" style="margin:14px 0 6px"><h3 style="font-size:14px;text-transform:uppercase;letter-spacing:.04em;margin:0">Motoristas</h3><span class="spacer"></span>' + (ms.length ? '<span class="small muted">' + nm + ' marcado(s)' + (pl ? ' · ' + noPlano.size + ' escalado(s) no plano' : '') + '</span><button class="btn sm" data-a="dispTodos" data-v="1">Marcar todos</button><button class="btn sm" data-a="dispTodos" data-v="0">Desmarcar todos</button>' : '') + '</div>' + (ms.length ? '<div class="tbl-wrap"><table><tbody>' + ms.map(linhaM).join('') + '</tbody></table></div>' : '<p class="muted small">Nenhum motorista cadastrado.' + (window.RC_HOST && ST.admin && ST.veiculos.size ? ' <button class="btn sm pri" data-a="importarFrota">Importar da Frota e do Rastreio de carga</button>' : window.RC_HOST ? '' : ' Cadastre em Cadastros › Motoristas.') + '</p>') + '</div>';
   }
   function vVazio() {
     if (window.RC_HOST) return '<div class="card empty"><h3>Nenhuma nota no roteirizador</h3><p>Traga os CTRCs disponíveis para entrega do SSW, importe XMLs, ZIPs, DANFEs em PDF ou planilhas, ou insira notas à mão.</p><div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-a="irSSW">Buscar no SSW</button><button class="btn" data-a="tab" data-v="notas">' + I.up2 + 'Importar notas</button></div></div>';
@@ -1356,6 +1360,7 @@
     let h = topo('Ajustes', 'Parâmetros de cálculo, histórico e dados');
     h += '<div class="card"><h2>Base e deslocamento</h2><div class="fields" style="margin-top:10px"><label class="f">Cidade da base<input type="text" list="dlMun" id="fBase" value="' + esc(c.base.nome) + '"' + dis() + '></label>' + f('base.lat', 'Latitude da base', 'num') + f('base.lon', 'Longitude da base', 'num') + f('fatorRodoviario', 'Fator rodoviário (× linha reta)', 'num') + f('velocidadeMedia', 'Velocidade média km/h', 'num') + f('kmUrbano', 'Km entre entregas na mesma cidade', 'num') + f('inicioJornada', 'Início da jornada', 'time') + f('jornadaMaxHoras', 'Jornada máxima h', 'num') + f('descargaPorNotaMin', 'Minutos extras por nota na mesma parada', 'num') + '</div></div>';
     h += '<div class="card"><h2>Custos</h2><div class="fields" style="margin-top:10px">' + f('precoDiesel', 'Diesel R$/l', 'num') + f('precoGasolina', 'Gasolina R$/l', 'num') + f('precoEtanol', 'Etanol R$/l', 'num') + f('pesoVeiculo', 'Penalidade por veículo usado R$ (desempate)', 'num') + '</div></div>';
+    h += '<div class="card"><h2>Motoristas por dia</h2><div class="row" style="margin-top:10px">' + f('minimizarMotoristas', 'Usar o menor número possível de motoristas (só abre outro veículo quando a carga não cabe ou uma entrega ficaria de fora)', 'bool') + '</div><p class="tiny" style="margin-top:8px">Com isso ligado, menos motoristas vale mais do que diferença de lucro entre rotas. Entregas no prazo continuam vindo antes. O plano nunca usa mais motoristas do que os marcados no Painel.</p></div>';
     h += '<div class="card"><h2>Mínimo de entregas por veículo</h2><div class="fields" style="margin-top:10px">' + f('minEntregas', 'Mínimo de entregas para um veículo sair (0 = sem mínimo)', 'num') + '</div><div class="row" style="margin-top:10px">' + f('minExcecaoPrazo', 'Exceção: o veículo sai abaixo do mínimo quando leva entrega no limite do prazo', 'bool') + '</div><p class="tiny" style="margin-top:8px">Cada parada conta como uma entrega (várias notas do mesmo cliente contam uma vez). Abaixo do mínimo, as entregas passam para outros veículos ou aguardam o próximo dia de rota da cidade. Cada veículo pode ter um mínimo próprio no cadastro.</p></div>';
     h += '<div class="card"><h2>Carga e tubos</h2><div class="fields" style="margin-top:10px">' + f('folgaEncaixeMm', 'Folga radial mínima no encaixe mm', 'num') + f('folgaSecaoMm', 'Folga entre tubos na seção mm', 'num') + f('niveisEncaixe', 'Níveis de encaixe', 'num') + f('cargaInternaKgM', 'Carga máxima dentro de um tubo kg/m', 'num') + f('aproveitamento', 'Aproveitamento do volume (0 a 1)', 'num') + f('densidadeSecao', 'Densidade da seção na busca rápida (0 a 1)', 'num', { ph: '0.72' }) + f('cubagemKgM3', 'Fator de cubagem kg/m³ (0 = não estimar volume)', 'num') + f('prazoPadraoDias', 'Prazo padrão em dias após a emissão (0 = sem prazo)', 'num') + '</div><p class="tiny" style="margin-top:8px">Volume e prazo só são estimados se você definir o fator de cubagem ou o prazo padrão; nesse caso a nota mostra o aviso.</p></div>';
     h += '<div class="card"><h2>Planos salvos</h2>' + (ST.planos.size ? '<div class="tbl-wrap" style="margin-top:10px"><table><thead><tr><th>Data</th><th>Situação</th><th class="r">Veículos</th><th class="r">Entregas</th><th class="r">Lucro</th><th>Calculado</th><th></th></tr></thead><tbody>' + [...ST.planos.values()].sort((a, b) => b.data.localeCompare(a.data)).slice(0, 60).map((p) => '<tr><td class="mono">' + dBR(p.data) + '</td><td>' + (p.status === 'aprovado' ? '<span class="chip ok">aprovado</span>' : '<span class="chip warn">rascunho</span>') + '</td><td class="r num">' + p.totais.veiculos + '</td><td class="r num">' + p.totais.entregas + '</td><td class="r num">' + brl(p.totais.lucro) + '</td><td class="small">' + new Date(p.editadoEm || p.criadoEm).toLocaleString('pt-BR') + '</td><td><button class="btn sm" data-a="abrirPlano" data-v="' + p.data + '">Abrir</button></td></tr>').join('') + '</tbody></table></div>' : '<p class="muted small">Nenhum plano salvo.</p>') + '</div>';
@@ -1469,6 +1474,7 @@
       case 'sbLimpar': ui.sb = null; render(); setTimeout(() => { const i = $('#sbNF'); if (i) i.focus(); }, 30); break;
       case 'sbRegistrar': await registrarSobra(); break;
       case 'sswAtualizar': await atualizarSSW(true); break;
+      case 'dispTodos': { const d = ui.data, dd = dispDia(d), mm = {}; for (const m of ST.motoristas.values()) mm[m.id] = v === '1' ? (RE.motoristaDisponivel(m, d) ? undefined : true) : false; for (const k in mm) if (mm[k] === undefined) delete mm[k]; await salvar('disponibilidade', d, { data: d, veiculos: Object.assign({}, dd.veiculos), motoristas: mm }); registrar('Disponibilidade', (v === '1' ? 'Todos os motoristas marcados' : 'Todos os motoristas desmarcados') + ' em ' + dBR(d)); render(); break; }
       case 'importarFrota': await importarFrota(); break;
       case 'conferido': { const vv = ST.veiculos.get(v); if (vv) { const q = Object.assign({}, vv); delete q.conferir; await salvar('veiculos', v, q); render(); } break; }
       case 'irSSW': ui.tab = 'notas'; ui.notasSub = 'ssw'; render(); break;
@@ -1497,7 +1503,7 @@
       const [t, id] = el.dataset.disp.split('|'); const d = ui.data; const dd = dispDia(d);
       const o = { data: d, veiculos: Object.assign({}, dd.veiculos), motoristas: Object.assign({}, dd.motoristas) };
       const k = t === 'v' ? 'veiculos' : 'motoristas';
-      if (el.checked) delete o[k][id]; else o[k][id] = false;
+      if (!el.checked) o[k][id] = false; else if (t === 'm' && !RE.motoristaDisponivel(ST.motoristas.get(id), d)) o[k][id] = true; else delete o[k][id];
       await salvar('disponibilidade', d, o);
       const nome = t === 'v' ? (ST.veiculos.get(id) || {}).nome : (ST.motoristas.get(id) || {}).nome;
       registrar('Disponibilidade', (nome || id) + (el.checked ? ' disponível' : ' fora') + ' em ' + dBR(d));

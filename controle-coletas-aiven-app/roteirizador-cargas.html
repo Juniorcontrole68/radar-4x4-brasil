@@ -1314,17 +1314,19 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     opcoes.sort((x, y) => (x.ops.length - y.ops.length) || (this.peso(y.r.seq) - this.peso(x.r.seq)));
     const semVeic = [];
     for (const o of opcoes) {
-      const op = o.ops.find((p) => livres.includes(p.v));
+      const op = (this.ctx.maxMotoristas >= 0 && this.V.length - livres.length >= this.ctx.maxMotoristas) ? null : o.ops.find((p) => livres.includes(p.v));
       if (op) { o.r.veic = op.v; o.r.a = op.a; livres.splice(livres.indexOf(op.v), 1); }
       else { o.r.veic = null; semVeic.push(o.r); }
     }
     return { livres, semVeic };
   };
+  Solver.prototype.pv = function () { const p = +this.cfg.pesoVeiculo || 0; return this.cfg.minimizarMotoristas === false ? p : Math.max(p, 30000); };
+  Solver.prototype.cabeNova = function (rotas) { const mx = this.ctx.maxMotoristas; return !(mx >= 0) || rotas.filter((r) => r.veic && r.seq.length).length < mx; };
   Solver.prototype.peso = function (seq) { return seq.reduce((s, i) => s + this.S[i].kg + this.S[i].m3 * 300, 0); };
   Solver.prototype.penal = function (i) { const s = this.S[i]; return s.obrigatoria ? (s.atrasada || s.prioridade ? 2e6 : 1e6) : (this.opts.consolidar ? 0 : 5e4 + s.receita); };
   Solver.prototype.objetivo = function (rotas, fora) {
     let v = 0;
-    for (const r of rotas) if (r.veic && r.seq.length) v += r.a.lucro - (this.cfg.pesoVeiculo || 0);
+    for (const r of rotas) if (r.veic && r.seq.length) v += r.a.lucro - this.pv();
     for (const i of fora) v -= this.penal(i);
     return v;
   };
@@ -1428,7 +1430,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
         const usados = outras.map((r) => r.veic);
         if (new Set(usados).size !== usados.length) continue;
         const novo = this.objetivo(outras, fora);
-        if (novo > obj + 1e-6) { decisoes.push('Viagem de ' + (alvo.veic ? alvo.veic.nome : 'um veículo') + ' eliminada: ' + alvo.seq.length + ' parada(s) redistribuída(s), ganho de R$ ' + round(novo - obj, 2).toFixed(2).replace('.', ',') + '.'); rotas = outras; obj = novo; melhorou = true; break; }
+        if (novo > obj + 1e-6) { decisoes.push('Viagem de ' + (alvo.veic ? alvo.veic.nome : 'um veículo') + ' eliminada: ' + alvo.seq.length + ' parada(s) redistribuída(s), ' + (this.cfg.minimizarMotoristas === false ? '' : 'um motorista a menos no dia, ') + 'ganho de R$ ' + round(novo - obj - (this.pv() - (+this.cfg.pesoVeiculo || 0)), 2).toFixed(2).replace('.', ',') + '.'); rotas = outras; obj = novo; melhorou = true; break; }
       }
       if (melhorou) continue;
       // 4b) realocar uma parada para outra rota
@@ -1442,7 +1444,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
             if (rb === ra) continue;
             const ins = this.melhorInsercao(rb.veic, rb.seq, i);
             if (!ins) continue;
-            const delta = (aA.vazio ? 0 : aA.lucro) + ins.a.lucro - ra.a.lucro - rb.a.lucro + (aA.vazio ? (this.cfg.pesoVeiculo || 0) : 0);
+            const delta = (aA.vazio ? 0 : aA.lucro) + ins.a.lucro - ra.a.lucro - rb.a.lucro + (aA.vazio ? this.pv() : 0);
             if (delta > 0.5) {
               ra.seq = semI; ra.a = aA; rb.seq = ins.seq; rb.a = ins.a;
               if (!semI.length) rotas = rotas.filter((r) => r !== ra);
@@ -1458,8 +1460,8 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
         for (const r of rotas) { const ins = this.melhorInsercao(r.veic, r.seq, i); if (ins && (!best || ins.a.lucro - r.a.lucro > best.d)) best = { r, ins, d: ins.a.lucro - r.a.lucro }; }
         if (!best) {
           // abrir veículo livre
-          const livres = this.V.filter((v) => !rotas.some((r) => r.veic === v));
-          for (const v of livres) { const a = this.avaliar(v, [i]); if (a.ok && (!best || a.lucro > best.d)) best = { nova: { seq: [i], veic: v, a }, d: a.lucro }; }
+          const livres = this.cabeNova(rotas) ? this.V.filter((v) => !rotas.some((r) => r.veic === v)) : [];
+          for (const v of livres) { const a = this.avaliar(v, [i]); if (a.ok && (!best || a.lucro > best.d)) best = { nova: { seq: [i], veic: v, a }, d: a.lucro - this.pv() }; }
         }
         if (best && best.d + this.penal(i) > 0) {
           if (best.nova) rotas.push(best.nova); else { best.r.seq = best.ins.seq; best.r.a = best.ins.a; }
@@ -1468,7 +1470,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
         }
         // troca em cadeia: tirar uma parada j de uma rota para abrir espaço para i, e levar j para outra rota ou veículo livre
         let troca = null;
-        const livres = this.V.filter((v) => !rotas.some((r) => r.veic === v));
+        const livres = this.cabeNova(rotas) ? this.V.filter((v) => !rotas.some((r) => r.veic === v)) : [];
         for (const r of rotas) {
           if (Date.now() - t0 > limite) break;
           for (const j of r.seq) {
@@ -1482,7 +1484,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
               const insJ = this.melhorInsercao(r2.veic, r2.seq, j);
               if (insJ && (!dest || insJ.a.lucro - r2.a.lucro > dest.d)) dest = { r2, insJ, d: insJ.a.lucro - r2.a.lucro };
             }
-            for (const v of livres) { const a = this.avaliar(v, [j]); if (a.ok && (!dest || a.lucro - (this.cfg.pesoVeiculo || 0) > dest.d)) dest = { nova: { seq: [j], veic: v, a }, d: a.lucro - (this.cfg.pesoVeiculo || 0) }; }
+            for (const v of livres) { const a = this.avaliar(v, [j]); if (a.ok && (!dest || a.lucro - this.pv() > dest.d)) dest = { nova: { seq: [j], veic: v, a }, d: a.lucro - this.pv() }; }
             if (!dest) continue;
             const ganho = insI.a.lucro - r.a.lucro + dest.d + this.penal(i);
             if (ganho > 0.5 && (!troca || ganho > troca.ganho)) troca = { r, insI, dest, ganho };
@@ -1631,6 +1633,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       const s = stops[i];
       let motivo = (solver.motivoFora && solver.motivoFora[i]) || (s.obrigatoria ? 'Sem veículo ou capacidade disponível' : 'Pode aguardar o próximo dia de rota');
       if (!veics.length) motivo = 'Nenhum veículo disponível';
+      else if (ctx.maxMotoristas === 0) motivo = 'Nenhum motorista marcado como disponível no dia';
       else {
         const viavel = (solver.motivoFora && solver.motivoFora[i]) || solver.tipos.some((v) => solver.avaliar(v, [i]).ok);
         if (!viavel) motivo = (solver.avaliar(solver.tipos[0], [i]).motivos || ['Não cabe em nenhum veículo']).join('; ');
@@ -1642,7 +1645,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       data, criadoEm: new Date().toISOString(), rotas, naoRoteirizadas,
       pendentes: pendentes.map((p) => ({ nota: p.nota.id, motivo: p.motivo })),
       decisoes: res.decisoes, totais: tot, estimativa: rotas.some((r) => r.estimativa),
-      veiculosDisponiveis: veics.length, tempoMs: res.tempoMs, opcoes: { consolidar: !!opts.consolidar, tipos: opts.tipos || null, cidades: opts.cidades || null },
+      veiculosDisponiveis: veics.length, motoristasDisponiveis: ctx.maxMotoristas >= 0 ? ctx.maxMotoristas : null, tempoMs: res.tempoMs, opcoes: { consolidar: !!opts.consolidar, tipos: opts.tipos || null, cidades: opts.cidades || null },
     };
   };
   RE.totais = (rotas) => {
@@ -1677,7 +1680,8 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       res.push({ nome: c.nome, veiculos: p.totais.veiculos, entregas: p.totais.entregas, foraTotal: p.naoRoteirizadas.length, obrigFora, km: p.totais.km, receita: p.totais.receita, custo: p.totais.custo, lucro: p.totais.lucro, margem: p.totais.margem, frota: c.frota.map((v) => v.nome) });
     }
     // ordenação: atende todas as obrigatórias, depois mais entregas, depois lucro, depois menos veículos
-    res.sort((a, b) => (a.obrigFora - b.obrigFora) || (b.entregas - a.entregas) || (b.lucro - a.lucro) || (a.veiculos - b.veiculos));
+    const menosMot = !ctx.cfg || ctx.cfg.minimizarMotoristas !== false;
+    res.sort((a, b) => (a.obrigFora - b.obrigFora) || (b.entregas - a.entregas) || (menosMot ? (a.veiculos - b.veiculos) || (b.lucro - a.lucro) : (b.lucro - a.lucro) || (a.veiculos - b.veiculos)));
     if (res.length) {
       const m = res[0];
       m.melhor = true;
@@ -1685,6 +1689,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       for (const o of res.slice(1)) {
         if (o.obrigFora > m.obrigFora) motivos.push(o.nome + ': deixa ' + o.obrigFora + ' entrega(s) obrigatória(s) sem rota');
         else if (o.entregas < m.entregas) motivos.push(o.nome + ': atende ' + (m.entregas - o.entregas) + ' entrega(s) a menos');
+        else if (menosMot && o.veiculos > m.veiculos) motivos.push(o.nome + ': usa ' + (o.veiculos - m.veiculos) + ' motorista(s) a mais');
         else if (o.lucro < m.lucro) motivos.push(o.nome + ': lucro R$ ' + round(m.lucro - o.lucro, 2).toFixed(2).replace('.', ',') + ' menor');
       }
       m.porque = 'Atende ' + m.entregas + ' entrega(s) com ' + m.veiculos + ' veículo(s), lucro de R$ ' + m.lucro.toFixed(2).replace('.', ',') + (m.margem != null ? ' (margem ' + String(m.margem).replace('.', ',') + '%)' : '') + '.';
@@ -1724,7 +1729,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     fatorRodoviario: 1.25, velocidadeMedia: 55, kmUrbano: 4, inicioJornada: '07:00', jornadaMaxHoras: 10,
     descargaPorNotaMin: 5, precoDiesel: 6.19, precoGasolina: 6.29, precoEtanol: 4.39,
     folgaEncaixeMm: 10, folgaSecaoMm: 5, niveisEncaixe: 3, cargaInternaKgM: 25, aproveitamento: 0.85,
-    cubagemKgM3: 0, prazoPadraoDias: 0, pesoVeiculo: 50, consolidar: false, combos: [], minEntregas: 20, minExcecaoPrazo: true,
+    cubagemKgM3: 0, prazoPadraoDias: 0, pesoVeiculo: 50, consolidar: false, combos: [], minEntregas: 20, minExcecaoPrazo: true, minimizarMotoristas: true,
   };
   RE.VEICULOS_PADRAO = [
     { id: 'fiorino-1', nome: 'Fiorino 1', tipo: 'fiorino', placa: '', capKg: 600, capM3: 3, custoDiaria: 400, kmL: 11, combustivel: 'gasolina', compr: 1.9, larg: 1.3, alt: 1.2, aceitaTubos: true, custoKm: 0, custoAjudante: 0, diariaMotorista: 0, multPedagio: 1, ativo: true },
@@ -1965,7 +1970,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
   // ---------------- dados derivados ----------------
   // disponibilidade marcada no Painel para cada dia (operadores podem alterar)
   const dispDia = (d) => { const x = ST.disponibilidade.get(d) || {}; return { veiculos: x.veiculos || {}, motoristas: x.motoristas || {} }; };
-  const motDisp = (m, d) => RE.motoristaDisponivel(m, d) && dispDia(d).motoristas[m.id] !== false;
+  const motDisp = (m, d) => { const x = dispDia(d).motoristas[m.id]; return x === true ? true : x === false ? false : RE.motoristaDisponivel(m, d); };
   const cidadeCoord = (c) => { const m = RE.findMun(c.id); return Object.assign({}, c, { lat: c.lat != null ? c.lat : m && m.lat, lon: c.lon != null ? c.lon : m && m.lon }); };
   let CTX = null, CTX_V = -1;
   function ctx() {
@@ -1977,6 +1982,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       produtos: [...ST.produtos.values()],
       veiculos: [...ST.veiculos.values()].map((v) => { const m = v.motoristaId ? ST.motoristas.get(v.motoristaId) : null; let o = v; if (m && !motDisp(m, ui.data)) o = Object.assign({}, o, { motoristaIndisponivel: m.nome || true }); if (dispDia(ui.data).veiculos[v.id] === false) o = Object.assign({}, o, { indispDia: true }); return o; }).sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR', { numeric: true })),
       base: ST.cfg.base, data: ui.data,
+      maxMotoristas: ST.motoristas.size ? [...ST.motoristas.values()].filter((m) => motDisp(m, ui.data)).length : undefined,
     };
     CTX_V = VER;
     return CTX;
@@ -2620,7 +2626,9 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
   function vDisponibilidade() {
     const d = ui.data, dd = dispDia(d);
     const vs = [...ST.veiculos.values()].sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR', { numeric: true }));
-    const ms = [...ST.motoristas.values()].filter((m) => m.ativo !== false).sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+    const ms = [...ST.motoristas.values()].sort((a, b) => (motDisp(b, d) - motDisp(a, d)) || (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+    const pl = plano();
+    const noPlano = new Set(pl ? pl.rotas.map((r) => r.motoristaId || (ST.veiculos.get(r.veiculoId) || {}).motoristaId).filter(Boolean) : []);
     const linhaV = (v) => {
       const m = v.motoristaId ? ST.motoristas.get(v.motoristaId) : null;
       let bloq = v.ativo === false ? 'inativo' : (v.manutIni && v.manutFim && d >= v.manutIni && d <= v.manutFim) ? 'manutenção' : '';
@@ -2630,16 +2638,17 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     };
     const linhaM = (m) => {
       const base = RE.motoristaDisponivel(m, d);
-      const marcado = base && dd.motoristas[m.id] !== false;
+      const marcado = motDisp(m, d);
+      const motivo = m.ativo === false ? 'inativo no cadastro' : m.disponivel === false ? 'indisponível no cadastro' : !base ? 'ausente no cadastro' : '';
       const vf = vs.filter((v) => v.motoristaId === m.id).map((v) => v.nome).join(', ');
-      return '<tr><td style="width:30px"><input type="checkbox" data-disp="m|' + esc(m.id) + '"' + (marcado ? ' checked' : '') + (base ? '' : ' disabled') + ' aria-label="' + esc(m.nome) + ' disponível"></td><td><b>' + esc(m.nome) + '</b><div class="tiny">' + esc(vf || 'sem veículo fixo') + (m.telefone ? ' · ' + esc(m.telefone) : '') + '</div></td><td class="r">' + (!base ? '<span class="chip bad">' + (m.disponivel === false ? 'indisponível' : 'ausente') + '</span>' : marcado ? '<span class="chip ok">disponível</span>' : '<span class="chip bad">fora hoje</span>') + '</td></tr>';
+      return '<tr><td style="width:30px"><input type="checkbox" data-disp="m|' + esc(m.id) + '"' + (marcado ? ' checked' : '') + ' aria-label="' + esc(m.nome) + ' disponível"></td><td><b>' + esc(m.nome) + '</b><div class="tiny">' + esc(vf || 'sem veículo fixo') + (m.telefone ? ' · ' + esc(m.telefone) : '') + (m.ultimoUso ? ' · rodou em ' + dBR(m.ultimoUso).slice(0, 5) : '') + (motivo ? ' · ' + motivo : '') + '</div></td><td class="r">' + (noPlano.has(m.id) ? '<span class="chip info">escalado</span> ' : '') + (marcado ? '<span class="chip ok">pode contar</span>' : '<span class="chip bad">não conta</span>') + '</td></tr>';
     };
     const nv = vs.filter((v) => RE.veicDisponivel(ctx().veiculos.find((x) => x.id === v.id) || v, d)).length;
     const nm = ms.filter((m) => motDisp(m, d)).length;
     return '<div class="card"><div class="card-h"><h2>Disponíveis em ' + dBR(d).slice(0, 5) + '</h2><span class="small muted">' + nv + ' de ' + vs.length + ' veículos · ' + nm + ' de ' + ms.length + ' motoristas</span></div>' +
-      '<p class="tiny" style="margin-bottom:8px">Desmarque quem não roda neste dia. Veículo cujo motorista fixo está fora não entra no plano.</p>' +
+      '<p class="tiny" style="margin-bottom:8px">Marque os motoristas com quem você pode contar neste dia. O roteirizador usa o <b>menor número possível</b> deles: só abre mais um veículo quando as entregas não cabem nos que já saem. Nunca escala mais motoristas do que os marcados. Veículo cujo motorista fixo não foi marcado fica de fora.</p>' +
       '<h3 style="font-size:14px;text-transform:uppercase;letter-spacing:.04em;margin:6px 0">Veículos</h3>' + (vs.length ? '<div class="tbl-wrap"><table><tbody>' + vs.map(linhaV).join('') + '</tbody></table></div>' : '<p class="muted small">Nenhum veículo cadastrado.' + (window.RC_HOST && ST.admin ? ' <button class="btn sm pri" data-a="importarFrota"' + (ui.frotaImp && ui.frotaImp.carregando ? ' disabled' : '') + '>' + (ui.frotaImp && ui.frotaImp.carregando ? 'Lendo o CONSTRULOG…' : 'Importar da Frota e do Rastreio de carga') + '</button>' : window.RC_HOST ? ' Peça a um administrador para importar a frota.' : '') + '</p>') +
-      '<h3 style="font-size:14px;text-transform:uppercase;letter-spacing:.04em;margin:14px 0 6px">Motoristas</h3>' + (ms.length ? '<div class="tbl-wrap"><table><tbody>' + ms.map(linhaM).join('') + '</tbody></table></div>' : '<p class="muted small">Nenhum motorista cadastrado. Cadastre em Cadastros › Motoristas.</p>') + '</div>';
+      '<div class="row" style="margin:14px 0 6px"><h3 style="font-size:14px;text-transform:uppercase;letter-spacing:.04em;margin:0">Motoristas</h3><span class="spacer"></span>' + (ms.length ? '<span class="small muted">' + nm + ' marcado(s)' + (pl ? ' · ' + noPlano.size + ' escalado(s) no plano' : '') + '</span><button class="btn sm" data-a="dispTodos" data-v="1">Marcar todos</button><button class="btn sm" data-a="dispTodos" data-v="0">Desmarcar todos</button>' : '') + '</div>' + (ms.length ? '<div class="tbl-wrap"><table><tbody>' + ms.map(linhaM).join('') + '</tbody></table></div>' : '<p class="muted small">Nenhum motorista cadastrado.' + (window.RC_HOST && ST.admin && ST.veiculos.size ? ' <button class="btn sm pri" data-a="importarFrota">Importar da Frota e do Rastreio de carga</button>' : window.RC_HOST ? '' : ' Cadastre em Cadastros › Motoristas.') + '</p>') + '</div>';
   }
   function vVazio() {
     if (window.RC_HOST) return '<div class="card empty"><h3>Nenhuma nota no roteirizador</h3><p>Traga os CTRCs disponíveis para entrega do SSW, importe XMLs, ZIPs, DANFEs em PDF ou planilhas, ou insira notas à mão.</p><div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-a="irSSW">Buscar no SSW</button><button class="btn" data-a="tab" data-v="notas">' + I.up2 + 'Importar notas</button></div></div>';
@@ -3207,6 +3216,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     let h = topo('Ajustes', 'Parâmetros de cálculo, histórico e dados');
     h += '<div class="card"><h2>Base e deslocamento</h2><div class="fields" style="margin-top:10px"><label class="f">Cidade da base<input type="text" list="dlMun" id="fBase" value="' + esc(c.base.nome) + '"' + dis() + '></label>' + f('base.lat', 'Latitude da base', 'num') + f('base.lon', 'Longitude da base', 'num') + f('fatorRodoviario', 'Fator rodoviário (× linha reta)', 'num') + f('velocidadeMedia', 'Velocidade média km/h', 'num') + f('kmUrbano', 'Km entre entregas na mesma cidade', 'num') + f('inicioJornada', 'Início da jornada', 'time') + f('jornadaMaxHoras', 'Jornada máxima h', 'num') + f('descargaPorNotaMin', 'Minutos extras por nota na mesma parada', 'num') + '</div></div>';
     h += '<div class="card"><h2>Custos</h2><div class="fields" style="margin-top:10px">' + f('precoDiesel', 'Diesel R$/l', 'num') + f('precoGasolina', 'Gasolina R$/l', 'num') + f('precoEtanol', 'Etanol R$/l', 'num') + f('pesoVeiculo', 'Penalidade por veículo usado R$ (desempate)', 'num') + '</div></div>';
+    h += '<div class="card"><h2>Motoristas por dia</h2><div class="row" style="margin-top:10px">' + f('minimizarMotoristas', 'Usar o menor número possível de motoristas (só abre outro veículo quando a carga não cabe ou uma entrega ficaria de fora)', 'bool') + '</div><p class="tiny" style="margin-top:8px">Com isso ligado, menos motoristas vale mais do que diferença de lucro entre rotas. Entregas no prazo continuam vindo antes. O plano nunca usa mais motoristas do que os marcados no Painel.</p></div>';
     h += '<div class="card"><h2>Mínimo de entregas por veículo</h2><div class="fields" style="margin-top:10px">' + f('minEntregas', 'Mínimo de entregas para um veículo sair (0 = sem mínimo)', 'num') + '</div><div class="row" style="margin-top:10px">' + f('minExcecaoPrazo', 'Exceção: o veículo sai abaixo do mínimo quando leva entrega no limite do prazo', 'bool') + '</div><p class="tiny" style="margin-top:8px">Cada parada conta como uma entrega (várias notas do mesmo cliente contam uma vez). Abaixo do mínimo, as entregas passam para outros veículos ou aguardam o próximo dia de rota da cidade. Cada veículo pode ter um mínimo próprio no cadastro.</p></div>';
     h += '<div class="card"><h2>Carga e tubos</h2><div class="fields" style="margin-top:10px">' + f('folgaEncaixeMm', 'Folga radial mínima no encaixe mm', 'num') + f('folgaSecaoMm', 'Folga entre tubos na seção mm', 'num') + f('niveisEncaixe', 'Níveis de encaixe', 'num') + f('cargaInternaKgM', 'Carga máxima dentro de um tubo kg/m', 'num') + f('aproveitamento', 'Aproveitamento do volume (0 a 1)', 'num') + f('densidadeSecao', 'Densidade da seção na busca rápida (0 a 1)', 'num', { ph: '0.72' }) + f('cubagemKgM3', 'Fator de cubagem kg/m³ (0 = não estimar volume)', 'num') + f('prazoPadraoDias', 'Prazo padrão em dias após a emissão (0 = sem prazo)', 'num') + '</div><p class="tiny" style="margin-top:8px">Volume e prazo só são estimados se você definir o fator de cubagem ou o prazo padrão; nesse caso a nota mostra o aviso.</p></div>';
     h += '<div class="card"><h2>Planos salvos</h2>' + (ST.planos.size ? '<div class="tbl-wrap" style="margin-top:10px"><table><thead><tr><th>Data</th><th>Situação</th><th class="r">Veículos</th><th class="r">Entregas</th><th class="r">Lucro</th><th>Calculado</th><th></th></tr></thead><tbody>' + [...ST.planos.values()].sort((a, b) => b.data.localeCompare(a.data)).slice(0, 60).map((p) => '<tr><td class="mono">' + dBR(p.data) + '</td><td>' + (p.status === 'aprovado' ? '<span class="chip ok">aprovado</span>' : '<span class="chip warn">rascunho</span>') + '</td><td class="r num">' + p.totais.veiculos + '</td><td class="r num">' + p.totais.entregas + '</td><td class="r num">' + brl(p.totais.lucro) + '</td><td class="small">' + new Date(p.editadoEm || p.criadoEm).toLocaleString('pt-BR') + '</td><td><button class="btn sm" data-a="abrirPlano" data-v="' + p.data + '">Abrir</button></td></tr>').join('') + '</tbody></table></div>' : '<p class="muted small">Nenhum plano salvo.</p>') + '</div>';
@@ -3320,6 +3330,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       case 'sbLimpar': ui.sb = null; render(); setTimeout(() => { const i = $('#sbNF'); if (i) i.focus(); }, 30); break;
       case 'sbRegistrar': await registrarSobra(); break;
       case 'sswAtualizar': await atualizarSSW(true); break;
+      case 'dispTodos': { const d = ui.data, dd = dispDia(d), mm = {}; for (const m of ST.motoristas.values()) mm[m.id] = v === '1' ? (RE.motoristaDisponivel(m, d) ? undefined : true) : false; for (const k in mm) if (mm[k] === undefined) delete mm[k]; await salvar('disponibilidade', d, { data: d, veiculos: Object.assign({}, dd.veiculos), motoristas: mm }); registrar('Disponibilidade', (v === '1' ? 'Todos os motoristas marcados' : 'Todos os motoristas desmarcados') + ' em ' + dBR(d)); render(); break; }
       case 'importarFrota': await importarFrota(); break;
       case 'conferido': { const vv = ST.veiculos.get(v); if (vv) { const q = Object.assign({}, vv); delete q.conferir; await salvar('veiculos', v, q); render(); } break; }
       case 'irSSW': ui.tab = 'notas'; ui.notasSub = 'ssw'; render(); break;
@@ -3348,7 +3359,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       const [t, id] = el.dataset.disp.split('|'); const d = ui.data; const dd = dispDia(d);
       const o = { data: d, veiculos: Object.assign({}, dd.veiculos), motoristas: Object.assign({}, dd.motoristas) };
       const k = t === 'v' ? 'veiculos' : 'motoristas';
-      if (el.checked) delete o[k][id]; else o[k][id] = false;
+      if (!el.checked) o[k][id] = false; else if (t === 'm' && !RE.motoristaDisponivel(ST.motoristas.get(id), d)) o[k][id] = true; else delete o[k][id];
       await salvar('disponibilidade', d, o);
       const nome = t === 'v' ? (ST.veiculos.get(id) || {}).nome : (ST.motoristas.get(id) || {}).nome;
       registrar('Disponibilidade', (nome || id) + (el.checked ? ' disponível' : ' fora') + ' em ' + dBR(d));
