@@ -213,6 +213,7 @@ details>summary{cursor:pointer;font-weight:600}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 .dsp-q{width:100%;padding:8px 10px;border:1px solid var(--line,#d5dbe3);border-radius:8px;font:inherit;margin-bottom:10px;background:var(--surface,#fff);color:inherit}.dsp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px}.dsp{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:7px 9px;border:1px solid var(--line,#d5dbe3);border-radius:8px}.dsp label{display:flex;gap:8px;align-items:flex-start;cursor:pointer;min-width:0;flex:1}.dsp input{margin-top:3px}.dsp.com-rota{border-color:var(--info,#2b6cb0);background:rgba(43,108,176,.07)}.dsp span{display:flex;flex-direction:column;min-width:0}.dsp small{opacity:.7;font-size:11.5px}.dsp:has(input:checked){border-color:#2f9e61;background:rgba(47,158,97,.07)}
 .escala-cols{display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:18px}@media(max-width:760px){.escala-cols{grid-template-columns:1fr}}.dsp-list{display:flex;flex-direction:column;gap:5px;max-height:460px;overflow:auto}.dsp-list .dsp{cursor:pointer;justify-content:flex-start}.escala{margin-bottom:14px}.ideia{border:1px solid var(--line,#d5dbe3);border-left:4px solid var(--info,#2b6cb0);border-radius:8px;padding:8px 10px;margin-bottom:8px}.ideia .row{gap:8px;align-items:center}.rota-cid{margin-top:3px;opacity:.85}.escala .empty{padding:18px;text-align:center}
+.seg{display:inline-flex;border:1px solid var(--line,#d5dbe3);border-radius:8px;overflow:hidden}.seg button{border:0;background:transparent;padding:5px 10px;font:inherit;font-size:12.5px;cursor:pointer;color:inherit;border-right:1px solid var(--line,#d5dbe3)}.seg button:last-child{border-right:0}.seg button.on{font-weight:700;color:#fff}.seg button.t-fiorino{background:#2f9e61}.seg button.t-van{background:#2b6cb0}.seg button.t-tubos{background:#b7791f}.seg button:disabled{cursor:default}
 </style>
 <div id="app"></div>
 
@@ -1884,6 +1885,20 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
   const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
   const COR = ['var(--r1)', 'var(--r2)', 'var(--r3)', 'var(--r4)', 'var(--r5)', 'var(--r6)', 'var(--r7)', 'var(--r8)'];
   const TIPO = { fiorino: 'Fiorino', van: 'Van convencional', tubos: 'Van de tubos' };
+  const TIPO_CURTO = { fiorino: 'Fiorino', van: 'Van', tubos: 'Van com tubo' };
+  // trocar o tipo aplica capacidade, medidas e custo padrão do novo tipo
+  async function trocarTipoVeic(id, tipo) {
+    const v = ST.veiculos.get(id); if (!v || !TIPO[tipo]) return;
+    if (v.tipo === tipo) { if (v.conferir) { const q = Object.assign({}, v); delete q.conferir; await salvar('veiculos', id, q); render(); } return; }
+    const base = RE.VEICULOS_PADRAO.find((x) => x.tipo === tipo) || {};
+    const q = Object.assign({}, v, { tipo, capKg: base.capKg, capM3: base.capM3, compr: base.compr, larg: base.larg, alt: base.alt, custoDiaria: base.custoDiaria, kmL: base.kmL, combustivel: base.combustivel, aceitaTubos: base.aceitaTubos });
+    if (tipo === 'tubos') Object.assign(q, { secaoL: base.secaoL, secaoA: base.secaoA, tuboCompr: base.tuboCompr }); else { delete q.secaoL; delete q.secaoA; delete q.tuboCompr; }
+    if (v.nome && TIPO[v.tipo] && v.nome.startsWith(TIPO[v.tipo])) q.nome = TIPO[tipo] + v.nome.slice(TIPO[v.tipo].length);
+    delete q.conferir;
+    await salvar('veiculos', id, q);
+    registrar('Alteração', 'Veículo ' + (v.placa || v.nome) + ': ' + TIPO_CURTO[v.tipo] + ' → ' + TIPO_CURTO[tipo]);
+    render();
+  }
   const DIAS = RE.DIAS;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const I = {
@@ -2965,7 +2980,8 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     const placas = new Map();
     for (const v of r.veiculos || []) {
       const pl = String(v.plate || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); if (!pl) continue;
-      const t = TIPO_FROTA[RE.norm(v.type)] || (/TUBO/.test(RE.norm(v.model)) ? 'tubos' : null);
+      const tx = RE.norm([v.type, v.brand, v.model, v.notes, v.obs].filter(Boolean).join(' '));
+      const t = /TUBO/.test(tx) ? 'tubos' : /FIORINO|STRADA|KANGOO|DOBLO|PARTNER|SAVEIRO|COURIER|BERLINGO|MONTANA/.test(tx) ? 'fiorino' : (TIPO_FROTA[RE.norm(v.type)] || (/VAN|MASTER|SPRINTER|DUCATO|DAILY|BOXER|JUMPER|HR|BONGO|IVECO/.test(tx) ? 'van' : null));
       if (!t || /VENDIDO/i.test(v.status || '')) continue;
       placas.set(pl, { pl, tipo: t, modelo: [v.brand, v.model].filter(Boolean).join(' '), motorista: v.driver || '', manut: /MANUT|PARADO/i.test(v.status || '') });
     }
@@ -3237,11 +3253,16 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       const vs = ctx().veiculos;
       const mots = [['', 'Sem motorista fixo']].concat([...ST.motoristas.values()].map((m) => [m.id, m.nome]));
       h += (ST.admin ? '<div class="row" style="margin-bottom:12px"><span class="small muted">Novo veículo:</span><button class="btn sm" data-a="novoVeic" data-v="fiorino">' + I.plus + 'Fiorino</button><button class="btn sm" data-a="novoVeic" data-v="van">' + I.plus + 'Van convencional</button><button class="btn sm" data-a="novoVeic" data-v="tubos">' + I.plus + 'Van de tubos</button></div>' : '');
-      h += vs.map((v) => { const c = (k, t, ty, o) => campo('veiculos', v.id, k, t, v[k], ty, Object.assign({ dis: d }, o || {})); const vc = ctx().veiculos.find((x) => x.id === v.id) || v; const disp = RE.veicDisponivel(vc, ui.data); return '<div class="card"><div class="card-h"><div class="row"><h2>' + esc(v.nome) + '</h2><span class="chip">' + TIPO[v.tipo] + '</span>' + (v.exemplo ? '<span class="chip acc">exemplo</span>' : '') + (v.conferir ? '<span class="chip warn" title="' + esc(v.origem || '') + '">conferir capacidade e medidas</span> <button class="btn sm" data-a="conferido" data-v="' + esc(v.id) + '">Conferido</button>' : '') + '<span class="chip ' + (disp ? 'ok' : 'bad') + '">' + (disp ? 'disponível em ' + dBR(ui.data) : 'indisponível em ' + dBR(ui.data) + (vc.motoristaIndisponivel ? ': motorista ' + vc.motoristaIndisponivel + ' indisponível' : vc.indispDia ? ': desmarcado no Painel' : '')) + '</span></div>' + (ST.admin ? '<button class="btn sm danger" data-a="excluirVeic" data-v="' + esc(v.id) + '">Excluir</button>' : '') + '</div>' + confirmacao('excluirVeic', 'Excluir ' + v.nome + '?', v.id) +
+      const seg = (v) => '<div class="seg">' + ['fiorino', 'van', 'tubos'].map((t) => '<button class="' + (v.tipo === t ? 'on t-' + t : '') + '" data-a="tipoVeic" data-v="' + esc(v.id) + '|' + t + '"' + (d ? ' disabled' : '') + '>' + TIPO_CURTO[t] + '</button>').join('') + '</div>';
+      const cont = { fiorino: 0, van: 0, tubos: 0 }; vs.forEach((v) => { cont[v.tipo] = (cont[v.tipo] || 0) + 1; });
+      if (vs.length) h += '<div class="card" style="margin-bottom:14px"><div class="card-h"><h2>Frota</h2><span class="small muted">' + cont.fiorino + ' Fiorino · ' + cont.van + ' Van · ' + cont.tubos + ' Van com tubo</span></div><div class="tbl-wrap"><table><thead><tr><th>Veículo</th><th>Placa</th><th>Motorista fixo</th><th>Tipo</th><th class="r">Capacidade</th><th></th></tr></thead><tbody>' +
+        vs.map((v) => { const m = v.motoristaId ? ST.motoristas.get(v.motoristaId) : null; return '<tr><td><b>' + esc(v.nome) + '</b>' + (v.conferir ? ' <span class="chip warn">conferir tipo</span>' : '') + (v.ativo === false ? ' <span class="chip bad">inativo</span>' : '') + '</td><td>' + (v.placa ? '<span class="plate">' + esc(v.placa) + '</span>' : '—') + '</td><td class="small">' + esc(m ? m.nome : '—') + '</td><td>' + seg(v) + '</td><td class="r small">' + nf(v.capKg, 0) + ' kg · ' + nf(v.capM3, 0) + ' m³</td><td class="r"><button class="btn sm" data-a="veicDet" data-v="' + esc(v.id) + '">' + (ui.veicDet === v.id ? 'Fechar' : 'Detalhes') + '</button></td></tr>'; }).join('') +
+        '</tbody></table></div><p class="tiny" style="margin-top:8px">Ao trocar o tipo, capacidade, medidas e custo passam para o padrão do novo tipo (Van com tubo: seção de 1 × 1 m para os tubos). Ajuste em Detalhes se o veículo for diferente.</p></div>';
+      h += vs.filter((v) => ui.veicDet === v.id).map((v) => { const c = (k, t, ty, o) => campo('veiculos', v.id, k, t, v[k], ty, Object.assign({ dis: d }, o || {})); const vc = ctx().veiculos.find((x) => x.id === v.id) || v; const disp = RE.veicDisponivel(vc, ui.data); return '<div class="card"><div class="card-h"><div class="row"><h2>' + esc(v.nome) + '</h2><span class="chip">' + TIPO[v.tipo] + '</span>' + (v.exemplo ? '<span class="chip acc">exemplo</span>' : '') + (v.conferir ? '<span class="chip warn" title="' + esc(v.origem || '') + '">conferir capacidade e medidas</span> <button class="btn sm" data-a="conferido" data-v="' + esc(v.id) + '">Conferido</button>' : '') + '<span class="chip ' + (disp ? 'ok' : 'bad') + '">' + (disp ? 'disponível em ' + dBR(ui.data) : 'indisponível em ' + dBR(ui.data) + (vc.motoristaIndisponivel ? ': motorista ' + vc.motoristaIndisponivel + ' indisponível' : vc.indispDia ? ': desmarcado no Painel' : '')) + '</span></div>' + (ST.admin ? '<button class="btn sm danger" data-a="excluirVeic" data-v="' + esc(v.id) + '">Excluir</button>' : '') + '</div>' + confirmacao('excluirVeic', 'Excluir ' + v.nome + '?', v.id) +
         '<div class="fields">' + c('nome', 'Nome') + c('placa', 'Placa') + c('tipo', 'Tipo', 'sel', { op: Object.entries(TIPO) }) + c('motoristaId', 'Motorista', 'sel', { op: mots }) + c('capKg', 'Capacidade kg', 'num') + c('capM3', 'Volume m³', 'num') + c('compr', 'Comprimento do baú m', 'num') + c('larg', 'Largura do baú m', 'num') + c('alt', 'Altura do baú m', 'num') +
         (v.tipo === 'tubos' ? c('secaoL', 'Seção dos tubos: largura m', 'num') + c('secaoA', 'Seção dos tubos: altura m', 'num') + c('tuboCompr', 'Comprimento útil dos tubos m', 'num') : '') +
         c('custoDiaria', 'Custo operacional diária R$', 'num') + c('diariaMotorista', 'Diária do motorista R$ (se não houver motorista fixo)', 'num') + c('custoAjudante', 'Ajudante R$/dia', 'num') + c('kmL', 'Consumo km/l', 'num') + c('combustivel', 'Combustível', 'sel', { op: [['diesel', 'Diesel'], ['gasolina', 'Gasolina'], ['etanol', 'Etanol']] }) + c('custoKm', 'Manutenção e pneus R$/km', 'num') + c('multPedagio', 'Multiplicador de pedágio', 'num') + c('minEntregas', 'Mínimo de entregas (vazio = ' + (ST.cfg.minEntregas || 0) + ', padrão dos Ajustes)', 'num') + c('saida', 'Horário de saída', 'time') + c('manutIni', 'Manutenção de', 'date') + c('manutFim', 'até', 'date') + '</div>' +
-        '<div class="row" style="margin-top:10px">' + c('ativo', 'Ativo na frota', 'bool') + (v.tipo !== 'tubos' ? c('aceitaTubos', 'Aceita tubos que caibam no baú', 'bool') : '') + '</div></div>'; }).join('') || '<div class="card empty"><h3>Nenhum veículo</h3><p>Cadastre a frota para roteirizar.</p></div>';
+        '<div class="row" style="margin-top:10px">' + c('ativo', 'Ativo na frota', 'bool') + (v.tipo !== 'tubos' ? c('aceitaTubos', 'Aceita tubos que caibam no baú', 'bool') : '') + '</div></div>'; }).join('') || (vs.length ? '' : '<div class="card empty"><h3>Nenhum veículo</h3><p>Cadastre a frota para roteirizar.</p></div>');
     } else if (ui.cadTab === 'motoristas') {
       h += (ST.admin ? '<div class="row" style="margin-bottom:12px"><button class="btn sm" data-a="novoMot">' + I.plus + 'Novo motorista</button></div>' : '');
       const ms = [...ST.motoristas.values()].sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
@@ -3395,6 +3416,8 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       case 'sswSync': ui.sswSync = true; await sincronizarSSW(); break;
       case 'dispTodos': { const d = ui.data, dd = dispDia(d), mm = {}; for (const m of ST.motoristas.values()) mm[m.id] = v === '1' ? (RE.motoristaDisponivel(m, d) ? undefined : true) : false; for (const k in mm) if (mm[k] === undefined) delete mm[k]; await salvar('disponibilidade', d, { data: d, veiculos: Object.assign({}, dd.veiculos), motoristas: mm }); registrar('Disponibilidade', (v === '1' ? 'Todos os motoristas marcados' : 'Todos os motoristas desmarcados') + ' em ' + dBR(d)); render(); break; }
       case 'importarFrota': await importarFrota(); break;
+      case 'tipoVeic': { const [id, t] = v.split('|'); await trocarTipoVeic(id, t); break; }
+      case 'veicDet': ui.veicDet = ui.veicDet === v ? null : v; render(); break;
       case 'conferido': { const vv = ST.veiculos.get(v); if (vv) { const q = Object.assign({}, vv); delete q.conferir; await salvar('veiculos', v, q); render(); } break; }
       case 'irSSW': ui.tab = 'notas'; ui.notasSub = 'ssw'; render(); break;
       case 'sswTrazer': { const f = ui.sswFiltro || { q: '', so: 'novas' }; const q = RE.norm(f.q); await trazerSSW(sswLinhas().filter((r) => !q || RE.norm([r.nf, r.ctrc, r.cliente, r.cidade, r.remetente].join(' ')).includes(q))); break; }
@@ -3458,6 +3481,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       const [col, id, k] = el.dataset.bind.split('|');
       let val = el.type === 'checkbox' ? el.checked : el.value;
       if (el.dataset.t === 'num') { val = val === '' ? null : RE.num(val); if (el.value !== '' && val == null) { toast('Número inválido', true); return; } }
+      if (col === 'veiculos' && k === 'tipo') { await trocarTipoVeic(id, val); return; }
       const obj = col === 'cfg' ? clone(ST.cfg) : clone(ST[col].get(id) || { id });
       setPath(obj, k, val);
       if (col === 'notas' && (k === 'pesoOperador' || k === 'volOperador') && val == null) delete obj[k];
