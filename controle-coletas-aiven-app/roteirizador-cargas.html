@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"><meta name="rc-versao" content="6ef14bb0fd07"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="rc-versao" content="e5550e0518b8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
 <title>Roteirizador Inteligente de Cargas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -342,13 +342,15 @@ details>summary{cursor:pointer;font-weight:600}
     async function conferir() {
       if (avisado) return;
       try {
-        const r = await fetch('/api/rc/versao', { cache: 'no-store', credentials: 'same-origin' });
+        const r = await fetch('/api/rc/sistema', { cache: 'no-store', credentials: 'same-origin' });
         const j = await r.json();
-        if (j && j.versao && j.versao !== minha) mostrar();
+        if (j && j.pagina && j.pagina !== minha) mostrar();
       } catch (e) { /* sem rede: tenta depois */ }
     }
     function mostrar() {
       avisado = true;
+      window.RC_HOST.novaVersao = true;
+      const bt = document.getElementById('rcAtualizar'); if (bt) { bt.textContent = '🔄 Nova versão — atualizar'; bt.style.background = '#f5b301'; bt.style.color = '#16142f'; }
       const d = document.createElement('div');
       d.setAttribute('role', 'status');
       d.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:99999;background:#16142f;color:#fff;padding:10px 12px 10px 16px;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.25);display:flex;gap:12px;align-items:center;font:14px system-ui,sans-serif;max-width:calc(100% - 32px)';
@@ -356,7 +358,7 @@ details>summary{cursor:pointer;font-weight:600}
       const b = document.createElement('button');
       b.textContent = 'Atualizar agora';
       b.style.cssText = 'background:#f5b301;color:#16142f;border:0;border-radius:7px;padding:7px 12px;font:600 14px system-ui,sans-serif;cursor:pointer';
-      b.onclick = () => location.reload();
+      b.onclick = () => { try { (window.top || window).location.reload(); } catch (e) { location.reload(); } };
       d.appendChild(b);
       document.body.appendChild(d);
     }
@@ -2667,7 +2669,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     }
     const pendentes = notasEnr().filter((n) => n.bloqueada && !['entregue', 'cancelada'].includes(n.status)).length;
     $('#nav').innerHTML = NAV.map(([k, t, ic]) => '<button type="button" data-tab="' + k + '"' + (ui.tab === k ? ' aria-current="page"' : '') + '>' + ic + '<span>' + t + '</span>' + (k === 'notas' && pendentes ? '<span class="cnt">' + pendentes + '</span>' : '') + (k === 'sobras' && nPrior() ? '<span class="cnt">' + nPrior() + '</span>' : '') + '</button>').join('');
-    $('#railFoot').innerHTML = '<div><span class="dot' + (DB.local ? ' local' : '') + '"></span>' + (DB.local ? 'Modo local: dados só neste navegador' : 'Banco de dados conectado') + '</div><div>Perfil: <b>' + (ST.admin ? 'Administrador' : 'Operador') + '</b></div>';
+    $('#railFoot').innerHTML = '<div><span class="dot' + (DB.local ? ' local' : '') + '"></span>' + (DB.local ? 'Modo local: dados só neste navegador' : 'Banco de dados conectado') + '</div><div>Perfil: <b>' + (ST.admin ? 'Administrador' : 'Operador') + '</b></div>' + (window.RC_HOST ? '<button class="btn sm" id="rcAtualizar" data-a="atualizarSistema" style="margin-top:8px;width:100%;justify-content:center">' + (window.RC_HOST.novaVersao ? '🔄 Nova versão — atualizar' : '🔄 Atualizar sistema') + '</button>' : '');
   }
   const nPrior = () => [...ST.notas.values()].filter((n) => n.prioridade && !['entregue', 'cancelada'].includes(n.status)).length;
   function topo(titulo, sub, comData) {
@@ -3448,6 +3450,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       case 'sswSync': ui.sswSync = true; await sincronizarSSW(); break;
       case 'dispTodos': { const d = ui.data, dd = dispDia(d), mm = {}; for (const m of ST.motoristas.values()) mm[m.id] = v === '1' ? (RE.motoristaDisponivel(m, d) ? undefined : true) : false; for (const k in mm) if (mm[k] === undefined) delete mm[k]; await salvar('disponibilidade', d, { data: d, veiculos: Object.assign({}, dd.veiculos), motoristas: mm }); registrar('Disponibilidade', (v === '1' ? 'Todos os motoristas marcados' : 'Todos os motoristas desmarcados') + ' em ' + dBR(d)); render(); break; }
       case 'importarFrota': await importarFrota(); break;
+      case 'atualizarSistema': try { (window.top || window).location.reload(); } catch (e) { location.reload(); } break;
       case 'tipoVeic': { const [id, t] = v.split('|'); await trocarTipoVeic(id, t); break; }
       case 'veicDet': ui.veicDet = ui.veicDet === v ? null : v; render(); break;
       case 'conferido': { const vv = ST.veiculos.get(v); if (vv) { const q = Object.assign({}, vv); delete q.conferir; await salvar('veiculos', v, q); render(); } break; }

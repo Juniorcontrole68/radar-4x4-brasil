@@ -775,7 +775,7 @@
     }
     const pendentes = notasEnr().filter((n) => n.bloqueada && !['entregue', 'cancelada'].includes(n.status)).length;
     $('#nav').innerHTML = NAV.map(([k, t, ic]) => '<button type="button" data-tab="' + k + '"' + (ui.tab === k ? ' aria-current="page"' : '') + '>' + ic + '<span>' + t + '</span>' + (k === 'notas' && pendentes ? '<span class="cnt">' + pendentes + '</span>' : '') + (k === 'sobras' && nPrior() ? '<span class="cnt">' + nPrior() + '</span>' : '') + '</button>').join('');
-    $('#railFoot').innerHTML = '<div><span class="dot' + (DB.local ? ' local' : '') + '"></span>' + (DB.local ? 'Modo local: dados só neste navegador' : 'Banco de dados conectado') + '</div><div>Perfil: <b>' + (ST.admin ? 'Administrador' : 'Operador') + '</b></div>';
+    $('#railFoot').innerHTML = '<div><span class="dot' + (DB.local ? ' local' : '') + '"></span>' + (DB.local ? 'Modo local: dados só neste navegador' : 'Banco de dados conectado') + '</div><div>Perfil: <b>' + (ST.admin ? 'Administrador' : 'Operador') + '</b></div>' + (window.RC_HOST ? '<button class="btn sm" id="rcAtualizar" data-a="atualizarSistema" style="margin-top:8px;width:100%;justify-content:center">' + (window.RC_HOST.novaVersao ? '🔄 Nova versão — atualizar' : '🔄 Atualizar sistema') + '</button>' : '');
   }
   const nPrior = () => [...ST.notas.values()].filter((n) => n.prioridade && !['entregue', 'cancelada'].includes(n.status)).length;
   function topo(titulo, sub, comData) {
@@ -1556,6 +1556,7 @@
       case 'sswSync': ui.sswSync = true; await sincronizarSSW(); break;
       case 'dispTodos': { const d = ui.data, dd = dispDia(d), mm = {}; for (const m of ST.motoristas.values()) mm[m.id] = v === '1' ? (RE.motoristaDisponivel(m, d) ? undefined : true) : false; for (const k in mm) if (mm[k] === undefined) delete mm[k]; await salvar('disponibilidade', d, { data: d, veiculos: Object.assign({}, dd.veiculos), motoristas: mm }); registrar('Disponibilidade', (v === '1' ? 'Todos os motoristas marcados' : 'Todos os motoristas desmarcados') + ' em ' + dBR(d)); render(); break; }
       case 'importarFrota': await importarFrota(); break;
+      case 'atualizarSistema': try { (window.top || window).location.reload(); } catch (e) { location.reload(); } break;
       case 'tipoVeic': { const [id, t] = v.split('|'); await trocarTipoVeic(id, t); break; }
       case 'veicDet': ui.veicDet = ui.veicDet === v ? null : v; render(); break;
       case 'conferido': { const vv = ST.veiculos.get(v); if (vv) { const q = Object.assign({}, vv); delete q.conferir; await salvar('veiculos', v, q); render(); } break; }

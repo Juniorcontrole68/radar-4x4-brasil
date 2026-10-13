@@ -14,6 +14,7 @@ const path = require('path');
 const PERM = 'roteirizador';
 const MAX_DOC = 900 * 1024;
 const SEED_FILE = path.join(__dirname, 'roteirizador-cargas.seed.json');
+const BOOT = Date.now().toString(36);
 const PAGE_FILE = path.join(__dirname, 'roteirizador-cargas.html');
 // versão publicada da página (meta rc-versao gravada pelo build); a página compara para avisar que há versão nova
 let versaoCache = { mtime: 0, v: '' };
@@ -78,6 +79,8 @@ async function handle(req, res, u, ctx) {
   if (p !== '/api/rc' && !p.startsWith('/api/rc/')) return false;
   const { pool, sendJson, readJsonBodyLimited, dashboardSession, dashboardHas } = ctx;
   try {
+    // versão do sistema (muda a cada publicação, porque o servidor reinicia): usada pelo botão "Atualizar sistema"
+    if (p === '/api/rc/sistema' && req.method === 'GET') return sendJson(res, 200, { ok: true, versao: BOOT, pagina: versaoPagina() }), true;
     const user = await dashboardSession(req, false);
     if (!dashboardHas(user, PERM)) return sendJson(res, 403, { ok: false, error: 'Seu usuário não tem acesso ao Roteirizador. Peça a liberação a um administrador.' }), true;
     const cliente = clienteDe(user);

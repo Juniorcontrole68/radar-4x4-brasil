@@ -31,6 +31,9 @@ const login = async (u, s) => { const r = await call('POST', '/api/auth/login', 
   r = await call('GET', '/api/rc/mudancas'); check('API sem login -> 401', r.status === 401, 'veio ' + r.status);
   r = await call('PUT', '/api/rc/doc', { body: { path: 'op/main/notas/x', data: { a: 1 } } }); check('gravar sem login -> 401', r.status === 401, 'veio ' + r.status);
 
+  r = await call('GET', '/api/rc/sistema');
+  check('versão do sistema é pública (botão Atualizar sistema)', r.status === 200 && !!r.json.versao && !!r.json.pagina, r.status);
+  r = await call('GET', '/dashboard/');
   console.log('Administrador');
   const adm = await login(ADMIN_USER, ADMIN_PASS);
   check('login', !!adm);
@@ -84,6 +87,7 @@ const login = async (u, s) => { const r = await call('POST', '/api/auth/login', 
   check('portal tem o Roteirizador novo e não tem mais o Teste nem o V02', portal.includes('data-module="roteirizador-cargas"') && !portal.includes('data-module="roteirizador-teste"') && !portal.includes('data-module="roteirizador-v02"'));
 
   const dash = fs.readFileSync(path.join(__dirname, '..', 'dashboard', 'public', 'index.html'), 'utf8');
+  check('menu do dashboard tem o botão Atualizar sistema', dash.includes('id="sysUpdate"'));
   check('menu do dashboard tem o Roteirizador novo e não tem o Teste nem o V02', dash.includes('data-tab="roteirizador-cargas"') && !dash.includes('data-tab="roteirizador-v02"') && !dash.includes('data-tab="roteirizador-teste"'));
 
   console.log('\n' + pass + ' ok, ' + fail + ' falha(s)');

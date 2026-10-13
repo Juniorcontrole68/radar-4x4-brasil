@@ -122,13 +122,15 @@
     async function conferir() {
       if (avisado) return;
       try {
-        const r = await fetch('/api/rc/versao', { cache: 'no-store', credentials: 'same-origin' });
+        const r = await fetch('/api/rc/sistema', { cache: 'no-store', credentials: 'same-origin' });
         const j = await r.json();
-        if (j && j.versao && j.versao !== minha) mostrar();
+        if (j && j.pagina && j.pagina !== minha) mostrar();
       } catch (e) { /* sem rede: tenta depois */ }
     }
     function mostrar() {
       avisado = true;
+      window.RC_HOST.novaVersao = true;
+      const bt = document.getElementById('rcAtualizar'); if (bt) { bt.textContent = '🔄 Nova versão — atualizar'; bt.style.background = '#f5b301'; bt.style.color = '#16142f'; }
       const d = document.createElement('div');
       d.setAttribute('role', 'status');
       d.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:99999;background:#16142f;color:#fff;padding:10px 12px 10px 16px;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.25);display:flex;gap:12px;align-items:center;font:14px system-ui,sans-serif;max-width:calc(100% - 32px)';
@@ -136,7 +138,7 @@
       const b = document.createElement('button');
       b.textContent = 'Atualizar agora';
       b.style.cssText = 'background:#f5b301;color:#16142f;border:0;border-radius:7px;padding:7px 12px;font:600 14px system-ui,sans-serif;cursor:pointer';
-      b.onclick = () => location.reload();
+      b.onclick = () => { try { (window.top || window).location.reload(); } catch (e) { location.reload(); } };
       d.appendChild(b);
       document.body.appendChild(d);
     }
