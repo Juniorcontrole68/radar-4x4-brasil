@@ -1621,7 +1621,11 @@ async function refreshData(first=false){
     }else S.help=[];
     filters();update();
     const er=$('#err');
-    if(errors.length){
+    // falha passageira (ex.: servidor reiniciando após uma atualização) não vira aviso: só depois de 3 tentativas seguidas
+    window.__refreshFails=errors.length?(window.__refreshFails||0)+1:0;
+    errors=errors.map(x=>x.replace(/signal is aborted without reason|The user aborted a request\.?|This operation was aborted|AbortError[^<]*/i,'o servidor demorou mais de 18 s para responder').replace(/Failed to fetch|NetworkError[^<]*/i,'sem conexão com o servidor'));
+    if(errors.length&&window.__refreshFails<3&&!first){er.style.display="none"}
+    else if(errors.length){
       er.style.display='block';
       er.innerHTML='<b>Atualização parcial.</b><br>'+errors.map(safe).join('<br>')+'<br>Os módulos permitidos que responderam continuam atualizando normalmente.';
     }else er.style.display='none';
