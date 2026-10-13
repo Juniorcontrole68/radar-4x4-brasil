@@ -108,7 +108,7 @@ function hasPerm(p){return !!(AUTH&&(AUTH.is_admin||AUTH.permissions?.includes('
 function hasAnyPerm(list){return list.some(hasPerm)}
 function tabAllowed(tab){
   const map={
-    dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',carga:'montar_carga',lancamentos:'lancamentos','roteirizador-teste':'roteirizador','roteirizador-v02':'roteirizador',rastreamento:'tracking',lotacao:'lotacao',frota:'frota','pdf-notas':'pdf_notas',
+    dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',carga:'montar_carga',lancamentos:'lancamentos','roteirizador-teste':'roteirizador','roteirizador-v02':'roteirizador','roteirizador-cargas':'roteirizador',rastreamento:'tracking',lotacao:'lotacao',frota:'frota','pdf-notas':'pdf_notas',
     agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes',
     'ssw-motoristas':'ssw_saidas','motoristas-evolucao':'evolucao',
     'ssw-atrasos':'ssw_atrasos','ssw-remetentes':'remetentes',
@@ -123,7 +123,7 @@ function tabAllowed(tab){
   return map[tab]?hasPerm(map[tab]):false
 }
 function applyPermissions(){
-  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',carga:'montar_carga',lancamentos:'lancamentos','roteirizador-teste':'roteirizador','roteirizador-v02':'roteirizador',rastreamento:'tracking',lotacao:'lotacao',frota:'frota',agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes'};
+  const navMap={dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',carga:'montar_carga',lancamentos:'lancamentos','roteirizador-teste':'roteirizador','roteirizador-v02':'roteirizador','roteirizador-cargas':'roteirizador',rastreamento:'tracking',lotacao:'lotacao',frota:'frota',agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes'};
   document.querySelectorAll('.nav button').forEach(b=>{
     let show=true;
     if(b.dataset.adminOnly==='1')show=!!AUTH?.is_admin;
@@ -5082,6 +5082,7 @@ $$('.nav button').forEach(b=>b.onclick=()=>{
   $$('.section').forEach(x=>x.classList.remove('active'));
   $('#'+b.dataset.tab).classList.add('active');
   $('#pageTitle').textContent=b.textContent;
+  if(b.dataset.tab==='roteirizador-cargas'){const f=$('#rcFrame');if(f&&!f.src)f.src='/roteirizador-cargas?embed=1'}
   setTimeout(()=>{
     if(b.dataset.tab==='dashboards'){
       setDashboardToday();

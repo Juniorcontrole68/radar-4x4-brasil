@@ -83,6 +83,9 @@ const login = async (u, s) => { const r = await call('POST', '/api/auth/login', 
   const portal = fs.readFileSync(path.join(__dirname, '..', 'painel.html'), 'utf8');
   check('portal tem o Roteirizador novo e não tem mais o Teste nem o V02', portal.includes('data-module="roteirizador-cargas"') && !portal.includes('data-module="roteirizador-teste"') && !portal.includes('data-module="roteirizador-v02"'));
 
+  const dash = fs.readFileSync(path.join(__dirname, '..', 'dashboard', 'public', 'index.html'), 'utf8');
+  check('menu do dashboard tem o Roteirizador novo e não tem o Teste nem o V02', dash.includes('data-tab="roteirizador-cargas"') && !dash.includes('data-tab="roteirizador-v02"') && !dash.includes('data-tab="roteirizador-teste"'));
+
   console.log('\n' + pass + ' ok, ' + fail + ' falha(s)');
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
