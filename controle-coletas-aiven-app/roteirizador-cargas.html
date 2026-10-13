@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"><meta name="rc-versao" content="929a11f60cba"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="rc-versao" content="328efe3dd301"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
 <title>Roteirizador Inteligente de Cargas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -377,6 +377,7 @@ details>summary{cursor:pointer;font-weight:600}
     statusNfs: (nfs, desde) => api('GET', '/api/programacao-entregas/status-nfs?nfs=' + encodeURIComponent(nfs.join(',')) + '&desde=' + encodeURIComponent(desde || '')),
     // romaneios emitidos no SSW num dia (por motorista) e a rota de um romaneio (km e pontos de entrega)
     romaneiosDoDia: (data) => api('GET', '/api/roteirizador/lista?date=' + encodeURIComponent(data)),
+    recalcularRota: (corpo) => api('POST', '/api/roteirizador/recalcular', corpo),
     rotaRomaneio: (data, romaneio) => api('GET', '/api/roteirizador/rota?date=' + encodeURIComponent(data) + '&romaneio=' + encodeURIComponent(romaneio)),
     sswDisponiveis: (forcar) => api('GET', '/api/programacao-entregas/disponiveis' + (forcar ? '?force=1' : '')),
     // veículos e motoristas: tela Frota + quem rodou no Rastreio de carga nos últimos dias
@@ -3143,10 +3144,32 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     catch (e) { ui.romCache[k] = { erro: e.message }; }
     render(); return ui.romCache[k];
   }
+  // motorista com mais de um romaneio: uma rota só, com as entregas (e cidades) de todos
+  const motChave = (d, g) => d + '|MOT:' + RE.norm(g.motorista) + '|' + g.romaneios.join('+');
+  async function roteirizarMotorista(g, abrir) {
+    const d = ui.romData || hoje(), k = motChave(d, g);
+    ui.romCache = ui.romCache || {};
+    if (abrir) ui.romSel = k;
+    if (ui.romCache[k] && (ui.romCache[k].ok || ui.romCache[k].carregando)) { render(); return ui.romCache[k]; }
+    ui.romCache[k] = { carregando: true }; render();
+    try {
+      const planos = [];
+      for (const r of g.romaneios) { const p = await roteirizarRomaneio(r, false); if (p && p.ok) planos.push(p); }
+      if (abrir) ui.romSel = k;
+      const vistos = new Set(), stops = [];
+      for (const p of planos) for (const s of (p.stops || [])) { const id = (s.ctrc || '') + '|' + (s.nf || '') + '|' + Number(s.lat).toFixed(5) + '|' + Number(s.lon).toFixed(5); if (vistos.has(id)) continue; vistos.add(id); stops.push(s); }
+      if (!stops.length) throw new Error('Nenhum dos romaneios tem entregas com localização.');
+      const j = await window.RC_HOST.recalcularRota({ date: d, romaneio: g.romaneios.join(' + '), motorista: g.motorista, veiculo: g.veiculo || '', stops: stops.slice(0, 80) });
+      ui.romCache[k] = j && j.ok !== false ? Object.assign({ ok: true, romaneios: g.romaneios.slice(), aviso: stops.length > 80 ? 'Rota única com as primeiras 80 entregas.' : '' }, j) : { erro: (j && j.error) || 'Sem resposta' };
+    } catch (e) { ui.romCache[k] = { erro: e.message }; }
+    render(); return ui.romCache[k];
+  }
+  // cidades agrupadas, na ordem da rota, com o número de entregas
+  const cidadesDe = (pts) => { const m = new Map(); for (const p of pts) { const c = p.cidade || '—'; m.set(c, (m.get(c) || 0) + 1); } return [...m]; };
   async function roteirizarTodos() {
     if (ui.romTodos) return;
     ui.romTodos = true; render();
-    for (const g of (ui.romLista && ui.romLista.rows) || []) for (const r of g.romaneios) { if (!ui.romTodos) break; await roteirizarRomaneio(r, false); }
+    for (const g of (ui.romLista && ui.romLista.rows) || []) { if (!ui.romTodos) break; if (g.romaneios.length > 1) await roteirizarMotorista(g, false); else await roteirizarRomaneio(g.romaneios[0], false); }
     ui.romTodos = false; render();
   }
   const kmDe = (x) => x && x.ok ? Math.round((x.optimizedDistanceMeters || 0) / 1000) : null;
@@ -3167,23 +3190,29 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       if (!L.rows.length) h += '<p class="muted small" style="margin-top:12px">Nenhum romaneio emitido em ' + dBR(d) + '.</p>';
       else {
         let tot = 0, totN = 0;
-        h += '<div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>Motorista</th><th>Veículo</th><th>Romaneios</th><th class="r">Entregas</th><th class="r">Km</th></tr></thead><tbody>' +
+        h += '<div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>Motorista</th><th>Veículo</th><th>Romaneios</th><th>Cidades</th><th class="r">Entregas</th><th class="r">Km</th></tr></thead><tbody>' +
           L.rows.slice().sort((a, b) => (a.motorista || '').localeCompare(b.motorista || '', 'pt-BR')).map((g) => {
             let km = 0, todos = true;
             const bts = g.romaneios.map((r) => { const k = romChave(d, r), x = C[k], q = kmDe(x); if (q == null) todos = false; else km += q;
               return '<button class="btn sm' + (ui.romSel === k ? ' pri' : '') + '" data-a="romVer" data-v="' + esc(r) + '" title="Roteirizar este romaneio">' + esc(r) + (x && x.carregando ? ' …' : q != null ? ' · ' + q + ' km' : x && x.erro ? ' ⚠' : '') + '</button>'; }).join(' ');
-            if (todos) { tot += km; totN++; }
-            return '<tr><td><b>' + esc(g.motorista) + '</b></td><td class="small">' + esc(g.veiculo || '—') + '</td><td>' + bts + '</td><td class="r num">' + (g.entregas ? nf(g.entregas, 0) : '—') + '</td><td class="r num">' + (todos ? '<b>' + nf(km, 0) + '</b>' : '—') + '</td></tr>';
-          }).join('') + '</tbody>' + (totN ? '<tfoot><tr><td colspan="4" class="r small">Km dos ' + totN + ' motorista(s) já calculados</td><td class="r num"><b>' + nf(tot, 0) + '</b></td></tr></tfoot>' : '') + '</table></div>';
+            const multi = g.romaneios.length > 1, mk = multi ? motChave(d, g) : null, mx = mk ? C[mk] : null, mkm = kmDe(mx);
+            const kmMot = multi ? mkm : (todos ? km : null);
+            if (kmMot != null) { tot += kmMot; totN++; }
+            const unico = multi ? '<div style="margin-top:6px"><button class="btn sm' + (ui.romSel === mk ? ' pri' : ' go') + '" data-a="romMot" data-v="' + esc(RE.norm(g.motorista)) + '" title="Juntar as entregas dos ' + g.romaneios.length + ' romaneios numa rota só">🧭 Rota única dos ' + g.romaneios.length + ' romaneios' + (mx && mx.carregando ? ' …' : mkm != null ? ' · ' + mkm + ' km' : '') + '</button></div>' : '';
+            const fonte = multi ? (mx && mx.ok ? [mx] : g.romaneios.map((r) => C[romChave(d, r)]).filter((x) => x && x.ok)) : g.romaneios.map((r) => C[romChave(d, r)]).filter((x) => x && x.ok);
+            const cids = cidadesDe(fonte.flatMap((x) => x.stops || []));
+            return '<tr><td><b>' + esc(g.motorista) + '</b></td><td class="small">' + esc(g.veiculo || '—') + '</td><td>' + bts + unico + '</td><td class="small">' + (cids.length ? cids.map(([c, n]) => esc(c) + (n > 1 ? ' <span class="muted">(' + n + ')</span>' : '')).join(', ') : '<span class="muted">—</span>') + '</td><td class="r num">' + (g.entregas ? nf(g.entregas, 0) : '—') + '</td><td class="r num">' + (kmMot != null ? '<b>' + nf(kmMot, 0) + '</b>' + (multi ? '<div class="tiny">rota única</div>' : '') : multi && todos ? nf(km, 0) + '<div class="tiny">soma</div>' : '—') + '</td></tr>';
+          }).join('') + '</tbody>' + (totN ? '<tfoot><tr><td colspan="5" class="r small">Km dos ' + totN + ' motorista(s) já calculados</td><td class="r num"><b>' + nf(tot, 0) + '</b></td></tr></tfoot>' : '') + '</table></div>';
       }
     }
     h += '</div>';
     // detalhe do romaneio escolhido
     const sel = ui.romSel && ui.romSel.startsWith(d + '|') ? ui.romSel : null;
     if (sel) {
-      const rom = sel.slice(d.length + 1), x = C[sel];
-      const g = L.rows.find((r) => r.romaneios.includes(rom)) || {};
-      h += '<div class="card"><div class="card-h"><h2>Romaneio ' + esc(rom) + '</h2><span class="small muted">' + esc(g.motorista || x && x.motorista || '') + (g.veiculo ? ' · ' + esc(g.veiculo) : '') + ' · ' + dBR(d) + '</span></div>';
+      const ehMot = sel.includes('|MOT:');
+      const rom = ehMot ? sel.slice(sel.lastIndexOf('|') + 1).split('+').join(' + ') : sel.slice(d.length + 1), x = C[sel];
+      const g = (ehMot ? L.rows.find((r) => motChave(d, r) === sel) : L.rows.find((r) => r.romaneios.includes(rom))) || {};
+      h += '<div class="card"><div class="card-h"><h2>' + (ehMot ? 'Rota única · ' : 'Romaneio ') + esc(rom) + '</h2><span class="small muted">' + esc(g.motorista || x && x.motorista || '') + (g.veiculo ? ' · ' + esc(g.veiculo) : '') + ' · ' + dBR(d) + '</span></div>';
       if (!x || x.carregando) h += '<div class="empty small">Roteirizando as entregas do romaneio… (pode levar alguns segundos)</div>';
       else if (x.erro) h += '<div class="note bad">' + esc(x.erro) + ' <button class="btn sm" data-a="romRefazer" data-v="' + esc(rom) + '">Tentar de novo</button></div>';
       else {
@@ -3191,11 +3220,14 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
         const pts = ordem.length ? ordem : (x.stops || []);
         const horas = x.durationSeconds ? Math.floor(x.durationSeconds / 3600) + 'h' + String(Math.round(x.durationSeconds % 3600 / 60)).padStart(2, '0') : '—';
         const entregues = pts.filter((p) => p.entregue).length;
-        h += '<div class="kpis">' + kpi('Km da rota', nf(kmDe(x), 0), '', 'ida e volta') + kpi('Entregas', pts.length) + kpi('Tempo de direção', horas) + kpi('Entregues', entregues, entregues === pts.length && pts.length ? 'good' : '') + (x.approximateStops ? kpi('Endereço aproximado', x.approximateStops, 'warn') : '') + '</div>';
+        const cids = cidadesDe(pts);
+        if (x.aviso) h += '<div class="note warn" style="margin-bottom:10px">' + esc(x.aviso) + '</div>';
+        h += '<div class="kpis">' + kpi('Km da rota', nf(kmDe(x), 0), '', 'ida e volta') + kpi('Entregas', pts.length) + kpi('Cidades', cids.length) + kpi('Tempo de direção', horas) + kpi('Entregues', entregues, entregues === pts.length && pts.length ? 'good' : '') + (x.approximateStops ? kpi('Endereço aproximado', x.approximateStops, 'warn') : '') + '</div>';
         const tracado = (x.geometry && x.geometry.coordinates || []).filter((c, i, arr) => arr.length < 1500 || i % Math.ceil(arr.length / 1500) === 0).map((c) => [c[1], c[0]]);
         const porEstrada = tracado.length > 2 && x.matrixSource !== 'estimada';
         const fake = { rotas: [{ veiculoId: 'rom', veiculoNome: 'Romaneio ' + rom, tracado: porEstrada ? tracado : null, paradas: pts.map((p) => ({ lat: p.lat, lon: p.lon, cidadeId: p.cidade || '', cidadeNome: p.cidade || '' })) }], naoRoteirizadas: [], estimativa: !porEstrada };
         if (!porEstrada) h += '<div class="note warn" style="margin-top:10px">O servidor de rotas por estrada não respondeu: o km acima é uma estimativa em linha reta. Clique em Atualizar daqui a pouco para recalcular.</div>';
+        h += '<div class="row" style="margin-top:12px;gap:6px">' + cids.map(([c, n]) => '<span class="chip">' + esc(c) + ' · ' + n + '</span>').join('') + '</div>';
         h += '<div style="margin-top:12px">' + mapaHTML(fake, null) + '</div>';
         h += '<div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>#</th><th>Destinatário</th><th>Cidade</th><th>Endereço</th><th>NF</th><th>CT-e</th><th>Situação</th></tr></thead><tbody>' +
           pts.map((p, i) => '<tr><td class="num">' + (i + 1) + '</td><td>' + esc(p.destinatario || p.label || '') + '</td><td>' + esc(p.cidade || '') + '</td><td class="small">' + esc([p.endereco, p.numero, p.bairro].filter(Boolean).join(', ')) + (p.precision && /aproximado|cidade|cliente/.test(p.precision) ? ' <span class="chip warn">aproximado</span>' : '') + '</td><td class="mono small">' + esc(p.nf || '') + '</td><td class="mono small">' + esc(p.ctrc || '') + '</td><td>' + (p.entregue ? '<span class="chip ok">entregue</span>' : '<span class="chip">a entregar</span>') + '</td></tr>').join('') +
@@ -3577,6 +3609,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       case 'romVer': await roteirizarRomaneio(v, true); break;
       case 'romRefazer': { const k = romChave(ui.romData || hoje(), v); if (ui.romCache) delete ui.romCache[k]; await roteirizarRomaneio(v, true); break; }
       case 'romTodos': await roteirizarTodos(); break;
+      case 'romMot': { const g = ((ui.romLista && ui.romLista.rows) || []).find((r) => RE.norm(r.motorista) === v && r.romaneios.length > 1); if (g) await roteirizarMotorista(g, true); break; }
       case 'sswSync': ui.sswSync = true; await sincronizarSSW(); break;
       case 'dispTodos': { const d = ui.data, dd = dispDia(d), mm = {}; for (const m of ST.motoristas.values()) mm[m.id] = v === '1' ? (RE.motoristaDisponivel(m, d) ? undefined : true) : false; for (const k in mm) if (mm[k] === undefined) delete mm[k]; await salvar('disponibilidade', d, { data: d, veiculos: Object.assign({}, dd.veiculos), motoristas: mm }); registrar('Disponibilidade', (v === '1' ? 'Todos os motoristas marcados' : 'Todos os motoristas desmarcados') + ' em ' + dBR(d)); render(); break; }
       case 'importarFrota': await importarFrota(); break;
