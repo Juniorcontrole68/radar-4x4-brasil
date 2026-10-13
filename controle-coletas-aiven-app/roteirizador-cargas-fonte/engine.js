@@ -409,6 +409,10 @@
       const pesoTubos = itens.filter((i) => i.tubo && i.tubo.pesoUnit).reduce((s, i) => s + i.tubo.pesoUnit * i.tubo.barras, 0);
       n.volOutrosM3 = round(Math.max(0, n.pesoKg - pesoTubos) / cfg.cubagemKgM3, 4); n.volFonte = 'fator de cubagem';
       avisos.push({ cod: 'vol_cubagem', msg: 'Volume estimado pelo fator de cubagem (' + cfg.cubagemKgM3 + ' kg/m³)' });
+    } else if (n.pesoKg > 0) {
+      // sem m³ mas com peso: não trava a nota, a carga é controlada só pelo peso
+      n.volOutrosM3 = 0; n.volFonte = 'sem m³ (vale o peso)';
+      avisos.push({ cod: 'vol_peso', msg: 'Sem volume (m³): a carga desta nota é controlada só pelo peso' });
     } else { n.volOutrosM3 = null; pend.push({ cod: 'volume', bloqueia: true, msg: 'Sem volume (m³): informe na nota ou cadastre os produtos' }); }
     // tubos
     n.tubos = [];
