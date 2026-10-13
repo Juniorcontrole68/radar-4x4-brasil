@@ -4655,6 +4655,20 @@ async function buildSswCityBubbles(from='',to=''){
 // (romaneio em que o CT-e saiu, gravado nos Lançamentos) e na data de entrega (baixas, BI2 17).
 // SLA = entregues até a previsão ÷ (entregues + vencidos sem entrega). Em aberto no prazo fica fora da conta.
 const SLA_CACHE=new Map();
+// SLA é por cliente PAGADOR. Pagadores que são o mesmo cliente ficam juntos (informado pela operação em 13/10/2026).
+const SLA_GRUPOS=[
+  {nome:'COMERCIAL LEAL (grupo)',re:/\bLEAL\b|LEAL DUTRA|CONASID|\bNAVAS\b|LOGMEL|SOMERLOG/},
+  {nome:'THB / FCB (grupo)',re:/\bTHB\b|\bFCB\b/}
+];
+// nome do pagador no BI2 174 (nunca um CNPJ); sem ele, o remetente
+function slaPagador(r){
+  const ent=Object.entries(r||{});
+  const pref=['pagador_nome','nome_pagador','tomador_nome','nome_tomador','PAGADOR','TOMADOR','CLIENTE PAGADOR','RAZAO SOCIAL PAGADOR','NOME PAGADOR','NOME TOMADOR'];
+  for(const a of pref){const na=normKey(a);const hit=ent.find(([k])=>normKey(k)===na);if(hit&&String(hit[1]||'').trim()&&!/^[\d.\/\-\s]+$/.test(String(hit[1])))return{nome:String(hit[1]).trim(),campo:hit[0]}}
+  for(const[k,v]of ent){const nk=normKey(k);if(/PAGADOR|TOMADOR/.test(nk)&&!/CNPJ|CPF|DOC|CEP|CIDADE|UF|END|FONE|IE|INSCR|COD/.test(nk)&&String(v||'').trim()&&!/^[\d.\/\-\s]+$/.test(String(v)))return{nome:String(v).trim(),campo:k}}
+  return{nome:String(r.remetente_nome||pickField(r,'REMETENTE')||'Não informado').trim(),campo:''}
+}
+function slaGrupo(nome){const n=normKey(nome).replace(/_/g,' ');const g=SLA_GRUPOS.find(x=>x.re.test(n)||x.re.test(String(nome).toUpperCase()));return g?g.nome:String(nome).toUpperCase()}
 function slaIso(v){
   const t=String(v||'').trim();let m=t.match(/^(\d{4})-(\d{2})-(\d{2})/);if(m)return m[1]+'-'+m[2]+'-'+m[3];
   m=t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);if(!m)return'';
@@ -4681,12 +4695,13 @@ async function buildSlaClientes(from,to){
     s174.push(...par[0]);s17.push(...par[1])
   }
   if(ate===hoje){try{s174.push({ok:true,rows:parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text).rows||[]})}catch{}try{s17.push({ok:true,rows:parseBi2Csv((await fetchBi2ReportFolder(17,'',bi2Auth().pasta)).text).rows||[]})}catch{}}
-  const ctes=new Map();
+  const ctes=new Map(),camposPagador=new Set();let semPagador=0;
   for(const sn of s174)for(const r of (sn.rows||[])){
     const raw=r.numero_ctrc||pickField(r,'CTRC'),k=normCtrcLoose(raw);if(!k)continue;
     const em=slaIso(pickField(r,'data_emissao','DATA EMISSAO','DATA AUTORIZACAO','AUTORIZACAO'));
     if(!em||em<from||em>to)continue;
-    const cur=ctes.get(k)||{ctrc:raw,nf:normNf(r.numero_nf||pickField(r,'NF')),cliente:String(r.remetente_nome||pickField(r,'REMETENTE')||'Não informado').trim(),cidade:r.cidade_destino||pickField(r,'CIDADE DESTINO')||'',emissao:em,previsao:'',entrega:'',rota:''};
+    const pg=slaPagador(r);if(pg.campo)camposPagador.add(pg.campo);else semPagador++;
+    const cur=ctes.get(k)||{ctrc:raw,nf:normNf(r.numero_nf||pickField(r,'NF')),cliente:slaGrupo(pg.nome),pagador:pg.nome.toUpperCase(),cidade:r.cidade_destino||pickField(r,'CIDADE DESTINO')||'',emissao:em,previsao:'',entrega:'',rota:''};
     const pv=slaIso(r.prev_ent||pickField(r,'PREV ENTREGA','PREVISAO ENTREGA','DATA PREVISAO'));if(pv)cur.previsao=pv;
     ctes.set(k,cur)
   }
@@ -4703,12 +4718,12 @@ async function buildSlaClientes(from,to){
     for(const l of (j.rows||[]))for(const x of (l.ctes||[])){const c=ctes.get(normCtrcLoose(x.c));if(c&&l.data&&(!c.rota||l.data<c.rota))c.rota=l.data}
   }catch(e){avisos.push('Data da rota indisponível: '+String(e.message||e))}
   // 4) contas
-  const zero=()=>({emitidos:0,entregues:0,noPrazo:0,atrasadas:0,vencidas:0,abertas:0,semPrevisao:0,mesmoDiaRota:0,comRota:0,sEmEnt:0,nEmEnt:0,sEmRota:0,nEmRota:0,sRotaEnt:0,nRotaEnt:0,cidades:new Set()});
+  const zero=()=>({membros:new Set(),emitidos:0,entregues:0,noPrazo:0,atrasadas:0,vencidas:0,abertas:0,semPrevisao:0,mesmoDiaRota:0,comRota:0,sEmEnt:0,nEmEnt:0,sEmRota:0,nEmRota:0,sRotaEnt:0,nRotaEnt:0,cidades:new Set()});
   const geral=zero(),porCli=new Map();
   for(const c of ctes.values()){
     const gs=[geral];if(!porCli.has(c.cliente))porCli.set(c.cliente,zero());gs.push(porCli.get(c.cliente));
     for(const g of gs){
-      g.emitidos++;if(c.cidade)g.cidades.add(c.cidade);
+      g.emitidos++;if(c.cidade)g.cidades.add(c.cidade);if(c.pagador)g.membros.add(c.pagador);
       if(c.rota){g.comRota++;const d=slaDias(c.emissao,c.rota);if(d!==null&&d>=0){g.sEmRota+=d;g.nEmRota++}}
       if(c.entrega){
         g.entregues++;const d=slaDias(c.emissao,c.entrega);if(d!==null&&d>=0){g.sEmEnt+=d;g.nEmEnt++}
@@ -4721,11 +4736,12 @@ async function buildSlaClientes(from,to){
   const fim=(g,extra)=>{const base=g.noPrazo+g.atrasadas+g.vencidas;return Object.assign({},extra,{emitidos:g.emitidos,entregues:g.entregues,noPrazo:g.noPrazo,atrasadas:g.atrasadas,vencidas:g.vencidas,abertas:g.abertas,semPrevisao:g.semPrevisao,comRota:g.comRota,
     sla:base?Math.round(g.noPrazo/base*1000)/10:null,
     mediaEmissaoEntrega:g.nEmEnt?Math.round(g.sEmEnt/g.nEmEnt*10)/10:null,mediaEmissaoRota:g.nEmRota?Math.round(g.sEmRota/g.nEmRota*10)/10:null,mediaRotaEntrega:g.nRotaEnt?Math.round(g.sRotaEnt/g.nRotaEnt*10)/10:null,
-    entregaNoDiaDaRota:g.nRotaEnt?Math.round(g.mesmoDiaRota/g.nRotaEnt*1000)/10:null,cidades:g.cidades.size})};
+    entregaNoDiaDaRota:g.nRotaEnt?Math.round(g.mesmoDiaRota/g.nRotaEnt*1000)/10:null,cidades:g.cidades.size,pagadores:g.membros.size>1?[...g.membros].sort():[]})};
   const clientes=[...porCli].map(([cliente,g])=>fim(g,{cliente})).sort((a,b)=>b.emitidos-a.emitidos);
   const faltam=s174.filter(x=>x.missing).length;
   if(faltam)avisos.push(faltam+' dia(s) sem arquivo BI2 174');
-  const value={ok:true,from,to,geral:fim(geral,{cliente:'Geral'}),clientes,avisos,regra:'SLA = entregues até a previsão ÷ (entregues + vencidas sem entrega). CT-e em aberto ainda no prazo não entra na conta.'};
+  if(!camposPagador.size&&semPagador)avisos.push('O BI2 174 não trouxe o pagador: agrupado pelo remetente');
+  const value={ok:true,from,to,agrupamento:camposPagador.size?'pagador ('+[...camposPagador].join(', ')+')':'remetente',geral:fim(geral,{cliente:'Geral'}),clientes,avisos,regra:'SLA = entregues até a previsão ÷ (entregues + vencidas sem entrega). CT-e em aberto ainda no prazo não entra na conta.'};
   SLA_CACHE.set(ck,{at:Date.now(),value});
   return value
 }
