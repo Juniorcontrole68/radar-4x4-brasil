@@ -173,8 +173,15 @@
     let cur = null;
     for (const raw of pages) {
       const t = raw.replace(/\s+/g, ' ');
-      const mm = t.match(/(?:\d{4}\s?){10}\d{4}/g) || [];
-      const chaves = mm.map((s) => s.replace(/\s/g, '')).filter((s) => s.length === 44 && RE.parseChave(s) && RE.parseChave(s).valida);
+      // a chave pode vir em blocos de 4, sem espaço, com pontos ou partida pelo leitor do PDF: junta os dígitos
+      // de cada trecho e procura 44 dígitos com dígito verificador válido; a que vem depois de "CHAVE DE ACESSO" ganha
+      const achar = (txt) => {
+        const runs = txt.replace(/(\d)[\s.\-\/]{1,3}(?=\d)/g, '$1').match(/\d{44,}/g) || [], out = [];
+        for (const r of runs) for (let i = 0; i + 44 <= r.length; i++) { const c = RE.parseChave(r.slice(i, i + 44)); if (c && c.valida && /^(1[1-7]|2[1-9]|3[1-35]|4[1-3]|5[0-3])$/.test(c.cUF) && c.modelo === '55') { out.push(c.chave); i += 43; } }
+        return out;
+      };
+      const lab = /CHAVE\s+DE\s+ACESSO/i.exec(t);
+      const chaves = [...new Set([].concat(lab ? achar(t.slice(lab.index, lab.index + 200)) : [], achar(t)))];
       if (chaves.length && (!cur || cur.chave !== chaves[0])) {
         const c = RE.parseChave(chaves[0]);
         cur = { chave: c.chave, numero: c.numero, serie: c.serie, emitenteDoc: c.cnpj, itens: [], origem: 'pdf', textoPdf: '' };
@@ -428,7 +435,11 @@
     n.cidadeId = mun ? mun.cod : null;
     n.cidadeNome = mun ? mun.nome + '/' + mun.uf : (e.cidade || '') + '/' + (e.uf || '');
     if (!e.lgr && !nota.pdfParcial) avisos.push({ cod: 'endereco', msg: 'Endereço sem logradouro' });
-    if (nota.pdfParcial && !nota.pdfConferido) pend.push({ cod: 'pdf', bloqueia: true, msg: 'Nota lida do PDF: confira destinatário, cidade e peso, ou importe o XML' });
+    // nota lida do PDF: com cidade reconhecida e peso, entra na programação (só um aviso); faltando algo, trava
+    if (nota.pdfParcial && !nota.pdfConferido) {
+      if (mun && n.pesoKg > 0) avisos.push({ cod: 'pdf', msg: 'Nota lida do PDF: confira destinatário e endereço, ou importe o XML para o endereço exato' });
+      else pend.push({ cod: 'pdf', bloqueia: true, msg: 'Nota lida do PDF sem ' + (!mun ? 'cidade reconhecida' : 'peso') + ': confira ou importe o XML' });
+    }
     const cidadeCad = ctx.cidades && n.cidadeId ? ctx.cidades[n.cidadeId] : null;
     if (n.cidadeId && !cidadeCad) pend.push({ cod: 'cidade_sem_rota', bloqueia: true, msg: 'Cidade sem dias de rota cadastrados: ' + n.cidadeNome });
     // coordenadas

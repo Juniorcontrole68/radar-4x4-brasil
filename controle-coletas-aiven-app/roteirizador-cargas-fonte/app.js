@@ -331,6 +331,15 @@
       if (vistos.has(id)) { res.duplicadas++; continue; }
       vistos.add(id);
       const ex = ST.notas.get(id);
+      const k = nfChave(n.numero);
+      const doSSW = !ex && k ? [...ST.notas.values()].find((o) => o.origem === 'ssw' && nfChave(o.numero) === k && !['entregue', 'cancelada'].includes(o.status)) : null;
+      if (doSSW && !doSSW.chaveNota) {
+        // mesma NF já veio do SSW (CTRC): a nota do SSW fica, com destinatário e endereço do arquivo
+        const q = Object.assign({}, doSSW, { chaveNota: n.chave || '', destNome: n.destNome || doSSW.destNome, destDoc: n.destDoc || doSSW.destDoc, emitente: doSSW.emitente || n.emitente, emitenteDoc: n.emitenteDoc || doSSW.emitenteDoc, itens: (n.itens && n.itens.length) ? n.itens : doSSW.itens, atualizadoEm: agoraISO() });
+        if (n.origem === 'xml' && n.endereco && n.endereco.lgr) q.endereco = Object.assign({}, doSSW.endereco, n.endereco);
+        if (!(doSSW.pesoB > 0) && n.pesoB > 0) q.pesoB = n.pesoB;
+        gravar.push({ id: doSSW.id, data: q }); vistos.add(doSSW.id); res.atualizadas++; res.comSSW = (res.comSSW || 0) + 1; continue;
+      }
       if (ex) {
         if (ex.origem === 'pdf' && n.origem === 'xml') {
           const keep = {}; for (const k of ['pesoOperador', 'volOperador', 'frete', 'prazo', 'janela', 'diaForcado', 'travaVeiculo', 'status', 'planoData', 'lat', 'lon']) if (ex[k] != null) keep[k] = ex[k];
@@ -345,6 +354,7 @@
       if (ex && ex.status !== 'cancelada') { gravar.push({ id: ch, data: Object.assign({}, ex, { status: 'cancelada', canceladaEm: agoraISO(), motivoCancel: 'Evento de cancelamento importado' }) }); res.canceladas++; }
       else if (!ex) res.ign.push('Cancelamento da chave ' + ch + ': nota não está no sistema');
     }
+    { const ign = Object.assign({}, ignoradas()); let mud = false; for (const g of gravar) { const kk = nfChave(g.data.numero); if (kk && ign[kk]) { delete ign[kk]; mud = true; } } if (mud) await salvar('ssw', 'ignoradas', { id: 'ignoradas', nfs: ign }); }
     ui.imp.fase = 'Gravando'; ui.imp.aGravar = gravar.length; atualizarProg();
     await salvarVarios('notas', gravar, (k) => { ui.imp.gravados = k; if (k % 10 === 0 || k === gravar.length) atualizarProg(); });
     ui.imp.res = res; ui.imp.fase = 'Concluído';
@@ -842,6 +852,7 @@
     const d = ui.data, dd = dispDia(d);
     if (window.RC_HOST && ST.admin && !ui.frotaAuto) { ui.frotaAuto = true; setTimeout(() => importarFrota(), 50); }
     if (window.RC_HOST && !ui.sswSync) { ui.sswSync = true; setTimeout(() => sincronizarSSW(), 80); }
+    if (!ui.juntAuto) { ui.juntAuto = true; setTimeout(() => juntarDuplicadasSSW().catch((e) => console.warn('juntar', e.message)), 2500); }
     if (!ui.sbNotasAuto) { ui.sbNotasAuto = true; setTimeout(() => notasDasSobras().catch((e) => console.warn('sobras→notas', e.message)), 1500); setInterval(() => notasDasSobras().catch(() => {}), 3 * 60000); }
     if (window.RC_HOST && !ui.geoAuto) { ui.geoAuto = true; setTimeout(() => localizarEnderecosXML(), 4000); setInterval(() => { if (document.visibilityState !== 'hidden') localizarEnderecosXML(); }, 10 * 60000); }
     const todos = motoristasUnicos();
@@ -1052,7 +1063,7 @@
       h += '<div id="impProg" style="margin-top:14px"></div>';
       if (ui.imp.res) {
         const r = ui.imp.res;
-        h += '<div class="note ' + (r.ign.length ? 'warn' : 'ok') + '" style="margin-top:12px"><b>' + r.novas + ' nova(s)</b> · ' + r.atualizadas + ' atualizada(s) pelo XML · ' + r.duplicadas + ' duplicada(s) ignorada(s) pela chave · ' + r.canceladas + ' cancelada(s)' + (r.ign.length ? '<details style="margin-top:6px"><summary>' + r.ign.length + ' arquivo(s) não aproveitado(s)</summary><ul class="small">' + r.ign.slice(0, 80).map((x) => '<li>' + esc(x) + '</li>').join('') + '</ul></details>' : '') + '</div>';
+        h += '<div class="note ' + (r.ign.length ? 'warn' : 'ok') + '" style="margin-top:12px"><b>' + r.novas + ' nova(s)</b> · ' + r.atualizadas + ' atualizada(s)' + (r.comSSW ? ' (' + r.comSSW + ' já estavam no SSW e receberam os dados do arquivo)' : ' pelo XML') + ' · ' + r.duplicadas + ' duplicada(s) ignorada(s) pela chave · ' + r.canceladas + ' cancelada(s)' + (r.ign.length ? '<details style="margin-top:6px"><summary>' + r.ign.length + ' arquivo(s) não aproveitado(s)</summary><ul class="small">' + r.ign.slice(0, 80).map((x) => '<li>' + esc(x) + '</li>').join('') + '</ul></details>' : '') + '</div>';
       }
     }
     h += '</div><div class="card"><h2>Como os dados são lidos</h2><dl class="kv" style="margin-top:10px"><dt>XML</dt><dd>Número, série, chave, emitente, destinatário, endereço (local de entrega quando informado), itens, peso bruto e líquido, valor, frete e observações.</dd><dt>PDF</dt><dd>Lê a chave de acesso (número, série e emitente saem dela) e tenta peso, valor e cidade. A nota fica pendente até ser conferida ou até o XML ser importado, que substitui os dados do PDF. PDF digitalizado sem texto não é lido: importe o XML.</dd><dt>Planilha</dt><dd>Colunas reconhecidas pelo título: Chave, NF, Série, Cliente, CNPJ, Endereço, Bairro, Cidade, UF, CEP, Peso, Volume, Valor, Frete, Prazo, Produto, Quantidade, Diâmetro, Comprimento, Latitude, Longitude. Linhas com a mesma chave ou número viram itens da mesma nota.</dd><dt>Duplicadas</dt><dd>Reconhecidas pela chave de acesso.</dd><dt>Sem invenção</dt><dd>Peso, volume, dimensões e frete ausentes ficam como pendência. Valores vêm da nota, do cadastro de produtos ou do operador.</dd></dl></div>';
@@ -1370,6 +1381,24 @@
   function sobrasAbertas() { const h = hoje(); return [...ST.sobras.values()].filter((x) => x.data && x.data <= h && sobraSituacao(x).st === 'pendente'); }
   // Sobra sem nota no roteirizador (lançada pela planilha ou à mão): vira uma nota, para entrar na programação.
   // Não recria nota excluída (lista de ignoradas) e liga a sobra à nota criada.
+  // NF importada por PDF/XML que também veio do SSW: fica uma nota só (a do SSW, com os dados do arquivo)
+  async function juntarDuplicadasSSW() {
+    if (!ST.admin || ui.juntando) return;
+    const ssw = new Map(); for (const o of ST.notas.values()) if (o.origem === 'ssw' && !['entregue', 'cancelada'].includes(o.status)) { const k = nfChave(o.numero); if (k) ssw.set(k, o); }
+    const pares = [];
+    for (const n of ST.notas.values()) { if (n.origem !== 'pdf' && n.origem !== 'xml') continue; if (['entregue', 'cancelada', 'em_rota', 'roteirizada'].includes(n.status)) continue; const o = ssw.get(nfChave(n.numero)); if (o && !o.chaveNota) pares.push([n, o]); }
+    if (!pares.length) return;
+    ui.juntando = true;
+    try {
+      for (const [n, o] of pares) {
+        const q = Object.assign({}, o, { chaveNota: n.chave || n.id, destNome: n.destNome || o.destNome, destDoc: n.destDoc || o.destDoc, emitenteDoc: n.emitenteDoc || o.emitenteDoc, itens: (n.itens && n.itens.length) ? n.itens : o.itens, atualizadoEm: agoraISO() });
+        if (n.origem === 'xml' && n.endereco && n.endereco.lgr) q.endereco = Object.assign({}, o.endereco, n.endereco);
+        if (n.bloqueioUsuario) q.bloqueioUsuario = true;
+        await salvar('notas', o.id, q); await remover('notas', n.id);
+      }
+      registrar('Notas', pares.length + ' nota(s) do PDF/XML juntadas com a mesma NF do SSW'); toast(pares.length + ' nota(s) repetidas (arquivo + SSW) viraram uma só.'); ui.escalaSuja = true;
+    } finally { ui.juntando = false; render(); }
+  }
   async function notasDasSobras() {
     if (!ST.admin || ui.sbNotas) return;
     const ign = ignoradas(), enr = notasEnr(), it = [], liga = [];
