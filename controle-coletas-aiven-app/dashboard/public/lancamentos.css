@@ -73,3 +73,9 @@
 @media(max-width:1180px){.lc-form{grid-template-columns:repeat(4,minmax(0,1fr))}.lc-form .lc-go{grid-column:span 4}}
 @media(max-width:760px){.lc-form{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.lc-form .lc-mot,.lc-form .lc-go{grid-column:1/-1}.lc-form .lc-go .lc-btn{flex:1}}
 @media(max-width:1050px){.nav button[data-tab=lancamentos]:before{content:'📝'}}
+
+/* cobrança por km: flag pequeno ao lado do km e o campo do valor do km */
+.lc-table td .lc-pk{display:flex;align-items:center;justify-content:flex-end;gap:3px;margin-top:3px;font-size:10.5px;font-weight:600;color:#64748b;white-space:nowrap;cursor:pointer}
+.lc-table td .lc-pk input{width:12px;height:12px;min-width:0;padding:0;margin:0;border:0;accent-color:var(--brand,#0f766e);cursor:pointer}
+.lc-table td input.lc-vkm{display:block;width:70px;height:26px;margin:3px 0 0 auto;font-size:12px}
+.lc-table td .lc-kmnao{display:block;color:#b91c1c}

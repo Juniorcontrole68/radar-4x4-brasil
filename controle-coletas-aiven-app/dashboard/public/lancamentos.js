@@ -159,7 +159,7 @@ const valorTexto=v=>v===null||v===undefined?'':Number(v).toLocaleString('pt-BR',
 const opcoes=(lista,atual)=>'<option value="">—</option>'+[...new Set([...lista,atual].filter(Boolean))].map(t=>'<option'+(t===atual?' selected':'')+'>'+esc(t)+'</option>').join('');
 // Enquanto o usuário está digitando numa linha, a lista não é redesenhada (perderia o que foi digitado).
 let renderPendente=false;
-function tabelaOcupada(){const a=document.activeElement;return!!(a&&a.closest&&a.closest('#lcTable')&&/^(INPUT|SELECT)$/.test(a.tagName))}
+function tabelaOcupada(){const a=document.activeElement;return!!(a&&a.closest&&a.closest('#lcTable')&&/^(INPUT|SELECT)$/.test(a.tagName)&&a.type!=='checkbox')}
 function renderLista(){
   if(tabelaOcupada()){renderPendente=true;return}
   renderPendente=false;
