@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"><meta name="rc-versao" content="4e3a5b9a4489"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="rc-versao" content="5d0fcb26d6f5"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
 <title>Roteirizador Inteligente de Cargas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -216,6 +216,7 @@ details>summary{cursor:pointer;font-weight:600}
 .seg{display:inline-flex;border:1px solid var(--line,#d5dbe3);border-radius:8px;overflow:hidden}.seg button{border:0;background:transparent;padding:5px 10px;font:inherit;font-size:12.5px;cursor:pointer;color:inherit;border-right:1px solid var(--line,#d5dbe3)}.seg button:last-child{border-right:0}.seg button.on{font-weight:700;color:#fff}.seg button.t-fiorino{background:#2f9e61}.seg button.t-van{background:#2b6cb0}.seg button.t-tubos{background:#b7791f}.seg button:disabled{cursor:default}
 .sb-st{font:inherit;font-size:12.5px;font-weight:600;padding:4px 6px;border-radius:7px;border:1px solid var(--line,#d5dbe3)}.sb-st.warn{background:#fef3c7;color:#92400e;border-color:#fcd34d}.sb-st.info{background:#dbeafe;color:#1e40af;border-color:#93c5fd}.sb-st.ok{background:#dcfce7;color:#166534;border-color:#86efac}
 .copiar-nf{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-left:4px;padding:0;border:1px solid var(--line,#d5dbe3);border-radius:6px;background:var(--surface,#fff);color:var(--ink,#334155);cursor:pointer;vertical-align:middle}.copiar-nf:hover{border-color:currentColor}
+.copiar-nf.lixo:hover{color:#b91c1c;border-color:#b91c1c}tr.sel td{background:rgba(37,99,235,.06)}
 </style>
 <div id="app"></div>
 
@@ -2763,7 +2764,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     try {
       const info = sswInfo();
       if (!info || Date.now() - Date.parse(info.em) > 30 * 60000) { const j = await window.RC_HOST.sswDisponiveis(false); await gravarSSW(j.rows || [], (j.fonte || 'SSW opção 038') + ' via CONSTRULOG'); }
-      const novas = sswLinhas().filter((r) => !notaDaLinhaSSW(r));
+      const ign = ignoradas(); const novas = sswLinhas().filter((r) => !notaDaLinhaSSW(r) && !ign[nfChave(r.nf)]);
       for (const r of novas) await criarNotaDeSSW(r);
       if (novas.length) registrar('SSW', novas.length + ' CTRC(s) disponíveis trazidos automaticamente');
     } catch (e) { toast('Não foi possível ler o SSW: ' + e.message, true); }
@@ -2801,13 +2802,16 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     h += '<div class="card"><div class="row" style="margin-bottom:12px"><label class="f" style="flex:2;min-width:180px">Buscar<input type="search" id="fQ" value="' + esc(f.q) + '" placeholder="Número, chave, cliente, cidade"></label>' +
       '<label class="f" style="min-width:150px">Situação<select id="fStatus">' + [['ativas', 'Ativas'], ['pendentes', 'Com pendência'], ['pronta', 'Prontas'], ['roteirizada', 'Roteirizadas'], ['entregue', 'Entregues'], ['cancelada', 'Canceladas'], ['todas', 'Todas']].map(([v, t]) => '<option value="' + v + '"' + (f.status === v ? ' selected' : '') + '>' + t + '</option>').join('') + '</select></label>' +
       '<label class="f" style="min-width:170px">Cidade<select id="fCidade"><option value="">Todas</option>' + cidades.map(([id, nm]) => '<option value="' + id + '"' + (f.cidade === id ? ' selected' : '') + '>' + esc(nm) + '</option>').join('') + '</select></label></div>' +
-      '<div class="tbl-wrap"><table><thead><tr><th>NF</th><th>Destinatário</th><th>Cidade</th><th class="r">Peso kg</th><th class="r">m³</th><th class="r">Tubos</th><th class="r">Frete</th><th>Prazo</th><th>Situação</th></tr></thead><tbody>' +
-      vis.map((n) => '<tr class="click" data-a="nota" data-v="' + esc(n.id) + '"><td class="mono">' + esc(n.numero || '—') + (n.demo ? ' <span class="chip acc">DEMO</span>' : '') + '</td><td class="trunc">' + esc(n.destNome || '—') + '</td><td>' + esc(n.cidadeNome) + '</td><td class="r num">' + nf(n.pesoKg, 0) + '</td><td class="r num">' + nf((n.volOutrosM3 || 0) + (n.volTubosM3 || 0), 2) + '</td><td class="r num">' + (n.qtdTubos || '') + '</td><td class="r num">' + (n.freteValor ? brl(n.freteValor) : '<span class="muted">—</span>') + '</td><td class="mono small">' + dBR(n.prazoEfetivo) + '</td><td>' + chipStatus(n) + '</td></tr>').join('') +
-      (vis.length ? '' : '<tr><td colspan="9" class="muted">Nenhuma nota com estes filtros</td></tr>') + '</tbody></table></div>' +
+      (() => { const sel = ui.notasSel || (ui.notasSel = new Set()); for (const id of [...sel]) if (!ST.notas.has(id)) sel.delete(id);
+        return sel.size ? '<div class="note warn row" style="margin-bottom:10px;align-items:center"><b>' + sel.size + ' nota(s) selecionada(s)</b><span class="spacer"></span>' + (ui.confirmar && ui.confirmar.a === 'excluirSel' ? '<span class="small">Excluir do sistema? O SSW não traz de volta sozinho.</span><button class="btn sm danger" data-a="excluirSelOk">Sim, excluir ' + sel.size + '</button><button class="btn sm" data-a="cancelarConf">Cancelar</button>' : '<button class="btn sm danger" data-a="excluirSel">Excluir selecionadas</button><button class="btn sm" data-a="limparSel">Limpar seleção</button>') + '</div>' : ''; })() +
+      '<div class="tbl-wrap"><table><thead><tr><th style="width:28px"><input type="checkbox" data-selall="1" aria-label="Selecionar todas desta página"' + (vis.length && vis.every((n) => (ui.notasSel || new Set()).has(n.id)) ? ' checked' : '') + '></th><th>NF</th><th>Destinatário</th><th>Cidade</th><th class="r">Peso kg</th><th class="r">m³</th><th class="r">Tubos</th><th class="r">Frete</th><th>Prazo</th><th>Situação</th></tr></thead><tbody>' +
+      vis.map((n) => '<tr class="click' + ((ui.notasSel || new Set()).has(n.id) ? ' sel' : '') + '" data-a="nota" data-v="' + esc(n.id) + '"><td data-a="selNota"><input type="checkbox" data-sel="' + esc(n.id) + '"' + ((ui.notasSel || new Set()).has(n.id) ? ' checked' : '') + ' aria-label="Selecionar NF ' + esc(n.numero || '') + '"></td><td class="mono">' + esc(n.numero || '—') + (n.demo ? ' <span class="chip acc">DEMO</span>' : '') + '</td><td class="trunc">' + esc(n.destNome || '—') + '</td><td>' + esc(n.cidadeNome) + '</td><td class="r num">' + nf(n.pesoKg, 0) + '</td><td class="r num">' + nf((n.volOutrosM3 || 0) + (n.volTubosM3 || 0), 2) + '</td><td class="r num">' + (n.qtdTubos || '') + '</td><td class="r num">' + (n.freteValor ? brl(n.freteValor) : '<span class="muted">—</span>') + '</td><td class="mono small">' + dBR(n.prazoEfetivo) + '</td><td>' + chipStatus(n) + '</td></tr>').join('') +
+      (vis.length ? '' : '<tr><td colspan="10" class="muted">Nenhuma nota com estes filtros</td></tr>') + '</tbody></table></div>' +
       (tot > pag ? '<div class="row" style="margin-top:10px"><button class="btn sm" data-a="pag" data-v="-1"' + (pg === 0 ? ' disabled' : '') + '>Anteriores</button><span class="small muted">' + (pg * pag + 1) + '–' + Math.min(tot, pg * pag + pag) + ' de ' + tot + '</span><button class="btn sm" data-a="pag" data-v="1"' + (pg * pag + pag >= tot ? ' disabled' : '') + '>Próximas</button></div>' : '') + '</div>';
     return h;
   }
   const btnCopiarNF = (nf) => nf ? '<button type="button" class="copiar-nf" data-a="copiarNF" data-v="' + esc(nf) + '" title="Copiar NF ' + esc(nf) + '" aria-label="Copiar NF ' + esc(nf) + '"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>' : '';
+  const btnExcluirNota = (n) => n && n.id && ui.tab === 'notas' ? '<button type="button" class="copiar-nf lixo" data-a="excluirUma" data-v="' + esc(n.id) + '" title="Excluir NF ' + esc(n.numero || '') + ' do sistema" aria-label="Excluir NF ' + esc(n.numero || '') + '"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' : '';
   async function copiarTexto(t) {
     try { await navigator.clipboard.writeText(t); return true; } catch (e) {
       try { const x = document.createElement('textarea'); x.value = t; x.style.position = 'fixed'; x.style.opacity = '0'; document.body.appendChild(x); x.select(); const ok = document.execCommand('copy'); x.remove(); return ok; } catch (e2) { return false; }
@@ -2817,7 +2821,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     if (n.status === 'cancelada') return '<span class="chip">Cancelada</span>';
     if (n.status === 'entregue') return '<span class="chip ok">Entregue</span>';
     if (n.status === 'em_rota') return '<span class="chip info">Em rota</span>';
-    if (n.bloqueada) return '<span class="chip bad">Pendente</span>' + btnCopiarNF(n.numero);
+    if (n.bloqueada) return '<span class="chip bad">Pendente</span>' + btnCopiarNF(n.numero) + btnExcluirNota(n);
     if (n.prioridade && n.status !== 'roteirizada') return '<span class="chip bad" title="' + esc(((n.ocorrencias || []).slice(-1)[0] || {}).motivo || '') + '">Prioridade</span>' + (n.avisos.length ? ' <span class="chip warn">' + n.avisos.length + '</span>' : '');
     if (n.status === 'roteirizada') return '<span class="chip info">Roteirizada ' + dBR(n.planoData) + '</span>';
     return '<span class="chip ok">Pronta</span>' + (n.avisos.length ? ' <span class="chip warn" title="' + esc(n.avisos.map((a) => a.msg).join('\n')) + '">' + n.avisos.length + ' aviso' + (n.avisos.length > 1 ? 's' : '') + '</span>' : '');
@@ -2896,6 +2900,23 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     return sswLinhas().find((r) => nfKey(r.nf) === String(+k)) || (k.length >= 5 ? sswLinhas().find((r) => String(r.ctrc || '').replace(/\D/g, '').endsWith(k)) : null) || null;
   }
   // nota já existente para a linha do SSW (mesmo CTRC, ou mesma NF do mesmo remetente)
+  const nfChave = (v) => String(v || '').replace(/\D/g, '').replace(/^0+/, '');
+  const ignoradas = () => (ST.ssw.get('ignoradas') || {}).nfs || {};
+  async function excluirNotas(ids) {
+    const ign = Object.assign({}, ignoradas()), nums = [];
+    for (const id of ids) {
+      const n = ST.notas.get(id); if (!n) continue;
+      await remover('notas', id); nums.push(n.numero);
+      const k = nfChave(n.numero); if (k && n.origem !== 'manual') ign[k] = hoje();
+    }
+    // guarda por 60 dias para o SSW não trazer de volta
+    const lim = RE.addDays(hoje(), -60); for (const k of Object.keys(ign)) if (ign[k] < lim) delete ign[k];
+    await salvar('ssw', 'ignoradas', { id: 'ignoradas', nfs: ign });
+    if (nums.length) registrar('Notas excluídas', nums.length + ' nota(s): NF ' + nums.join(', '));
+    ui.notasSel = new Set(); ui.confirmar = null;
+    toast(nums.length + ' nota(s) excluída(s).');
+    render();
+  }
   function notaDaLinhaSSW(r) {
     const id = sswKey(r);
     if (ST.notas.has(id)) return ST.notas.get(id);
@@ -2963,7 +2984,9 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
   }
   async function trazerSSW(linhas) {
     let k = 0;
-    for (const r of linhas) { if (!notaDaLinhaSSW(r)) { await criarNotaDeSSW(r); k++; } }
+    const ign = Object.assign({}, ignoradas()); let mud = false;
+    for (const r of linhas) { if (!notaDaLinhaSSW(r)) { await criarNotaDeSSW(r); k++; if (ign[nfChave(r.nf)]) { delete ign[nfChave(r.nf)]; mud = true; } } }
+    if (mud) await salvar('ssw', 'ignoradas', { id: 'ignoradas', nfs: ign });
     registrar('SSW', k + ' CTRC(s) disponíveis trazidos para o roteirizador');
     toast(k + ' nota(s) trazida(s) do SSW.');
     render();
@@ -3611,6 +3634,11 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       case 'sbBuscar': buscarSobra(); break;
       case 'sbLimpar': ui.sb = null; render(); setTimeout(() => { const i = $('#sbNF'); if (i) i.focus(); }, 30); break;
       case 'sbRegistrar': await registrarSobra(); break;
+      case 'selNota': break;
+      case 'excluirUma': { ui.notasSel = new Set([v]); ui.confirmar = { a: 'excluirSel' }; render(); window.scrollTo(0, 0); break; }
+      case 'excluirSel': ui.confirmar = { a: 'excluirSel' }; render(); break;
+      case 'excluirSelOk': await excluirNotas([...(ui.notasSel || [])]); break;
+      case 'limparSel': ui.notasSel = new Set(); ui.confirmar = null; render(); break;
       case 'copiarNF': { const ok = await copiarTexto(v); toast(ok ? 'NF ' + v + ' copiada.' : 'Não consegui copiar a NF ' + v + '.', !ok); break; }
       case 'sswAtualizar': await atualizarSSW(true); break;
       case 'romAtualizar': ui.romCache = {}; await carregarRomaneios(true); break;
@@ -3647,6 +3675,8 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
 
   document.addEventListener('change', async (e) => {
     const el = e.target;
+    if (el.dataset.sel) { const s = ui.notasSel || (ui.notasSel = new Set()); if (el.checked) s.add(el.dataset.sel); else s.delete(el.dataset.sel); ui.confirmar = null; render(); return; }
+    if (el.dataset.selall) { const s = ui.notasSel || (ui.notasSel = new Set()); for (const c of $$('[data-sel]')) { if (el.checked) s.add(c.dataset.sel); else s.delete(c.dataset.sel); } ui.confirmar = null; render(); return; }
     if (el.id === 'fRomData') { if (el.value) { ui.romData = el.value; ui.romSel = null; ui.romTodos = false; render(); } return; }
     if (el.id === 'fData') { if (el.value) { ui.data = el.value; ui.cenarios = null; render(); } return; }
     if (el.dataset.disp) {
