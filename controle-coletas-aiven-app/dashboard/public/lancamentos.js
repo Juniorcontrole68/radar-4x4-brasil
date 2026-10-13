@@ -19,6 +19,7 @@ function valorDigitado(v){
 
 let pronto=false,motoristas=[],tipos=[],operacoes=['MATCOM','ECOM','MATCOM/ECOM'],linhas=[],naFila=[],config=null;
 let rom=null,romSeq=0,editando=null,timerLista=null,autoMotorista='',mexeuTipo=false;
+const abrindoPorKm=new Set(); // flag marcado, esperando o valor por km
 
 function msg(texto,tipo=''){const el=q('#lcMsg');if(!el)return;el.textContent=texto;el.className='lc-msg'+(tipo?' '+tipo:'')}
 async function api(url,opts){
@@ -143,6 +144,7 @@ async function recalcular(id){
 
 // ---------------------------------------------------------------- lista
 function situacao(r){
+  if(r.valor===null&&r.por_km)return'<span class="lc-tag wait" title="O valor sai do km da rota vezes o valor do km">aguardando o km</span>';
   if(r.valor===null)return'<span class="lc-tag bad" title="Informe o valor negociado com o motorista">falta o valor</span>';
   if(!r.operacao)return'<span class="lc-tag warn" title="Escolha a operação">falta a operação</span>';
   if(!r.veiculo_tipo)return'<span class="lc-tag warn" title="Escolha o tipo de carro">falta o carro</span>';
@@ -174,8 +176,12 @@ function renderLista(){
       '<td><b>'+esc(r.romaneio)+'</b>'+(r.partes?'<small>'+r.partes.length+' romaneios, um valor</small>':'')+'</td><td>'+esc(r.motorista)+'</td>'+
       '<td><select data-lc-campo="veiculo_tipo" data-id="'+id+'" aria-label="Tipo de carro do romaneio '+esc(r.romaneio)+'"'+(r.veiculo_tipo?'':' class="falta"')+'>'+opcoes(tp,r.veiculo_tipo)+'</select>'+(r.placa?'<small>'+esc(r.placa)+'</small>':'')+'</td>'+
       '<td><select data-lc-campo="operacao" data-id="'+id+'" aria-label="Operação do romaneio '+esc(r.romaneio)+'"'+(r.operacao?'':' class="falta"')+'>'+opcoes(operacoes,r.operacao)+'</select></td>'+
-      '<td class="n" title="Entregas feitas / entregas do romaneio">'+(feitas===null||feitas===undefined?int(r.entregas):'<b>'+int(feitas)+'</b> / '+int(r.entregas)+(r.realizadas===null&&r.ao_vivo!==null?'<small>até agora</small>':''))+'</td><td class="n"'+(r.km_soma?' title="Soma das rotas de cada romaneio. O km da rota única ainda está sendo calculado."':'')+'>'+(r.km?int(r.km)+(r.km_soma?'<small>soma</small>':''):'—')+'</td>'+
-      '<td class="n"><input data-lc-campo="valor" data-id="'+id+'" data-no-titlecase="true" type="text" inputmode="decimal" autocomplete="off" maxlength="12" placeholder="0,00" value="'+valorTexto(r.valor)+'" aria-label="Valor negociado do romaneio '+esc(r.romaneio)+'"'+(r.valor===null?' class="falta"':'')+'></td>'+
+      '<td class="n" title="Entregas feitas / entregas do romaneio">'+(feitas===null||feitas===undefined?int(r.entregas):'<b>'+int(feitas)+'</b> / '+int(r.entregas)+(r.realizadas===null&&r.ao_vivo!==null?'<small>até agora</small>':''))+'</td><td class="n"'+(r.km_soma?' title="Soma das rotas de cada romaneio. O km da rota única ainda está sendo calculado."':'')+'>'+(r.km?int(r.km)+(r.km_soma?'<small>soma</small>':''):'—')+
+        (()=>{const on=!!r.por_km||abrindoPorKm.has(r.id);
+          return '<label class="lc-pk" title="Este motorista, neste dia, recebe por km rodado"><input type="checkbox" data-lc-porkm="'+id+'"'+(on?' checked':'')+'> por km</label>'+
+            (on?'<input class="lc-vkm" data-lc-vkm="'+id+'" data-no-titlecase="true" type="text" inputmode="decimal" autocomplete="off" maxlength="8" placeholder="R$/km" value="'+(r.por_km?valorTexto(r.por_km.valor_km):'')+'" aria-label="Valor por km do romaneio '+esc(r.romaneio)+'">':'')+
+            (r.por_km&&r.por_km.km_nao>0?'<small class="lc-kmnao" title="Km das entregas não feitas, descontado do valor">− '+int(r.por_km.km_nao)+' km não feitos</small>':'')})()+'</td>'+
+      (r.por_km?'<td class="n" title="Km × valor do km'+(r.desconto>0?', menos o km das entregas não feitas':'')+'"><b>'+reais(r.frete_mot_liq??r.valor)+'</b><small>'+(r.km?int(r.km)+' km × '+reais(r.por_km.valor_km):'aguardando o km')+(r.desconto>0?' − '+reais(r.desconto):'')+'</small></td>':'')+(r.por_km?'':'<td class="n"><input data-lc-campo="valor" data-id="'+id+'" data-no-titlecase="true" type="text" inputmode="decimal" autocomplete="off" maxlength="12" placeholder="0,00" value="'+valorTexto(r.valor)+'" aria-label="Valor negociado do romaneio '+esc(r.romaneio)+'"'+(r.valor===null?' class="falta"':'')+'></td>')+
       '<td class="n">'+reais(r.frete_vialog)+'</td><td class="n"'+(r.desconto_vialog>0?' title="Descontado o frete das entregas não feitas: '+reais(r.desconto_vialog)+'"':'')+'>'+(r.frete_vialog===null?'—':r.ctes&&r.ctes.length?'<button type="button" class="lc-link n" data-lc-frete="'+id+'" title="Ver as entregas descontadas">'+reais(liq)+'</button>':reais(liq))+(r.desconto_vialog>0?'<small>− '+reais(r.desconto_vialog)+'</small>':'')+'</td><td class="n">'+pct+'</td>'+
       '<td class="rota">'+(r.rota?'<button type="button" class="lc-link" data-lc-cidades="'+id+'" title="Ver as cidades do romaneio">'+esc(r.rota)+'</button>':'—')+'</td>'+(comConf?'<td>'+esc(r.conferente||'—')+(r.erros?'<small>'+int(r.erros)+' erro(s)</small>':'')+'</td>':'')+'<td>'+situacao(r)+'</td>'+
       '<td class="acts"><button type="button" data-lc-edit="'+id+'" title="Alterar data, motorista, conferente" aria-label="Alterar o romaneio '+esc(r.romaneio)+'">✎</button><button type="button" data-lc-calc="'+id+'" title="Buscar de novo no SSW" aria-label="Buscar de novo no SSW">↻</button><button type="button" class="rm" data-lc-del="'+id+'" title="Excluir" aria-label="Excluir o romaneio '+esc(r.romaneio)+'">✕</button></td></tr>'
@@ -202,6 +208,28 @@ async function salvarCampo(el){
     el.classList.toggle('falta',campo==='valor'?j.row.valor===null:!v);
     renderLista()
   }catch(e){msg('✗ '+e.message,'bad');volta()}
+}
+// Cobrança por km: o flag abre o campo do valor por km; o sistema calcula o valor e desconta o km das entregas não feitas.
+async function mudarPorKm(id,on){
+  const r=linhas.find(x=>x.id===id);if(!r)return;
+  if(on){abrindoPorKm.add(id);renderLista();setTimeout(()=>{const i=q('[data-lc-vkm="'+id+'"]');if(i)i.focus()},30);return}
+  abrindoPorKm.delete(id);
+  if(!r.por_km){renderLista();return}
+  try{const j=await api('/api/lancamentos/'+id,{method:'PATCH',body:JSON.stringify({por_km:false})});const i=linhas.findIndex(x=>(x.ids||[x.id]).includes(id));if(i>=0)linhas[i]=j.row;msg('Romaneio '+j.row.romaneio+': cobrança por km desligada. Informe o valor negociado.','ok');renderLista()}
+  catch(e){msg('✗ '+e.message,'bad');renderLista()}
+}
+async function salvarValorKm(el){
+  const id=el.dataset.lcVkm,r=linhas.find(x=>x.id===id);if(!r)return;
+  const v=valorDigitado(el.value);
+  if(!Number.isFinite(v)||v<=0){msg('Digite o valor por km assim: 2,50','warn');return}
+  if(r.por_km&&v===r.por_km.valor_km)return;
+  try{
+    const j=await api('/api/lancamentos/'+id,{method:'PATCH',body:JSON.stringify({por_km:true,valor_km:v})});
+    abrindoPorKm.delete(id);
+    const i=linhas.findIndex(x=>(x.ids||[x.id]).includes(id));if(i>=0)linhas[i]=j.row;
+    msg('Romaneio '+j.row.romaneio+' • '+j.row.motorista+': cobrança por km, '+reais(v)+' o km'+(j.row.km?' → '+reais(j.row.valor):'')+'. Entrega não feita desconta o km dela.','ok');
+    renderLista();agendar(15000)
+  }catch(e){msg('✗ '+e.message,'bad')}
 }
 function abrirCidades(id){
   const r=linhas.find(x=>x.id===id),d=q('#lcCidades');
@@ -293,7 +321,11 @@ function setup(){
   q('#lcHoje').onclick=()=>{q('#lcDe').value=hoje();q('#lcAte').value=hoje();carregarLista()};
   const tab=q('#lcTable');
   tab.onclick=e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.lcEdit){editar(b.dataset.lcEdit);renderLista()}else if(b.dataset.lcDel)excluir(b.dataset.lcDel);else if(b.dataset.lcCalc)recalcular(b.dataset.lcCalc);else if(b.dataset.lcCidades)abrirCidades(b.dataset.lcCidades);else if(b.dataset.lcFrete)abrirFrete(b.dataset.lcFrete)};
-  tab.onchange=e=>{if(e.target.dataset.lcCampo)salvarCampo(e.target)};
+  tab.onchange=e=>{
+    if(e.target.dataset.lcCampo)return salvarCampo(e.target);
+    if(e.target.dataset.lcPorkm)return mudarPorKm(e.target.dataset.lcPorkm,e.target.checked);
+    if(e.target.dataset.lcVkm)return salvarValorKm(e.target);
+  };
   // Enter no valor: grava e desce para o valor do próximo romaneio
   tab.onkeydown=e=>{
     if(e.key!=='Enter'||e.target.dataset.lcCampo!=='valor')return;

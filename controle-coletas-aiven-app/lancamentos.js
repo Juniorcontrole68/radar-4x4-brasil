@@ -99,6 +99,7 @@ function juntar(rs){
     ao_vivo:rs.some(r=>r.realizadas!==null||r.ao_vivo!==null)?rs.reduce((t,r)=>t+Number(r.realizadas??r.ao_vivo??0),0):null,
     auto:rs.every(r=>r.auto),
     calculo:{status,msg:rs.map(r=>r.calculo?.msg?r.romaneio+': '+r.calculo.msg:'').filter(Boolean).join(' • ').slice(0,500),fechado:rs.every(r=>r.calculo?.fechado),tentativas:Math.max(...rs.map(r=>Number(r.calculo?.tentativas||0)))},
+    por_km:prim(r=>r.por_km),
     partes:rs.map(r=>({id:r.id,romaneio:r.romaneio,romaneio_ssw:r.romaneio_ssw,entregas:r.entregas,km:r.km,frete_vialog:r.frete_vialog,status:r.calculo?.status||''})),
     conjunto:undefined
   }
@@ -155,8 +156,19 @@ function resumir(row){
     auto:!!s.auto,cidades:Array.isArray(s.cidades)?s.cidades:null,
     // entregas do romaneio, uma a uma (frete e situação), e o km da rota única quando o motorista tem mais de um romaneio
     ctes:Array.isArray(s.ctes)?s.ctes:null,conjunto:s.conjunto||null,seq:s.seq||'',
+    // cobrança por km rodado: valor = km × valor do km; desconto = km das entregas não feitas × valor do km
+    por_km:s.por_km&&s.por_km.valor_km>0?{valor_km:s.por_km.valor_km,km_nao:s.por_km.km_nao??null,keys:s.por_km.keys??null,em:s.por_km.em||null}:null,
     calculo:s.calculo||null,criado_por:row.created_by||'',atualizado_em:row.updated_at||null
   }
+}
+// Cobrança por km: o valor negociado passa a ser km × valor do km (km da rota única quando o motorista
+// tem mais de um romaneio) e o desconto é o km das entregas não feitas × valor do km.
+function aplicarPorKm(c,ssw){
+  const pk=ssw.por_km;if(!pk||!(pk.valor_km>0))return;
+  const km=Number(ssw.conjunto?.km)>0?Number(ssw.conjunto.km):numero(c.km);
+  if(Number.isFinite(km)&&km>0)c.valor=Math.round(km*pk.valor_km*100)/100;
+  const kn=Number(pk.km_nao);
+  c.desconto=Number.isFinite(kn)&&kn>0?Math.round(kn*pk.valor_km*100)/100:null
 }
 // Campos do lançamento a partir da linha guardada (para regravar depois de uma alteração).
 function campos(row){
@@ -415,6 +427,17 @@ async function atender(req,res,u,ctx){
           ssw.calculo={status:'pendente',em:new Date().toISOString()}
         }
       }
+      if(tem('por_km')){
+        if(b.por_km){
+          const vk=numero(b.valor_km);
+          if(!Number.isFinite(vk)||vk<=0||vk>1000)return sendJson(res,400,{ok:false,error:'Informe o valor por km (ex.: 2,50).'});
+          ssw.por_km={valor_km:Math.round(vk*100)/100,km_nao:ssw.por_km?.km_nao??null,keys:ssw.por_km?.keys??null,em:ssw.por_km?.em||null}
+        }else{
+          if(ssw.por_km){c.valor=null;c.desconto=null}
+          delete ssw.por_km
+        }
+      }
+      if(user.internal&&b.km_nao&&typeof b.km_nao==='object'&&ssw.por_km){const kn=numero(b.km_nao.km);ssw.por_km.km_nao=Number.isFinite(kn)&&kn>=0?Math.round(kn):null;ssw.por_km.keys=limpo(b.km_nao.keys,4000);ssw.por_km.em=new Date().toISOString()}
       // km da rota única dos romaneios do mesmo motorista (só o próprio sistema grava)
       if(user.internal&&b.conjunto&&typeof b.conjunto==='object'){const kmc=numero(b.conjunto.km);ssw.conjunto=Number.isFinite(kmc)&&kmc>0?{km:Math.round(kmc),keys:limpo(b.conjunto.keys,200),em:new Date().toISOString()}:undefined}
       if(b.calculo&&typeof b.calculo==='object'){
@@ -448,6 +471,7 @@ async function atender(req,res,u,ctx){
           fechado:k.fechado===undefined?!!ssw.calculo?.fechado:k.fechado===true,
           tentativas:status==='erro'?Number(ssw.calculo?.tentativas||0)+1:0}
       }
+      aplicarPorKm(c,ssw);
       const r=await pool.query(
         "UPDATE operacao_lancamentos SET event_date=$2::date,romaneio=$3,romaneio_key=$4,motorista=$5,dados=$6::jsonb,ssw=$7::jsonb,updated_at=NOW() WHERE id=$1 RETURNING id::text AS id,origem,to_char(event_date,'YYYY-MM-DD') AS event_date,romaneio,romaneio_key,motorista,dados,ssw,linha,created_by,updated_at",
         [m[1],c.data,c.romaneio,key,c.motorista.toUpperCase(),JSON.stringify(montarDados(c)),JSON.stringify(ssw)]);
@@ -480,4 +504,4 @@ async function atender(req,res,u,ctx){
   }
 }
 
-module.exports={COLUNAS,OPERACOES,freteNaoEntregue,contasDasEntregas,agrupar,numero,dinheiro,dataIso,dataBr,romaneioKey,romaneioCurto,montarDados,resumir,ensureSchema,handle};
+module.exports={aplicarPorKm,COLUNAS,OPERACOES,freteNaoEntregue,contasDasEntregas,agrupar,numero,dinheiro,dataIso,dataBr,romaneioKey,romaneioCurto,montarDados,resumir,ensureSchema,handle};
