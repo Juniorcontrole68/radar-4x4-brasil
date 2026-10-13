@@ -1691,48 +1691,63 @@ async function compressLoadingPhoto(file,capturedAt=null,label=''){
   }
   return result
 }
+// Fotos do registro de carga e descarga: guardadas na memória (não baixa de novo a cada atualização),
+// no máximo 4 ao mesmo tempo, as do dia primeiro; as mais antigas só quando aparecem na tela.
+const LOAD_PHOTO_CACHE=new Map(),LOAD_PHOTO_INFLIGHT=new Map(),LOAD_PHOTO_QUEUE=[];let LOAD_PHOTO_ACTIVE=0;
 function clearLoadingPhotoUrls(){
-  const urls=Array.isArray(window.__loadingPhotoObjectUrls)?window.__loadingPhotoObjectUrls:[];
-  urls.forEach(u=>{try{URL.revokeObjectURL(u)}catch{}});
-  window.__loadingPhotoObjectUrls=[]
+  if(LOAD_PHOTO_CACHE.size<=250)return;
+  const extra=[...LOAD_PHOTO_CACHE.keys()].slice(0,LOAD_PHOTO_CACHE.size-200);
+  extra.forEach(k=>{try{URL.revokeObjectURL(LOAD_PHOTO_CACHE.get(k))}catch{}LOAD_PHOTO_CACHE.delete(k)})
 }
+function pumpLoadPhotos(){
+  while(LOAD_PHOTO_ACTIVE<4&&LOAD_PHOTO_QUEUE.length){
+    LOAD_PHOTO_QUEUE.sort((a,b)=>b.pri-a.pri);
+    const job=LOAD_PHOTO_QUEUE.shift();LOAD_PHOTO_ACTIVE++;
+    fetch('/api/carregamentos-finais/'+encodeURIComponent(job.id)+'/foto')
+      .then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.blob()})
+      .then(b=>{if(!b.size)throw new Error('Foto vazia');const u=URL.createObjectURL(b);LOAD_PHOTO_CACHE.set(job.id,u);job.ok(u)})
+      .catch(job.no)
+      .finally(()=>{LOAD_PHOTO_ACTIVE--;LOAD_PHOTO_INFLIGHT.delete(job.id);pumpLoadPhotos()})
+  }
+}
+function loadPhotoUrl(id,pri){
+  if(LOAD_PHOTO_CACHE.has(id))return Promise.resolve(LOAD_PHOTO_CACHE.get(id));
+  const cur=LOAD_PHOTO_INFLIGHT.get(id);
+  if(cur){if(pri>cur.job.pri)cur.job.pri=pri;return cur.p}
+  const job={id,pri};const p=new Promise((ok,no)=>{job.ok=ok;job.no=no});
+  LOAD_PHOTO_INFLIGHT.set(id,{job,p});LOAD_PHOTO_QUEUE.push(job);pumpLoadPhotos();return p
+}
+function showLoadPhoto(img,id,pri){
+  const wrap=img.closest('a');
+  return loadPhotoUrl(id,pri).then(url=>{
+    img.src=url;img.classList.remove('load-photo-pending','load-photo-error');
+    if(wrap){wrap.href=url;wrap.target='_blank';wrap.rel='noopener'}
+  }).catch(()=>{
+    img.classList.remove('load-photo-pending');img.classList.add('load-photo-error');
+    img.alt='Não foi possível carregar a foto';
+    if(wrap){wrap.removeAttribute('href');wrap.removeAttribute('target');wrap.title='Não foi possível carregar esta foto.'}
+  })
+}
+let LOAD_PHOTO_OBS=null;
 async function hydrateLoadingPhotos(){
   const box=$('#loadRecords');if(!box)return;
   const imgs=[...box.querySelectorAll('img[data-loading-photo-id]')];
-  await Promise.all(imgs.map(async img=>{
+  if(LOAD_PHOTO_OBS)LOAD_PHOTO_OBS.disconnect();
+  LOAD_PHOTO_OBS='IntersectionObserver' in window?new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){LOAD_PHOTO_OBS.unobserve(e.target);showLoadPhoto(e.target,e.target.dataset.loadingPhotoId,1)}}),{rootMargin:'400px'}):null;
+  imgs.forEach((img,k)=>{
     const id=img.dataset.loadingPhotoId;if(!id)return;
-    const wrap=img.closest('a');
-    try{
-      const r=await fetch('/api/carregamentos-finais/'+encodeURIComponent(id)+'/foto?t='+Date.now(),{cache:'no-store'});
-      if(!r.ok)throw new Error('HTTP '+r.status);
-      const blob=await r.blob();if(!blob.size)throw new Error('Foto vazia');
-      const url=URL.createObjectURL(blob);
-      if(!Array.isArray(window.__loadingPhotoObjectUrls))window.__loadingPhotoObjectUrls=[];
-      window.__loadingPhotoObjectUrls.push(url);
-      img.src=url;img.classList.remove('load-photo-pending','load-photo-error');
-      if(wrap){wrap.href=url;wrap.target='_blank';wrap.rel='noopener'}
-    }catch(e){
-      img.classList.remove('load-photo-pending');img.classList.add('load-photo-error');
-      img.alt='Não foi possível carregar a foto';
-      if(wrap){wrap.removeAttribute('href');wrap.removeAttribute('target');wrap.title='Não foi possível carregar esta foto.'}
-    }
-  }))
+    if(LOAD_PHOTO_CACHE.has(id)||img.dataset.today==='1'||!LOAD_PHOTO_OBS)showLoadPhoto(img,id,img.dataset.today==='1'?100-k*0.01:1);
+    else LOAD_PHOTO_OBS.observe(img)
+  })
 }
 async function renderOverviewLoadingPhotos(rows){
   const box=$('#overviewLoadPhotos');if(!box)return;
   const recent=(rows||[]).slice(0,6);
   if(!recent.length){box.innerHTML='<div class="muted">Nenhuma foto de carregamento ou descarga registrada.</div>';return}
   box.innerHTML=recent.map(r=>'<div style="min-width:150px;max-width:190px;flex:1;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;background:#fff"><a data-overview-photo-id="'+safe(r.id)+'" title="Abrir foto"><div style="height:115px;background:#f1f5f9;display:flex;align-items:center;justify-content:center"><img data-overview-photo-id="'+safe(r.id)+'" alt="Foto do registro" style="width:100%;height:100%;object-fit:cover"></div></a><div style="padding:8px;font-size:12px"><b>'+safe(cargoTypeLabel(r.tipo))+'</b><br>'+safe(r.motorista||'Motorista não informado')+'<br><span class="muted">'+safe(loadingDateTime(r.capturada_em))+'</span></div></div>').join('');
-  await Promise.all([...box.querySelectorAll('img[data-overview-photo-id]')].map(async img=>{
+  await Promise.all([...box.querySelectorAll('img[data-overview-photo-id]')].map(img=>{
     const id=img.dataset.overviewPhotoId,wrap=img.closest('a');
-    try{
-      const r=await fetch('/api/carregamentos-finais/'+encodeURIComponent(id)+'/foto?t='+Date.now(),{cache:'no-store'});
-      if(!r.ok)throw new Error('HTTP '+r.status);
-      const blob=await r.blob(),url=URL.createObjectURL(blob);
-      if(!Array.isArray(window.__loadingPhotoObjectUrls))window.__loadingPhotoObjectUrls=[];
-      window.__loadingPhotoObjectUrls.push(url);img.src=url;
-      if(wrap){wrap.href=url;wrap.target='_blank';wrap.rel='noopener'}
-    }catch(e){img.alt='Foto indisponível'}
+    return loadPhotoUrl(id,50).then(url=>{img.src=url;if(wrap){wrap.href=url;wrap.target='_blank';wrap.rel='noopener'}}).catch(()=>{img.alt='Foto indisponível'})
   }))
 }
 
@@ -1756,7 +1771,8 @@ function renderLoadingRecords(rows){
         const editColeta=String(r.tipo||'').toLowerCase()==='carregamento'
           ?'<button type="button" class="secondary" data-edit-coleta-dev="'+safe(r.id)+'" data-checker="'+safe(r.conferente_coleta_devolucao||'')+'" style="padding:4px 7px;font-size:10px">✏️ Coleta e Devolução</button>'
           :'';
-        return '<div class="load-record"><a class="load-photo-link" data-loading-photo-id="'+safe(r.id)+'" title="Abrir foto"><img class="load-photo-pending" data-loading-photo-id="'+safe(r.id)+'" alt="Carregando foto do registro"></a><div><b>'+safe(tipo)+' • '+safe(r.motorista||'Motorista não informado')+'</b><div class="meta">Conferente: '+safe(r.conferente||'—')+returnChecker+'<br>Quantidade: <b>'+nf(Number(r.quantidade_entregas||0))+'</b><br>Registro: '+safe(dt)+'</div><div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap">'+extras.join(' ')+editColeta+'</div></div></div>'
+        const doDia=(()=>{const d=new Date(r.capturada_em);return !isNaN(d)&&iso(d)===iso(new Date())})();
+        return '<div class="load-record"><a class="load-photo-link" data-loading-photo-id="'+safe(r.id)+'" title="Abrir foto"><img class="load-photo-pending" data-loading-photo-id="'+safe(r.id)+'"'+(doDia?' data-today="1"':' loading="lazy"')+' alt="Carregando foto do registro"></a><div><b>'+safe(tipo)+' • '+safe(r.motorista||'Motorista não informado')+'</b><div class="meta">Conferente: '+safe(r.conferente||'—')+returnChecker+'<br>Quantidade: <b>'+nf(Number(r.quantidade_entregas||0))+'</b><br>Registro: '+safe(dt)+'</div><div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap">'+extras.join(' ')+editColeta+'</div></div></div>'
       }).join('');
       hydrateLoadingPhotos().catch(()=>{});
       box.querySelectorAll('[data-edit-coleta-dev]').forEach(btn=>btn.onclick=()=>editLoadingCollectReturn(btn.dataset.editColetaDev,btn.dataset.checker||''))

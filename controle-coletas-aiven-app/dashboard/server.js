@@ -598,6 +598,7 @@ function deliveryProgramFormParams(html){
   return p
 }
 const RC_STATUS_CACHE=new Map();
+const LOAD_PHOTO_MEM=new Map();
 async function fetchSswPendingDeliveries(){
   if(SSW_PENDING_CACHE.value&&Date.now()-SSW_PENDING_CACHE.at<90000)return SSW_PENDING_CACHE.value;
   if(SSW_PENDING_INFLIGHT)return SSW_PENDING_INFLIGHT;
@@ -5570,11 +5571,15 @@ if(carregamentoAvaria&&req.method==='GET'){try{if(!dashboardHas(authUser,'final_
 const carregamentoFoto=u.pathname.match(/^\/api\/carregamentos-finais\/(\d+)\/foto(?:\/(\d))?$/);
 if(carregamentoFoto&&req.method==='GET'){try{if(!dashboardHas(authUser,'final_carregamento'))return dashboardDeny(res);
   const slot=carregamentoFoto[2]||'';
+  // a foto principal não muda depois de registrada: guarda as últimas em memória para abrir na hora
+  const ck=carregamentoFoto[1]+'|'+(slot||'1'),hit=(!slot||slot==='1')?LOAD_PHOTO_MEM.get(ck):null;
+  if(hit){LOAD_PHOTO_MEM.delete(ck);LOAD_PHOTO_MEM.set(ck,hit);res.writeHead(200,{'Content-Type':hit.type,'Content-Length':hit.buf.length,'Cache-Control':'private, max-age=86400'});return res.end(hit.buf)}
   const ru=new URL('/api/painel/carregamentos-finais/'+carregamentoFoto[1]+'/foto'+(slot?'/'+slot:''),COLETAS_PORTAL_URL);
   const rr=await fetch(ru,{headers:internalHeaders(),signal:AbortSignal.timeout(20000)});
   if(!rr.ok)throw Object.assign(new Error('Foto não encontrada.'),{status:rr.status});
-  const buf=Buffer.from(await rr.arrayBuffer());
-  res.writeHead(200,{'Content-Type':rr.headers.get('content-type')||'image/jpeg','Content-Length':buf.length,'Cache-Control':'private, max-age=3600'});
+  const buf=Buffer.from(await rr.arrayBuffer()),type=rr.headers.get('content-type')||'image/jpeg';
+  if(!slot||slot==='1'){LOAD_PHOTO_MEM.set(ck,{buf,type});while(LOAD_PHOTO_MEM.size>80)LOAD_PHOTO_MEM.delete(LOAD_PHOTO_MEM.keys().next().value)}
+  res.writeHead(200,{'Content-Type':type,'Content-Length':buf.length,'Cache-Control':'private, max-age=3600'});
   return res.end(buf)
 }catch(e){
   res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
