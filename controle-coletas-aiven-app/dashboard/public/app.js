@@ -3865,6 +3865,60 @@ function trackingExportOpen(){
   box.scrollIntoView({behavior:'smooth',block:'nearest'})
 }
 // Simulação: gera um link para abrir a rota de hoje de um motorista no MOVIT de quem está na central.
+// Pop-up "Simular rota": mapa da rota de hoje do motorista, paradas na ordem e km total.
+let TRACKING_POP_MAP=null;
+function trackingRoutePopupEl(){
+  let d=document.getElementById('trackingRoutePop');
+  if(d)return d;
+  d=document.createElement('dialog');d.id='trackingRoutePop';
+  d.style.cssText='width:min(1100px,96vw);max-height:92vh;padding:0;border:0;border-radius:14px;box-shadow:0 20px 60px #0006;overflow:hidden';
+  d.innerHTML='<div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid #e4eaf2"><div style="flex:1"><b id="trpTitle" style="font-size:16px">Rota</b><div id="trpSub" class="muted" style="font-size:12px"></div></div><button type="button" id="trpPhone" class="tb-btn" title="Abrir esta rota no MOVIT do seu celular; o motorista não é avisado">📱 Abrir no celular</button><button type="button" id="trpClose" class="tb-btn" aria-label="Fechar">✕</button></div>'+
+    '<div id="trpKpis" style="display:flex;gap:10px;flex-wrap:wrap;padding:10px 16px"></div>'+
+    '<div style="display:grid;grid-template-columns:minmax(0,1.6fr) minmax(260px,1fr);gap:0;height:min(64vh,620px)" class="trp-body"><div id="trpMap" style="min-height:300px"></div><div id="trpList" style="overflow:auto;border-left:1px solid #e4eaf2;font-size:13px"></div></div>';
+  document.body.appendChild(d);
+  const st=document.createElement('style');st.textContent='@media(max-width:760px){#trackingRoutePop .trp-body{grid-template-columns:1fr!important;height:auto!important}#trackingRoutePop #trpMap{height:46vh}#trackingRoutePop #trpList{border-left:0!important;border-top:1px solid #e4eaf2;max-height:40vh}}.trp-k{background:#f1f5f9;border-radius:10px;padding:8px 12px;min-width:110px}.trp-k span{display:block;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.04em}.trp-k b{font-size:20px}.trp-s{display:flex;gap:10px;padding:9px 14px;border-bottom:1px solid #f1f5f9}.trp-n{flex:0 0 26px;height:26px;border-radius:50%;background:#2563eb;color:#fff;display:grid;place-items:center;font-weight:700;font-size:12px}.trp-n.ok{background:#16a34a}';
+  document.head.appendChild(st);
+  d.querySelector('#trpClose').onclick=()=>d.close();
+  d.addEventListener('click',e=>{if(e.target===d)d.close()});
+  return d
+}
+async function trackingRoutePopup(item,button){
+  const d=trackingRoutePopupEl(),who=driverDisplayName(item.r.driver_name||'')+(item.r.vehicle_plate?' • '+String(item.r.vehicle_plate).toUpperCase():'');
+  d.querySelector('#trpTitle').textContent='Rota de hoje • '+who;
+  d.querySelector('#trpSub').textContent='Montando a rota com as entregas dos romaneios…';
+  d.querySelector('#trpKpis').innerHTML='';d.querySelector('#trpList').innerHTML='<div class="muted" style="padding:16px">Carregando…</div>';
+  d.querySelector('#trpPhone').onclick=e=>{d.close();trackingSimulateRoute(item,null)};
+  if(!d.open)d.showModal();
+  const label=button?button.textContent:'';if(button){button.disabled=true;button.textContent='Montando…'}
+  try{
+    const plan=await trackingBuildLogicalPlan(item.r,iso(new Date()));
+    if(!plan||!(plan.points||plan.stops||[]).length)throw new Error('Não encontrei entregas com localização nos romaneios de hoje deste motorista.');
+    const pts=plan.points||[{label:'Base',lat:-22.739,lon:-47.331},...plan.stops];
+    const ordem=(plan.optimizedOrder||pts.map((_,i)=>i)).filter(i=>i>0&&pts[i]);
+    const paradas=ordem.map(i=>pts[i]);
+    const km=Number(plan.optimizedDistanceMeters||plan.geometryDistanceMeters||0)/1000,seg=Number(plan.durationSeconds||0);
+    const feitas=paradas.filter(p=>p.entregue||p.baixaConfirmed).length;
+    const k=(l,v)=>'<div class="trp-k"><span>'+l+'</span><b>'+v+'</b></div>';
+    d.querySelector('#trpKpis').innerHTML=k('Km total',km?nf(Math.round(km))+' km':'—')+k('Paradas',nf(paradas.length))+k('Entregues',nf(feitas)+' de '+nf(paradas.length))+(seg?k('Tempo de direção',Math.floor(seg/3600)+'h'+String(Math.round(seg%3600/60)).padStart(2,'0')):'')+((plan.rejectedStops||[]).length?k('Sem localização',nf(plan.rejectedStops.length)):'');
+    d.querySelector('#trpSub').textContent=(plan.romaneios&&plan.romaneios.length?'Romaneio'+(plan.romaneios.length>1?'s ':' ')+plan.romaneios.join(', ')+' • ':'')+'saída e volta na base • ordem otimizada pelas vias';
+    d.querySelector('#trpList').innerHTML=paradas.map((p,i)=>'<div class="trp-s"><div class="trp-n'+(p.entregue||p.baixaConfirmed?' ok':'')+'">'+(i+1)+'</div><div><b>'+safe(p.destinatario||p.label||'Parada')+'</b><div class="muted" style="font-size:12px">'+safe([p.endereco,p.numero,p.bairro].filter(Boolean).join(', '))+(p.cidade?' • '+safe(p.cidade):'')+'</div><div class="muted" style="font-size:11px">'+(p.nf?'NF '+safe(p.nf)+' ':'')+(p.ctrc?'• CT-e '+safe(p.ctrc):'')+(p.entregue||p.baixaConfirmed?' • <b style="color:#16a34a">entregue</b>':'')+'</div></div></div>').join('')||'<div class="muted" style="padding:16px">Sem paradas.</div>';
+    // mapa
+    const box=d.querySelector('#trpMap');
+    if(TRACKING_POP_MAP){TRACKING_POP_MAP.remove();TRACKING_POP_MAP=null}
+    TRACKING_POP_MAP=L.map(box,{zoomControl:true});
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(TRACKING_POP_MAP);
+    const coords=(plan.geometry?.coordinates||[]).map(c=>[c[1],c[0]]);
+    const linha=coords.length>1?coords:[pts[0],...paradas,pts[0]].filter(p=>Number.isFinite(Number(p.lat))).map(p=>[Number(p.lat),Number(p.lon)]);
+    const pl=L.polyline(linha,{color:'#2563eb',weight:5,opacity:.85}).addTo(TRACKING_POP_MAP);
+    const b0=pts[0];if(Number.isFinite(Number(b0.lat)))L.marker([b0.lat,b0.lon],{icon:L.divIcon({className:'',html:'<div style="background:#f5b301;color:#16142f;font-weight:800;border-radius:6px;padding:2px 6px;border:2px solid #16142f">BASE</div>',iconSize:[46,22],iconAnchor:[23,11]})}).addTo(TRACKING_POP_MAP).bindTooltip('Base');
+    paradas.forEach((p,i)=>{if(!Number.isFinite(Number(p.lat)))return;const ok=p.entregue||p.baixaConfirmed;
+      L.marker([p.lat,p.lon],{icon:L.divIcon({className:'',html:'<div style="width:24px;height:24px;border-radius:50%;background:'+(ok?'#16a34a':'#2563eb')+';color:#fff;font:700 12px system-ui;display:grid;place-items:center;border:2px solid #fff;box-shadow:0 1px 4px #0006">'+(i+1)+'</div>',iconSize:[24,24],iconAnchor:[12,12]})}).addTo(TRACKING_POP_MAP).bindTooltip((i+1)+'. '+(p.destinatario||p.label||'')+(p.cidade?' • '+p.cidade:''))});
+    setTimeout(()=>{TRACKING_POP_MAP.invalidateSize();try{TRACKING_POP_MAP.fitBounds(pl.getBounds(),{padding:[24,24]})}catch{}},60)
+  }catch(e){
+    d.querySelector('#trpSub').textContent='';
+    d.querySelector('#trpList').innerHTML='<div style="padding:16px;color:#b91c1c">'+safe(e.message)+'</div>'
+  }finally{if(button){button.disabled=false;button.textContent=label}}
+}
 async function trackingSimulateRoute(item,button){
   const box=$('#trackingSimBox');if(!box)return;
   const label=button?button.textContent:'';
@@ -3966,7 +4020,7 @@ function renderTrackingBoard(rows,extraRows){
     if(d.action==='notify')actions.push('<button type="button" class="tb-btn wa" data-tb-act="notify" data-tb-i="'+i+'">💬 Avisar no WhatsApp</button>');
     if(d.action==='invite')actions.push('<button type="button" class="tb-btn wa" data-tb-act="invite" data-tb-i="'+i+'">💬 Enviar link do aplicativo</button>');
     if(d.action==='map'||(trackingHasPosition(r)&&d.action!=='map'))actions.push('<button type="button" class="tb-btn" data-tb-act="map" data-tb-i="'+i+'">🗺️ Ver no mapa</button>');
-    if(!r.test_only&&romList.length)actions.push('<button type="button" class="tb-btn" title="Abrir a rota de hoje deste motorista no MOVIT do seu celular, sem ser motorista. O motorista não é avisado." data-tb-act="simular" data-tb-i="'+i+'">📱 Simular rota</button>');
+    if(!r.test_only&&romList.length)actions.push('<button type="button" class="tb-btn" title="Ver a rota de hoje deste motorista: mapa, paradas e km total" data-tb-act="simular" data-tb-i="'+i+'">🗺️ Simular rota</button>');
     const told=notified[it.key]?'<div class="tb-sub">Avisado às '+safe(notified[it.key])+'</div>':'';
     const tv=trackingTestVersion();
     const linkBtns=r.test_only?'':'<button type="button" class="tb-btn tb-mini" title="Enviar o link de instalação do aplicativo pelo WhatsApp" data-tb-act="link" data-tb-i="'+i+'">🔗 Enviar link</button>'+
@@ -4007,7 +4061,7 @@ async function trackingBoardClick(e){
     const el=$('#trackingMap');if(el)el.scrollIntoView({behavior:'smooth',block:'center'});
     trackingFocusDriver(item.key);return
   }
-  if(act==='simular'){await trackingSimulateRoute(item,b);return}
+  if(act==='simular'){await trackingRoutePopup(item,b);return}
   if(act==='phone-edit'){TRACKING_CONTACT_EDIT={key:ckey,value:phone?trackingPhoneLabel(phone):''};trackingBoardRerender();return}
   if(act==='phone-cancel'){TRACKING_CONTACT_EDIT=null;trackingBoardRerender();return}
   if(act==='phone-save'){b.disabled=true;await trackingBoardSavePhone(item,String(TRACKING_CONTACT_EDIT?.value||''));return}
