@@ -6168,6 +6168,22 @@ if(u.pathname==='/api/programacao-entregas/status-nfs'&&req.method==='GET'){try{
     else if(pendOk&&!pend.has(nf))itens[nf]={status:'em_rota',fonte:'Saiu dos CTRCs disponíveis (romaneio)'};
     else if(pendOk)itens[nf]={status:'pendente',fonte:'Disponível no galpão'};
   }
+  // saiu do galpão mas a baixa ainda não apareceu no BI2: confere a situação do CT-e na opção 101 do SSW
+  const conferir=nfs.filter(nf=>itens[nf]&&itens[nf].status==='em_rota').slice(0,20);
+  if(conferir.length&&u.searchParams.get('rapido')!=='1'){
+    await Promise.race([Promise.all(conferir.map(async nf=>{
+      try{
+        const f=await fetchSsw101ByNf(nf);if(!f||!f.ctrc)return;
+        {const k=sswCteKey(f.ctrc),h=SSW_CTE_CACHE.get(k);if(h&&Date.now()-h.at>20*60*1000)SSW_CTE_CACHE.delete(k)}   // a situação muda: não usa a leitura antiga
+        const info=await sswCteInfo(f.ctrc,1);const sit=String(info?.resumo?.situacao||'');
+        const txt=(sit+' '+String(f.plain||'')).toUpperCase();
+        if(/MERCADORIA\s+ENTREGUE|\bENTREGUE\b|ENTREGA\s+REALIZADA|BAIXAD/.test(sit.toUpperCase())&&!/N[AÃ]O\s+ENTREG/.test(sit.toUpperCase())){
+          const dm=(sit.match(/(\d{2}\/\d{2}\/\d{2,4})/)||txt.match(/ENTREG[A-Z]*\D{0,30}(\d{2}\/\d{2}\/\d{2,4})/)||[])[1];
+          itens[nf]={status:'entregue',em:(dm&&brDateToIso(dm))||hoje,fonte:'Situação do CT-e '+f.ctrc+' (SSW 101)',ctrc:f.ctrc}
+        }else if(sit)itens[nf].situacao=sit.slice(0,120)
+      }catch(e){}
+    })),new Promise(r=>setTimeout(r,40000))]);
+  }
   const value={ok:true,at:new Date().toISOString(),desde,pendOk,baixasOk,itens};
   RC_STATUS_CACHE.set(ck,{at:Date.now(),value});if(RC_STATUS_CACHE.size>200)RC_STATUS_CACHE.clear();
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});

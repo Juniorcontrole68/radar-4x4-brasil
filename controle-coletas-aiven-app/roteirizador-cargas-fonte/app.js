@@ -886,7 +886,7 @@
     if (!ST.carregado || !ST.carregado.notas) return;
     if (window.RC_HOST && ST.admin && !ui.frotaAuto) { ui.frotaAuto = true; setTimeout(() => importarFrota(), 50); }
     if (window.RC_HOST && !ui.sswSync) { ui.sswSync = true; setTimeout(() => sincronizarSSW(), 80); }
-    if (window.RC_HOST && !ui.sbSyncIni) { ui.sbSyncIni = true; setTimeout(() => sincronizarSobras(), 2000); }
+    if (window.RC_HOST && !ui.sbSyncIni) { ui.sbSyncIni = true; setTimeout(() => sincronizarSobras(), 2000); setTimeout(() => situacaoPeloSSW().catch(() => {}), 6000); setInterval(() => { if (document.visibilityState === 'hidden') return; sincronizarSobras(); situacaoPeloSSW().catch(() => {}); }, 10 * 60000); }
     if (!ui.juntAuto) { ui.juntAuto = true; setTimeout(() => juntarDuplicadasSSW().catch((e) => console.warn('juntar', e.message)), 2500); }
     if (!ui.sbNotasAuto) { ui.sbNotasAuto = true; setTimeout(() => notasDasSobras().catch((e) => console.warn('sobras→notas', e.message)), 1500); setInterval(() => notasDasSobras().catch(() => {}), 3 * 60000); }
     if (window.RC_HOST && !ui.geoAuto) { ui.geoAuto = true; setTimeout(() => localizarEnderecosXML(), 4000); setInterval(() => { if (document.visibilityState !== 'hidden') localizarEnderecosXML(); }, 10 * 60000); }
@@ -1074,6 +1074,43 @@
       render(); setTimeout(() => localizarPorNF(), 500);
     }
   }
+  // Nota do SSW que saiu da lista de CTRCs disponíveis (038) foi para romaneio: fica "em rota" e não entra mais na
+  // programação; se voltar para a lista (não entregue), volta a "pronta". Depois confere a baixa (entregue).
+  async function situacaoPeloSSW() {
+    const linhas = sswLinhas(); if (linhas.length < 5) return;          // lista vazia/curta demais: pode ser falha de leitura
+    const naLista = new Set(); for (const r of linhas) { const n = notaDaLinhaSSW(r); if (n) naLista.add(n.id); }
+    const it = [], hojeD = hoje();
+    for (const n of ST.notas.values()) {
+      if (!n.ctrc || !(n.origem === 'ssw' || n.vistoSSW)) continue;
+      if (naLista.has(n.id)) {
+        if (n.status === 'em_rota' && n.statusFonte === 'ssw') it.push({ id: n.id, data: Object.assign({}, n, { status: 'pronta', statusFonte: '', emRotaEm: null, voltouEm: hojeD }) });
+        else if (!n.vistoSSW) it.push({ id: n.id, data: Object.assign({}, n, { vistoSSW: true }) });
+      } else if (['pronta', 'roteirizada'].includes(n.status)) it.push({ id: n.id, data: Object.assign({}, n, { status: 'em_rota', statusFonte: 'ssw', emRotaEm: hojeD }) });
+    }
+    if (it.length) { await salvarVarios('notas', it); const k = it.filter((x) => x.data.status === 'em_rota').length; if (k) { registrar('SSW', k + ' nota(s) saíram em romaneio (não estão mais nos CTRCs disponíveis)'); ui.escalaSuja = true; } }
+    await baixasPeloSSW();
+  }
+  // notas "em rota": confere no SSW se foram entregues (baixa no BI2 ou situação do CT-e)
+  async function baixasPeloSSW() {
+    if (!window.RC_HOST || !window.RC_HOST.statusNfs || ui.baixas) return;
+    const em = [...ST.notas.values()].filter((n) => n.status === 'em_rota' && n.numero && (!n.baixaConfEm || Date.now() - Date.parse(n.baixaConfEm) > 20 * 60000));
+    if (!em.length) return;
+    ui.baixas = true;
+    try {
+      for (let i = 0; i < em.length; i += 60) {
+        const lote = em.slice(i, i + 60), desde = RE.addDays(lote.map((n) => n.emRotaEm || hoje()).sort()[0], -2);
+        const j = await window.RC_HOST.statusNfs(lote.map((n) => n.numero), desde);
+        const it = [];
+        for (const n of lote) {
+          const x = (j.itens || {})[nfChave(n.numero)] || (j.itens || {})[String(n.numero)]; const o = ST.notas.get(n.id); if (!o) continue;
+          const q = Object.assign({}, o, { baixaConfEm: agoraISO() });
+          if (x && x.status === 'entregue') Object.assign(q, { status: 'entregue', entregueEm: x.em || hoje(), statusFonte: 'ssw' });
+          it.push({ id: n.id, data: q });
+        }
+        await salvarVarios('notas', it);
+      }
+    } catch (e) { console.warn('baixas', e.message); } finally { ui.baixas = false; render(); }
+  }
   async function sincronizarSSW() {
     if (!window.RC_HOST || ui.sswLendo) return;
     ui.sswLendo = true; render();
@@ -1085,6 +1122,7 @@
       for (const r of sswLinhas()) { if (!devolvidaSSW(r)) continue; const n = notaDaLinhaSSW(r); if (n && !['cancelada', 'entregue'].includes(n.status)) await salvar('notas', n.id, Object.assign({}, n, { status: 'cancelada', canceladaMotivo: 'Devolvida ao remetente (SSW)' })); }
       for (const r of novas) await criarNotaDeSSW(r);
       if (novas.length) registrar('SSW', novas.length + ' CTRC(s) disponíveis trazidos automaticamente');
+      await situacaoPeloSSW();
     } catch (e) { toast('Não foi possível ler o SSW: ' + e.message, true); }
     ui.sswLendo = false; render();
     setTimeout(() => localizarEnderecosXML(), 300);
