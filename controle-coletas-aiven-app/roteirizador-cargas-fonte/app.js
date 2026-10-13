@@ -840,6 +840,7 @@
     const d = ui.data, dd = dispDia(d);
     if (window.RC_HOST && ST.admin && !ui.frotaAuto) { ui.frotaAuto = true; setTimeout(() => importarFrota(), 50); }
     if (window.RC_HOST && !ui.sswSync) { ui.sswSync = true; setTimeout(() => sincronizarSSW(), 80); }
+    if (window.RC_HOST && !ui.geoAuto) { ui.geoAuto = true; setTimeout(() => localizarEnderecosXML(), 4000); setInterval(() => { if (document.visibilityState !== 'hidden') localizarEnderecosXML(); }, 10 * 60000); }
     const todos = motoristasUnicos();
     const q = RE.norm(ui.motQ || '');
     const lista = (q ? todos.filter((m) => RE.norm(m.nome).includes(q)) : todos.filter((m) => motRecente(m, d) || dd.motoristas[m.id] === true))
@@ -851,7 +852,7 @@
     if (nNotas && nm && !ui.calc && (!pl || ui.escalaSuja) && !(pl && pl.status === 'aprovado') && ui.autoEm !== VER) { ui.autoEm = VER; setTimeout(() => { if (!ui.calc) otimizar(); }, 400); }
     const rotaDe = new Map(pl ? pl.rotas.filter((r) => r.motoristaId).map((r) => [r.motoristaId, r]) : []);
     const marca = (m) => '<label class="dsp"><input type="checkbox" data-disp="m|' + esc(m.id) + '"' + (motDisp(m, d) ? ' checked' : '') + '><span><b>' + esc(m.nome) + '</b><small>' + (m.ultimoUso ? 'rodou em ' + dBR(m.ultimoUso) : 'sem registro recente') + '</small></span></label>';
-    let h = '<div class="card escala"><div class="card-h"><h2>Escala de ' + dBR(d) + '</h2><span class="small muted">' + (ui.sswLendo ? 'buscando CTRCs no SSW… · ' : '') + nNotas + ' nota(s) para este dia · ' + nm + ' motorista(s) marcado(s)</span>' + (nNotas && nm ? '<button class="btn sm go" data-a="otimizar"' + (ui.calc ? ' disabled' : '') + '>' + I.play + (pl ? 'Otimizar de novo' : 'Otimizar') + '</button>' : '') + '</div>';
+    let h = '<div class="card escala"><div class="card-h"><h2>Escala de ' + dBR(d) + '</h2><span class="small muted">' + (ui.sswLendo ? 'buscando CTRCs no SSW… · ' : '') + (ui.geo ? 'lendo endereços no XML do CT-e: ' + ui.geo.feitos + ' de ' + ui.geo.total + ' · ' : '') + nNotas + ' nota(s) para este dia · ' + nm + ' motorista(s) marcado(s)</span>' + (nNotas && nm ? '<button class="btn sm go" data-a="otimizar"' + (ui.calc ? ' disabled' : '') + '>' + I.play + (pl ? 'Otimizar de novo' : 'Otimizar') + '</button>' : '') + '</div>';
     h += '<div class="escala-cols"><div><p class="small" style="margin:0 0 8px"><b>1. Quem trabalha hoje?</b></p>' +
       '<input id="fMotQ" class="dsp-q" placeholder="Procurar motorista mais antigo" value="' + esc(ui.motQ || '') + '">' +
       (lista.length ? '<div class="dsp-list">' + lista.map(marca).join('') + '</div>' : '<p class="muted small">' + (q ? 'Nenhum motorista com esse nome.' : ui.frotaImp && ui.frotaImp.carregando ? 'Lendo o Rastreio de carga…' : 'Nenhum motorista rodou nos últimos 30 dias.') + '</p>') + '</div>';
@@ -921,6 +922,48 @@
     if (fora.length) h += '<ul style="margin:6px 0 0 18px;padding:0">' + fora.sort((a, b) => a.x.data.localeCompare(b.x.data)).slice(0, 8).map((f) => '<li>NF ' + esc(f.x.numero || '—') + ' · ' + esc(f.x.cidade || (f.n && f.n.cidadeNome) || '') + ' · sobra de ' + dBR(f.x.data) + ' — ' + motivo(f) + '</li>').join('') + (fora.length > 8 ? '<li>+ ' + (fora.length - 8) + '</li>' : '') + '</ul>';
     return h + '</div>';
   }
+  // ---- endereço certo pelo XML do CT-e ----
+  // As notas do SSW chegam só com a cidade (ficam no centro da cidade). Para cada uma, o servidor lê o XML do CT-e
+  // na opção 101 e localiza a rua e o número no mapa; a nota guarda o endereço e o ponto.
+  const geoAproximado = (pr) => !pr || /cidade|munic|base/.test(pr);
+  function notasSemEndereco() {
+    const lim = Date.now() - 6 * 3600e3;
+    return [...ST.notas.values()].filter((n) => n.ctrc && n.lat == null && !['entregue', 'cancelada'].includes(n.status) && !n.bloqueioUsuario && !(n.geoTentEm && Date.parse(n.geoTentEm) > lim));
+  }
+  async function localizarEnderecosXML() {
+    if (!window.RC_HOST || !window.RC_HOST.enderecosCtrc || ui.geo) return;
+    let fila = notasSemEndereco(); if (!fila.length) return;
+    ui.geo = { feitos: 0, total: fila.length, ok: 0 }; render();
+    try {
+      while (fila.length) {
+        const lote = fila.splice(0, 12);
+        let j = null; try { j = await window.RC_HOST.enderecosCtrc(lote.map((n) => n.ctrc)); } catch (e) { console.warn('endereços XML', e.message); break; }
+        const porCtrc = new Map((j.rows || []).map((r) => [String(r.ctrc).replace(/[^A-Z0-9]/gi, '').toUpperCase(), r]));
+        const it = [];
+        for (const n of lote) {
+          const o = ST.notas.get(n.id); if (!o) continue;
+          const r = porCtrc.get(String(n.ctrc).replace(/[^A-Z0-9]/gi, '').toUpperCase());
+          const q = Object.assign({}, o, { geoTentEm: agoraISO() });
+          if (r && r.ok) {
+            const m = RE.findMun(null, r.cidade || o.endereco.cidade, r.uf || o.endereco.uf);
+            q.endereco = Object.assign({}, o.endereco, { lgr: r.endereco || o.endereco.lgr, nro: r.numero || o.endereco.nro || '', bairro: r.bairro || o.endereco.bairro || '', cep: r.cep || o.endereco.cep || '', cidade: m ? m.nome : (r.cidade || o.endereco.cidade), uf: r.uf || o.endereco.uf, cMun: m ? m.cod : o.endereco.cMun, compl: r.complemento || o.endereco.compl || '' });
+            if (r.destinatario && !o.destNome) q.destNome = r.destinatario;
+            if (r.telefone && !o.destFone) q.destFone = r.telefone;
+            q.geoPrecisao = r.precisao || ''; q.geoFonte = 'XML do CT-e' + (r.fonte ? ' · ' + r.fonte : '');
+            if (r.lat != null && r.lon != null && !geoAproximado(r.precisao)) { q.lat = +r.lat; q.lon = +r.lon; ui.geo.ok++; }
+          } else if (r) q.geoErro = r.erro || '';
+          if (r) it.push({ id: n.id, data: q });
+        }
+        await salvarVarios('notas', it);
+        ui.geo.feitos += lote.length; render();
+        if (!(j.rows || []).length) break;     // o SSW não respondeu nada: tenta de novo mais tarde
+      }
+    } finally {
+      const g = ui.geo; ui.geo = null;
+      if (g && g.ok) { toast(g.ok + ' endereço(s) localizados pelo XML do CT-e.'); ui.escalaSuja = true; }
+      render();
+    }
+  }
   async function sincronizarSSW() {
     if (!window.RC_HOST || ui.sswLendo) return;
     ui.sswLendo = true; render();
@@ -934,6 +977,7 @@
       if (novas.length) registrar('SSW', novas.length + ' CTRC(s) disponíveis trazidos automaticamente');
     } catch (e) { toast('Não foi possível ler o SSW: ' + e.message, true); }
     ui.sswLendo = false; render();
+    setTimeout(() => localizarEnderecosXML(), 300);
   }
   function vVazio() {
     if (window.RC_HOST) return '<div class="card empty"><h3>Nenhuma nota no roteirizador</h3><p>Traga os CTRCs disponíveis para entrega do SSW, importe XMLs, ZIPs, DANFEs em PDF ou planilhas, ou insira notas à mão.</p><div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" data-a="irSSW">Buscar no SSW</button><button class="btn" data-a="tab" data-v="notas">' + I.up2 + 'Importar notas</button></div></div>';

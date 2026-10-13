@@ -6513,6 +6513,24 @@ if(req.method==='POST'&&u.pathname==='/api/roteirizador/geometria-order'){try{
   res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
+// Endereço certo das notas do roteirizador de cargas: lê o XML do CT-e no SSW (opção 101) e localiza no mapa
+// do mesmo jeito do roteirizador de romaneio. Responde com o que der dentro do tempo; o resto vem na próxima chamada.
+if(req.method==='POST'&&u.pathname==='/api/roteirizador/enderecos-ctrc'){try{
+  if(!dashboardHasAny(authUser,['dashboard','roteirizador','montar_carga']))return dashboardDeny(res);
+  const body=await routeReadJson(req);
+  const lista=[...new Set((Array.isArray(body.ctrcs)?body.ctrcs:[]).map(c=>String(c||'').toUpperCase().replace(/\s+/g,'')).filter(c=>/^[A-Z]{3}0*\d+-?\d$/.test(c)))].slice(0,12)
+    .map(c=>c.includes('-')?c:c.slice(0,-1)+'-'+c.slice(-1));
+  const rows=[];const t0=Date.now();
+  await Promise.race([
+    Promise.all(lista.map(async ctrc=>{
+      try{const x=await routeBiparCte(ctrc);rows.push({ctrc,ok:true,endereco:x.endereco||'',numero:x.numero||'',bairro:x.bairro||'',cep:x.cep||'',complemento:x.complemento||'',cidade:x.cidade||'',uf:x.uf||'',lat:x.lat,lon:x.lon,precisao:x.precision||'',fonte:x.coordinateSource||x.enderecoFonte||'',destinatario:x.destinatario||'',telefone:x.telefone||''})}
+      catch(e){const st=e.stop||null;rows.push({ctrc,ok:false,erro:String(e.message||e),endereco:'',destinatario:st?.destinatario||''})}
+    })),
+    new Promise(r=>setTimeout(r,50000))
+  ]);
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:true,rows,pedidos:lista.length,ms:Date.now()-t0}))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(req.method==='POST'&&u.pathname==='/api/roteirizador/recalcular'){try{
   if(!dashboardHasAny(authUser,['dashboard','roteirizador','tracking','montar_carga']))return dashboardDeny(res);
   const body=await routeReadJson(req);
