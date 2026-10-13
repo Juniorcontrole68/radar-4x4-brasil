@@ -597,6 +597,7 @@ function deliveryProgramFormParams(html){
   }
   return p
 }
+const RC_STATUS_CACHE=new Map();
 async function fetchSswPendingDeliveries(){
   if(SSW_PENDING_CACHE.value&&Date.now()-SSW_PENDING_CACHE.at<90000)return SSW_PENDING_CACHE.value;
   if(SSW_PENDING_INFLIGHT)return SSW_PENDING_INFLIGHT;
@@ -5844,6 +5845,36 @@ if(u.pathname==='/api/agendamento-teste'&&req.method==='POST'){try{
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 // CTRCs disponíveis para entrega (SSW opção 038, pendências), com peso, m³ e frete cruzados no BI2.
 // Usado pelo Roteirizador de Cargas para trazer as notas sem planilha.
+// Situação das notas que ficaram no galpão (Roteirizador > Sobras):
+// entregue = baixa no BI2 (relatório 17) desde a data informada; em rota = saiu dos CTRCs disponíveis
+// para entrega (opção 38), ou seja, já entrou em romaneio; pendente = continua disponível no galpão.
+if(u.pathname==='/api/programacao-entregas/status-nfs'&&req.method==='GET'){try{
+  if(!dashboardHasAny(authUser,['programacao','roteirizador','dashboard','ssw_saidas']))return dashboardDeny(res);
+  const nfs=[...new Set(String(u.searchParams.get('nfs')||'').split(/[\s,;]+/).map(normNf).filter(Boolean))].slice(0,400);
+  const hoje=spDateISO();
+  let desde=String(u.searchParams.get('desde')||'').slice(0,10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(desde)||desde>hoje)desde=hoje;
+  const datas=[];for(let d=new Date(hoje+'T12:00:00Z');datas.length<10;d.setUTCDate(d.getUTCDate()-1)){const x=d.toISOString().slice(0,10);if(x<desde)break;datas.push(x)}
+  const ck=nfs.join(',')+'|'+desde,hit=RC_STATUS_CACHE.get(ck);
+  if(hit&&Date.now()-hit.at<4*60*1000){res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(hit.value))}
+  let pendOk=false;const pend=new Set();
+  try{const p=await fetchSswPendingDeliveries();for(const r of p.rows||[])pend.add(normNf(r.nf));pendOk=(p.rows||[]).length>0}catch(e){console.log('STATUS NFS pendências: '+String(e.message||e))}
+  const entregues=new Map();let baixasOk=false;
+  for(const d of datas){try{const b=await buildBi2Baixas(d);baixasOk=true;for(const r of b.rows||[]){const k=normNf(r.nf);const em=brDateToIso((String(r.entrega||'').match(/\d{2}\/\d{2}\/\d{2,4}/)||[''])[0])||'';if(k&&em&&em>=desde&&!entregues.has(k))entregues.set(k,em)}}catch(e){console.log('STATUS NFS baixas '+d+': '+String(e.message||e))}}
+  const itens={};
+  for(const nf of nfs){
+    if(entregues.has(nf))itens[nf]={status:'entregue',em:entregues.get(nf),fonte:'Baixa no SSW'};
+    else if(pendOk&&!pend.has(nf))itens[nf]={status:'em_rota',fonte:'Saiu dos CTRCs disponíveis (romaneio)'};
+    else if(pendOk)itens[nf]={status:'pendente',fonte:'Disponível no galpão'};
+  }
+  const value={ok:true,at:new Date().toISOString(),desde,pendOk,baixasOk,itens};
+  RC_STATUS_CACHE.set(ck,{at:Date.now(),value});if(RC_STATUS_CACHE.size>200)RC_STATUS_CACHE.clear();
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(value))
+}catch(e){
+  res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
+}}
 if(u.pathname==='/api/programacao-entregas/disponiveis'&&req.method==='GET'){try{
   if(!dashboardHasAny(authUser,['programacao','roteirizador','dashboard','ssw_saidas']))return dashboardDeny(res);
   if(u.searchParams.get('force')==='1')SSW_PENDING_CACHE={at:0,value:null};

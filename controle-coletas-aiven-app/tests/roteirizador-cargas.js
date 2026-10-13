@@ -85,7 +85,8 @@ const login = async (u, s) => { const r = await call('POST', '/api/auth/login', 
   r = await call('GET', '/', { cookie: adm });
   const portal = fs.readFileSync(path.join(__dirname, '..', 'painel.html'), 'utf8');
   check('portal tem o botão Atualizar ao lado do nome', portal.includes('id="sysUpdate"'));
-  check('logo do portal é uma imagem válida', !/data:image\/png;base64/.test(portal) && portal.includes('data:image/svg+xml;base64'));
+  const imgs = [...portal.matchAll(/data:image\/png;base64,([A-Za-z0-9+/=]+)/g)].map((m) => m[1]);
+  check('logo do portal é uma imagem válida', imgs.length >= 2 && imgs.every((b) => Buffer.from(b, 'base64').toString('base64') === b && Buffer.from(b, 'base64').slice(1, 4).toString() === 'PNG'));
   check('portal tem o Roteirizador novo e não tem mais o Teste nem o V02', portal.includes('data-module="roteirizador-cargas"') && !portal.includes('data-module="roteirizador-teste"') && !portal.includes('data-module="roteirizador-v02"'));
 
   const dash = fs.readFileSync(path.join(__dirname, '..', 'dashboard', 'public', 'index.html'), 'utf8');

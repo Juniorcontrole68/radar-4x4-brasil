@@ -152,6 +152,8 @@
   window.RC_HOST = {
     nome: 'CONSTRULOG',
     // CTRCs disponíveis para entrega: SSW opção 038 (pendências), com peso, m³ e frete do BI2
+    // situação das notas que ficaram: em rota (saiu dos disponíveis = romaneio) ou entregue (baixa no BI2)
+    statusNfs: (nfs, desde) => api('GET', '/api/programacao-entregas/status-nfs?nfs=' + encodeURIComponent(nfs.join(',')) + '&desde=' + encodeURIComponent(desde || '')),
     sswDisponiveis: (forcar) => api('GET', '/api/programacao-entregas/disponiveis' + (forcar ? '?force=1' : '')),
     // veículos e motoristas: tela Frota + quem rodou no Rastreio de carga nos últimos dias
     async frotaERastreio(dias) {

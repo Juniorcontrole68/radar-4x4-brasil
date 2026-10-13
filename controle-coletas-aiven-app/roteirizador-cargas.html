@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"><meta name="rc-versao" content="e5550e0518b8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="rc-versao" content="8da7b3daa7f1"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
 <title>Roteirizador Inteligente de Cargas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -214,6 +214,7 @@ details>summary{cursor:pointer;font-weight:600}
 .dsp-q{width:100%;padding:8px 10px;border:1px solid var(--line,#d5dbe3);border-radius:8px;font:inherit;margin-bottom:10px;background:var(--surface,#fff);color:inherit}.dsp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px}.dsp{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:7px 9px;border:1px solid var(--line,#d5dbe3);border-radius:8px}.dsp label{display:flex;gap:8px;align-items:flex-start;cursor:pointer;min-width:0;flex:1}.dsp input{margin-top:3px}.dsp.com-rota{border-color:var(--info,#2b6cb0);background:rgba(43,108,176,.07)}.dsp span{display:flex;flex-direction:column;min-width:0}.dsp small{opacity:.7;font-size:11.5px}.dsp:has(input:checked){border-color:#2f9e61;background:rgba(47,158,97,.07)}
 .escala-cols{display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:18px}@media(max-width:760px){.escala-cols{grid-template-columns:1fr}}.dsp-list{display:flex;flex-direction:column;gap:5px;max-height:460px;overflow:auto}.dsp-list .dsp{cursor:pointer;justify-content:flex-start}.escala{margin-bottom:14px}.ideia{border:1px solid var(--line,#d5dbe3);border-left:4px solid var(--info,#2b6cb0);border-radius:8px;padding:8px 10px;margin-bottom:8px}.ideia .row{gap:8px;align-items:center}.rota-cid{margin-top:3px;opacity:.85}.escala .empty{padding:18px;text-align:center}
 .seg{display:inline-flex;border:1px solid var(--line,#d5dbe3);border-radius:8px;overflow:hidden}.seg button{border:0;background:transparent;padding:5px 10px;font:inherit;font-size:12.5px;cursor:pointer;color:inherit;border-right:1px solid var(--line,#d5dbe3)}.seg button:last-child{border-right:0}.seg button.on{font-weight:700;color:#fff}.seg button.t-fiorino{background:#2f9e61}.seg button.t-van{background:#2b6cb0}.seg button.t-tubos{background:#b7791f}.seg button:disabled{cursor:default}
+.sb-st{font:inherit;font-size:12.5px;font-weight:600;padding:4px 6px;border-radius:7px;border:1px solid var(--line,#d5dbe3)}.sb-st.warn{background:#fef3c7;color:#92400e;border-color:#fcd34d}.sb-st.info{background:#dbeafe;color:#1e40af;border-color:#93c5fd}.sb-st.ok{background:#dcfce7;color:#166534;border-color:#86efac}
 </style>
 <div id="app"></div>
 
@@ -372,6 +373,8 @@ details>summary{cursor:pointer;font-weight:600}
   window.RC_HOST = {
     nome: 'CONSTRULOG',
     // CTRCs disponíveis para entrega: SSW opção 038 (pendências), com peso, m³ e frete do BI2
+    // situação das notas que ficaram: em rota (saiu dos disponíveis = romaneio) ou entregue (baixa no BI2)
+    statusNfs: (nfs, desde) => api('GET', '/api/programacao-entregas/status-nfs?nfs=' + encodeURIComponent(nfs.join(',')) + '&desde=' + encodeURIComponent(desde || '')),
     sswDisponiveis: (forcar) => api('GET', '/api/programacao-entregas/disponiveis' + (forcar ? '?force=1' : '')),
     // veículos e motoristas: tela Frota + quem rodou no Rastreio de carga nos últimos dias
     async frotaERastreio(dias) {
@@ -1160,7 +1163,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     const wd = RE.weekday(data);
     const out = [], fora = [];
     for (const n of notasEnr) {
-      if (n.status === 'entregue' || n.status === 'cancelada') continue;
+      if (n.status === 'entregue' || n.status === 'cancelada' || n.status === 'em_rota') continue;
       if (n.planoData && n.planoData !== data && n.status === 'roteirizada') continue;
       if (filtroCidades && filtroCidades.length && !filtroCidades.includes(n.cidadeId)) continue;
       if (n.bloqueada) { fora.push({ nota: n, motivo: 'Dados pendentes' }); continue; }
@@ -2802,6 +2805,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
   function chipStatus(n) {
     if (n.status === 'cancelada') return '<span class="chip">Cancelada</span>';
     if (n.status === 'entregue') return '<span class="chip ok">Entregue</span>';
+    if (n.status === 'em_rota') return '<span class="chip info">Em rota</span>';
     if (n.bloqueada) return '<span class="chip bad">Pendente</span>';
     if (n.prioridade && n.status !== 'roteirizada') return '<span class="chip bad" title="' + esc(((n.ocorrencias || []).slice(-1)[0] || {}).motivo || '') + '">Prioridade</span>' + (n.avisos.length ? ' <span class="chip warn">' + n.avisos.length + '</span>' : '');
     if (n.status === 'roteirizada') return '<span class="chip info">Roteirizada ' + dBR(n.planoData) + '</span>';
@@ -3081,9 +3085,45 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     return null;
   }
   const chegouDe = (n) => n.chegouEm || (n.importadoEm || '').slice(0, 10) || n.emissao || '';
+  // situação de uma nota que ficou: manual > SSW (romaneio/baixa) > nota no roteirizador
+  const SB_ST = { pendente: ['Pendente', 'warn'], em_rota: ['Em rota', 'info'], entregue: ['Entregue', 'ok'] };
+  function sobraSituacao(s) {
+    if (s.statusManual) return { st: s.statusManual, em: s.statusManualEm || '', fonte: 'marcado à mão' };
+    const n = s.notaId ? ST.notas.get(s.notaId) : null;
+    if (n && n.status === 'entregue') return { st: 'entregue', em: n.entregueEm || s.entregueEm || '', fonte: 'roteirizador' };
+    if (s.status) return { st: s.status, em: s.status === 'entregue' ? s.entregueEm || '' : s.statusEm || '', fonte: s.statusFonte || 'SSW' };
+    return { st: 'pendente', em: '', fonte: '' };
+  }
+  // fica no quadro até o dia seguinte à entrega
+  const sobraVisivel = (s, d) => s.data === d || (s.data < d && !(sobraSituacao(s).st === 'entregue' && (sobraSituacao(s).em || s.data) < d));
+  async function sincronizarSobras() {
+    if (!window.RC_HOST || !window.RC_HOST.statusNfs || ui.sbSync) return;
+    const abertas = [...ST.sobras.values()].filter((s) => s.numero && !s.statusManual && sobraSituacao(s).st !== 'entregue' && s.data >= RE.addDays(hoje(), -20));
+    if (!abertas.length) return;
+    ui.sbSync = true; ui.sbSyncEm = Date.now();
+    try {
+      const desde = abertas.map((s) => s.data).sort()[0];
+      const j = await window.RC_HOST.statusNfs(abertas.map((s) => s.numero), desde);
+      const hojeD = hoje();
+      for (const s of abertas) {
+        const r = (j.itens || {})[String(s.numero).replace(/\D/g, '').replace(/^0+/, '')];
+        if (!r || (r.status === (s.status || 'pendente'))) continue;
+        const q = Object.assign({}, s, { status: r.status, statusFonte: r.fonte, statusEm: hojeD });
+        if (r.status === 'entregue') q.entregueEm = r.em || hojeD; else delete q.entregueEm;
+        await salvar('sobras', s.id, q);
+        const n = s.notaId ? ST.notas.get(s.notaId) : null;
+        if (n) {
+          const ns = r.status === 'entregue' ? 'entregue' : r.status === 'em_rota' ? 'em_rota' : (n.status === 'em_rota' ? 'pronta' : n.status);
+          if (ns !== n.status) await salvar('notas', n.id, Object.assign({}, n, { status: ns }, ns === 'entregue' ? { entregueEm: q.entregueEm } : {}));
+        }
+      }
+    } catch (e) { console.warn('situação das sobras', e.message); }
+    ui.sbSync = false; render();
+  }
   function vSobras() {
     const d = ui.data;
-    const doDia = [...ST.sobras.values()].filter((s) => s.data === d);
+    if (window.RC_HOST && !ui.sbSync && (!ui.sbSyncEm || Date.now() - ui.sbSyncEm > 5 * 60000)) setTimeout(sincronizarSobras, 60);
+    const doDia = [...ST.sobras.values()].filter((s) => sobraVisivel(s, d));
     let h = topo('Notas que ficaram', 'Digite o número da NF (ou várias, separadas por espaço): o sistema preenche o resto e sugere o motivo. Elas viram prioridade nas próximas rotas.', true);
     const sb = ui.sb;
     h += '<div class="card"><div class="row"><label class="f" style="flex:1;min-width:200px">NF<input type="text" id="sbNF" inputmode="numeric" autocomplete="off" value="' + esc(sb ? sb.q : '') + '" placeholder="Ex.: 669950 669926"></label><button class="btn pri" data-a="sbBuscar" style="align-self:flex-end">Buscar</button></div>';
@@ -3101,12 +3141,13 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     h += '</div>';
     // quadro no formato da planilha: por embarcador, separando "ficou hoje" de "há mais de um dia no galpão"
     const limite = RE.addDays(d, -1);
-    const antigas = doDia.filter((s) => s.chegou && s.chegou < limite), hojeL = doDia.filter((s) => !(s.chegou && s.chegou < limite));
+    const velha = (s) => s.data < d || (s.chegou && s.chegou < limite);
+    const antigas = doDia.filter(velha), hojeL = doDia.filter((s) => !velha(s));
     const porMotivo = new Map(); for (const s of doDia) porMotivo.set(s.motivo, (porMotivo.get(s.motivo) || 0) + 1);
     const quadro = (titulo, l) => {
       if (!l.length) return '';
       const g = new Map(); for (const s of l) { const k = s.embarcador || 'Sem embarcador'; if (!g.has(k)) g.set(k, []); g.get(k).push(s); }
-      return '<h3 style="margin:14px 0 8px">' + titulo + ' <span class="chip">' + l.length + '</span></h3><div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(min(100%,640px),1fr))">' + [...g].sort((a, b) => a[0].localeCompare(b[0])).map(([emb, ls]) => '<div class="tbl-wrap"><table><thead><tr><th colspan="7" style="background:var(--brand);color:var(--brand-ink)">' + esc(emb) + ' · ' + ls.length + '</th></tr><tr><th>Cidade</th><th>Carga</th><th>Chegou</th><th>NF</th><th>Motivo</th><th>Agora</th><th></th></tr></thead><tbody>' + ls.sort((a, b) => (a.cidade || '').localeCompare(b.cidade || '')).map((s) => { const n = s.notaId ? notaE(s.notaId) : null; return '<tr><td>' + esc((s.cidade || '').split('/')[0]) + '</td><td class="small">' + esc(s.carga || '') + '</td><td class="mono small">' + dBR(s.chegou) + '</td><td class="mono">' + esc(s.numero) + '</td><td><select data-sbmot="' + esc(s.id) + '" style="min-width:150px">' + MOTIVOS.map((m) => '<option' + (s.motivo === m ? ' selected' : '') + '>' + m + '</option>').join('') + '</select>' + (s.obs ? '<div class="tiny">' + esc(s.obs) + '</div>' : '') + '</td><td>' + (n ? chipStatus(n) : '<span class="chip" title="Importe a nota para ela voltar às rotas">sem nota</span>') + '</td><td><button class="btn sm ghost danger" data-a="sbExcluir" data-v="' + esc(s.id) + '" aria-label="Desfazer lançamento">' + I.x + '</button></td></tr>'; }).join('') + '</tbody></table></div>').join('') + '</div>';
+      return '<h3 style="margin:14px 0 8px">' + titulo + ' <span class="chip">' + l.length + '</span></h3><div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(min(100%,640px),1fr))">' + [...g].sort((a, b) => a[0].localeCompare(b[0])).map(([emb, ls]) => '<div class="tbl-wrap"><table><thead><tr><th colspan="7" style="background:var(--brand);color:var(--brand-ink)">' + esc(emb) + ' · ' + ls.length + '</th></tr><tr><th>Cidade</th><th>Carga</th><th>Chegou</th><th>NF</th><th>Motivo</th><th>Situação</th><th></th></tr></thead><tbody>' + ls.sort((a, b) => (a.cidade || '').localeCompare(b.cidade || '')).map((s) => { const n = s.notaId ? notaE(s.notaId) : null; return '<tr><td>' + esc((s.cidade || '').split('/')[0]) + '</td><td class="small">' + esc(s.carga || '') + '</td><td class="mono small">' + dBR(s.chegou) + '</td><td class="mono">' + esc(s.numero) + '</td><td><select data-sbmot="' + esc(s.id) + '" style="min-width:150px">' + MOTIVOS.map((m) => '<option' + (s.motivo === m ? ' selected' : '') + '>' + m + '</option>').join('') + '</select>' + (s.obs ? '<div class="tiny">' + esc(s.obs) + '</div>' : '') + '</td><td>' + (() => { const si = sobraSituacao(s); return '<select data-sbst="' + esc(s.id) + '" class="sb-st ' + SB_ST[si.st][1] + '" title="' + esc(si.fonte ? 'Origem: ' + si.fonte : '') + '">' + Object.entries(SB_ST).map(([k, v]) => '<option value="' + k + '"' + (si.st === k ? ' selected' : '') + '>' + v[0] + (si.st === k && si.em ? ' ' + dBR(si.em) : '') + '</option>').join('') + '</select>' + (s.statusManual ? ' <button class="btn sm ghost" data-a="sbAuto" data-v="' + esc(s.id) + '" title="Voltar a seguir o SSW">auto</button>' : '') + (!n ? '<div class="tiny">sem nota no roteirizador</div>' : ''); })() + '</td><td><button class="btn sm ghost danger" data-a="sbExcluir" data-v="' + esc(s.id) + '" aria-label="Desfazer lançamento">' + I.x + '</button></td></tr>'; }).join('') + '</tbody></table></div>').join('') + '</div>';
     };
     h += '<div class="card"><div class="card-h"><h2>Ficaram no galpão em ' + dBR(d) + '</h2><span class="chip ' + (doDia.length ? 'warn' : 'ok') + '">' + doDia.length + ' nota(s)' + (doDia.some((s) => s.kg) ? ' · ' + nf(doDia.reduce((s, x) => s + (x.kg || 0), 0), 0) + ' kg' : '') + '</span></div>' +
       (porMotivo.size ? '<div class="row">' + [...porMotivo].sort((x, y) => y[1] - x[1]).map(([m, k]) => '<span class="chip">' + esc(m) + ': ' + k + '</span>').join('') + '</div>' : '') +
@@ -3462,6 +3503,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
         if (!(munPorTexto(f.cidade) || RE.findMun(null, f.cidade, 'SP'))) { toast('Escolha a cidade na lista (Cidade/UF).', true); return; }
         const id = await criarNotaManual(f); toast('NF ' + f.numero + ' inserida.'); ui.notaAberta = id; render(); break;
       }
+      case 'sbAuto': { const s = ST.sobras.get(v); if (s) { const q = Object.assign({}, s); delete q.statusManual; delete q.statusManualEm; await salvar('sobras', v, q); ui.sbSyncEm = 0; render(); } break; }
       case 'sbExcluir': {
         const s = ST.sobras.get(v); await remover('sobras', v);
         if (s && s.notaId) { const n = ST.notas.get(s.notaId); if (n) { const oc = (n.ocorrencias || []).filter((o) => !(o.data === s.data && o.motivo === s.motivo)); const q = Object.assign({}, n, { ocorrencias: oc }); if (!oc.length) { q.prioridade = false; delete q.prioridadeDesde; delete q.dataMinima; } if (n.status === 'cancelada' && /^Devolvida/.test(n.motivoCancel || '')) q.status = 'pronta'; await salvar('notas', n.id, q); } }
@@ -3486,6 +3528,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       registrar('Disponibilidade', (nome || id) + (el.checked ? ' disponível' : ' fora') + ' em ' + dBR(d));
       render(); return;
     }
+    if (el.dataset.sbst) { const s = ST.sobras.get(el.dataset.sbst); if (s) { const st = el.value; const q = Object.assign({}, s, { statusManual: st, statusManualEm: hoje() }); await salvar('sobras', s.id, q); const n = s.notaId ? ST.notas.get(s.notaId) : null; if (n) { const ns = st === 'entregue' ? 'entregue' : st === 'em_rota' ? 'em_rota' : (['em_rota', 'entregue'].includes(n.status) ? 'pronta' : n.status); if (ns !== n.status) await salvar('notas', n.id, Object.assign({}, n, { status: ns }, ns === 'entregue' ? { entregueEm: hoje() } : {})); } registrar('Sobras', 'NF ' + s.numero + ': ' + SB_ST[st][0]); render(); } return; }
     if (el.dataset.sbmot) { const s = ST.sobras.get(el.dataset.sbmot); await salvar('sobras', s.id, Object.assign({}, s, { motivo: el.value })); if (s.notaId) { const n = ST.notas.get(s.notaId); if (n) { const oc = (n.ocorrencias || []).map((o) => (o.data === s.data && o.motivo === s.motivo ? Object.assign({}, o, { motivo: el.value }) : o)); await salvar('notas', n.id, Object.assign({}, n, { ocorrencias: oc })); } } render(); return; }
     if (el.id === 'sbMotivo' && ui.sb) { ui.sb.motivo = el.value; ui.sb.reenvio = !SEM_REENVIO.includes(el.value); const r = $('#sbReenvio'); if (r) r.checked = ui.sb.reenvio; return; }
     if (el.id === 'fSSW') { if (el.files[0]) carregarArquivoSSW(el.files[0]); el.value = ''; return; }

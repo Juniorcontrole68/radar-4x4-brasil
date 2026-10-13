@@ -766,7 +766,7 @@
     const wd = RE.weekday(data);
     const out = [], fora = [];
     for (const n of notasEnr) {
-      if (n.status === 'entregue' || n.status === 'cancelada') continue;
+      if (n.status === 'entregue' || n.status === 'cancelada' || n.status === 'em_rota') continue;
       if (n.planoData && n.planoData !== data && n.status === 'roteirizada') continue;
       if (filtroCidades && filtroCidades.length && !filtroCidades.includes(n.cidadeId)) continue;
       if (n.bloqueada) { fora.push({ nota: n, motivo: 'Dados pendentes' }); continue; }

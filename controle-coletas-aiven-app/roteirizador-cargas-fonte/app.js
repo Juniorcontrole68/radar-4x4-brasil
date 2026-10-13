@@ -908,6 +908,7 @@
   function chipStatus(n) {
     if (n.status === 'cancelada') return '<span class="chip">Cancelada</span>';
     if (n.status === 'entregue') return '<span class="chip ok">Entregue</span>';
+    if (n.status === 'em_rota') return '<span class="chip info">Em rota</span>';
     if (n.bloqueada) return '<span class="chip bad">Pendente</span>';
     if (n.prioridade && n.status !== 'roteirizada') return '<span class="chip bad" title="' + esc(((n.ocorrencias || []).slice(-1)[0] || {}).motivo || '') + '">Prioridade</span>' + (n.avisos.length ? ' <span class="chip warn">' + n.avisos.length + '</span>' : '');
     if (n.status === 'roteirizada') return '<span class="chip info">Roteirizada ' + dBR(n.planoData) + '</span>';
@@ -1187,9 +1188,45 @@
     return null;
   }
   const chegouDe = (n) => n.chegouEm || (n.importadoEm || '').slice(0, 10) || n.emissao || '';
+  // situação de uma nota que ficou: manual > SSW (romaneio/baixa) > nota no roteirizador
+  const SB_ST = { pendente: ['Pendente', 'warn'], em_rota: ['Em rota', 'info'], entregue: ['Entregue', 'ok'] };
+  function sobraSituacao(s) {
+    if (s.statusManual) return { st: s.statusManual, em: s.statusManualEm || '', fonte: 'marcado à mão' };
+    const n = s.notaId ? ST.notas.get(s.notaId) : null;
+    if (n && n.status === 'entregue') return { st: 'entregue', em: n.entregueEm || s.entregueEm || '', fonte: 'roteirizador' };
+    if (s.status) return { st: s.status, em: s.status === 'entregue' ? s.entregueEm || '' : s.statusEm || '', fonte: s.statusFonte || 'SSW' };
+    return { st: 'pendente', em: '', fonte: '' };
+  }
+  // fica no quadro até o dia seguinte à entrega
+  const sobraVisivel = (s, d) => s.data === d || (s.data < d && !(sobraSituacao(s).st === 'entregue' && (sobraSituacao(s).em || s.data) < d));
+  async function sincronizarSobras() {
+    if (!window.RC_HOST || !window.RC_HOST.statusNfs || ui.sbSync) return;
+    const abertas = [...ST.sobras.values()].filter((s) => s.numero && !s.statusManual && sobraSituacao(s).st !== 'entregue' && s.data >= RE.addDays(hoje(), -20));
+    if (!abertas.length) return;
+    ui.sbSync = true; ui.sbSyncEm = Date.now();
+    try {
+      const desde = abertas.map((s) => s.data).sort()[0];
+      const j = await window.RC_HOST.statusNfs(abertas.map((s) => s.numero), desde);
+      const hojeD = hoje();
+      for (const s of abertas) {
+        const r = (j.itens || {})[String(s.numero).replace(/\D/g, '').replace(/^0+/, '')];
+        if (!r || (r.status === (s.status || 'pendente'))) continue;
+        const q = Object.assign({}, s, { status: r.status, statusFonte: r.fonte, statusEm: hojeD });
+        if (r.status === 'entregue') q.entregueEm = r.em || hojeD; else delete q.entregueEm;
+        await salvar('sobras', s.id, q);
+        const n = s.notaId ? ST.notas.get(s.notaId) : null;
+        if (n) {
+          const ns = r.status === 'entregue' ? 'entregue' : r.status === 'em_rota' ? 'em_rota' : (n.status === 'em_rota' ? 'pronta' : n.status);
+          if (ns !== n.status) await salvar('notas', n.id, Object.assign({}, n, { status: ns }, ns === 'entregue' ? { entregueEm: q.entregueEm } : {}));
+        }
+      }
+    } catch (e) { console.warn('situação das sobras', e.message); }
+    ui.sbSync = false; render();
+  }
   function vSobras() {
     const d = ui.data;
-    const doDia = [...ST.sobras.values()].filter((s) => s.data === d);
+    if (window.RC_HOST && !ui.sbSync && (!ui.sbSyncEm || Date.now() - ui.sbSyncEm > 5 * 60000)) setTimeout(sincronizarSobras, 60);
+    const doDia = [...ST.sobras.values()].filter((s) => sobraVisivel(s, d));
     let h = topo('Notas que ficaram', 'Digite o número da NF (ou várias, separadas por espaço): o sistema preenche o resto e sugere o motivo. Elas viram prioridade nas próximas rotas.', true);
     const sb = ui.sb;
     h += '<div class="card"><div class="row"><label class="f" style="flex:1;min-width:200px">NF<input type="text" id="sbNF" inputmode="numeric" autocomplete="off" value="' + esc(sb ? sb.q : '') + '" placeholder="Ex.: 669950 669926"></label><button class="btn pri" data-a="sbBuscar" style="align-self:flex-end">Buscar</button></div>';
@@ -1207,12 +1244,13 @@
     h += '</div>';
     // quadro no formato da planilha: por embarcador, separando "ficou hoje" de "há mais de um dia no galpão"
     const limite = RE.addDays(d, -1);
-    const antigas = doDia.filter((s) => s.chegou && s.chegou < limite), hojeL = doDia.filter((s) => !(s.chegou && s.chegou < limite));
+    const velha = (s) => s.data < d || (s.chegou && s.chegou < limite);
+    const antigas = doDia.filter(velha), hojeL = doDia.filter((s) => !velha(s));
     const porMotivo = new Map(); for (const s of doDia) porMotivo.set(s.motivo, (porMotivo.get(s.motivo) || 0) + 1);
     const quadro = (titulo, l) => {
       if (!l.length) return '';
       const g = new Map(); for (const s of l) { const k = s.embarcador || 'Sem embarcador'; if (!g.has(k)) g.set(k, []); g.get(k).push(s); }
-      return '<h3 style="margin:14px 0 8px">' + titulo + ' <span class="chip">' + l.length + '</span></h3><div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(min(100%,640px),1fr))">' + [...g].sort((a, b) => a[0].localeCompare(b[0])).map(([emb, ls]) => '<div class="tbl-wrap"><table><thead><tr><th colspan="7" style="background:var(--brand);color:var(--brand-ink)">' + esc(emb) + ' · ' + ls.length + '</th></tr><tr><th>Cidade</th><th>Carga</th><th>Chegou</th><th>NF</th><th>Motivo</th><th>Agora</th><th></th></tr></thead><tbody>' + ls.sort((a, b) => (a.cidade || '').localeCompare(b.cidade || '')).map((s) => { const n = s.notaId ? notaE(s.notaId) : null; return '<tr><td>' + esc((s.cidade || '').split('/')[0]) + '</td><td class="small">' + esc(s.carga || '') + '</td><td class="mono small">' + dBR(s.chegou) + '</td><td class="mono">' + esc(s.numero) + '</td><td><select data-sbmot="' + esc(s.id) + '" style="min-width:150px">' + MOTIVOS.map((m) => '<option' + (s.motivo === m ? ' selected' : '') + '>' + m + '</option>').join('') + '</select>' + (s.obs ? '<div class="tiny">' + esc(s.obs) + '</div>' : '') + '</td><td>' + (n ? chipStatus(n) : '<span class="chip" title="Importe a nota para ela voltar às rotas">sem nota</span>') + '</td><td><button class="btn sm ghost danger" data-a="sbExcluir" data-v="' + esc(s.id) + '" aria-label="Desfazer lançamento">' + I.x + '</button></td></tr>'; }).join('') + '</tbody></table></div>').join('') + '</div>';
+      return '<h3 style="margin:14px 0 8px">' + titulo + ' <span class="chip">' + l.length + '</span></h3><div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(min(100%,640px),1fr))">' + [...g].sort((a, b) => a[0].localeCompare(b[0])).map(([emb, ls]) => '<div class="tbl-wrap"><table><thead><tr><th colspan="7" style="background:var(--brand);color:var(--brand-ink)">' + esc(emb) + ' · ' + ls.length + '</th></tr><tr><th>Cidade</th><th>Carga</th><th>Chegou</th><th>NF</th><th>Motivo</th><th>Situação</th><th></th></tr></thead><tbody>' + ls.sort((a, b) => (a.cidade || '').localeCompare(b.cidade || '')).map((s) => { const n = s.notaId ? notaE(s.notaId) : null; return '<tr><td>' + esc((s.cidade || '').split('/')[0]) + '</td><td class="small">' + esc(s.carga || '') + '</td><td class="mono small">' + dBR(s.chegou) + '</td><td class="mono">' + esc(s.numero) + '</td><td><select data-sbmot="' + esc(s.id) + '" style="min-width:150px">' + MOTIVOS.map((m) => '<option' + (s.motivo === m ? ' selected' : '') + '>' + m + '</option>').join('') + '</select>' + (s.obs ? '<div class="tiny">' + esc(s.obs) + '</div>' : '') + '</td><td>' + (() => { const si = sobraSituacao(s); return '<select data-sbst="' + esc(s.id) + '" class="sb-st ' + SB_ST[si.st][1] + '" title="' + esc(si.fonte ? 'Origem: ' + si.fonte : '') + '">' + Object.entries(SB_ST).map(([k, v]) => '<option value="' + k + '"' + (si.st === k ? ' selected' : '') + '>' + v[0] + (si.st === k && si.em ? ' ' + dBR(si.em) : '') + '</option>').join('') + '</select>' + (s.statusManual ? ' <button class="btn sm ghost" data-a="sbAuto" data-v="' + esc(s.id) + '" title="Voltar a seguir o SSW">auto</button>' : '') + (!n ? '<div class="tiny">sem nota no roteirizador</div>' : ''); })() + '</td><td><button class="btn sm ghost danger" data-a="sbExcluir" data-v="' + esc(s.id) + '" aria-label="Desfazer lançamento">' + I.x + '</button></td></tr>'; }).join('') + '</tbody></table></div>').join('') + '</div>';
     };
     h += '<div class="card"><div class="card-h"><h2>Ficaram no galpão em ' + dBR(d) + '</h2><span class="chip ' + (doDia.length ? 'warn' : 'ok') + '">' + doDia.length + ' nota(s)' + (doDia.some((s) => s.kg) ? ' · ' + nf(doDia.reduce((s, x) => s + (x.kg || 0), 0), 0) + ' kg' : '') + '</span></div>' +
       (porMotivo.size ? '<div class="row">' + [...porMotivo].sort((x, y) => y[1] - x[1]).map(([m, k]) => '<span class="chip">' + esc(m) + ': ' + k + '</span>').join('') + '</div>' : '') +
@@ -1568,6 +1606,7 @@
         if (!(munPorTexto(f.cidade) || RE.findMun(null, f.cidade, 'SP'))) { toast('Escolha a cidade na lista (Cidade/UF).', true); return; }
         const id = await criarNotaManual(f); toast('NF ' + f.numero + ' inserida.'); ui.notaAberta = id; render(); break;
       }
+      case 'sbAuto': { const s = ST.sobras.get(v); if (s) { const q = Object.assign({}, s); delete q.statusManual; delete q.statusManualEm; await salvar('sobras', v, q); ui.sbSyncEm = 0; render(); } break; }
       case 'sbExcluir': {
         const s = ST.sobras.get(v); await remover('sobras', v);
         if (s && s.notaId) { const n = ST.notas.get(s.notaId); if (n) { const oc = (n.ocorrencias || []).filter((o) => !(o.data === s.data && o.motivo === s.motivo)); const q = Object.assign({}, n, { ocorrencias: oc }); if (!oc.length) { q.prioridade = false; delete q.prioridadeDesde; delete q.dataMinima; } if (n.status === 'cancelada' && /^Devolvida/.test(n.motivoCancel || '')) q.status = 'pronta'; await salvar('notas', n.id, q); } }
@@ -1592,6 +1631,7 @@
       registrar('Disponibilidade', (nome || id) + (el.checked ? ' disponível' : ' fora') + ' em ' + dBR(d));
       render(); return;
     }
+    if (el.dataset.sbst) { const s = ST.sobras.get(el.dataset.sbst); if (s) { const st = el.value; const q = Object.assign({}, s, { statusManual: st, statusManualEm: hoje() }); await salvar('sobras', s.id, q); const n = s.notaId ? ST.notas.get(s.notaId) : null; if (n) { const ns = st === 'entregue' ? 'entregue' : st === 'em_rota' ? 'em_rota' : (['em_rota', 'entregue'].includes(n.status) ? 'pronta' : n.status); if (ns !== n.status) await salvar('notas', n.id, Object.assign({}, n, { status: ns }, ns === 'entregue' ? { entregueEm: hoje() } : {})); } registrar('Sobras', 'NF ' + s.numero + ': ' + SB_ST[st][0]); render(); } return; }
     if (el.dataset.sbmot) { const s = ST.sobras.get(el.dataset.sbmot); await salvar('sobras', s.id, Object.assign({}, s, { motivo: el.value })); if (s.notaId) { const n = ST.notas.get(s.notaId); if (n) { const oc = (n.ocorrencias || []).map((o) => (o.data === s.data && o.motivo === s.motivo ? Object.assign({}, o, { motivo: el.value }) : o)); await salvar('notas', n.id, Object.assign({}, n, { ocorrencias: oc })); } } render(); return; }
     if (el.id === 'sbMotivo' && ui.sb) { ui.sb.motivo = el.value; ui.sb.reenvio = !SEM_REENVIO.includes(el.value); const r = $('#sbReenvio'); if (r) r.checked = ui.sb.reenvio; return; }
     if (el.id === 'fSSW') { if (el.files[0]) carregarArquivoSSW(el.files[0]); el.value = ''; return; }
