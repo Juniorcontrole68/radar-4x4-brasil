@@ -187,12 +187,61 @@ function renderPermissionOptions(){
   const box=document.querySelector('#userPermGrid');if(!box)return;
   box.innerHTML=PERMISSION_OPTIONS.map(([id,label])=>'<label class="perm-item"><input type="checkbox" value="'+id+'"> <span>'+label+'</span></label>').join('')
 }
+// ---- grupos de acesso ----
+window.__dashboardGroups=[];
+const groupName=id=>((window.__dashboardGroups||[]).find(g=>String(g.id)===String(id))||{}).nome||'';
+const groupPerms=id=>new Set(((window.__dashboardGroups||[]).find(g=>String(g.id)===String(id))||{}).permissions||[]);
+function syncUserPermLocks(){
+  const gp=groupPerms(document.querySelector('#userGroup')?.value);
+  document.querySelectorAll('#userPermGrid input[type=checkbox]').forEach(x=>{
+    const herd=gp.has(x.value);
+    if(herd){if(!x.dataset.manual)x.dataset.manual=x.checked?'1':'0';x.checked=true;x.disabled=true}
+    else if(x.disabled){x.disabled=false;x.checked=x.dataset.manual==='1';delete x.dataset.manual}
+    x.closest('.perm-item')?.classList.toggle('herdada',herd)
+  })
+}
+function renderGroupSelect(){
+  const sel=document.querySelector('#userGroup');if(!sel)return;
+  const v=sel.value;
+  sel.innerHTML='<option value="">Sem grupo</option>'+(window.__dashboardGroups||[]).map(g=>'<option value="'+g.id+'">'+safe(g.nome)+'</option>').join('');
+  sel.value=v;sel.onchange=syncUserPermLocks
+}
+function renderGroups(){
+  const box=document.querySelector('#groupList');if(!box)return;
+  const gs=window.__dashboardGroups||[];
+  if(!gs.length){box.innerHTML='<div class="muted">Nenhum grupo.</div>';return}
+  box.innerHTML=gs.map(g=>{
+    const set=new Set(g.permissions||[]);
+    const membros=(window.__dashboardUsers||[]).filter(u=>String(u.group_id||'')===String(g.id)).map(u=>u.username);
+    return '<div class="group-card" data-gid="'+g.id+'"><input class="gname" value="'+safe(g.nome)+'" aria-label="Nome do grupo"><div class="perm-grid">'+PERMISSION_OPTIONS.map(([id,label])=>'<label class="perm-item"><input type="checkbox" value="'+id+'"'+(set.has(id)?' checked':'')+'> <span>'+label+'</span></label>').join('')+'</div><div class="muted" style="font-size:12px;margin-bottom:8px">'+(membros.length?membros.length+' pessoa(s): '+safe(membros.join(', ')):'Ninguém neste grupo ainda.')+'</div><div class="gfoot"><button class="primary" data-gsave>Salvar grupo</button><button class="secondary" data-gdel>Excluir</button><span class="gmsg"></span></div></div>'
+  }).join('');
+  box.querySelectorAll('.group-card').forEach(card=>{
+    const id=card.dataset.gid,msg=card.querySelector('.gmsg');
+    card.querySelector('[data-gsave]').onclick=async()=>{
+      const nome=card.querySelector('.gname').value.trim();
+      const permissions=[...card.querySelectorAll('.perm-grid input:checked')].map(x=>x.value);
+      msg.textContent='Salvando…';
+      try{const r=await fetch('/api/painel/auth/groups/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({nome,permissions})});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao salvar');msg.textContent='✓ Salvo. Vale para todos do grupo.';await loadDashboardGroups(false)}catch(e){msg.textContent=e.message}
+    };
+    card.querySelector('[data-gdel]').onclick=async()=>{
+      if(!confirm('Excluir o grupo "'+card.querySelector('.gname').value+'"? As pessoas dele ficam sem grupo, só com as autorizações extras.'))return;
+      try{const r=await fetch('/api/painel/auth/groups/'+id,{method:'DELETE'});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao excluir');await loadDashboardGroups();await loadDashboardUsers()}catch(e){msg.textContent=e.message}
+    }
+  })
+}
+async function loadDashboardGroups(redesenhar=true){
+  if(!AUTH?.is_admin)return;
+  try{const r=await fetch('/api/painel/auth/groups',{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar grupos.');window.__dashboardGroups=j.rows||[]}
+  catch(e){const b=document.querySelector('#groupList');if(b)b.innerHTML='<div class="muted">'+safe(e.message)+'</div>';return}
+  renderGroupSelect();if(redesenhar)renderGroups();syncUserPermLocks()
+}
 function resetUserForm(){
   const f=document.querySelector('#userForm');if(!f)return;
   f.reset();
   document.querySelector('#userEditId').value='';
   document.querySelector('#userActive').checked=true;
-  document.querySelectorAll('#userPermGrid input[type=checkbox]').forEach(x=>x.checked=false);
+  document.querySelectorAll('#userPermGrid input[type=checkbox]').forEach(x=>{x.checked=false;x.disabled=false;delete x.dataset.manual;x.closest('.perm-item')?.classList.remove('herdada')});
+  const gs=document.querySelector('#userGroup');if(gs)gs.value='';
   const m=document.querySelector('#userAdminMsg');if(m)m.textContent=''
 }
 function editDashboardUser(id){
@@ -202,7 +251,9 @@ function editDashboardUser(id){
   document.querySelector('#userPassword').value='';
   document.querySelector('#userActive').checked=u.active!==false;
   const set=new Set(u.permissions||[]);
-  document.querySelectorAll('#userPermGrid input[type=checkbox]').forEach(x=>x.checked=u.is_admin||set.has(x.value));
+  const gs=document.querySelector('#userGroup');if(gs)gs.value=u.group_id||'';
+  document.querySelectorAll('#userPermGrid input[type=checkbox]').forEach(x=>{x.disabled=false;delete x.dataset.manual;x.checked=u.is_admin||set.has(x.value)});
+  if(!u.is_admin)syncUserPermLocks();
   document.querySelector('#userAdminMsg').textContent=u.is_admin?'Conta administradora: acesso total.':'Editando '+u.username;
   document.querySelector('#userName').scrollIntoView({behavior:'smooth',block:'center'})
 }
@@ -211,8 +262,9 @@ function renderDashboardUsers(rows){
   const box=document.querySelector('#userList');if(!box)return;
   if(!rows.length){box.innerHTML='<div class="muted">Nenhum usuário cadastrado.</div>';return}
   box.innerHTML=rows.map(u=>{
-    const perms=u.is_admin?'Acesso total':((u.permissions||[]).map(p=>(PERMISSION_OPTIONS.find(x=>x[0]===p)||[p,p])[1]).join(' • ')||'Sem cards liberados');
-    return '<div class="user-row"><div><b>'+safe(u.username)+'</b> '+(u.is_admin?'<span class="dash-tag live">ADMIN</span>':(u.active?'<span class="dash-tag live">ATIVO</span>':'<span class="dash-tag wait">INATIVO</span>'))+'<div class="meta">'+safe(perms)+'</div></div><div class="actions"><button class="edit" data-user-edit="'+u.id+'">Editar</button><button class="wa" data-user-wa="'+safe(u.username)+'">💬 WhatsApp</button></div></div>'
+    const gp=groupPerms(u.group_id),extra=(u.permissions||[]).filter(p=>!gp.has(p));
+    const perms=u.is_admin?'Acesso total':((u.group_id?'Grupo '+groupName(u.group_id)+(extra.length?' + ':''):'')+(extra.map(p=>(PERMISSION_OPTIONS.find(x=>x[0]===p)||[p,p])[1]).join(' • '))||'Sem cards liberados');
+    return '<div class="user-row"><div><b>'+safe(u.username)+'</b> '+(u.is_admin?'<span class="dash-tag live">ADMIN</span>':(u.active?'<span class="dash-tag live">ATIVO</span>':'<span class="dash-tag wait">INATIVO</span>'))+(u.group_id&&!u.is_admin?'<span class="user-group-tag">'+safe(groupName(u.group_id))+'</span>':'')+'<div class="meta">'+safe(perms)+'</div></div><div class="actions"><button class="edit" data-user-edit="'+u.id+'">Editar</button><button class="wa" data-user-wa="'+safe(u.username)+'">💬 WhatsApp</button></div></div>'
   }).join('');
   box.querySelectorAll('[data-user-edit]').forEach(b=>b.onclick=()=>editDashboardUser(b.dataset.userEdit));
   box.querySelectorAll('[data-user-wa]').forEach(b=>b.onclick=()=>whatsappShare(b.dataset.userWa))
@@ -223,14 +275,17 @@ async function loadDashboardUsers(){
   try{
     const r=await fetch('/api/painel/auth/users',{cache:'no-store'}),j=await r.json();
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar usuários.');
-    renderDashboardUsers(j.rows||[])
+    if(!(window.__dashboardGroups||[]).length)await loadDashboardGroups(false);
+    renderDashboardUsers(j.rows||[]);renderGroups()
   }catch(e){if(box)box.innerHTML='<div class="muted">'+safe(e.message)+'</div>'}
 }
 function setupUserAdmin(){
   renderPermissionOptions();
   const form=document.querySelector('#userForm'),nw=document.querySelector('#userNew'),rf=document.querySelector('#usersRefresh');
   if(nw)nw.onclick=resetUserForm;
-  if(rf)rf.onclick=loadDashboardUsers;
+  if(rf)rf.onclick=async()=>{await loadDashboardGroups(false);await loadDashboardUsers()};
+  const gn=document.querySelector('#groupNew');
+  if(gn)gn.onclick=async()=>{const nome=prompt('Nome do novo grupo:');if(!nome||!nome.trim())return;try{const r=await fetch('/api/painel/auth/groups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nome:nome.trim(),permissions:[]})});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao criar');await loadDashboardGroups()}catch(e){alert(e.message)}};
   if(!form)return;
   form.onsubmit=async e=>{
     e.preventDefault();
@@ -238,10 +293,11 @@ function setupUserAdmin(){
     const username=document.querySelector('#userName').value.trim();
     const password=document.querySelector('#userPassword').value;
     const active=document.querySelector('#userActive').checked;
-    const permissions=[...document.querySelectorAll('#userPermGrid input[type=checkbox]:checked')].map(x=>x.value);
+    const permissions=[...document.querySelectorAll('#userPermGrid input[type=checkbox]:checked:not(:disabled)')].map(x=>x.value);
+    const group_id=document.querySelector('#userGroup')?.value||null;
     const msg=document.querySelector('#userAdminMsg');
     if(!id&&!password){msg.style.color='#b91c1c';msg.textContent='Informe uma senha para o novo usuário.';return}
-    const body={username,active,permissions};
+    const body={username,active,permissions,group_id};
     if(password)body.password=password;
     try{
       msg.style.color='#475569';msg.textContent='Salvando…';
@@ -5090,7 +5146,7 @@ $$('.nav button').forEach(b=>b.onclick=()=>{
     }
     update();
     if(b.dataset.tab==='operacoes')refreshData(false);
-    if(b.dataset.tab==='usuarios'&&AUTH?.is_admin)loadDashboardUsers();
+    if(b.dataset.tab==='usuarios'&&AUTH?.is_admin)loadDashboardGroups(false).then(loadDashboardUsers);
     if(b.dataset.tab==='dashboards'){
       renderSswAtrasos();
       renderSswReceita();

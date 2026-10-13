@@ -872,10 +872,17 @@ async function dashboardUserContext(row){
     client_modules:clientModules
   };
 }
+// grupo informado no cadastro do usuário: null (sem grupo), id do mesmo cliente, ou false (inválido)
+async function grupoDoCliente(admin,v){
+  if(v===null||v===undefined||v==='')return null;
+  if(!/^[0-9]+$/.test(String(v)))return false;
+  const r=await pool.query('SELECT id FROM dashboard_groups WHERE id=$1 AND client_id IS NOT DISTINCT FROM $2',[String(v),admin.client_id||null]);
+  return r.rowCount?String(v):false;
+}
 async function dashboardSession(req, adminOnly=false) {
   const token=dashboardBearer(req);
   if(!token){const e=new Error('Sessão não informada.');e.status=401;throw e}
-  const r=await pool.query("SELECT u.id::text AS id,u.username,u.is_admin,u.active,u.permissions,u.client_id,u.is_platform_admin FROM dashboard_sessions s JOIN dashboard_users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>NOW() AND u.active=TRUE LIMIT 1",[dashboardTokenHash(token)]);
+  const r=await pool.query("SELECT u.id::text AS id,u.username,u.is_admin,u.active,(COALESCE(u.permissions,'[]'::jsonb) || COALESCE((SELECT g.permissions FROM dashboard_groups g WHERE g.id=u.group_id),'[]'::jsonb)) AS permissions,u.client_id,u.is_platform_admin FROM dashboard_sessions s JOIN dashboard_users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>NOW() AND u.active=TRUE LIMIT 1",[dashboardTokenHash(token)]);
   if(!r.rowCount){const e=new Error('Sessão expirada ou inválida.');e.status=401;throw e}
   const row=r.rows[0];
   if(adminOnly&&!row.is_admin){const e=new Error('Acesso exclusivo do administrador.');e.status=403;throw e}
@@ -1632,6 +1639,17 @@ async function start() {
   }
   // Administradores já existentes são considerados administradores MOVIT nesta migração inicial.
   await pool.query('UPDATE dashboard_users SET is_platform_admin=TRUE WHERE is_admin=TRUE AND is_platform_admin=FALSE');
+  // Grupos de acesso: as autorizações do grupo valem para todos os membros; as do usuário somam (inseridas à mão).
+  await pool.query("CREATE TABLE IF NOT EXISTS dashboard_groups (id BIGSERIAL PRIMARY KEY, client_id BIGINT, nome TEXT NOT NULL, permissions JSONB NOT NULL DEFAULT '[]'::jsonb, ordem INT NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())");
+  await pool.query('ALTER TABLE dashboard_users ADD COLUMN IF NOT EXISTS group_id BIGINT REFERENCES dashboard_groups(id) ON DELETE SET NULL');
+  {
+    const cl=await pool.query('SELECT DISTINCT client_id FROM dashboard_users');
+    for(const row of cl.rows){
+      const has=await pool.query('SELECT 1 FROM dashboard_groups WHERE client_id IS NOT DISTINCT FROM $1 LIMIT 1',[row.client_id]);
+      if(has.rowCount)continue;
+      for(let i=1;i<=4;i++)await pool.query("INSERT INTO dashboard_groups(client_id,nome,ordem) VALUES($1,$2,$3)",[row.client_id,'Grupo '+i,i]);
+    }
+  }
 
   // Marca dados operacionais atuais como pertencentes à CONSTRULOG sem alterar ainda as consultas existentes.
   if(construlogId){
@@ -2872,7 +2890,7 @@ async function start() {
           const username=String(body.username||'').trim();
           const password=String(body.password||'');
           if(!username||!password)return sendJson(res,400,{ok:false,error:'Informe usuário e senha.'});
-          const r=await pool.query('SELECT id::text AS id,username,password_salt,password_hash,is_admin,active,permissions,client_id,is_platform_admin FROM dashboard_users WHERE lower(username)=lower($1) LIMIT 1',[username]);
+          const r=await pool.query('SELECT id::text AS id,username,password_salt,password_hash,is_admin,active,(COALESCE(permissions,\'[]\'::jsonb) || COALESCE((SELECT g.permissions FROM dashboard_groups g WHERE g.id=dashboard_users.group_id),\'[]\'::jsonb)) AS permissions,client_id,is_platform_admin FROM dashboard_users WHERE lower(username)=lower($1) LIMIT 1',[username]);
           if(!r.rowCount||!r.rows[0].active||!dashboardVerifyPassword(password,r.rows[0].password_salt,r.rows[0].password_hash)){
             return sendJson(res,401,{ok:false,error:'Usuário ou senha inválidos.'});
           }
@@ -2944,7 +2962,7 @@ async function start() {
           if(!ticket)return sendJson(res,400,{ok:false,error:'Ticket não informado.'});
           const r=await pool.query("UPDATE dashboard_embed_tickets SET used_at=NOW() WHERE ticket_hash=$1 AND used_at IS NULL AND expires_at>NOW() RETURNING user_id",[dashboardTokenHash(ticket)]);
           if(!r.rowCount)return sendJson(res,401,{ok:false,error:'Ticket expirado ou já utilizado.'});
-          const ur=await pool.query('SELECT id::text AS id,username,is_admin,active,permissions,client_id,is_platform_admin FROM dashboard_users WHERE id=$1 AND active=TRUE LIMIT 1',[r.rows[0].user_id]);
+          const ur=await pool.query('SELECT id::text AS id,username,is_admin,active,(COALESCE(permissions,\'[]\'::jsonb) || COALESCE((SELECT g.permissions FROM dashboard_groups g WHERE g.id=dashboard_users.group_id),\'[]\'::jsonb)) AS permissions,client_id,is_platform_admin FROM dashboard_users WHERE id=$1 AND active=TRUE LIMIT 1',[r.rows[0].user_id]);
           if(!ur.rowCount)return sendJson(res,401,{ok:false,error:'Usuário inativo.'});
           const row=ur.rows[0],token=await dashboardCreateSession(row.id),user=await dashboardUserContext(row);
           return sendJson(res,200,{ok:true,token,user});
@@ -3455,7 +3473,7 @@ async function start() {
           const username=String(body.username||'').trim();
           const password=String(body.password||'');
           if(!username||!password)return sendJson(res,400,{ok:false,error:'Informe usuário e senha.'});
-          const r=await pool.query('SELECT id::text AS id,username,password_salt,password_hash,is_admin,active,permissions FROM dashboard_users WHERE lower(username)=lower($1) LIMIT 1',[username]);
+          const r=await pool.query('SELECT id::text AS id,username,password_salt,password_hash,is_admin,active,(COALESCE(permissions,\'[]\'::jsonb) || COALESCE((SELECT g.permissions FROM dashboard_groups g WHERE g.id=dashboard_users.group_id),\'[]\'::jsonb)) AS permissions FROM dashboard_users WHERE lower(username)=lower($1) LIMIT 1',[username]);
           if(!r.rowCount||!r.rows[0].active||!dashboardVerifyPassword(password,r.rows[0].password_salt,r.rows[0].password_hash))return sendJson(res,401,{ok:false,error:'Usuário ou senha inválidos.'});
           const row=r.rows[0];
           const token=await dashboardCreateSession(row.id);
@@ -3477,8 +3495,8 @@ async function start() {
         try {
           const admin=await dashboardSession(req,true);
           const r=admin.client_id
-            ? await pool.query('SELECT id::text AS id,username,is_admin,active,permissions,created_at,updated_at FROM dashboard_users WHERE client_id=$1 ORDER BY is_admin DESC,lower(username)',[admin.client_id])
-            : await pool.query('SELECT id::text AS id,username,is_admin,active,permissions,created_at,updated_at FROM dashboard_users ORDER BY is_admin DESC,lower(username)');
+            ? await pool.query('SELECT id::text AS id,username,is_admin,active,permissions,group_id::text AS group_id,created_at,updated_at FROM dashboard_users WHERE client_id=$1 ORDER BY is_admin DESC,lower(username)',[admin.client_id])
+            : await pool.query('SELECT id::text AS id,username,is_admin,active,permissions,group_id::text AS group_id,created_at,updated_at FROM dashboard_users ORDER BY is_admin DESC,lower(username)');
           return sendJson(res,200,{ok:true,rows:r.rows.map(x=>Object.assign({},x,{permissions:x.is_admin?['*']:dashboardPerms(x.permissions)}))});
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Não foi possível carregar os usuários.'});}
       }
@@ -3491,16 +3509,50 @@ async function start() {
           const password=String(body.password||'');
           const permissions=Array.isArray(body.permissions)?Array.from(new Set(body.permissions.map(String))):[];
           const active=body.active!==false;
+          const groupId=await grupoDoCliente(admin,body.group_id);
+          if(groupId===false)return sendJson(res,400,{ok:false,error:'Grupo inválido.'});
           if(username.length<2)return sendJson(res,400,{ok:false,error:'Informe um nome de usuário.'});
           if(password.length<4)return sendJson(res,400,{ok:false,error:'A senha deve ter pelo menos 4 caracteres.'});
           const ph=dashboardHashPassword(password);
-          const r=await pool.query('INSERT INTO dashboard_users(username,password_salt,password_hash,is_admin,active,permissions,client_id,is_platform_admin,updated_at) VALUES($1,$2,$3,FALSE,$4,$5::jsonb,$6,FALSE,NOW()) RETURNING id::text AS id,username,is_admin,active,permissions,created_at,updated_at',[username,ph.salt,ph.hash,active,JSON.stringify(permissions),admin.client_id]);
+          const r=await pool.query('INSERT INTO dashboard_users(username,password_salt,password_hash,is_admin,active,permissions,client_id,is_platform_admin,updated_at,group_id) VALUES($1,$2,$3,FALSE,$4,$5::jsonb,$6,FALSE,NOW(),$7) RETURNING id::text AS id,username,is_admin,active,permissions,group_id::text AS group_id,created_at,updated_at',[username,ph.salt,ph.hash,active,JSON.stringify(permissions),admin.client_id,groupId]);
           const user=Object.assign({},r.rows[0],{permissions:dashboardPerms(r.rows[0].permissions)});
           return sendJson(res,201,{ok:true,user});
         } catch(e){
           const msg=e.code==='23505'?'Já existe um usuário com esse nome.':(e.message||'Não foi possível criar o usuário.');
           return sendJson(res,e.code==='23505'?409:(e.status||500),{ok:false,error:msg});
         }
+      }
+
+      // Grupos de acesso (4 iniciais; o administrador pode renomear, criar e excluir)
+      if (u.pathname === '/api/painel/auth/groups' || u.pathname.startsWith('/api/painel/auth/groups/')) {
+        try {
+          const admin=await dashboardSession(req,true);
+          const gid=u.pathname.slice('/api/painel/auth/groups/'.length);
+          if (req.method === 'GET' && u.pathname === '/api/painel/auth/groups') {
+            const tem=await pool.query('SELECT 1 FROM dashboard_groups WHERE client_id IS NOT DISTINCT FROM $1 LIMIT 1',[admin.client_id||null]);
+            if(!tem.rowCount)for(let i=1;i<=4;i++)await pool.query('INSERT INTO dashboard_groups(client_id,nome,ordem) VALUES($1,$2,$3)',[admin.client_id||null,'Grupo '+i,i]);
+            const r=await pool.query('SELECT g.id::text AS id,g.nome,g.permissions,g.ordem,(SELECT count(*)::int FROM dashboard_users x WHERE x.group_id=g.id) AS membros FROM dashboard_groups g WHERE g.client_id IS NOT DISTINCT FROM $1 ORDER BY g.ordem,g.id',[admin.client_id||null]);
+            return sendJson(res,200,{ok:true,rows:r.rows.map(x=>Object.assign({},x,{permissions:dashboardPerms(x.permissions)}))});
+          }
+          const body=req.method==='DELETE'?{}:await readJsonBodyLimited(req,64*1024);
+          const nome=body.nome==null?null:String(body.nome).trim().slice(0,60);
+          const perms=Array.isArray(body.permissions)?Array.from(new Set(body.permissions.map(String))):null;
+          if (req.method === 'POST' && u.pathname === '/api/painel/auth/groups') {
+            if(!nome)return sendJson(res,400,{ok:false,error:'Informe o nome do grupo.'});
+            const r=await pool.query("INSERT INTO dashboard_groups(client_id,nome,permissions,ordem) VALUES($1,$2,$3::jsonb,(SELECT COALESCE(max(ordem),0)+1 FROM dashboard_groups WHERE client_id IS NOT DISTINCT FROM $1)) RETURNING id::text AS id,nome,permissions,ordem",[admin.client_id||null,nome,JSON.stringify(perms||[])]);
+            return sendJson(res,201,{ok:true,group:r.rows[0]});
+          }
+          if(!/^[0-9]+$/.test(gid))return sendJson(res,404,{ok:false,error:'Grupo não encontrado.'});
+          const cur=await pool.query('SELECT id FROM dashboard_groups WHERE id=$1 AND client_id IS NOT DISTINCT FROM $2',[gid,admin.client_id||null]);
+          if(!cur.rowCount)return sendJson(res,404,{ok:false,error:'Grupo não encontrado.'});
+          if (req.method === 'PATCH') {
+            if(nome!==null&&!nome)return sendJson(res,400,{ok:false,error:'Informe o nome do grupo.'});
+            const r=await pool.query('UPDATE dashboard_groups SET nome=COALESCE($2,nome),permissions=COALESCE($3::jsonb,permissions),updated_at=NOW() WHERE id=$1 RETURNING id::text AS id,nome,permissions,ordem',[gid,nome,perms?JSON.stringify(perms):null]);
+            return sendJson(res,200,{ok:true,group:Object.assign({},r.rows[0],{permissions:dashboardPerms(r.rows[0].permissions)})});
+          }
+          if (req.method === 'DELETE') { await pool.query('DELETE FROM dashboard_groups WHERE id=$1',[gid]); return sendJson(res,200,{ok:true}); }
+          return sendJson(res,405,{ok:false,error:'Método não permitido.'});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha nos grupos.'});}
       }
 
       if (req.method === 'PATCH' && u.pathname.startsWith('/api/painel/auth/users/')) {
@@ -3517,6 +3569,8 @@ async function start() {
           const active=body.active==null?null:!!body.active;
           const permissions=Array.isArray(body.permissions)?Array.from(new Set(body.permissions.map(String))):null;
           const password=body.password==null?'':String(body.password);
+          const groupId=body.group_id===undefined?undefined:await grupoDoCliente(admin,body.group_id);
+          if(groupId===false)return sendJson(res,400,{ok:false,error:'Grupo inválido.'});
           if(username!==null&&username.length<2)return sendJson(res,400,{ok:false,error:'Nome de usuário inválido.'});
           if(password&&password.length<4)return sendJson(res,400,{ok:false,error:'A senha deve ter pelo menos 4 caracteres.'});
           if(String(admin.id)===String(id)&&active===false)return sendJson(res,400,{ok:false,error:'O administrador não pode desativar a própria conta.'});
@@ -3525,10 +3579,11 @@ async function start() {
           if(username!==null)add('username=?',username);
           if(active!==null)add('active=?',active);
           if(permissions!==null&&!current.rows[0].is_admin)add('permissions=?::jsonb',JSON.stringify(permissions));
+          if(groupId!==undefined)add('group_id=?',groupId);
           if(password){const ph=dashboardHashPassword(password);add('password_salt=?',ph.salt);add('password_hash=?',ph.hash);}
           sets.push('updated_at=NOW()');
           vals.push(id);
-          const r=await pool.query('UPDATE dashboard_users SET '+sets.join(', ')+' WHERE id='+String.fromCharCode(36)+vals.length+' RETURNING id::text AS id,username,is_admin,active,permissions,created_at,updated_at',vals);
+          const r=await pool.query('UPDATE dashboard_users SET '+sets.join(', ')+' WHERE id='+String.fromCharCode(36)+vals.length+' RETURNING id::text AS id,username,is_admin,active,permissions,group_id::text AS group_id,created_at,updated_at',vals);
           const user=Object.assign({},r.rows[0],{permissions:r.rows[0].is_admin?['*']:dashboardPerms(r.rows[0].permissions)});
           return sendJson(res,200,{ok:true,user});
         } catch(e){
