@@ -151,6 +151,9 @@
   const diasAtras = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }); };
   window.RC_HOST = {
     nome: 'CONSTRULOG',
+    // empresa fora da CONSTRULOG (demonstração ou teste grátis): o app roda sem as integrações do SSW/Frota/Rastreio,
+    // que leem dados da CONSTRULOG. Resolve com {demo, cliente, testeAte} nesse caso, ou null.
+    pronto: euP.then((j) => (j && j.sandbox ? { demo: !!j.demo, cliente: j.cliente || '', testeAte: j.testeAte || null } : null)).catch(() => null),
     // CTRCs disponíveis para entrega: SSW opção 038 (pendências), com peso, m³ e frete do BI2
     // situação das notas que ficaram: em rota (saiu dos disponíveis = romaneio) ou entregue (baixa no BI2)
     statusNfs: (nfs, desde) => api('GET', '/api/programacao-entregas/status-nfs?nfs=' + encodeURIComponent(nfs.join(',')) + '&desde=' + encodeURIComponent(desde || '')),

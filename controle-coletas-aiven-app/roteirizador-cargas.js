@@ -62,11 +62,21 @@ async function ensureSchema(pool) {
 
 // Carga inicial de um cliente sem nenhum documento: ajustes, cidades com os dias de rota
 // (planilha AMERICANA_MATCOM 13-10, Araçoiaba corrigida) e as notas que ficaram em 09/10.
-async function semear(pool, cliente) {
+// Frota e motoristas fictícios do ambiente de demonstração
+const DEMO_EXTRA = [
+  { path: 'cad/main/veiculos/demo-fiorino-1', data: { id: 'demo-fiorino-1', nome: 'Fiorino 01', placa: 'DEM1A11', tipo: 'fiorino', capKg: 600, capM3: 3, custoDiaria: 400, kmL: 11, combustivel: 'gasolina', compr: 1.9, larg: 1.3, alt: 1.2, aceitaTubos: true, motoristaId: 'demo-m1', ativo: true } },
+  { path: 'cad/main/veiculos/demo-van-1', data: { id: 'demo-van-1', nome: 'Van 01', placa: 'DEM2B22', tipo: 'van', capKg: 1500, capM3: 10, custoDiaria: 700, kmL: 9, combustivel: 'diesel', compr: 3.3, larg: 1.75, alt: 1.75, aceitaTubos: true, motoristaId: 'demo-m2', ativo: true } },
+  { path: 'cad/main/veiculos/demo-van-2', data: { id: 'demo-van-2', nome: 'Van 02', placa: 'DEM3C33', tipo: 'van', capKg: 1500, capM3: 10, custoDiaria: 700, kmL: 9, combustivel: 'diesel', compr: 3.3, larg: 1.75, alt: 1.75, aceitaTubos: true, motoristaId: 'demo-m3', ativo: true } },
+  { path: 'cad/main/veiculos/demo-tubos-1', data: { id: 'demo-tubos-1', nome: 'Van com tubo 01', placa: 'DEM4D44', tipo: 'tubos', capKg: 1500, capM3: 15, custoDiaria: 800, kmL: 8, combustivel: 'diesel', compr: 4.2, larg: 1.8, alt: 2, secaoL: 1, secaoA: 1, tuboCompr: 6, aceitaTubos: true, motoristaId: 'demo-m4', ativo: true } },
+].concat(['Carlos Demonstração', 'Ana Exemplo', 'Bruno Teste', 'Diego Fictício', 'Eduardo Modelo'].map((nome, i) => ({ path: 'cad/main/motoristas/demo-m' + (i + 1), data: { id: 'demo-m' + (i + 1), nome, telefone: '', diaria: 0, ativo: true, disponivel: true, origem: 'Demonstração' } })));
+async function semear(pool, cliente, demo, construlog) {
   const q = await pool.query('SELECT 1 FROM rc_docs WHERE cliente=$1 LIMIT 1', [cliente]);
   if (q.rowCount) return 0;
   let docs = [];
   try { docs = JSON.parse(fs.readFileSync(SEED_FILE, 'utf8')); } catch { return 0; }
+  // clientes que não são a CONSTRULOG não recebem as notas dela
+  if (!construlog) docs = docs.filter((d) => !String(d.path).startsWith('op/'));
+  if (demo) docs = docs.concat(DEMO_EXTRA);
   for (const d of docs) {
     if (!caminhoValido(d.path)) continue;
     await pool.query('INSERT INTO rc_docs(cliente,path,colecao,data,updated_by) VALUES($1,$2,$3,$4::jsonb,$5) ON CONFLICT DO NOTHING', [cliente, d.path, colecaoDe(d.path), JSON.stringify(d.data), 'carga inicial']);
@@ -88,8 +98,8 @@ async function handle(req, res, u, ctx) {
     if (p === '/api/rc/versao' && req.method === 'GET') return sendJson(res, 200, { ok: true, versao: versaoPagina() }), true;
 
     if (p === '/api/rc/eu' && req.method === 'GET') {
-      await semear(pool, cliente);
-      return sendJson(res, 200, { ok: true, id: 'u' + user.id, username: user.username, admin: !!user.is_admin, permissions: user.permissions || [] }), true;
+      await semear(pool, cliente, user.client && String(user.client.slug || '').toLowerCase() === 'demo', !user.client || String(user.client.slug || '').toLowerCase() === 'construlog');
+      return sendJson(res, 200, { ok: true, id: 'u' + user.id, username: user.username, admin: !!user.is_admin, permissions: user.permissions || [], sandbox: !!user.sandbox, demo: !!(user.client && String(user.client.slug || '').toLowerCase() === 'demo'), cliente: user.client ? user.client.name : '', testeAte: user.client && user.client.status === 'trial' ? user.client.trial_ends_at : null }), true;
     }
 
     // tudo o que mudou desde um instante (sem "desde": tudo)
@@ -132,4 +142,10 @@ async function handle(req, res, u, ctx) {
   }
 }
 
-module.exports = { ensureSchema, handle, semear, versaoPagina, caminhoValido, colecaoDe, podeGravar, PERM };
+// Demonstração: apaga e recarrega os dados do cliente de demonstração (todo dia)
+async function resetDemo(pool, cliente) {
+  await pool.query('DELETE FROM rc_docs WHERE cliente=$1', [cliente]);
+  await pool.query('DELETE FROM rc_docs_removidos WHERE cliente=$1', [cliente]);
+  return semear(pool, cliente, true);
+}
+module.exports = { resetDemo, ensureSchema, handle, semear, versaoPagina, caminhoValido, colecaoDe, podeGravar, PERM };

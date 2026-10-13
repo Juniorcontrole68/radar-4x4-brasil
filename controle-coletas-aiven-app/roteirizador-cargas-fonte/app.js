@@ -1015,7 +1015,8 @@
   }
 
   // ---------------- CTRCs disponíveis para entrega (SSW) e notas manuais ----------------
-  const sswLinhas = () => [...ST.ssw.values()].sort((a, b) => (a.id || '').localeCompare(b.id || '')).flatMap((d) => d.linhas || []);
+  // NF excluída no roteirizador some de todas as listas do SSW (fica guardada em 'ignoradas' por 60 dias)
+  const sswLinhas = () => { const ign = ignoradas(); return [...ST.ssw.values()].filter((d) => d.id !== 'ignoradas').sort((a, b) => (a.id || '').localeCompare(b.id || '')).flatMap((d) => d.linhas || []).filter((r) => !ign[nfChave(r.nf)]); };
   const sswInfo = () => { const ds = [...ST.ssw.values()]; return ds.length ? { em: ds.map((d) => d.capturadoEm || '').sort().pop(), fonte: (ds[0] || {}).fonte || '' } : null; };
   const nfKey = (s) => { const d = String(s || '').replace(/\D/g, ''); return d ? String(+d) : ''; };
   const sswKey = (r) => 'ssw-' + (String(r.ctrc || '').replace(/[^A-Za-z0-9]/g, '') || 'nf' + nfKey(r.nf));
@@ -1029,13 +1030,32 @@
   const devolvidaSSW = (r) => /DEVOLV|DEVOLU|RETORN\w* (A|AO|P) ?REMET|AO REMETENTE|DEV REMET/.test(RE.norm((r.status || '') + ' ' + (r.detalhes || '') + ' ' + (r.ocorrencia || '')));
   const nfChave = (v) => String(v || '').replace(/\D/g, '').replace(/^0+/, '');
   const ignoradas = () => (ST.ssw.get('ignoradas') || {}).nfs || {};
+  // tira notas (excluídas ou bloqueadas) das programações de hoje em diante e recalcula as rotas
+  async function tirarDosPlanos(ids) {
+    const fora = new Set(ids); if (!fora.size) return;
+    const tem = (x) => (x && Array.isArray(x.notas) ? x.notas : [x && x.nota && (x.nota.id || x.nota), x && x.id]).some((id) => fora.has(id));
+    for (const [d, p0] of [...ST.planos]) {
+      if (d < hoje() || !p0 || !p0.rotas) continue;
+      if (!p0.rotas.some((r) => r.paradas.some((x) => x.notas.some((id) => fora.has(id)))) && !(p0.naoRoteirizadas || []).some(tem) && !(p0.pendentes || []).some(tem)) continue;
+      const p = clone(p0);
+      for (const r of p.rotas) { for (const x of r.paradas) x.notas = x.notas.filter((id) => !fora.has(id)); r.paradas = r.paradas.filter((x) => x.notas.length); }
+      p.rotas = p.rotas.filter((r) => r.paradas.length);
+      if (p.naoRoteirizadas) p.naoRoteirizadas = p.naoRoteirizadas.filter((x) => !tem(x));
+      if (p.pendentes) p.pendentes = p.pendentes.filter((x) => !tem(x));
+      let rec = p; try { rec = Object.assign(RE.recalcularPlano(p, notasEnr().filter((n) => !fora.has(n.id)), ctx()), { naoRoteirizadas: p.naoRoteirizadas || [], pendentes: p.pendentes || [] }); } catch (e) { rec = p; }
+      await salvar('planos', d, rec);
+    }
+  }
   async function excluirNotas(ids) {
     const ign = Object.assign({}, ignoradas()), nums = [];
     for (const id of ids) {
       const n = ST.notas.get(id); if (!n) continue;
       await remover('notas', id); nums.push(n.numero);
-      const k = nfChave(n.numero); if (k && n.origem !== 'manual') ign[k] = hoje();
+      const k = nfChave(n.numero); if (k) ign[k] = hoje();
     }
+    await tirarDosPlanos(ids);
+    const numsK = new Set(nums.map(nfChave));
+    for (const sb of [...ST.sobras.values()]) if ((sb.notaId && ids.includes(sb.notaId)) || numsK.has(nfChave(sb.numero))) await remover('sobras', sb.id);
     // guarda por 60 dias para o SSW não trazer de volta
     const lim = RE.addDays(hoje(), -60); for (const k of Object.keys(ign)) if (ign[k] < lim) delete ign[k];
     await salvar('ssw', 'ignoradas', { id: 'ignoradas', nfs: ign });
@@ -1804,7 +1824,7 @@
 
   document.addEventListener('change', async (e) => {
     const el = e.target;
-    if (el.dataset.bloq) { const n = ST.notas.get(el.dataset.bloq); if (n) { const q = Object.assign({}, n); if (el.checked) { q.bloqueioUsuario = true; q.bloqueioEm = agoraISO(); q.bloqueioPor = ST.uid; } else { delete q.bloqueioUsuario; delete q.bloqueioEm; delete q.bloqueioPor; } await salvar('notas', n.id, q); registrar('Nota ' + (el.checked ? 'bloqueada' : 'desbloqueada'), 'NF ' + n.numero); toast('NF ' + n.numero + (el.checked ? ' bloqueada: não entra na programação.' : ' desbloqueada.')); render(); } return; }
+    if (el.dataset.bloq) { const n = ST.notas.get(el.dataset.bloq); if (n) { const q = Object.assign({}, n); if (el.checked) { q.bloqueioUsuario = true; q.bloqueioEm = agoraISO(); q.bloqueioPor = ST.uid; } else { delete q.bloqueioUsuario; delete q.bloqueioEm; delete q.bloqueioPor; } await salvar('notas', n.id, q); if (el.checked) await tirarDosPlanos([n.id]); registrar('Nota ' + (el.checked ? 'bloqueada' : 'desbloqueada'), 'NF ' + n.numero); toast('NF ' + n.numero + (el.checked ? ' bloqueada: não entra na programação.' : ' desbloqueada.')); render(); } return; }
     if (el.dataset.sel) { const s = ui.notasSel || (ui.notasSel = new Set()); if (el.checked) s.add(el.dataset.sel); else s.delete(el.dataset.sel); ui.confirmar = null; render(); return; }
     if (el.dataset.selall) { const s = ui.notasSel || (ui.notasSel = new Set()); for (const c of $$('[data-sel]')) { if (el.checked) s.add(c.dataset.sel); else s.delete(c.dataset.sel); } ui.confirmar = null; render(); return; }
     if (el.id === 'fRomData') { if (el.value) { ui.romData = el.value; ui.romSel = null; ui.romTodos = false; render(); } return; }
@@ -1879,11 +1899,22 @@
       try { ST.admin = await user.canEdit(); } catch (e) { ST.admin = false; }
       try { ST.uid = (await user.id()) || 'anon'; } catch (e) { /* ok */ }
     }
+    if (window.RC_HOST && window.RC_HOST.pronto) {
+      let sb = null; try { sb = await window.RC_HOST.pronto; } catch (e) { sb = null; }
+      if (sb) { ST.sandbox = sb; window.RC_HOST = undefined; }   // demonstração / teste grátis: sem SSW da CONSTRULOG
+    }
     if (!db) { DB.local = true; ST.admin = true; carregarLocal(); VER++; render(); return; }
     DB.db = db;
     let prontos = 0;
     const total = COLS.length + 1;
-    const pronto = () => { prontos++; if (prontos >= total) render(); else if (prontos === 1) render(); };
+    const pronto = () => {
+      prontos++;
+      if (prontos >= total) {
+        render();
+        if (ST.sandbox && ST.sandbox.demo && ST.admin && !ST.notas.size && !ui.demoAuto) { ui.demoAuto = true; setTimeout(() => carregarDemo().catch(() => {}), 120); }
+        if (ST.sandbox && !ui.sbAviso) { ui.sbAviso = true; toast(ST.sandbox.demo ? 'Demonstração com dados fictícios: fique à vontade para testar.' : 'Bem-vindo ao teste grátis' + (ST.sandbox.testeAte ? ' (até ' + new Date(ST.sandbox.testeAte).toLocaleDateString('pt-BR') + ')' : '') + '.'); }
+      } else if (prontos === 1) render();
+    };
     db.doc(PATH.cfg).onSnapshot((s) => { ST.carregado.cfgDoc = s.exists; ST.cfg = Object.assign({}, RE.CFG_PADRAO, s.exists ? s.data() : {}); if (!ST.cfg.base || ST.cfg.base.lat == null) ST.cfg.base = RE.CFG_PADRAO.base; VER++; if (!ST.carregado.cfg) { ST.carregado.cfg = 1; pronto(); } else agendar(); }, (e) => toast('Conexão com o banco interrompida (' + e.code + '). Recarregue a página.', true));
     for (const c of COLS) {
       db.collection(PATH[c]).onSnapshot((s) => {

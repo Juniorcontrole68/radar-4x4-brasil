@@ -852,18 +852,35 @@ function dashboardPerms(v) {
 }
 // Frota deixou de ser aberta a qualquer usuário logado: precisa da permissão "frota" (administrador sempre pode).
 const FROTA_SEM_ACESSO='Seu usuário não tem acesso ao módulo Frota. Peça a liberação a um administrador.';
-function dashboardHas(user,perm){return !!(user&&(user.is_admin||user.permissions?.includes('*')||user.permissions?.includes(perm)))}
+// Cliente em teste/demonstração (qualquer empresa que não a CONSTRULOG): só os módulos que já guardam os
+// dados separados por empresa. O resto do sistema lê o SSW e as planilhas da CONSTRULOG e fica fechado.
+const SANDBOX_PERMS=new Set(['roteirizador']);
+const DEMO_RATE=new Map();
+const SANDBOX_API=[/^\/api\/rc\//,/^\/api\/rc$/,/^\/api\/auth\//,/^\/api\/painel\/auth\//];
+function tenantSandbox(user){return !!(user&&!user.internal&&!user.is_platform_admin&&user.client&&String(user.client.slug||'').toLowerCase()!=='construlog')}
+function clienteBloqueado(user){
+  if(!user||user.is_platform_admin||!user.client)return '';
+  const c=user.client;
+  if(String(c.slug||'').toLowerCase()==='construlog')return '';   // a casa nunca é travada por aqui
+  if(c.status==='blocked')return 'Acesso suspenso. Fale com a MOVIT para reativar.';
+  if(c.status==='trial'&&c.trial_ends_at&&new Date(c.trial_ends_at).getTime()<Date.now())return 'Seu teste grátis terminou. Fale com a MOVIT para contratar e continuar usando.';
+  return ''
+}
+function dashboardHas(user,perm){
+  if(tenantSandbox(user)&&!SANDBOX_PERMS.has(perm))return false;
+  return !!(user&&(user.is_admin||user.permissions?.includes('*')||user.permissions?.includes(perm)))
+}
 async function dashboardUserContext(row){
   let client=null,clientModules=[];
   if(row?.client_id){
-    const cq=await pool.query("SELECT id::text,name,slug,status,plan,monthly_fee,due_day FROM movit_clients WHERE id=$1 LIMIT 1",[row.client_id]);
+    const cq=await pool.query("SELECT id::text,name,slug,status,plan,monthly_fee,due_day,trial_ends_at FROM movit_clients WHERE id=$1 LIMIT 1",[row.client_id]);
     if(cq.rowCount){
       client=cq.rows[0];
       const mq=await pool.query("SELECT module_key FROM movit_client_modules WHERE client_id=$1 AND enabled=TRUE ORDER BY module_key",[row.client_id]);
       clientModules=mq.rows.map(x=>String(x.module_key));
     }
   }
-  return {
+  const ctx={
     id:String(row.id),username:row.username,is_admin:!!row.is_admin,active:!!row.active,
     permissions:row.is_admin?['*']:dashboardPerms(row.permissions),
     client_id:row.client_id==null?null:String(row.client_id),
@@ -871,6 +888,8 @@ async function dashboardUserContext(row){
     client,
     client_modules:clientModules
   };
+  ctx.sandbox=tenantSandbox(ctx);
+  return ctx;
 }
 // grupo informado no cadastro do usuário: null (sem grupo), id do mesmo cliente, ou false (inválido)
 async function grupoDoCliente(admin,v){
@@ -886,7 +905,12 @@ async function dashboardSession(req, adminOnly=false) {
   if(!r.rowCount){const e=new Error('Sessão expirada ou inválida.');e.status=401;throw e}
   const row=r.rows[0];
   if(adminOnly&&!row.is_admin){const e=new Error('Acesso exclusivo do administrador.');e.status=403;throw e}
-  return dashboardUserContext(row);
+  const ctx=await dashboardUserContext(row);
+  const bloq=clienteBloqueado(ctx);if(bloq){const e=new Error(bloq);e.status=402;throw e}
+  const pth=String(req.url||'').split('?')[0];
+  if(tenantSandbox(ctx)&&pth.startsWith('/api/')&&!SANDBOX_API.some(re=>re.test(pth))){const e=new Error('Este módulo fica disponível na versão contratada.');e.status=403;throw e}
+  ctx.sandbox=tenantSandbox(ctx);
+  return ctx;
 }
 // Chamada interna do dashboard (mesma máquina), identificada pela chave gerada na inicialização.
 function isInternalCall(req){
@@ -1639,6 +1663,23 @@ async function start() {
   }
   // Administradores já existentes são considerados administradores MOVIT nesta migração inicial.
   await pool.query('UPDATE dashboard_users SET is_platform_admin=TRUE WHERE is_admin=TRUE AND is_platform_admin=FALSE');
+  // Venda: preço mensal por módulo, taxa de implantação, fim do teste grátis e cliente de demonstração.
+  await pool.query('ALTER TABLE movit_modules ADD COLUMN IF NOT EXISTS price_monthly NUMERIC(12,2) NOT NULL DEFAULT 0');
+  await pool.query('ALTER TABLE movit_clients ADD COLUMN IF NOT EXISTS installation_fee NUMERIC(12,2) NOT NULL DEFAULT 0');
+  await pool.query('ALTER TABLE movit_clients ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ');
+  await pool.query("CREATE TABLE IF NOT EXISTS movit_config (chave TEXT PRIMARY KEY, valor JSONB NOT NULL DEFAULT '{}'::jsonb, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())");
+  await pool.query(`INSERT INTO movit_config(chave,valor) VALUES('precos','{"instalacao":1500,"teste_dias":7}'::jsonb) ON CONFLICT DO NOTHING`);
+  {
+    const ex=[['roteirizador',290],['rastreio',190],['programacao',150],['visao_geral',150],['dashboards',190],['agendamento',90],['lotacao',190],['coletas',90],['financeiro_lotacao',90],['financeiro_operacoes',150],['frota',120],['contas_pagar',90],['operacao',0],['usuarios',0],['app_movit',90]];
+    for(const[k,p]of ex)await pool.query('UPDATE movit_modules SET price_monthly=$2 WHERE key=$1 AND price_monthly=0',[k,p]);
+    const dq=await pool.query("INSERT INTO movit_clients(name,slug,plan,monthly_fee,due_day,status,notes) VALUES('Transportadora Demonstração','demo','Demonstração',0,10,'demo','Ambiente de demonstração com dados fictícios (zera todo dia)') ON CONFLICT DO NOTHING RETURNING id");
+    const demoId=dq.rowCount?dq.rows[0].id:(await pool.query("SELECT id FROM movit_clients WHERE lower(slug)='demo' LIMIT 1")).rows[0]?.id;
+    if(demoId){
+      for(const k of ['roteirizador','usuarios'])await pool.query('INSERT INTO movit_client_modules(client_id,module_key,enabled) VALUES($1,$2,TRUE) ON CONFLICT DO NOTHING',[demoId,k]);
+      const du=await pool.query("SELECT id FROM dashboard_users WHERE lower(username)='demo' LIMIT 1");
+      if(!du.rowCount){const ph=dashboardHashPassword(crypto.randomBytes(18).toString('hex'));await pool.query("INSERT INTO dashboard_users(username,password_salt,password_hash,is_admin,active,permissions,client_id,is_platform_admin) VALUES('demo',$1,$2,TRUE,TRUE,$4::jsonb,$3,FALSE)",[ph.salt,ph.hash,demoId,JSON.stringify(['roteirizador'])])}
+    }
+  }
   // Grupos de acesso: as autorizações do grupo valem para todos os membros; as do usuário somam (inseridas à mão).
   await pool.query("CREATE TABLE IF NOT EXISTS dashboard_groups (id BIGSERIAL PRIMARY KEY, client_id BIGINT, nome TEXT NOT NULL, permissions JSONB NOT NULL DEFAULT '[]'::jsonb, ordem INT NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())");
   await pool.query('ALTER TABLE dashboard_users ADD COLUMN IF NOT EXISTS group_id BIGINT REFERENCES dashboard_groups(id) ON DELETE SET NULL');
@@ -2884,6 +2925,27 @@ async function start() {
         } catch(e){return sendJson(res,500,{ok:false,error:'Falha ao baixar aplicativo.'});}
       }
 
+      // Demonstração pública: entra no ambiente de dados fictícios sem senha (zera uma vez por dia)
+      if (req.method === 'POST' && u.pathname === '/api/auth/demo') {
+        try {
+          const ip=String(req.headers['x-forwarded-for']||req.socket?.remoteAddress||'').split(',')[0].trim();
+          const lim=DEMO_RATE.get(ip)||{n:0,at:Date.now()};if(Date.now()-lim.at>60*60*1000){lim.n=0;lim.at=Date.now()}
+          if(++lim.n>30)return sendJson(res,429,{ok:false,error:'Muitas tentativas. Tente de novo em instantes.'});DEMO_RATE.set(ip,lim);
+          const r=await pool.query("SELECT u.id::text AS id,u.username,u.is_admin,u.active,u.permissions,u.client_id,u.is_platform_admin FROM dashboard_users u JOIN movit_clients c ON c.id=u.client_id WHERE lower(u.username)='demo' AND lower(c.slug)='demo' AND u.active=TRUE LIMIT 1");
+          if(!r.rowCount)return sendJson(res,503,{ok:false,error:'Demonstração indisponível no momento.'});
+          const row=r.rows[0],cliente='c'+row.client_id;
+          const ult=await pool.query("SELECT valor FROM movit_config WHERE chave='demo_reset'");
+          const em=ult.rows[0]?.valor?.em;
+          if(!em||Date.now()-Date.parse(em)>20*60*60*1000){
+            await roteirizadorCargas.resetDemo(pool,cliente);
+            await pool.query("INSERT INTO movit_config(chave,valor,updated_at) VALUES('demo_reset',$1::jsonb,NOW()) ON CONFLICT(chave) DO UPDATE SET valor=EXCLUDED.valor,updated_at=NOW()",[JSON.stringify({em:new Date().toISOString()})]);
+          }
+          const token=await dashboardCreateSession(row.id,1);
+          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Set-Cookie':dashboardSetCookie(token,24*60*60)});
+          return res.end(JSON.stringify({ok:true,user:await dashboardUserContext(row)}));
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao abrir a demonstração.'});}
+      }
+
       if (req.method === 'POST' && u.pathname === '/api/auth/login') {
         try {
           const body=await readJsonBodyLimited(req,64*1024);
@@ -2894,7 +2956,9 @@ async function start() {
           if(!r.rowCount||!r.rows[0].active||!dashboardVerifyPassword(password,r.rows[0].password_salt,r.rows[0].password_hash)){
             return sendJson(res,401,{ok:false,error:'Usuário ou senha inválidos.'});
           }
-          const row=r.rows[0],sessionDays=row.is_admin?365:14,token=await dashboardCreateSession(row.id,sessionDays);
+          const row=r.rows[0];
+          {const ctx0=await dashboardUserContext(row);const bq=clienteBloqueado(ctx0);if(bq)return sendJson(res,402,{ok:false,error:bq})}
+          const sessionDays=row.is_admin?365:14,token=await dashboardCreateSession(row.id,sessionDays);
           res.writeHead(200,{
             'Content-Type':'application/json; charset=utf-8',
             'Cache-Control':'no-store',
@@ -2981,8 +3045,8 @@ async function start() {
       if (req.method === 'GET' && u.pathname === '/api/movit-central/clients') {
         try{
           await dashboardPlatformSession(req);
-          const mq=await pool.query("SELECT key,name,category FROM movit_modules WHERE active=TRUE ORDER BY category,name");
-          const cq=await pool.query(`SELECT c.id::text,c.name,c.slug,c.document,c.email,c.phone,c.plan,c.monthly_fee,c.due_day,c.status,c.notes,c.created_at,c.updated_at,
+          const mq=await pool.query("SELECT key,name,category,price_monthly FROM movit_modules WHERE active=TRUE ORDER BY category,name");
+          const cq=await pool.query(`SELECT c.id::text,c.name,c.slug,c.document,c.email,c.phone,c.plan,c.monthly_fee,c.due_day,c.status,c.notes,c.created_at,c.updated_at,c.installation_fee,c.trial_ends_at,
             COALESCE((SELECT json_agg(cm.module_key ORDER BY cm.module_key) FROM movit_client_modules cm WHERE cm.client_id=c.id AND cm.enabled=TRUE),'[]'::json) AS modules
             FROM movit_clients c ORDER BY lower(c.name)`);
           return sendJson(res,200,{ok:true,modules:mq.rows,clients:cq.rows});
@@ -2998,7 +3062,7 @@ async function start() {
           if(name.length<2||slug.length<2)return sendJson(res,400,{ok:false,error:'Informe o nome e o identificador do cliente.'});
           const dueDay=Math.min(31,Math.max(1,Number(body.due_day)||10));
           const monthlyFee=Math.max(0,Number(body.monthly_fee)||0);
-          const status=['pilot','active','trial','overdue','blocked'].includes(body.status)?body.status:'pilot';
+          const status=['pilot','active','trial','overdue','blocked','demo'].includes(body.status)?body.status:'pilot';
           const q=await pool.query(`INSERT INTO movit_clients(name,slug,document,email,phone,plan,monthly_fee,due_day,status,notes)
             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id::text,name,slug,document,email,phone,plan,monthly_fee,due_day,status,notes`,
             [name,slug,String(body.document||'').trim().slice(0,60)||null,String(body.email||'').trim().slice(0,180)||null,String(body.phone||'').trim().slice(0,80)||null,String(body.plan||'Personalizado').trim().slice(0,80),monthlyFee,dueDay,status,String(body.notes||'').trim().slice(0,2000)||null]);
@@ -3011,6 +3075,49 @@ async function start() {
           return sendJson(res,201,{ok:true,client});
         }catch(e){
           const msg=e.code==='23505'?'Já existe um cliente com esse identificador.':(e.message||'Falha ao criar cliente.');
+          return sendJson(res,e.code==='23505'?409:(e.status||500),{ok:false,error:msg})
+        }
+      }
+
+      // Preços: taxa de implantação padrão, dias de teste e mensalidade de cada módulo
+      if (u.pathname === '/api/movit-central/precos' && (req.method === 'GET' || req.method === 'PUT')) {
+        try{
+          await dashboardPlatformSession(req);
+          if(req.method==='PUT'){
+            const body=await readJsonBodyLimited(req,64*1024);
+            const cfg={instalacao:Math.max(0,Number(body.instalacao)||0),teste_dias:Math.min(60,Math.max(1,Number(body.teste_dias)||7))};
+            await pool.query("INSERT INTO movit_config(chave,valor,updated_at) VALUES('precos',$1::jsonb,NOW()) ON CONFLICT(chave) DO UPDATE SET valor=EXCLUDED.valor,updated_at=NOW()",[JSON.stringify(cfg)]);
+            for(const[k,v]of Object.entries(body.modulos||{}))await pool.query('UPDATE movit_modules SET price_monthly=$2,updated_at=NOW() WHERE key=$1',[String(k),Math.max(0,Number(v)||0)]);
+          }
+          const c=(await pool.query("SELECT valor FROM movit_config WHERE chave='precos'")).rows[0]?.valor||{instalacao:0,teste_dias:7};
+          const mq=await pool.query('SELECT key,name,category,price_monthly FROM movit_modules WHERE active=TRUE ORDER BY category,name');
+          return sendJson(res,200,{ok:true,instalacao:Number(c.instalacao||0),teste_dias:Number(c.teste_dias||7),modulos:mq.rows.map(x=>({...x,price_monthly:Number(x.price_monthly||0)}))});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha nos preços.'})}
+      }
+      // Teste grátis: cria a empresa (em teste por N dias), libera os módulos que já separam dados por empresa
+      // e cria o usuário administrador dela com uma senha sorteada (mostrada uma única vez)
+      if (req.method === 'POST' && u.pathname === '/api/movit-central/teste') {
+        try{
+          await dashboardPlatformSession(req);
+          const body=await readJsonBodyLimited(req,64*1024);
+          const name=String(body.name||'').trim().slice(0,160);
+          if(name.length<2)return sendJson(res,400,{ok:false,error:'Informe o nome da transportadora.'});
+          const slug=name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,60)||('cliente-'+Date.now().toString(36));
+          if(['construlog','demo'].includes(slug))return sendJson(res,400,{ok:false,error:'Escolha outro nome.'});
+          const c=(await pool.query("SELECT valor FROM movit_config WHERE chave='precos'")).rows[0]?.valor||{};
+          const dias=Math.min(60,Math.max(1,Number(body.dias)||Number(c.teste_dias)||7));
+          const q=await pool.query(`INSERT INTO movit_clients(name,slug,document,email,phone,plan,monthly_fee,due_day,status,notes,installation_fee,trial_ends_at)
+            VALUES($1,$2,$3,$4,$5,'Teste grátis',0,10,'trial',$6,$7,NOW()+($8 * INTERVAL '1 day')) RETURNING id::text,name,slug,trial_ends_at`,
+            [name,slug,String(body.document||'').trim().slice(0,60)||null,String(body.email||'').trim().slice(0,180)||null,String(body.phone||'').trim().slice(0,80)||null,'Teste grátis criado em '+new Date().toLocaleDateString('pt-BR'),Math.max(0,Number(c.instalacao||0)),dias]);
+          const cl=q.rows[0];
+          for(const k of ['roteirizador','usuarios'])await pool.query('INSERT INTO movit_client_modules(client_id,module_key,enabled) VALUES($1,$2,TRUE) ON CONFLICT DO NOTHING',[cl.id,k]);
+          const usuario=(slug.replace(/-/g,'').slice(0,16)||'cliente')+'.admin';
+          const senha=crypto.randomBytes(6).toString('base64').replace(/[^A-Za-z0-9]/g,'').slice(0,8)+Math.floor(10+Math.random()*89);
+          const ph=dashboardHashPassword(senha);
+          await pool.query("INSERT INTO dashboard_users(username,password_salt,password_hash,is_admin,active,permissions,client_id,is_platform_admin) VALUES($1,$2,$3,TRUE,TRUE,$4::jsonb,$5,FALSE)",[usuario,ph.salt,ph.hash,JSON.stringify(['roteirizador']),cl.id]);
+          return sendJson(res,201,{ok:true,client:cl,usuario,senha,dias});
+        }catch(e){
+          const msg=e.code==='23505'?'Já existe uma empresa ou usuário com esse nome.':(e.message||'Falha ao criar o teste.');
           return sendJson(res,e.code==='23505'?409:(e.status||500),{ok:false,error:msg})
         }
       }
@@ -3085,11 +3192,13 @@ async function start() {
           if(name.length<2||slug.length<2)return sendJson(res,400,{ok:false,error:'Informe o nome e o identificador do cliente.'});
           const dueDay=Math.min(31,Math.max(1,Number(body.due_day)||10));
           const monthlyFee=Math.max(0,Number(body.monthly_fee)||0);
-          const status=['pilot','active','trial','overdue','blocked'].includes(body.status)?body.status:'pilot';
+          const status=['pilot','active','trial','overdue','blocked','demo'].includes(body.status)?body.status:'pilot';
           const q=await pool.query(`UPDATE movit_clients SET name=$1,slug=$2,document=$3,email=$4,phone=$5,plan=$6,monthly_fee=$7,due_day=$8,status=$9,notes=$10,updated_at=NOW()
             WHERE id=$11 RETURNING id::text,name,slug,document,email,phone,plan,monthly_fee,due_day,status,notes`,
             [name,slug,String(body.document||'').trim().slice(0,60)||null,String(body.email||'').trim().slice(0,180)||null,String(body.phone||'').trim().slice(0,80)||null,String(body.plan||'Personalizado').trim().slice(0,80),monthlyFee,dueDay,status,String(body.notes||'').trim().slice(0,2000)||null,id]);
           if(!q.rowCount)return sendJson(res,404,{ok:false,error:'Cliente não encontrado.'});
+          if(body.installation_fee!==undefined)await pool.query('UPDATE movit_clients SET installation_fee=$2 WHERE id=$1',[id,Math.max(0,Number(body.installation_fee)||0)]);
+          if(body.trial_ends_at!==undefined)await pool.query('UPDATE movit_clients SET trial_ends_at=$2 WHERE id=$1',[id,/^\d{4}-\d{2}-\d{2}$/.test(String(body.trial_ends_at||''))?String(body.trial_ends_at)+'T23:59:59-03:00':null]);
           const modules=Array.isArray(body.modules)?[...new Set(body.modules.map(String))]:[];
           await pool.query('UPDATE movit_client_modules SET enabled=FALSE,updated_at=NOW() WHERE client_id=$1',[id]);
           for(const moduleKey of modules){
