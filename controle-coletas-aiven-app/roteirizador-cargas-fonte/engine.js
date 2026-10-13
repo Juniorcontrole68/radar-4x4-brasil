@@ -732,7 +732,9 @@
     let ped = 0;
     for (const id of cidadesIds) { const c = ctx.cidades[id]; if (c && c.pedagio > ped) ped = c.pedagio; }
     ped *= veic.multPedagio || 1;
-    const mot = ctx.motoristas && veic.motoristaId && ctx.motoristas[veic.motoristaId] ? +ctx.motoristas[veic.motoristaId].diaria || 0 : +veic.diariaMotorista || 0;
+    // pagamento do motorista: diária + R$ por km (cadastro do motorista; sem motorista, o do veículo)
+    const mc = ctx.motoristas && veic.motoristaId ? ctx.motoristas[veic.motoristaId] : null;
+    const mot = round(mc ? (+mc.diaria || 0) + km * (+mc.valorKm || 0) : (+veic.diariaMotorista || 0) + km * (+veic.valorKmMotorista || 0), 2);
     const c = {
       veiculo: +veic.custoDiaria || 0, motorista: mot, ajudante: +veic.custoAjudante || 0,
       combustivel: round(comb, 2), pedagio: round(ped, 2), manutencao: round(km * (+veic.custoKm || 0), 2), extras: +extras || 0,
