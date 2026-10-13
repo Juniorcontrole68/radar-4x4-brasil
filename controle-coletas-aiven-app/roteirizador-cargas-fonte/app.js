@@ -201,6 +201,8 @@
     const ign = ignoradas();
     ENR = [...ST.notas.values()].filter((n) => n.origem === 'manual' || !ign[nfChave(n.numero)]).map((n) => RE.enriquecer(n, c));
     // cruzamento com as sobras ainda não baixadas (de hoje e de dias anteriores): a nota vira prioridade
+    // nota criada a partir de uma sobra segue a situação da sobra (em rota / entregue pelo SSW ou marcada à mão)
+    for (const n of ENR) if (n.origem === 'sobra' && /^sb-/.test(n.id)) { const x = ST.sobras.get(n.id.slice(3)); const st = x ? sobraSituacao(x).st : 'entregue'; if (st === 'entregue' || st === 'em_rota') n.status = st; }
     const sb = sobrasAbertas(), porId = new Map(), porNum = new Map();
     for (const x of sb) { if (x.notaId) porId.set(x.notaId, x); const k = nfChave(x.numero); if (k && (!porNum.has(k) || x.data < porNum.get(k).data)) porNum.set(k, x); }
     for (const n of ENR) { const x = porId.get(n.id) || porNum.get(nfChave(n.numero)); if (x && !['entregue', 'cancelada', 'em_rota'].includes(n.status) && !n.bloqueioUsuario) { n.sobraDe = x.data; n.sobraId = x.id; n.prioridade = true; } }
@@ -840,6 +842,7 @@
     const d = ui.data, dd = dispDia(d);
     if (window.RC_HOST && ST.admin && !ui.frotaAuto) { ui.frotaAuto = true; setTimeout(() => importarFrota(), 50); }
     if (window.RC_HOST && !ui.sswSync) { ui.sswSync = true; setTimeout(() => sincronizarSSW(), 80); }
+    if (!ui.sbNotasAuto) { ui.sbNotasAuto = true; setTimeout(() => notasDasSobras().catch((e) => console.warn('sobras→notas', e.message)), 1500); setInterval(() => notasDasSobras().catch(() => {}), 3 * 60000); }
     if (window.RC_HOST && !ui.geoAuto) { ui.geoAuto = true; setTimeout(() => localizarEnderecosXML(), 4000); setInterval(() => { if (document.visibilityState !== 'hidden') localizarEnderecosXML(); }, 10 * 60000); }
     const todos = motoristasUnicos();
     const q = RE.norm(ui.motQ || '');
@@ -917,7 +920,7 @@
     const enr = notasEnr(), achaNota = (x) => (x.notaId && ENR_MAP.get(x.notaId)) || enr.find((n) => nfChave(n.numero) && nfChave(n.numero) === nfChave(x.numero));
     const dentro = [], fora = [];
     for (const x of ab) { const n = achaNota(x); if (n && noPlano.has(n.id)) dentro.push(x); else fora.push({ x, n }); }
-    const motivo = ({ x, n }) => !n ? 'nota não está no roteirizador' : n.bloqueioUsuario ? 'bloqueada' : n.status === 'em_rota' ? 'já em rota' : n.bloqueada ? 'dados pendentes' : (pl.naoRoteirizadas || []).some((u) => (u.notas || []).includes(n.id)) ? 'não coube na frota' : 'cidade sem rota neste dia';
+    const motivo = ({ x, n }) => !n ? 'nota não está no roteirizador' : n.bloqueioUsuario ? 'bloqueada' : n.status === 'em_rota' ? 'já em rota' : n.bloqueada ? 'dados pendentes' : (pl.naoRoteirizadas || []).some((u) => (u.notas || []).includes(n.id)) ? ((pl.naoRoteirizadas.find((u) => (u.notas || []).includes(n.id)) || {}).motivo || 'não coube na frota') : 'cidade sem rota neste dia';
     let h = '<div class="note ' + (fora.length ? 'warn' : 'ok') + ' small" style="margin-top:10px"><b>Sobras não baixadas:</b> ' + ab.length + ' · <b>' + dentro.length + '</b> na programação de ' + dBR(d) + (fora.length ? ' · <b>' + fora.length + '</b> fora' : '') + ' <a href="#" data-a="tab" data-v="sobras">Ver sobras</a>';
     if (fora.length) h += '<ul style="margin:6px 0 0 18px;padding:0">' + fora.sort((a, b) => a.x.data.localeCompare(b.x.data)).slice(0, 8).map((f) => '<li>NF ' + esc(f.x.numero || '—') + ' · ' + esc(f.x.cidade || (f.n && f.n.cidadeNome) || '') + ' · sobra de ' + dBR(f.x.data) + ' — ' + motivo(f) + '</li>').join('') + (fora.length > 8 ? '<li>+ ' + (fora.length - 8) + '</li>' : '') + '</ul>';
     return h + '</div>';
@@ -1365,6 +1368,40 @@
   // sobras que ainda não foram baixadas nem saíram em romaneio (pendentes), de hoje para trás
   const nomeMotorista = (id) => (ST.motoristas.get(id) || {}).nome || '';
   function sobrasAbertas() { const h = hoje(); return [...ST.sobras.values()].filter((x) => x.data && x.data <= h && sobraSituacao(x).st === 'pendente'); }
+  // Sobra sem nota no roteirizador (lançada pela planilha ou à mão): vira uma nota, para entrar na programação.
+  // Não recria nota excluída (lista de ignoradas) e liga a sobra à nota criada.
+  async function notasDasSobras() {
+    if (!ST.admin || ui.sbNotas) return;
+    const ign = ignoradas(), enr = notasEnr(), it = [], liga = [];
+    for (const x of sobrasAbertas()) {
+      if (x.notaId && ST.notas.has(x.notaId)) continue;
+      const k = nfChave(x.numero);
+      if (k && ign[k]) continue;
+      const ex = k ? enr.find((n) => nfChave(n.numero) === k) : null;
+      if (ex) { if (x.notaId !== ex.id) liga.push({ id: x.id, data: Object.assign({}, x, { notaId: ex.id }) }); continue; }
+      // a sobra ainda está nos CTRCs disponíveis do SSW: a nota vem de lá (peso, m³, CTRC e endereço pelo XML)
+      const linhaSSW = k ? sswLinhas().find((r) => nfChave(r.nf) === k && !devolvidaSSW(r)) : null;
+      if (linhaSSW) { const nid = await criarNotaDeSSW(linhaSSW); liga.push({ id: x.id, data: Object.assign({}, x, { notaId: nid }) }); continue; }
+      const cidTxt = String(x.cidade || ''), uf = (cidTxt.match(/\/([A-Z]{2})\s*$/) || [])[1] || 'SP', nome = cidTxt.replace(/\/[A-Z]{2}\s*$/, '').trim();
+      const m = munPorTexto(cidTxt) || RE.findMun(null, nome, uf);
+      const id = 'sb-' + x.id, carga = String(x.carga || '');
+      if (ST.notas.has(id)) { liga.push({ id: x.id, data: Object.assign({}, x, { notaId: id }) }); continue; }
+      it.push({ id, data: {
+        id, numero: k || String(x.numero || ''), serie: x.serie || '', emitente: x.embarcador || '', destNome: x.cliente || '',
+        endereco: { lgr: '', nro: '', bairro: '', cidade: m ? m.nome : nome, uf: m ? m.uf : uf, cep: '', cMun: m ? m.cod : '' },
+        pesoB: x.kg > 0 ? +x.kg : null, volM3: null, qVol: null, valorMerc: +x.valor || 0, freteXml: 0, frete: null, prazo: '', itens: [],
+        origem: 'sobra', mercadoria: carga, exigeTubo: /TUBO/i.test(carga) && !/SEM\s+TUBO/i.test(carga), obs: 'Sobra de ' + dBR(x.data) + (x.motivo ? ' — ' + x.motivo : ''),
+        status: 'pronta', dataMinima: x.dataMin || '', importadoEm: agoraISO(), importadoPor: ST.uid, chegouEm: x.chegou || null,
+      } });
+      liga.push({ id: x.id, data: Object.assign({}, x, { notaId: id }) });
+    }
+    if (!it.length && !liga.length) return;
+    ui.sbNotas = true;
+    try {
+      await salvarVarios('notas', it); await salvarVarios('sobras', liga);
+      if (it.length) { registrar('Sobras', it.length + ' sobra(s) sem nota viraram notas no roteirizador'); toast(it.length + ' sobra(s) entraram nas notas para a programação.'); ui.escalaSuja = true; }
+    } finally { ui.sbNotas = false; render(); }
+  }
   function sobraDaParada(st) { let d = ''; for (const id of st.notas || []) { const n = ENR_MAP && ENR_MAP.get(id); if (n && n.sobraDe && (!d || n.sobraDe < d)) d = n.sobraDe; } return d; }
   function sobraSituacao(s) {
     if (s.statusManual) return { st: s.statusManual, em: s.statusManualEm || '', fonte: 'marcado à mão' };

@@ -398,6 +398,7 @@
     if (nota.pesoOperador != null) { n.pesoKg = nota.pesoOperador; n.pesoFonte = 'operador'; }
     else if (nota.pesoB != null && nota.pesoB > 0) { n.pesoKg = nota.pesoB; n.pesoFonte = 'nota'; }
     else if (itens.length && pesoItensCompleto && pesoItens > 0) { n.pesoKg = round(pesoItens, 2); n.pesoFonte = 'cadastro'; }
+    else if (nota.origem === 'sobra') { n.pesoKg = 0; n.pesoFonte = 'sobra sem peso'; avisos.push({ cod: 'peso_sobra', msg: 'Sobra sem peso informado: entra na rota sem contar peso (informe o peso para conferir a carga)' }); }
     else { n.pesoKg = null; pend.push({ cod: 'peso', bloqueia: true, msg: 'Sem peso bruto na nota nem no cadastro dos produtos' }); }
     // volume das mercadorias que não são tubo
     const naoTubos = itens.filter((i) => i.tipo !== 'tubo');
@@ -409,7 +410,7 @@
       const pesoTubos = itens.filter((i) => i.tubo && i.tubo.pesoUnit).reduce((s, i) => s + i.tubo.pesoUnit * i.tubo.barras, 0);
       n.volOutrosM3 = round(Math.max(0, n.pesoKg - pesoTubos) / cfg.cubagemKgM3, 4); n.volFonte = 'fator de cubagem';
       avisos.push({ cod: 'vol_cubagem', msg: 'Volume estimado pelo fator de cubagem (' + cfg.cubagemKgM3 + ' kg/m³)' });
-    } else if (n.pesoKg > 0) {
+    } else if (n.pesoKg > 0 || nota.origem === 'sobra') {
       // sem m³ mas com peso: não trava a nota, a carga é controlada só pelo peso
       n.volOutrosM3 = 0; n.volFonte = 'sem m³ (vale o peso)';
       avisos.push({ cod: 'vol_peso', msg: 'Sem volume (m³): a carga desta nota é controlada só pelo peso' });
@@ -452,7 +453,10 @@
   };
   RE.clienteKey = (n) => {
     const e = n.endereco || {};
-    return ((n.destDoc || norm(n.destNome)) + '-' + (e.cep || '') + '-' + norm(e.nro)).replace(/[^A-Za-z0-9_\-.]/g, '').slice(0, 120) || 'sem-cliente';
+    // a cidade entra na chave: mesmo cliente sem CEP em cidades diferentes não pode virar uma parada só;
+    // sem nome nem documento, cada nota é uma parada
+    const quem = n.destDoc || norm(n.destNome) || ('nota-' + (n.id || n.numero || ''));
+    return (quem + '-' + (n.cidadeId || e.cMun || norm(e.cidade)) + '-' + (e.cep || '') + '-' + norm(e.nro)).replace(/[^A-Za-z0-9_\-.]/g, '').slice(0, 120) || 'sem-cliente';
   };
 
   // ---------- geometria de círculos (encaixe e seção transversal) ----------
