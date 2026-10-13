@@ -2610,7 +2610,7 @@ async function buildBi2Baixas(date=''){
     filiais:topCounts(base,['UNIDADE DESTINO'],20),
     cidades:topCounts(base,['CIDADE DESTINO'],20),
     remetentes:topCounts(base,['REMETENTE'],20),
-    rows:base.slice(0,1000).map(r=>({
+    rows:base.slice(0,6000).map(r=>({
       ctrc:r.CTRC||'',nf:r.NF||'',remetente:r.REMETENTE||'',destinatario:r.DESTINATARIO||'',
       cidade:r['CIDADE DESTINO']||'',uf:r['UF DESTINO']||'',unidade:r['UNIDADE DESTINO']||'',
       previsao:r['DATA PREVENTR']||'',entrega:r['DATA ENTREGA']||'',performance:r.PERFORMANCE||''
@@ -6161,7 +6161,9 @@ if(u.pathname==='/api/programacao-entregas/status-nfs'&&req.method==='GET'){try{
   let pendOk=false;const pend=new Set();
   try{const p=await fetchSswPendingDeliveries();for(const r of p.rows||[])pend.add(normNf(r.nf));pendOk=(p.rows||[]).length>0}catch(e){console.log('STATUS NFS pendências: '+String(e.message||e))}
   const entregues=new Map();let baixasOk=false;
-  for(const d of datas){try{const b=await buildBi2Baixas(d);baixasOk=true;for(const r of b.rows||[]){const k=normNf(r.nf);const em=brDateToIso((String(r.entrega||'').match(/\d{2}\/\d{2}\/\d{2,4}/)||[''])[0])||'';if(k&&em&&em>=desde&&!entregues.has(k))entregues.set(k,em)}}catch(e){console.log('STATUS NFS baixas '+d+': '+String(e.message||e))}}
+  for(const d of datas){try{const b=await buildBi2Baixas(d);baixasOk=true;for(const r of b.rows||[]){const em=brDateToIso((String(r.entrega||'').match(/\d{2}\/\d{2}\/\d{2,4}/)||[''])[0])||'';if(!em||em<desde)continue;
+    // o campo NF pode trazer várias notas do mesmo CT-e ("456787/456788", "456787 - 456788"): cada uma conta
+    for(const k of String(r.nf||'').split(/[^0-9]+/).map(normNf).filter(x=>x.length>=3))if(!entregues.has(k))entregues.set(k,em)}}catch(e){console.log('STATUS NFS baixas '+d+': '+String(e.message||e))}}
   const itens={};
   for(const nf of nfs){
     if(entregues.has(nf))itens[nf]={status:'entregue',em:entregues.get(nf),fonte:'Baixa no SSW'};
@@ -6180,7 +6182,15 @@ if(u.pathname==='/api/programacao-entregas/status-nfs'&&req.method==='GET'){try{
         if(/MERCADORIA\s+ENTREGUE|\bENTREGUE\b|ENTREGA\s+REALIZADA|BAIXAD/.test(sit.toUpperCase())&&!/N[AÃ]O\s+ENTREG/.test(sit.toUpperCase())){
           const dm=(sit.match(/(\d{2}\/\d{2}\/\d{2,4})/)||txt.match(/ENTREG[A-Z]*\D{0,30}(\d{2}\/\d{2}\/\d{2,4})/)||[])[1];
           itens[nf]={status:'entregue',em:(dm&&brDateToIso(dm))||hoje,fonte:'Situação do CT-e '+f.ctrc+' (SSW 101)',ctrc:f.ctrc}
-        }else if(sit)itens[nf].situacao=sit.slice(0,120)
+        }else{
+          // terceiro caminho: rastreamento do SSW pelo CNPJ do destinatário do CT-e
+          const doc=String(info?.cte?.destinatario?.doc||info?.cte?.recebedor?.doc||'').replace(/\D/g,'');
+          const t=doc.length===14?await trackingDestQuery(doc,nf):null;
+          if(t&&t.entregue){
+            const dh=String(t.delivery?.data_hora||'');const dm=(dh.match(/(\d{2}\/\d{2}\/\d{2,4})/)||[])[1];
+            itens[nf]={status:'entregue',em:(dm&&brDateToIso(dm))||(/^\d{4}-\d{2}-\d{2}/.test(dh)?dh.slice(0,10):hoje),fonte:'Rastreamento SSW (CT-e '+f.ctrc+')',ctrc:f.ctrc}
+          }else if(sit)itens[nf].situacao=sit.slice(0,120)
+        }
       }catch(e){}
     })),new Promise(r=>setTimeout(r,40000))]);
   }
