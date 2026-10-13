@@ -4453,12 +4453,54 @@ function parseSswReceita73(text,from='',to=''){
     aliasRule:'FastShop e Somerlog consolidados como Somerlog'
   }
 }
+// Faturamento por cliente = frete dos CT-es EMITIDOS no período (BI2 174, data de emissão), por cliente
+// pagador (mesmos grupos do SLA). Cliente sem faturamento no período não entra na lista.
+const RECEITA_CACHE=new Map(),BI2_174_DIA=new Map();
+async function bi2_174Dia(d){
+  const hit=BI2_174_DIA.get(d),hoje=spDateISO();
+  if(hit&&Date.now()-hit.at<(d<hoje?6*60*60*1000:10*60*1000))return hit.v;
+  const v=await fetchBi2FolderDayParsed(174,'ctrc',d).catch(e=>({ok:false,date:d,rows:[],erro:String(e.message||e)}));
+  BI2_174_DIA.set(d,{at:Date.now(),v});if(BI2_174_DIA.size>120)BI2_174_DIA.delete(BI2_174_DIA.keys().next().value);
+  return v
+}
 async function buildBi2Receita(from='',to=''){
+  const hoje=spDateISO();
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(from||''))from=hoje.slice(0,8)+'01';
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(to||'')||to>hoje)to=hoje;
+  if(from>to)from=to;
+  const ck=from+'|'+to,hit=RECEITA_CACHE.get(ck);
+  if(hit&&Date.now()-hit.at<10*60*1000)return hit.value;
   try{
-    const rep=await fetchSswReceita73Text();
-    return parseSswReceita73(rep.text,from,to)
+    // o CT-e aparece no arquivo do dia em que foi emitido e nos seguintes: lê até 5 dias depois do fim
+    const ate=(()=>{const d=new Date(to+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+5);const x=d.toISOString().slice(0,10);return x>hoje?hoje:x})();
+    const dias=bi2DateRange(from,ate,70),snaps=[];
+    for(let i=0;i<dias.length;i+=4)snaps.push(...await Promise.all(dias.slice(i,i+4).map(bi2_174Dia)));
+    if(ate===hoje){try{snaps.push({ok:true,rows:parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text).rows||[]})}catch{}}
+    const ctes=new Map();let campoFrete='',campoPag=new Set();
+    for(const sn of snaps)for(const r of (sn.rows||[])){
+      const raw=r.numero_ctrc||pickField(r,'CTRC'),k=normCtrcLoose(raw);if(!k||ctes.has(k))continue;
+      const em=slaIso(pickField(r,'data_emissao','DATA EMISSAO','DATA AUTORIZACAO','AUTORIZACAO'));
+      if(!em||em<from||em>to)continue;
+      if(/CANCEL/i.test(String(pickField(r,'situacao','SITUACAO','status','STATUS')||'')))continue;
+      const fr=bi2Number(pickField(r,'valor_frete','VALOR FRETE','frete_total','FRETE TOTAL','FRETE'));
+      if(!campoFrete)for(const a of ['valor_frete','VALOR FRETE','frete_total','FRETE TOTAL','FRETE'])if(pickField(r,a)!==undefined&&pickField(r,a)!==''){campoFrete=a;break}
+      const pg=slaPagador(r);if(pg.campo)campoPag.add(pg.campo);
+      let nome=pg.nome.toUpperCase();if(/FAST ?SHOP/.test(nome))nome='SOMERLOG';
+      ctes.set(k,{cliente:slaGrupo(nome),pagador:nome,frete:fr})
+    }
+    const g=new Map();
+    for(const c of ctes.values()){const x=g.get(c.cliente)||{cliente:c.cliente,faturamento:0,registros:0,membros:new Set()};x.faturamento+=c.frete;x.registros++;x.membros.add(c.pagador);g.set(c.cliente,x)}
+    const clientes=[...g.values()].filter(x=>x.faturamento>0).map(x=>({cliente:x.cliente,faturamento:Math.round(x.faturamento*100)/100,registros:x.registros,pagadores:x.membros.size>1?[...x.membros].sort():[]})).sort((a,b)=>b.faturamento-a.faturamento);
+    const total=clientes.reduce((t,x)=>t+x.faturamento,0);
+    const br=d=>d.split('-').reverse().join('/');
+    const value={ok:true,available:true,source:'SSW',sourceCode:174,sourceName:'CT-es emitidos (BI2 174)',periodo:br(from)+' a '+br(to),from,to,
+      totalFaturamento:Math.round(total*100)/100,totalClientes:clientes.length,totalRegistros:clientes.reduce((t,x)=>t+x.registros,0),
+      revenueField:campoFrete||'frete do CT-e',clientField:campoPag.size?'pagador':'remetente',
+      aliasRule:'Por cliente pagador • Comercial Leal, Leal Dutra, Conasid, Navas, Logmel e Somerlog juntos • THB/FCB juntos • só clientes com faturamento',clientes};
+    RECEITA_CACHE.set(ck,{at:Date.now(),value});
+    return value
   }catch(e){
-    return{ok:false,available:false,source:'SSW',sourceCode:73,sourceName:'073 - Monitoramento de Clientes',error:String(e.message||e),clientes:[]}
+    return{ok:false,available:false,source:'SSW',sourceCode:174,sourceName:'CT-es emitidos (BI2 174)',error:String(e.message||e),clientes:[]}
   }
 }
 

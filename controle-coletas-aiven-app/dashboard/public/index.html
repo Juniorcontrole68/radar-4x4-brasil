@@ -219,15 +219,15 @@ body.embedded-view #currentUser,body.embedded-view #logoutBtn,body.embedded-view
 </div>
 </section>
 <section id="receita-ssw" class="section">
-<div class="dash-intro"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap"><div><h2>Receita SSW</h2><div id="revenueMeta" class="muted">Carregando relatório 073 do SSW…</div></div><button class="dash-open" data-open="dashboards">← Central de Dashboards</button></div></div>
+<div class="dash-intro"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap"><div><h2>Receita SSW</h2><div id="revenueMeta" class="muted">Carregando os CT-es emitidos no período (SSW)…</div></div><button class="dash-open" data-open="dashboards">← Central de Dashboards</button></div></div>
 <div class="grid kpis">
-  <div class="card kpi fin"><div class="label">Faturamento total</div><div id="revenueTotal" class="value">—</div><div class="sub">relatório 073</div></div>
-  <div class="card kpi"><div class="label">Clientes</div><div id="revenueClients" class="value">—</div><div class="sub">clientes consolidados</div></div>
-  <div class="card kpi"><div class="label">CT-es faturados</div><div id="revenueRows" class="value">—</div><div class="sub">quantidade no mês de referência</div></div>
+  <div class="card kpi fin"><div class="label">Faturamento total</div><div id="revenueTotal" class="value">—</div><div class="sub">frete dos CT-es emitidos no período</div></div>
+  <div class="card kpi"><div class="label">Clientes</div><div id="revenueClients" class="value">—</div><div class="sub">clientes pagadores com faturamento</div></div>
+  <div class="card kpi"><div class="label">CT-es faturados</div><div id="revenueRows" class="value">—</div><div class="sub">CT-es emitidos no período</div></div>
   <div class="card kpi"><div class="label">Campo de faturamento</div><div id="revenueField" class="value" style="font-size:16px">—</div><div class="sub">identificado no SSW</div></div>
 </div>
 <div class="card" style="margin-bottom:14px"><b>Faturamento por cliente</b><div class="chart"><canvas id="sswRevenueChart"></canvas></div></div>
-<div class="card tablecard"><div class="thead">Receita por cliente • FastShop consolidada como Somerlog</div><div class="scroll"><table id="sswRevenueTable"></table></div></div>
+<div class="card tablecard"><div class="thead">Faturamento por cliente pagador • CT-es emitidos no período</div><div class="scroll"><table id="sswRevenueTable"></table></div></div>
 </section>
 <section id="motoristas-evolucao" class="section"><div class="dash-intro"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap"><div><h2>Painel de Evolução por Motorista</h2><div id="driverProgressMeta" class="muted">Carregando evolução das entregas…</div></div><button class="dash-open" data-open="dashboards">← Central de Dashboards</button></div></div>
 <div class="driver-summary-grid"><div class="card kpi"><div class="label">Total em rota</div><div id="driverProgTotal" class="value">—</div><div class="sub">CT-es considerados no painel</div></div><div class="card kpi"><div class="label">Entregues</div><div id="driverProgDelivered" class="value">—</div><div class="sub">verde</div></div><div class="card kpi"><div class="label">Pendentes</div><div id="driverProgPending" class="value">—</div><div class="sub">amarelo</div></div><div class="card kpi"><div class="label">Ocorrências</div><div id="driverProgOcc" class="value">—</div><div class="sub">vermelho</div></div></div>
