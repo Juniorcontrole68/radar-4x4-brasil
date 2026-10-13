@@ -452,7 +452,8 @@
     else if (cli && cli.lat != null) { n.lat = cli.lat; n.lon = cli.lon; n.coordFonte = 'confirmada'; if (cli.janelaIni) n.janela = { ini: cli.janelaIni, fim: cli.janelaFim }; }
     else if (mun) { n.lat = mun.lat; n.lon = mun.lon; n.coordFonte = 'centro da cidade'; }
     // frete
-    if (nota.frete != null && nota.frete !== '') { n.freteValor = +nota.frete; n.freteFonte = 'operador'; }
+    if (nota.frete != null && nota.frete !== '') { n.freteValor = +nota.frete; n.freteFonte = nota.origem === 'ssw' ? 'CT-e' : 'operador'; }
+    else if (nota.freteCte > 0) { n.freteValor = +nota.freteCte; n.freteFonte = 'CT-e'; }
     else if (RE.fretePctCliente(nota, cfg) && n.valorMerc > 0) {
       // antes do CT-e: frete combinado com o cliente, em % do valor da nota
       const r = RE.fretePctCliente(nota, cfg);
@@ -845,6 +846,8 @@
       if (filtroCidades && filtroCidades.length && !filtroCidades.includes(n.cidadeId)) continue;
       if (n.bloqueioUsuario) continue;   // bloqueada pelo usuário: fica fora da programação sem aparecer nela
       if (n.bloqueada) { fora.push({ nota: n, motivo: 'Dados pendentes' }); continue; }
+      // sem rua e número localizados não entra (a não ser que o usuário libere pelo centro da cidade)
+      if (ctx.cfg && ctx.cfg.exigirEnderecoExato === true && n.coordFonte !== 'confirmada' && !n.aproximadoOk) { fora.push({ nota: n, motivo: 'Sem endereço exato' }); continue; }
       const cid = ctx.cidades[n.cidadeId];
       const forcado = n.diaForcado === data;
       if (!forcado && !(cid.dias || []).includes(wd)) { continue; }

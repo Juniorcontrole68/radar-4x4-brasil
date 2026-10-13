@@ -69,7 +69,7 @@
     cfg: Object.assign({}, RE.CFG_PADRAO), veiculos: new Map(), motoristas: new Map(), cidades: new Map(), produtos: new Map(),
     clientes: new Map(), notas: new Map(), planos: new Map(), log: new Map(), sobras: new Map(), disponibilidade: new Map(), ssw: new Map(), carregado: {}, admin: true, uid: 'local', nomes: {},
   };
-  let ui = { tab: 'painel', data: null, notasFiltro: { status: 'ativas', cidade: '', q: '' }, notasPag: 0, cadTab: 'veiculos', notaAberta: null, relTipo: 'romaneio', cargaVeic: null, imp: null, cenarios: null, calc: null, confirmar: null, notasSub: 'lista', mapaFoco: null, filtroCombo: '' };
+  let ui = { tab: 'notas', data: null, notasFiltro: { status: 'ativas', cidade: '', q: '' }, notasPag: 0, cadTab: 'veiculos', notaAberta: null, relTipo: 'romaneio', cargaVeic: null, imp: null, cenarios: null, calc: null, confirmar: null, notasSub: 'lista', mapaFoco: null, filtroCombo: '' };
   try { const s = JSON.parse(localStorage.getItem('rot-ui') || 'null'); if (s) { ui.tab = s.tab || ui.tab; ui.cadTab = s.cadTab || ui.cadTab; ui.relTipo = s.relTipo || ui.relTipo; } } catch (e) { /* sem armazenamento */ }
   const lembrarUI = () => { try { localStorage.setItem('rot-ui', JSON.stringify({ tab: ui.tab, cadTab: ui.cadTab, relTipo: ui.relTipo })); } catch (e) { /* ok */ } };
   let VER = 0;
@@ -133,7 +133,9 @@
 
   // ---------------- dados derivados ----------------
   // disponibilidade marcada no Painel para cada dia (operadores podem alterar)
-  const dispDia = (d) => { const x = ST.disponibilidade.get(d) || {}; return { veiculos: x.veiculos || {}, motoristas: x.motoristas || {} }; };
+  const dispDia = (d) => { const x = ST.disponibilidade.get(d) || {}; return { veiculos: x.veiculos || {}, motoristas: x.motoristas || {}, motoristaDe: x.motoristaDe || {} }; };
+  // passo 2: o usuário marca os veículos do dia (e o motorista de cada um); só eles entram na programação
+  const modoVeiculos = (d) => Object.values(dispDia(d).veiculos).some((v) => v === true);
   const motRecente = (m, d) => (m.ultimoUso ? m.ultimoUso >= RE.addDays(d, -30) : !m.origem);
   const motDisp = (m, d) => { const x = dispDia(d).motoristas[m.id]; return x === true ? true : x === false ? false : RE.motoristaDisponivel(m, d) && motRecente(m, d); };
   const cidadeCoord = (c) => { const m = RE.findMun(c.id); return Object.assign({}, c, { lat: c.lat != null ? c.lat : m && m.lat, lon: c.lon != null ? c.lon : m && m.lon }); };
@@ -160,6 +162,9 @@
   function veiculosComMotorista(d) {
     const vs = [...ST.veiculos.values()].sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR', { numeric: true }));
     const dd = dispDia(d);
+    if (modoVeiculos(d)) return vs.map((v) => (dd.veiculos[v.id] === true && RE.veicDisponivel(v, d))
+      ? Object.assign({}, v, { motoristaId: dd.motoristaDe[v.id] || v.motoristaId || '', motoristaDoDia: !!dd.motoristaDe[v.id] })
+      : Object.assign({}, v, { indispDia: true }));
     const usavel = (v) => RE.veicDisponivel(v, d) && dd.veiculos[v.id] !== false;
     if (!ST.motoristas.size) return vs.map((v) => (dd.veiculos[v.id] === false ? Object.assign({}, v, { indispDia: true }) : v));
     const disp = motoristasUnicos().filter((m) => motDisp(m, d));
@@ -185,11 +190,11 @@
     const cidades = {};
     for (const [id, c] of ST.cidades) cidades[id] = cidadeCoord(c);
     CTX = {
-      cfg: ST.cfg, cidades, motoristas: Object.fromEntries(ST.motoristas), clientes: Object.fromEntries(ST.clientes),
+      cfg: Object.assign({}, ST.cfg, { exigirEnderecoExato: !!window.RC_HOST && ST.cfg.exigirEnderecoExato !== false }), cidades, motoristas: Object.fromEntries(ST.motoristas), clientes: Object.fromEntries(ST.clientes),
       produtos: [...ST.produtos.values()],
       veiculos: veiculosComMotorista(ui.data),
       base: ST.cfg.base, data: ui.data,
-      maxMotoristas: ST.motoristas.size ? motoristasUnicos().filter((m) => motDisp(m, ui.data)).length : undefined,
+      maxMotoristas: modoVeiculos(ui.data) ? undefined : ST.motoristas.size ? motoristasUnicos().filter((m) => motDisp(m, ui.data)).length : undefined,
     };
     CTX_V = VER;
     return CTX;
@@ -802,7 +807,10 @@
   const linkWhats = (r, p) => { const m = ST.motoristas.get(r.motoristaId); const tel = m && m.telefone ? m.telefone.replace(/\D/g, '') : ''; return 'https://wa.me/' + (tel ? (tel.length <= 11 ? '55' + tel : tel) : '') + '?text=' + encodeURIComponent(textoWhats(r, p)); };
 
   // ---------------- telas ----------------
-  const NAV = [['painel', 'Painel', I.painel], ['notas', 'Notas', I.notas], ['sobras', 'Sobras', I.sobra], ['rotas', 'Rotas', I.rotas], ['rom', 'Romaneios', I.rotas], ['carga', 'Carga', I.carga], ['rel', 'Relatórios', I.rel], ['cad', 'Cadastros', I.cad], ['cfg', 'Ajustes', I.cfg]];
+  const NAV = [['notas', '1. Notas', I.notas], ['veic', '2. Veículos do dia', I.carga], ['prog', '3. Programação', I.rotas], ['carga', '4. Carga', I.carga], ['rom', 'Romaneios', I.rotas], ['rel', 'Relatórios', I.rel], ['cad', 'Cadastros', I.cad], ['cfg', 'Ajustes', I.cfg]];
+  // nomes antigos das telas (links e preferências guardadas) levam para a tela nova
+  const ALIAS_TAB = { painel: 'prog', rotas: 'prog', sobras: 'notas' };
+  function normTab() { if (ALIAS_TAB[ui.tab]) { if (ui.tab === 'sobras') ui.notasSub = 'sobras'; ui.tab = ALIAS_TAB[ui.tab]; } }
   function shell() {
     const app = $('#app');
     if (!$('#main')) {
@@ -810,7 +818,7 @@
       document.body.insertAdjacentHTML('beforeend', '<datalist id="dlMun"></datalist>');
     }
     const pendentes = notasEnr().filter((n) => n.bloqueada && !['entregue', 'cancelada'].includes(n.status)).length;
-    $('#nav').innerHTML = NAV.filter(([k]) => k !== 'rom' || window.RC_HOST).map(([k, t, ic]) => '<button type="button" data-tab="' + k + '"' + (ui.tab === k ? ' aria-current="page"' : '') + '>' + ic + '<span>' + t + '</span>' + (k === 'notas' && pendentes ? '<span class="cnt">' + pendentes + '</span>' : '') + (k === 'sobras' && nPrior() ? '<span class="cnt">' + nPrior() + '</span>' : '') + '</button>').join('');
+    $('#nav').innerHTML = NAV.filter(([k]) => k !== 'rom' || window.RC_HOST).map(([k, t, ic]) => '<button type="button" data-tab="' + k + '"' + (ui.tab === k ? ' aria-current="page"' : '') + '>' + ic + '<span>' + t + '</span>' + (k === 'notas' && pendentes ? '<span class="cnt">' + pendentes + '</span>' : '') + (k === 'prog' && nPrior() ? '<span class="cnt">' + nPrior() + '</span>' : '') + '</button>').join('');
     $('#railFoot').innerHTML = '<div><span class="dot' + (DB.local ? ' local' : '') + '"></span>' + (DB.local ? 'Modo local: dados só neste navegador' : 'Banco de dados conectado') + '</div><div>Perfil: <b>' + (ST.admin ? 'Administrador' : 'Operador') + '</b></div>' + (window.RC_HOST ? '<button class="btn sm" id="rcAtualizar" data-a="atualizarSistema" style="margin-top:8px;width:100%;justify-content:center;background:transparent;color:#fff;border:1px solid rgba(255,255,255,.35)">' + (window.RC_HOST.novaVersao ? '🔄 Nova versão — atualizar' : '🔄 Atualizar sistema') + '</button>' : '');
   }
   const nPrior = () => [...ST.notas.values()].filter((n) => n.prioridade && !['entregue', 'cancelada'].includes(n.status)).length;
@@ -848,14 +856,44 @@
       '</div></div>';
     return h;
   }
-  // Escala do dia: marcar motoristas -> ideia de rota de cada um (recalcula sozinho)
-  function vEscala() {
+  function vVeiculos() {
+    const d = ui.data, dd = dispDia(d), modo = modoVeiculos(d);
+    let h = topo('2. Veículos do dia', 'Marque os veículos que vão sair em ' + dBR(d) + ' e o motorista de cada um. A programação usa só estes.', true);
+    const vs = [...ST.veiculos.values()].filter((v) => v.ativo !== false).sort((a, b) => ({ tubos: 0, van: 1, fiorino: 2 }[a.tipo] - { tubos: 0, van: 1, fiorino: 2 }[b.tipo]) || (a.nome || '').localeCompare(b.nome || '', 'pt-BR', { numeric: true }));
+    const mots = motoristasUnicos().slice().sort((a, b) => (b.ultimoUso || '').localeCompare(a.ultimoUso || '') || (a.nome || '').localeCompare(b.nome || ''));
+    const marc = vs.filter((v) => dd.veiculos[v.id] === true);
+    const usoMot = {}; for (const v of marc) { const m = dd.motoristaDe[v.id] || v.motoristaId; if (m) usoMot[m] = (usoMot[m] || 0) + 1; }
+    const { notas: eleg } = RE.elegiveis(notasEnr(), d, ctx());
+    const precisaTubo = eleg.filter((n) => n.exigeTubo || n.qtdTubos).length;
+    const cont = (t) => marc.filter((v) => v.tipo === t).length;
+    h += '<div class="card"><div class="row"><b>' + marc.length + ' veículo(s) marcados</b><span class="muted small">· ' + cont('tubos') + ' van com tubo · ' + cont('van') + ' van · ' + cont('fiorino') + ' fiorino</span><span class="spacer"></span>' +
+      (ST.admin ? '<button class="btn sm" data-a="vdiaFixos">Marcar os que têm motorista fixo</button><button class="btn sm ghost" data-a="vdiaLimpar">Desmarcar todos</button>' : '') +
+      '<button class="btn sm go" data-a="tab" data-v="prog">' + I.play + 'Ir para a Programação</button></div>' +
+      (!modo ? '<div class="note warn small" style="margin-top:10px">Nenhum veículo marcado para ' + dBR(d) + ': a programação usa os motoristas disponíveis, como antes. Marque abaixo os carros que vão sair.</div>' : '') +
+      (precisaTubo && modo && !cont('tubos') ? '<div class="note bad small" style="margin-top:10px">' + precisaTubo + ' nota(s) deste dia têm tubo e nenhuma van com tubo está marcada.</div>' : '') + '</div>';
+    h += '<div class="card"><div class="tbl-wrap"><table><thead><tr><th>Sai?</th><th>Veículo</th><th>Tipo</th><th>Capacidade</th><th>Motorista</th></tr></thead><tbody>' + vs.map((v) => {
+      const on = dd.veiculos[v.id] === true, ok = RE.veicDisponivel(v, d), mid = dd.motoristaDe[v.id] || v.motoristaId || '';
+      return '<tr' + (on ? ' style="background:var(--ok-bg,#ecfdf3)"' : '') + '><td><input type="checkbox" data-vdia="' + esc(v.id) + '"' + (on ? ' checked' : '') + (ok ? '' : ' disabled title="Em manutenção ou inativo"') + dis() + '></td><td><b>' + esc(v.nome) + '</b>' + (v.placa ? ' <span class="plate">' + esc(v.placa) + '</span>' : '') + (ok ? '' : ' <span class="chip bad">indisponível</span>') + '</td><td>' + esc(TIPO_CURTO[v.tipo] || v.tipo) + '</td><td class="small">' + nf(v.capKg, 0) + ' kg · ' + nf(v.capM3, 1) + ' m³</td><td><select data-vmot="' + esc(v.id) + '"' + dis() + ' style="width:auto"><option value="">— sem motorista —</option>' + mots.map((m) => '<option value="' + esc(m.id) + '"' + (m.id === mid ? ' selected' : '') + '>' + esc(m.nome) + (m.ultimoUso ? ' (rodou ' + dBR(m.ultimoUso).slice(0, 5) + ')' : '') + '</option>').join('') + '</select>' + (on && mid && usoMot[mid] > 1 ? ' <span class="chip bad">em 2 carros</span>' : '') + '</td></tr>';
+    }).join('') + '</tbody></table></div></div>';
+    return h;
+  }
+  async function salvarDispVeic(mut) {
     const d = ui.data, dd = dispDia(d);
+    const o = { data: d, veiculos: Object.assign({}, dd.veiculos), motoristas: Object.assign({}, dd.motoristas), motoristaDe: Object.assign({}, dd.motoristaDe) };
+    mut(o); await salvar('disponibilidade', d, o); ui.escalaSuja = true; render();
+  }
+  function rotinas() {
+    if (!ST.carregado || !ST.carregado.notas) return;
     if (window.RC_HOST && ST.admin && !ui.frotaAuto) { ui.frotaAuto = true; setTimeout(() => importarFrota(), 50); }
     if (window.RC_HOST && !ui.sswSync) { ui.sswSync = true; setTimeout(() => sincronizarSSW(), 80); }
+    if (window.RC_HOST && !ui.sbSyncIni) { ui.sbSyncIni = true; setTimeout(() => sincronizarSobras(), 2000); }
     if (!ui.juntAuto) { ui.juntAuto = true; setTimeout(() => juntarDuplicadasSSW().catch((e) => console.warn('juntar', e.message)), 2500); }
     if (!ui.sbNotasAuto) { ui.sbNotasAuto = true; setTimeout(() => notasDasSobras().catch((e) => console.warn('sobras→notas', e.message)), 1500); setInterval(() => notasDasSobras().catch(() => {}), 3 * 60000); }
     if (window.RC_HOST && !ui.geoAuto) { ui.geoAuto = true; setTimeout(() => localizarEnderecosXML(), 4000); setInterval(() => { if (document.visibilityState !== 'hidden') localizarEnderecosXML(); }, 10 * 60000); }
+  }
+  // Escala do dia: marcar motoristas -> ideia de rota de cada um (recalcula sozinho)
+  function vEscala() {
+    const d = ui.data, dd = dispDia(d);
     const todos = motoristasUnicos();
     const q = RE.norm(ui.motQ || '');
     const lista = (q ? todos.filter((m) => RE.norm(m.nome).includes(q)) : todos.filter((m) => motRecente(m, d) || dd.motoristas[m.id] === true))
@@ -970,9 +1008,41 @@
       }
     } finally { ui.geoRua = false; if (ok) { toast(ok + ' endereço(s) do XML localizados no mapa.'); ui.escalaSuja = true; } render(); }
   }
+  // nota sem CTRC (PDF, XML sem rua achada, sobra): procura a NF no SSW (opção 101), pega o CTRC, o frete do CT-e e o endereço do XML
+  function notasSemCtrc() {
+    const lim = Date.now() - 6 * 3600e3;
+    return [...ST.notas.values()].filter((n) => !n.ctrc && n.lat == null && n.numero && !['entregue', 'cancelada'].includes(n.status) && !n.bloqueioUsuario && !(n.geoNfEm && Date.parse(n.geoNfEm) > lim));
+  }
+  async function localizarPorNF() {
+    if (!window.RC_HOST || !window.RC_HOST.enderecosCtrc || ui.geoNf) { setTimeout(() => localizarRuasXML(), 200); return; }
+    const fila = notasSemCtrc(); if (!fila.length) { setTimeout(() => localizarRuasXML(), 200); return; }
+    ui.geoNf = { feitos: 0, total: fila.length }; let ok = 0;
+    try {
+      while (fila.length) {
+        const lote = fila.splice(0, 8);
+        let j; try { j = await window.RC_HOST.enderecosCtrc([], lote.map((n) => ({ id: n.id, nf: n.numero }))); } catch (e) { break; }
+        const por = new Map((j.rows || []).filter((r) => r.id).map((r) => [r.id, r])), it = [];
+        for (const n of lote) {
+          const r = por.get(n.id), o = ST.notas.get(n.id); if (!o || !r) continue;
+          const q = Object.assign({}, o, { geoNfEm: agoraISO() });
+          if (r.ok) {
+            q.ctrc = r.ctrc; if (r.frete > 0) q.freteCte = r.frete;
+            const m = RE.findMun(null, r.cidade || o.endereco.cidade, r.uf || o.endereco.uf);
+            q.endereco = Object.assign({}, o.endereco, { lgr: r.endereco || o.endereco.lgr, nro: r.numero || o.endereco.nro || '', bairro: r.bairro || o.endereco.bairro || '', cep: r.cep || o.endereco.cep || '', cidade: m ? m.nome : (r.cidade || o.endereco.cidade), uf: r.uf || o.endereco.uf, cMun: m ? m.cod : o.endereco.cMun });
+            if (r.destinatario && !o.destNome) q.destNome = r.destinatario;
+            q.geoFonte = 'XML do CT-e (achado pela NF)'; q.geoTentEm = agoraISO();
+            if (r.lat != null && !geoAproximado(r.precisao)) { q.lat = +r.lat; q.lon = +r.lon; ok++; }
+          }
+          it.push({ id: n.id, data: q });
+        }
+        await salvarVarios('notas', it); ui.geoNf.feitos += lote.length; render();
+        if (!(j.rows || []).length) break;
+      }
+    } finally { ui.geoNf = null; if (ok) { toast(ok + ' nota(s) localizadas pelo CT-e no SSW.'); ui.escalaSuja = true; } render(); setTimeout(() => localizarRuasXML(), 300); }
+  }
   async function localizarEnderecosXML() {
     if (!window.RC_HOST || !window.RC_HOST.enderecosCtrc || ui.geo) return;
-    let fila = notasSemEndereco(); if (!fila.length) { setTimeout(() => localizarRuasXML(), 200); return; }
+    let fila = notasSemEndereco(); if (!fila.length) { setTimeout(() => localizarPorNF(), 200); return; }
     ui.geo = { feitos: 0, total: fila.length, ok: 0 }; render();
     try {
       while (fila.length) {
@@ -1001,7 +1071,7 @@
     } finally {
       const g = ui.geo; ui.geo = null;
       if (g && g.ok) { toast(g.ok + ' endereço(s) localizados pelo XML do CT-e.'); ui.escalaSuja = true; }
-      render(); setTimeout(() => localizarRuasXML(), 500);
+      render(); setTimeout(() => localizarPorNF(), 500);
     }
   }
   async function sincronizarSSW() {
@@ -1028,7 +1098,8 @@
     const enr = notasEnr();
     const pend = enr.filter((n) => n.bloqueada && !['entregue', 'cancelada'].includes(n.status));
     let h = topo('Notas fiscais', enr.length + ' nota(s) no sistema · ' + pend.length + ' com dados pendentes');
-    h += '<div class="tabs" role="tablist"><button role="tab" aria-selected="' + (ui.notasSub === 'lista') + '" data-a="notasSub" data-v="lista">Lista</button><button role="tab" aria-selected="' + (ui.notasSub === 'importar') + '" data-a="notasSub" data-v="importar">Importar</button><button role="tab" aria-selected="' + (ui.notasSub === 'ssw') + '" data-a="notasSub" data-v="ssw">CTRCs disponíveis (SSW)</button><button role="tab" aria-selected="' + (ui.notasSub === 'inserir') + '" data-a="notasSub" data-v="inserir">Inserir nota</button><button role="tab" aria-selected="' + (ui.notasSub === 'revisao') + '" data-a="notasSub" data-v="revisao">Revisão de pendências' + (pend.length ? ' (' + pend.length + ')' : '') + '</button></div>';
+    h += '<div class="tabs" role="tablist"><button role="tab" aria-selected="' + (ui.notasSub === 'lista') + '" data-a="notasSub" data-v="lista">Lista</button><button role="tab" aria-selected="' + (ui.notasSub === 'importar') + '" data-a="notasSub" data-v="importar">Importar</button><button role="tab" aria-selected="' + (ui.notasSub === 'ssw') + '" data-a="notasSub" data-v="ssw">CTRCs disponíveis (SSW)</button><button role="tab" aria-selected="' + (ui.notasSub === 'inserir') + '" data-a="notasSub" data-v="inserir">Inserir nota</button><button role="tab" aria-selected="' + (ui.notasSub === 'revisao') + '" data-a="notasSub" data-v="revisao">Revisão de pendências' + (pend.length ? ' (' + pend.length + ')' : '') + '</button><button role="tab" aria-selected="' + (ui.notasSub === 'sobras') + '" data-a="notasSub" data-v="sobras">Sobras e galpão' + (sobrasAbertas().length ? ' (' + sobrasAbertas().length + ')' : '') + '</button></div>';
+    if (ui.notasSub === 'sobras') return h + vSobras(true);
     if (ui.notasSub === 'importar') return h + vImportar();
     if (ui.notasSub === 'ssw') return h + vSSW();
     if (ui.notasSub === 'inserir') return h + vInserir();
@@ -1608,11 +1679,11 @@
     }
     return h;
   }
-  function vSobras() {
+  function vSobras(embutido) {
     const d = ui.data;
     if (window.RC_HOST && !ui.sbSync && (!ui.sbSyncEm || Date.now() - ui.sbSyncEm > 5 * 60000)) setTimeout(sincronizarSobras, 60);
     const doDia = [...ST.sobras.values()].filter((s) => sobraVisivel(s, d));
-    let h = topo('Notas que ficaram', 'Digite o número da NF (ou várias, separadas por espaço): o sistema preenche o resto e sugere o motivo. Elas viram prioridade nas próximas rotas.', true);
+    let h = embutido ? '<p class="small muted" style="margin:4px 0 12px">Notas que ficaram no galpão (sobras): digite o número da NF (ou várias, separadas por espaço). Elas entram como prioridade na Programação, inclusive as com tubo.</p>' : topo('Notas que ficaram', 'Digite o número da NF (ou várias, separadas por espaço): o sistema preenche o resto e sugere o motivo. Elas viram prioridade nas próximas rotas.', true);
     const sb = ui.sb;
     h += '<div class="card"><div class="row"><label class="f" style="flex:1;min-width:200px">NF<input type="text" id="sbNF" inputmode="numeric" autocomplete="off" value="' + esc(sb ? sb.q : '') + '" placeholder="Ex.: 669950 669926"></label><button class="btn pri" data-a="sbBuscar" style="align-self:flex-end">Buscar</button></div>';
     if (sb) {
@@ -1702,8 +1773,16 @@
   function vRotas() {
     const p = plano();
     const combos = ST.cfg.combos || [];
-    let h = topo('Rotas', 'Seleção de veículos, sequência das entregas e resultado financeiro', true);
+    const d = ui.data, enr = notasEnr(), cx = ctx();
+    const { notas: eleg, fora: foraEleg } = RE.elegiveis(enr, d, cx, filtroCidades());
+    const vDisp = cx.veiculos.filter((v) => RE.veicDisponivel(v, d));
+    let h = topo('3. Programação', (p ? 'Plano ' + (p.status === 'aprovado' ? '<span class="chip ok">aprovado</span>' : '<span class="chip warn">rascunho</span>') + ' · ' : '') + eleg.length + ' nota(s) para ' + dBR(d) + ' · ' + vDisp.length + ' veículo(s) ' + (modoVeiculos(d) ? 'marcados' : 'disponíveis') + ' <a href="#" data-a="tab" data-v="veic">alterar</a>' + (ui.geo || ui.geoNf ? ' · localizando endereços no SSW…' : ''), true);
     if (!ST.notas.size) return h + vVazio();
+    // refaz sozinho quando mudam as notas ou os veículos (plano aprovado só com clique)
+    if (eleg.length && vDisp.length && !ui.calc && (!p || ui.escalaSuja) && !(p && p.status === 'aprovado') && ui.autoEm !== VER) { ui.autoEm = VER; ui.escalaSuja = false; setTimeout(() => { if (!ui.calc) otimizar(); }, 400); }
+    const semEnd = foraEleg.filter((f) => f.motivo === 'Sem endereço exato').length;
+    if (semEnd) h += '<div class="note warn small"><b>' + semEnd + ' nota(s) sem endereço exato</b> ficam fora até o XML (CT-e no SSW ou XML da NF) trazer rua e número' + (ui.geo || ui.geoNf ? ' — buscando agora…' : '.') + ' ' + (ST.admin ? '<button class="btn sm" data-a="aproxOk">Programar mesmo assim pelo centro da cidade</button>' : '') + '</div>';
+    if (!eleg.length) h += porQueSemNotas(d);
     h += '<div class="card"><div class="row"><button class="btn go" data-a="otimizar"' + (ui.calc ? ' disabled' : '') + '>' + I.play + (p ? 'Otimizar de novo' : 'Otimizar') + '</button>' +
       (p ? '<button class="btn" data-a="encaixar"' + (ui.calc ? ' disabled' : '') + ' title="Mantém as rotas atuais e encaixa as notas novas">Encaixar novas notas</button>' : '') +
       '<button class="btn" data-a="cenarios"' + (ui.calc ? ' disabled' : '') + '>Comparar cenários</button>' +
@@ -1721,10 +1800,12 @@
     const fr = frescor(p);
     if (fr && (fr.novas.length || fr.canceladas.length)) h += '<div class="note warn" style="margin-top:14px">Desde o cálculo: ' + (fr.novas.length ? '<b>' + fr.novas.length + ' nota(s) nova(s)</b> liberada(s) para esta data' : '') + (fr.novas.length && fr.canceladas.length ? ' e ' : '') + (fr.canceladas.length ? '<b>' + fr.canceladas.length + ' cancelada(s)</b> ainda no plano' : '') + '. Use “Encaixar novas notas” para manter as rotas atuais ou “Otimizar de novo” para refazer tudo.</div>';
     if (p.substituiuAprovado && p.status !== 'aprovado') h += '<div class="note warn" style="margin-top:14px">Este rascunho substituiu um plano aprovado. As notas voltaram a “Pronta” até a nova aprovação.</div>';
+    h += cruzamentoSobras(p, d);
     const t = p.totais;
     h += '<div class="kpis" style="margin-top:14px">' + kpi('Veículos', t.veiculos, '', 'de ' + p.veiculosDisponiveis) + kpi('Entregas', t.entregas, '', t.notas + ' NF') + kpi('Km', nf(t.km, 0)) + kpi('Receita', brl(t.receita)) + kpi('Custo', brl(t.custo)) + kpi('Lucro', brl(t.lucro), t.lucro >= 0 ? 'good' : 'bad', t.margem != null ? nf(t.margem, 1) + '%' : '') + '</div>';
     if (p.estimativa) h += '<p class="tiny" style="margin-top:8px">Rota estimada: distâncias em linha reta × fator ' + nf(ST.cfg.fatorRodoviario, 2) + ', velocidade média ' + ST.cfg.velocidadeMedia + ' km/h e posição pelo centro da cidade onde o cliente não tem coordenada confirmada. Pedágios conforme o cadastro das cidades.</p>';
     h += '<div class="split" style="margin-top:14px"><div>' + p.rotas.map((r) => vRota(p, r)).join('') + (p.rotas.length ? '' : '<div class="card empty"><h3>Nenhuma rota</h3><p>Nenhuma entrega coube na frota disponível ou nenhuma nota está liberada.</p></div>') + vFora(p) + '</div><div class="stack"><div class="card">' + mapaHTML(p, ui.mapaFoco) + (p.rotas.length > 1 ? '<div class="row" style="margin-top:10px"><span class="small muted">Mostrar</span><select id="fFoco"><option value="">Todas as rotas</option>' + p.rotas.map((r) => '<option value="' + esc(r.veiculoId) + '"' + (ui.mapaFoco === r.veiculoId ? ' selected' : '') + '>' + esc(r.veiculoNome) + '</option>').join('') + '</select></div>' : '') + '</div>' +
+      (() => { const al = RE.alertasPrazo(notasEnr(), ui.data, ctx()); return '<div class="card"><div class="card-h"><h2>Alertas de prazo</h2><span class="chip ' + (al.length ? 'bad' : 'ok') + '">' + al.length + '</span></div>' + (al.length ? '<div class="tbl-wrap"><table><tbody>' + al.slice(0, 10).map((a) => '<tr class="click" data-a="nota" data-v="' + esc(a.nota.id) + '"><td><b>NF ' + esc(a.nota.numero) + '</b><div class="tiny">' + esc(a.nota.destNome) + ' · ' + esc(a.nota.cidadeNome) + '</div></td><td class="small">' + esc(a.msg) + '</td></tr>').join('') + '</tbody></table></div>' + (al.length > 10 ? '<p class="tiny">+ ' + (al.length - 10) + ' alertas</p>' : '') : '<p class="muted small">Nenhum prazo em risco.</p>') + '</div>'; })() +
       '<div class="card"><details' + ((p.decisoes || []).length ? ' open' : '') + '><summary>Auditoria das decisões (' + ((p.decisoes || []).length + 2) + ')</summary><ul class="small" style="margin-top:8px;padding-left:18px">' + '<li>' + p.veiculosDisponiveis + ' veículo(s) disponível(is) em ' + dBR(p.data) + '; ' + (p.opcoes && p.opcoes.consolidar ? 'veículos só saem com entrega no limite do prazo.' : 'entregas liberadas saem assim que houver veículo.') + '</li><li>Cálculo em ' + nf((p.tempoMs || 0) / 1000, 1) + ' s; versão ' + (p.versao || 1) + (p.editadoManual ? ', com edições manuais' : '') + '.</li>' + (p.decisoes || []).map((d) => '<li>' + esc(d) + '</li>').join('') + (p.historico || []).map((x) => '<li class="muted">Versão ' + x.versao + ' (' + x.status + '): ' + (x.totais ? x.totais.veiculos + ' veículo(s), lucro ' + brl(x.totais.lucro) : '') + '</li>').join('') + '</ul></details></div></div></div>';
     return h;
   }
@@ -1895,10 +1976,12 @@
 
   // ---------------- render ----------------
   function render() {
+    normTab();
     lembrarUI();
     shell();
     const m = $('#main');
-    const V = { painel: vPainel, notas: vNotas, sobras: vSobras, rotas: vRotas, rom: vRomaneios, carga: vCarga, rel: vRel, cad: vCad, cfg: vCfg }[ui.tab] || vPainel;
+    rotinas();
+    const V = { notas: vNotas, veic: vVeiculos, prog: vRotas, rom: vRomaneios, carga: vCarga, rel: vRel, cad: vCad, cfg: vCfg }[ui.tab] || vNotas;
     let html;
     try { html = V(); } catch (e) { console.error(e); html = '<div class="note bad">Erro ao montar a tela: ' + esc(e.message) + '</div>'; }
     const sy = window.scrollY;
@@ -1999,6 +2082,12 @@
       case 'excluirSel': ui.confirmar = { a: 'excluirSel' }; render(); break;
       case 'fpcAdd': { const c = clone(ST.cfg); c.fretePctClientes = (c.fretePctClientes || []).concat([{ nome: '', pct: 0 }]); await salvar('cfg', 'main', c); render(); break; }
       case 'fpcDel': { const c = clone(ST.cfg); c.fretePctClientes = (c.fretePctClientes || []).filter((_, i) => i !== +v); await salvar('cfg', 'main', c); ui.escalaSuja = true; render(); break; }
+      case 'vdiaFixos': await salvarDispVeic((o) => { for (const x of ST.veiculos.values()) if (x.ativo !== false && x.motoristaId && RE.veicDisponivel(x, ui.data)) o.veiculos[x.id] = true; }); break;
+      case 'vdiaLimpar': await salvarDispVeic((o) => { o.veiculos = {}; o.motoristaDe = {}; }); break;
+      case 'aproxOk': {
+        const it = []; for (const n of notasEnr()) if (n.coordFonte !== 'confirmada' && !n.aproximadoOk && !['entregue', 'cancelada', 'em_rota'].includes(n.status)) { const o = ST.notas.get(n.id); if (o) it.push({ id: n.id, data: Object.assign({}, o, { aproximadoOk: true }) }); }
+        await salvarVarios('notas', it); registrar('Programação', it.length + ' nota(s) liberadas pelo centro da cidade'); ui.escalaSuja = true; render(); break;
+      }
       case 'semNotasPend': ui.tab = 'notas'; ui.notasSub = 'revisao'; render(); break;
       case 'semNotasForcar': {
         const d = ui.data, wd = RE.weekday(d), c = ctx(), it = [];
@@ -2052,6 +2141,8 @@
     if (el.dataset.selall) { const s = ui.notasSel || (ui.notasSel = new Set()); for (const c of $$('[data-sel]')) { if (el.checked) s.add(c.dataset.sel); else s.delete(c.dataset.sel); } ui.confirmar = null; render(); return; }
     if (el.id === 'fRomData') { if (el.value) { ui.romData = el.value; ui.romSel = null; ui.romTodos = false; render(); } return; }
     if (el.id === 'fData') { if (el.value) { ui.data = el.value; ui.cenarios = null; render(); } return; }
+    if (el.dataset.vdia) { const id = el.dataset.vdia, on = el.checked; await salvarDispVeic((o) => { if (on) o.veiculos[id] = true; else delete o.veiculos[id]; }); registrar('Veículos do dia', ((ST.veiculos.get(id) || {}).nome || id) + (on ? ' sai' : ' não sai') + ' em ' + dBR(ui.data)); return; }
+    if (el.dataset.vmot) { const id = el.dataset.vmot, m = el.value; await salvarDispVeic((o) => { if (m) o.motoristaDe[id] = m; else delete o.motoristaDe[id]; if (m) o.veiculos[id] = true; }); return; }
     if (el.dataset.disp) {
       const [t, id] = el.dataset.disp.split('|'); const d = ui.data; const dd = dispDia(d);
       const o = { data: d, veiculos: Object.assign({}, dd.veiculos), motoristas: Object.assign({}, dd.motoristas) };

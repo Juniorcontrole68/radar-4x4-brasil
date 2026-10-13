@@ -6540,15 +6540,27 @@ if(req.method==='POST'&&u.pathname==='/api/roteirizador/enderecos-ctrc'){try{
   const lista=[...new Set((Array.isArray(body.ctrcs)?body.ctrcs:[]).map(c=>String(c||'').toUpperCase().replace(/\s+/g,'')).filter(c=>/^[A-Z]{3}0*\d+-?\d$/.test(c)))].slice(0,12)
     .map(c=>c.includes('-')?c:c.slice(0,-1)+'-'+c.slice(-1));
   const rows=[];const t0=Date.now();
+  // notas sem CTRC: acha o CTRC pela NF na opção 101 (e o frete do CT-e, se já emitido), confere a NF no CT-e e lê o XML
+  const porNf=(Array.isArray(body.nfs)?body.nfs:[]).slice(0,8).map(x=>({id:String(x.id||''),nf:String(x.nf||'').replace(/\D/g,'').replace(/^0+/,'')})).filter(x=>x.nf);
+  const jobsNf=porNf.map(async x=>{
+    try{
+      const f=await fetchSsw101ByNf(x.nf);
+      if(!f||!f.ctrc){rows.push({id:x.id,nf:x.nf,ok:false,erro:'NF sem CT-e no SSW'});return}
+      const c=await routeBiparCte(f.ctrc);
+      const nfsCte=String(c.nf||'').split(/\s*,\s*/).map(v=>v.replace(/^0+/,''));
+      if(nfsCte.length&&nfsCte[0]&&!nfsCte.includes(x.nf)){rows.push({id:x.id,nf:x.nf,ok:false,erro:'CT-e '+f.ctrc+' é de outra NF'});return}
+      rows.push({id:x.id,nf:x.nf,ctrc:c.ctrc||f.ctrc,frete:Number(f.freight||0)||0,ok:true,endereco:c.endereco||'',numero:c.numero||'',bairro:c.bairro||'',cep:c.cep||'',complemento:c.complemento||'',cidade:c.cidade||'',uf:c.uf||'',lat:c.lat,lon:c.lon,precisao:c.precision||'',fonte:c.coordinateSource||c.enderecoFonte||'',destinatario:c.destinatario||'',telefone:c.telefone||''})
+    }catch(e){rows.push({id:x.id,nf:x.nf,ok:false,erro:String(e.message||e)})}
+  });
   await Promise.race([
-    Promise.all(lista.map(async ctrc=>{
+    Promise.all(jobsNf.concat(lista.map(async ctrc=>{
       try{const x=await routeBiparCte(ctrc);rows.push({ctrc,ok:true,endereco:x.endereco||'',numero:x.numero||'',bairro:x.bairro||'',cep:x.cep||'',complemento:x.complemento||'',cidade:x.cidade||'',uf:x.uf||'',lat:x.lat,lon:x.lon,precisao:x.precision||'',fonte:x.coordinateSource||x.enderecoFonte||'',destinatario:x.destinatario||'',telefone:x.telefone||''})}
       catch(e){const st=e.stop||null;rows.push({ctrc,ok:false,erro:String(e.message||e),endereco:'',destinatario:st?.destinatario||''})}
-    })),
+    }))),
     new Promise(r=>setTimeout(r,50000))
   ]);
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
-  return res.end(JSON.stringify({ok:true,rows,pedidos:lista.length,ms:Date.now()-t0}))
+  return res.end(JSON.stringify({ok:true,rows,pedidos:lista.length+porNf.length,ms:Date.now()-t0}))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(req.method==='POST'&&u.pathname==='/api/roteirizador/recalcular'){try{
   if(!dashboardHasAny(authUser,['dashboard','roteirizador','tracking','montar_carga']))return dashboardDeny(res);
