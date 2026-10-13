@@ -3369,14 +3369,37 @@ async function routeBaseGeo(){
   // Mantemos o ponto do CEP/logradouro como fallback operacional estável.
   return {...ROUTE_BASE_FALLBACK}
 }
+// Rotas por estrada (OSRM). Tenta o servidor da FOSSGIS e o público do OSRM, com nova tentativa quando
+// o servidor pede para esperar; guarda as respostas. Sem nenhum dos dois, a conta cai para a estimativa em linha reta.
+const OSRM_BASES=['https://routing.openstreetmap.de/routed-car','https://router.project-osrm.org'];
+const OSRM_CACHE=new Map();
+const OSRM_STATS={ok:0,falha:0,ultimaFalha:''};
+async function osrmGet(service,coords,query){
+  const key=service+'|'+coords+'|'+query,hit=OSRM_CACHE.get(key);
+  if(hit&&Date.now()-hit.at<6*60*60*1000)return hit.j;
+  let erro='';
+  for(const base of OSRM_BASES){
+    for(let tent=0;tent<2;tent++){
+      try{
+        const u=base+'/'+service+'/v1/driving/'+coords+'?'+query;
+        const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Roteirizador/1.0 (controle-coletas)'},signal:AbortSignal.timeout(25000)});
+        if(r.status===429||r.status>=500){erro=base+' HTTP '+r.status;await new Promise(ok=>setTimeout(ok,1200*(tent+1)));continue}
+        const j=await r.json();
+        if(r.ok&&j.code==='Ok'){OSRM_STATS.ok++;OSRM_CACHE.set(key,{at:Date.now(),j});if(OSRM_CACHE.size>400)OSRM_CACHE.delete(OSRM_CACHE.keys().next().value);return j}
+        erro=base+' '+(j.code||('HTTP '+r.status));break
+      }catch(e){erro=base+' '+String(e?.name||e?.message||e);break}
+    }
+  }
+  OSRM_STATS.falha++;OSRM_STATS.ultimaFalha=new Date().toISOString()+' '+erro;
+  console.log('OSRM sem resposta: '+erro);
+  return null
+}
 async function routeOsrmTable(points){
   if(points.length<2)return{matrix:[[0]],source:'single'};
   try{
-    const coords=points.map(p=>p.lon+','+p.lat).join(';');
-    const u='https://router.project-osrm.org/table/v1/driving/'+coords+'?annotations=distance';
-    const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Roteirizador/1.0'},signal:AbortSignal.timeout(20000)});
-    const j=await r.json();
-    if(!r.ok||j.code!=='Ok'||!Array.isArray(j.distances))throw new Error('OSRM table');
+    const coords=points.map(p=>(+p.lon).toFixed(6)+','+(+p.lat).toFixed(6)).join(';');
+    const j=await osrmGet('table',coords,'annotations=distance');
+    if(!j||!Array.isArray(j.distances))throw new Error('OSRM table');
     return{matrix:j.distances.map(row=>row.map(v=>Number.isFinite(v)?v:Infinity)),source:'OSRM'}
   }catch{
     const matrix=points.map(a=>points.map(b=>routeHaversine(a,b)*1.25));
@@ -3450,11 +3473,9 @@ function routeTwoOptOpen(order,m,endIndex){
 }
 async function routeGeometryFixedEnd(points,order,endIndex){
   try{
-    const seq=[0,...order,endIndex],coords=seq.map(i=>points[i].lon+','+points[i].lat).join(';');
-    const u='https://router.project-osrm.org/route/v1/driving/'+coords+'?overview=full&geometries=geojson&steps=false';
-    const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Roteirizador/1.0'},signal:AbortSignal.timeout(20000)});
-    const j=await r.json();
-    if(r.ok&&j.code==='Ok'&&j.routes?.[0])return{geometry:j.routes[0].geometry,distanceMeters:j.routes[0].distance,durationSeconds:j.routes[0].duration}
+    const seq=[0,...order,endIndex],coords=seq.map(i=>(+points[i].lon).toFixed(6)+','+(+points[i].lat).toFixed(6)).join(';');
+    const j=await osrmGet('route',coords,'overview=full&geometries=geojson&steps=false');
+    if(j&&j.routes?.[0])return{geometry:j.routes[0].geometry,distanceMeters:j.routes[0].distance,durationSeconds:j.routes[0].duration}
   }catch{}
   return{geometry:{type:'LineString',coordinates:[0,...order,endIndex].map(i=>[points[i].lon,points[i].lat])},distanceMeters:null,durationSeconds:null}
 }
@@ -3513,21 +3534,17 @@ function routeLegs(order,m,points){
 }
 async function routeGeometry(points,order){
   try{
-    const seq=[0,...order,0],coords=seq.map(i=>points[i].lon+','+points[i].lat).join(';');
-    const u='https://router.project-osrm.org/route/v1/driving/'+coords+'?overview=full&geometries=geojson&steps=false';
-    const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Roteirizador/1.0'},signal:AbortSignal.timeout(20000)});
-    const j=await r.json();
-    if(r.ok&&j.code==='Ok'&&j.routes?.[0])return{geometry:j.routes[0].geometry,distanceMeters:j.routes[0].distance,durationSeconds:j.routes[0].duration}
+    const seq=[0,...order,0],coords=seq.map(i=>(+points[i].lon).toFixed(6)+','+(+points[i].lat).toFixed(6)).join(';');
+    const j=await osrmGet('route',coords,'overview=full&geometries=geojson&steps=false');
+    if(j&&j.routes?.[0])return{geometry:j.routes[0].geometry,distanceMeters:j.routes[0].distance,durationSeconds:j.routes[0].duration}
   }catch{}
   return{geometry:{type:'LineString',coordinates:[0,...order,0].map(i=>[points[i].lon,points[i].lat])},distanceMeters:null,durationSeconds:null}
 }
 async function routeGeometryOpen(points,order){
   try{
-    const seq=[0,...order],coords=seq.map(i=>points[i].lon+','+points[i].lat).join(';');
-    const u='https://router.project-osrm.org/route/v1/driving/'+coords+'?overview=full&geometries=geojson&steps=false';
-    const r=await fetch(u,{headers:{'User-Agent':'CONSTRULOG-Roteirizador/1.0'},signal:AbortSignal.timeout(20000)});
-    const j=await r.json();
-    if(r.ok&&j.code==='Ok'&&j.routes?.[0])return{geometry:j.routes[0].geometry,distanceMeters:j.routes[0].distance,durationSeconds:j.routes[0].duration}
+    const seq=[0,...order],coords=seq.map(i=>(+points[i].lon).toFixed(6)+','+(+points[i].lat).toFixed(6)).join(';');
+    const j=await osrmGet('route',coords,'overview=full&geometries=geojson&steps=false');
+    if(j&&j.routes?.[0])return{geometry:j.routes[0].geometry,distanceMeters:j.routes[0].distance,durationSeconds:j.routes[0].duration}
   }catch{}
   return{geometry:{type:'LineString',coordinates:[0,...order].map(i=>[points[i].lon,points[i].lat])},distanceMeters:null,durationSeconds:null}
 }
@@ -3603,6 +3620,8 @@ async function routeFinalizePlan(stops,meta={}){
     legs=routeLegs(optimized,m,points)
   }
 
+  // km = o da rota por estrada (o mesmo traçado do mapa); a matriz só serve para escolher a ordem
+  if(Number.isFinite(geo?.distanceMeters)&&geo.distanceMeters>0)optMeters=geo.distanceMeters;
   return{
     ok:true,date:meta.date||'',baseAddress,radiusLimitKm:300,
     romaneio:meta.romaneio||'',motorista:meta.motorista||'',veiculo:meta.veiculo||'',

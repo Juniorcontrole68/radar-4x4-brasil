@@ -492,7 +492,7 @@
     const cidRot = new Map();
     rotas.forEach((r) => {
       const cor = corRota(plan, r.veiculoId);
-      const seq = [base].concat(r.paradas.filter((p) => p.lat != null)).concat([base]).map(P);
+      const seq = (r.tracado && r.tracado.length > 1 ? r.tracado.map(([lat, lon]) => ({ lat, lon })) : [base].concat(r.paradas.filter((p) => p.lat != null)).concat([base])).map(P);
       linhas += '<polyline points="' + seq.map((p) => p[0].toFixed(2) + ',' + p[1].toFixed(2)).join(' ') + '" fill="none" stroke="' + cor + '" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" opacity=".9"/>';
       r.paradas.forEach((p, i) => {
         if (p.lat == null) return;
@@ -512,7 +512,7 @@
     const legenda = rotas.map((r) => '<span><i style="background:' + corRota(plan, r.veiculoId) + '"></i>' + esc(r.veiculoNome) + ' · ' + r.paradas.length + ' parada(s)</span>').join('');
     return '<div class="map" data-map><svg viewBox="' + vb.map((v) => v.toFixed(2)).join(' ') + '" data-vb0="' + vb.join(',') + '" role="img" aria-label="Mapa das rotas"><g fill="var(--map-dot)">' + dots + '</g>' + linhas + rot + marcas + baseMk + '</svg>' +
       '<div class="ctl"><button type="button" data-z="1.4" aria-label="Aproximar">+</button><button type="button" data-z="0.7" aria-label="Afastar">−</button><button type="button" data-z="0" aria-label="Enquadrar">⟲</button></div>' +
-      '<div class="tag">' + (plan && plan.estimativa ? 'Traçado em linha reta entre paradas · posições sem coordenada confirmada usam o centro da cidade' : 'Pontos: municípios do IBGE') + '</div></div>' +
+      '<div class="tag">' + (plan && plan.rotas && plan.rotas.some((r) => r.tracado) ? 'Traçado pelas estradas' : plan && plan.estimativa ? 'Traçado em linha reta entre paradas · posições sem coordenada confirmada usam o centro da cidade' : 'Pontos: municípios do IBGE') + '</div></div>' +
       (legenda ? '<div class="legend">' + legenda + '</div>' : '');
   }
   function ativarMapas() {
@@ -1292,7 +1292,10 @@
         const horas = x.durationSeconds ? Math.floor(x.durationSeconds / 3600) + 'h' + String(Math.round(x.durationSeconds % 3600 / 60)).padStart(2, '0') : '—';
         const entregues = pts.filter((p) => p.entregue).length;
         h += '<div class="kpis">' + kpi('Km da rota', nf(kmDe(x), 0), '', 'ida e volta') + kpi('Entregas', pts.length) + kpi('Tempo de direção', horas) + kpi('Entregues', entregues, entregues === pts.length && pts.length ? 'good' : '') + (x.approximateStops ? kpi('Endereço aproximado', x.approximateStops, 'warn') : '') + '</div>';
-        const fake = { rotas: [{ veiculoId: 'rom', veiculoNome: 'Romaneio ' + rom, paradas: pts.map((p) => ({ lat: p.lat, lon: p.lon, cidadeId: p.cidade || '', cidadeNome: p.cidade || '' })) }], naoRoteirizadas: [], estimativa: true };
+        const tracado = (x.geometry && x.geometry.coordinates || []).filter((c, i, arr) => arr.length < 1500 || i % Math.ceil(arr.length / 1500) === 0).map((c) => [c[1], c[0]]);
+        const porEstrada = tracado.length > 2 && x.matrixSource !== 'estimada';
+        const fake = { rotas: [{ veiculoId: 'rom', veiculoNome: 'Romaneio ' + rom, tracado: porEstrada ? tracado : null, paradas: pts.map((p) => ({ lat: p.lat, lon: p.lon, cidadeId: p.cidade || '', cidadeNome: p.cidade || '' })) }], naoRoteirizadas: [], estimativa: !porEstrada };
+        if (!porEstrada) h += '<div class="note warn" style="margin-top:10px">O servidor de rotas por estrada não respondeu: o km acima é uma estimativa em linha reta. Clique em Atualizar daqui a pouco para recalcular.</div>';
         h += '<div style="margin-top:12px">' + mapaHTML(fake, null) + '</div>';
         h += '<div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>#</th><th>Destinatário</th><th>Cidade</th><th>Endereço</th><th>NF</th><th>CT-e</th><th>Situação</th></tr></thead><tbody>' +
           pts.map((p, i) => '<tr><td class="num">' + (i + 1) + '</td><td>' + esc(p.destinatario || p.label || '') + '</td><td>' + esc(p.cidade || '') + '</td><td class="small">' + esc([p.endereco, p.numero, p.bairro].filter(Boolean).join(', ')) + (p.precision && /aproximado|cidade|cliente/.test(p.precision) ? ' <span class="chip warn">aproximado</span>' : '') + '</td><td class="mono small">' + esc(p.nf || '') + '</td><td class="mono small">' + esc(p.ctrc || '') + '</td><td>' + (p.entregue ? '<span class="chip ok">entregue</span>' : '<span class="chip">a entregar</span>') + '</td></tr>').join('') +

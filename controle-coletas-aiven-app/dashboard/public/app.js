@@ -3946,6 +3946,7 @@ async function trackingRoutePopup(item,button){
     TRACKING_POP_MAP=L.map(box,{zoomControl:true});
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(TRACKING_POP_MAP);
     const coords=(plan.geometry?.coordinates||[]).map(c=>[c[1],c[0]]);
+    if(coords.length<=paradas.length+2||plan.matrixSource==='estimada')d.querySelector('#trpSub').textContent+=' • ⚠ servidor de rotas por estrada sem resposta: km e traçado estimados em linha reta, tente de novo em instantes';
     const linha=coords.length>1?coords:[pts[0],...paradas,pts[0]].filter(p=>Number.isFinite(Number(p.lat))).map(p=>[Number(p.lat),Number(p.lon)]);
     const pl=L.polyline(linha,{color:'#2563eb',weight:5,opacity:.85}).addTo(TRACKING_POP_MAP);
     const b0=pts[0];if(Number.isFinite(Number(b0.lat)))L.marker([b0.lat,b0.lon],{icon:L.divIcon({className:'',html:'<div style="background:#f5b301;color:#16142f;font-weight:800;border-radius:6px;padding:2px 6px;border:2px solid #16142f">BASE</div>',iconSize:[46,22],iconAnchor:[23,11]})}).addTo(TRACKING_POP_MAP).bindTooltip('Base');
