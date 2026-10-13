@@ -6024,7 +6024,7 @@ if(u.pathname==='/api/tracking/planned-route'&&req.method==='GET'){try{
     u.searchParams.get('date')||spDateISO(),
     u.searchParams.get('driver')||'',
     u.searchParams.get('plate')||'',
-    authUser.internal?1:0          // rota do dia pedida pelo aplicativo do motorista (ou simulação): lê do SSW
+    authUser.internal||u.searchParams.get('prioridade')==='1'?1:0          // rota do dia pedida pelo aplicativo do motorista, simulação ou quem está olhando a tela: na frente da fila do SSW
   );
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))

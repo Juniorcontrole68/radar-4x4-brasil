@@ -3087,7 +3087,7 @@ function printTrackingHistory(){
 async function trackingFetchPlan(romaneio,date){
   const key=date+'|'+romaneio,hit=TRACKING_PLAN_CACHE.get(key);
   if(hit&&Date.now()-hit.at<30*1000)return hit.value;
-  const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(date)+'&romaneio='+encodeURIComponent(romaneio)+'&t='+Date.now(),{cache:'no-store'});
+  const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(date)+'&romaneio='+encodeURIComponent(romaneio)+'&prioridade=1&t='+Date.now(),{cache:'no-store'});
   const j=await r.json().catch(()=>({}));
   if(!r.ok||!j.ok)throw new Error(j.error||('Falha ao montar rota '+romaneio));
   TRACKING_PLAN_CACHE.set(key,{at:Date.now(),value:j});
@@ -3099,7 +3099,7 @@ async function trackingBuildLogicalPlan(row,date){
   const key='manifestos|'+date+'|'+trackingDriverKey(driver,plate),hit=TRACKING_PLAN_CACHE.get(key);
   if(hit&&Date.now()-hit.at<20*1000)return hit.value;
   try{
-    const q=new URLSearchParams({date,driver,plate,t:String(Date.now())});
+    const q=new URLSearchParams({date,driver,plate,prioridade:'1',t:String(Date.now())});
     const r=await fetch('/api/tracking/planned-route?'+q.toString(),{cache:'no-store'});
     const j=await r.json().catch(()=>({}));
     if(r.ok&&j.ok){
@@ -3896,7 +3896,7 @@ function trackingExportOpen(){
 }
 // Simulação: gera um link para abrir a rota de hoje de um motorista no MOVIT de quem está na central.
 // Pop-up "Simular rota": mapa da rota de hoje do motorista, paradas na ordem e km total.
-let TRACKING_POP_MAP=null;
+let TRACKING_POP_MAP=null;const TRACKING_POP_CACHE=new Map();
 function trackingRoutePopupEl(){
   let d=document.getElementById('trackingRoutePop');
   if(d)return d;
@@ -3920,8 +3920,16 @@ async function trackingRoutePopup(item,button){
   d.querySelector('#trpPhone').onclick=e=>{d.close();trackingSimulateRoute(item,null)};
   if(!d.open)d.showModal();
   const label=button?button.textContent:'';if(button){button.disabled=true;button.textContent='Montando…'}
+  const t0=Date.now(),sub=d.querySelector('#trpSub'),lista=d.querySelector('#trpList');
+  const tick=setInterval(()=>{const s=Math.round((Date.now()-t0)/1000);sub.textContent='Montando a rota com as entregas dos romaneios… '+s+' s';lista.innerHTML='<div class="muted" style="padding:16px">Localizando os endereços das entregas e calculando a melhor ordem pelas ruas.<br><br>Na primeira vez de cada romaneio isso pode levar até 1 minuto; depois abre na hora.</div>'},1000);
   try{
-    const plan=await trackingBuildLogicalPlan(item.r,iso(new Date()));
+    const ck=trackingDriverKey(item.r.driver_name||'',item.r.vehicle_plate||''),hit=TRACKING_POP_CACHE.get(ck);
+    const plan=hit&&Date.now()-hit.at<5*60*1000?hit.plan:await Promise.race([
+      trackingBuildLogicalPlan(item.r,iso(new Date())),
+      new Promise((_,no)=>setTimeout(()=>no(new Error('A rota demorou mais de 2 minutos para ficar pronta. Feche e tente de novo em instantes: o que já foi calculado fica guardado.')),120000))
+    ]);
+    if(plan)TRACKING_POP_CACHE.set(ck,{at:Date.now(),plan});
+    clearInterval(tick);
     if(!plan||!(plan.points||plan.stops||[]).length)throw new Error('Não encontrei entregas com localização nos romaneios de hoje deste motorista.');
     const pts=plan.points||[{label:'Base',lat:-22.739,lon:-47.331},...plan.stops];
     const ordem=(plan.optimizedOrder||pts.map((_,i)=>i)).filter(i=>i>0&&pts[i]);
@@ -3945,9 +3953,10 @@ async function trackingRoutePopup(item,button){
       L.marker([p.lat,p.lon],{icon:L.divIcon({className:'',html:'<div style="width:24px;height:24px;border-radius:50%;background:'+(ok?'#16a34a':'#2563eb')+';color:#fff;font:700 12px system-ui;display:grid;place-items:center;border:2px solid #fff;box-shadow:0 1px 4px #0006">'+(i+1)+'</div>',iconSize:[24,24],iconAnchor:[12,12]})}).addTo(TRACKING_POP_MAP).bindTooltip((i+1)+'. '+(p.destinatario||p.label||'')+(p.cidade?' • '+p.cidade:''))});
     setTimeout(()=>{TRACKING_POP_MAP.invalidateSize();try{TRACKING_POP_MAP.fitBounds(pl.getBounds(),{padding:[24,24]})}catch{}},60)
   }catch(e){
+    clearInterval(tick);
     d.querySelector('#trpSub').textContent='';
     d.querySelector('#trpList').innerHTML='<div style="padding:16px;color:#b91c1c">'+safe(e.message)+'</div>'
-  }finally{if(button){button.disabled=false;button.textContent=label}}
+  }finally{clearInterval(tick);if(button){button.disabled=false;button.textContent=label}}
 }
 async function trackingSimulateRoute(item,button){
   const box=$('#trackingSimBox');if(!box)return;
