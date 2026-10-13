@@ -905,11 +905,17 @@
       (tot > pag ? '<div class="row" style="margin-top:10px"><button class="btn sm" data-a="pag" data-v="-1"' + (pg === 0 ? ' disabled' : '') + '>Anteriores</button><span class="small muted">' + (pg * pag + 1) + '–' + Math.min(tot, pg * pag + pag) + ' de ' + tot + '</span><button class="btn sm" data-a="pag" data-v="1"' + (pg * pag + pag >= tot ? ' disabled' : '') + '>Próximas</button></div>' : '') + '</div>';
     return h;
   }
+  const btnCopiarNF = (nf) => nf ? '<button type="button" class="copiar-nf" data-a="copiarNF" data-v="' + esc(nf) + '" title="Copiar NF ' + esc(nf) + '" aria-label="Copiar NF ' + esc(nf) + '"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>' : '';
+  async function copiarTexto(t) {
+    try { await navigator.clipboard.writeText(t); return true; } catch (e) {
+      try { const x = document.createElement('textarea'); x.value = t; x.style.position = 'fixed'; x.style.opacity = '0'; document.body.appendChild(x); x.select(); const ok = document.execCommand('copy'); x.remove(); return ok; } catch (e2) { return false; }
+    }
+  }
   function chipStatus(n) {
     if (n.status === 'cancelada') return '<span class="chip">Cancelada</span>';
     if (n.status === 'entregue') return '<span class="chip ok">Entregue</span>';
     if (n.status === 'em_rota') return '<span class="chip info">Em rota</span>';
-    if (n.bloqueada) return '<span class="chip bad">Pendente</span>';
+    if (n.bloqueada) return '<span class="chip bad">Pendente</span>' + btnCopiarNF(n.numero);
     if (n.prioridade && n.status !== 'roteirizada') return '<span class="chip bad" title="' + esc(((n.ocorrencias || []).slice(-1)[0] || {}).motivo || '') + '">Prioridade</span>' + (n.avisos.length ? ' <span class="chip warn">' + n.avisos.length + '</span>' : '');
     if (n.status === 'roteirizada') return '<span class="chip info">Roteirizada ' + dBR(n.planoData) + '</span>';
     return '<span class="chip ok">Pronta</span>' + (n.avisos.length ? ' <span class="chip warn" title="' + esc(n.avisos.map((a) => a.msg).join('\n')) + '">' + n.avisos.length + ' aviso' + (n.avisos.length > 1 ? 's' : '') + '</span>' : '');
@@ -1703,6 +1709,7 @@
       case 'sbBuscar': buscarSobra(); break;
       case 'sbLimpar': ui.sb = null; render(); setTimeout(() => { const i = $('#sbNF'); if (i) i.focus(); }, 30); break;
       case 'sbRegistrar': await registrarSobra(); break;
+      case 'copiarNF': { const ok = await copiarTexto(v); toast(ok ? 'NF ' + v + ' copiada.' : 'Não consegui copiar a NF ' + v + '.', !ok); break; }
       case 'sswAtualizar': await atualizarSSW(true); break;
       case 'romAtualizar': ui.romCache = {}; await carregarRomaneios(true); break;
       case 'romVer': await roteirizarRomaneio(v, true); break;
