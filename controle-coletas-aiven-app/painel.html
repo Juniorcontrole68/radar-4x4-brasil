@@ -112,6 +112,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
       <span class="subtab-label">Financeiro</span>
       <button class="tab" data-group="financeiro" data-module="fin-op" data-src="/dashboard/?embed=1&view=financeiro-op" data-name="Financeiro">💰 Financeiro</button>
       <button class="tab" data-group="financeiro" data-module="receita-ssw" data-src="/dashboard/?embed=1&view=receita-ssw" data-name="Receita SSW">💵 Receita SSW</button>
+      <button class="tab" data-group="financeiro" data-module="faturas" data-src="/dashboard/?embed=1&view=faturas" data-name="Faturas em aberto">🧾 Faturas em aberto</button>
       <button class="tab" data-group="financeiro" data-module="remetentes" data-src="/dashboard/?embed=1&view=ssw-remetentes" data-name="Entregas por Cliente Remetente">📦 Entregas por Cliente Remetente</button>
     </div>
   </div>
@@ -181,6 +182,7 @@ function moduleAllowed(mod){
   if(mod==='fin-op')return licensed('dashboards')&&hasPerm('financeiro');
   if(mod==='receita-ssw')return licensed('dashboards')&&hasPerm('receita_ssw');
   if(mod==='remetentes')return licensed('dashboards')&&hasPerm('remetentes');
+  if(mod==='faturas')return licensed('dashboards')&&hasPerm('financeiro');
   if(mod==='lotacao')return licensed('lotacao')&&(moduleAllowed('coletas')||moduleAllowed('financeiro-lotacao'));
   if(mod==='agendamento-teste')return licensed('agendamento')&&(hasPerm('agendamentos')||hasPerm('dashboard'));
   if(mod==='contas')return licensed('contas_pagar')&&hasPerm('contas_pagar');
@@ -194,7 +196,7 @@ function applyModulePermissions(){
   const operacaoMods=['dashboard','agendamento-teste','programacao','lancamentos','carga','roteirizador-cargas','tracking'];
   document.querySelector('.group-card[data-group="lotacao"]')?.style.setProperty('display',lotacaoOk?'flex':'none');
   document.querySelector('.group-card[data-group="operacao"]')?.style.setProperty('display',licensed('operacao')&&operacaoMods.some(moduleAllowed)?'flex':'none');
-  document.querySelector('.group-card[data-group="financeiro"]')?.style.setProperty('display',['fin-op','receita-ssw','remetentes'].some(moduleAllowed)?'flex':'none');
+  document.querySelector('.group-card[data-group="financeiro"]')?.style.setProperty('display',['fin-op','receita-ssw','remetentes','faturas'].some(moduleAllowed)?'flex':'none');
   const company=AUTH?.client?.name?(' • '+AUTH.client.name):'';
   document.getElementById('sessionUser').textContent=AUTH?(AUTH.username+company+(AUTH.is_admin?' • Administrador':'')):'';
   const alert=document.getElementById('licenseAlert');
@@ -244,7 +246,7 @@ async function abrirModulo(btn){
   try{
     let src=btn.dataset.src;
     const sep=src.includes('?')?'&':'?';
-    if(mod==='dashboard'||mod==='dashboards'||mod==='programacao'||mod==='carga'||mod==='lancamentos'||mod==='tracking'||mod==='agendamento-teste'||mod==='fin-op'||mod==='receita-ssw'||mod==='remetentes'){
+    if(mod==='dashboard'||mod==='dashboards'||mod==='programacao'||mod==='carga'||mod==='lancamentos'||mod==='tracking'||mod==='agendamento-teste'||mod==='fin-op'||mod==='receita-ssw'||mod==='remetentes'||mod==='faturas'){
       DASH_FRAME_TOKEN='';
       const ticket=await dashboardTicket();
       src += sep+'ticket='+encodeURIComponent(ticket)+'&refresh='+Date.now();

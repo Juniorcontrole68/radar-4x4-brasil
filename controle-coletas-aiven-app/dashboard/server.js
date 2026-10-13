@@ -4729,6 +4729,103 @@ async function buildSlaClientes(from,to){
   SLA_CACHE.set(ck,{at:Date.now(),value});
   return value
 }
+// ---- Faturas (SSW opção 457 / tela 104 "Situação de Faturas"): lê pelo "Período de pesquisa".
+// O formulário é lido na hora (nome dos campos e ação do ▶ vêm da própria tela). Só consulta.
+const FATURAS_CACHE={at:0,key:'',value:null};
+const ddmmaa=iso=>{const m=String(iso||'').match(/^(\d{4})-(\d{2})-(\d{2})/);return m?m[3]+m[2]+m[1].slice(2):''};
+function fatNum(v){const t=String(v||'').replace(/[^\d,.\-]/g,'');if(!t)return 0;const n=Number(t.includes(',')?t.replace(/\./g,'').replace(',','.'):t);return Number.isFinite(n)?n:0}
+function fatTokens(html){
+  // sequência de textos visíveis, campos e ações (▶) na ordem em que aparecem no formulário
+  const out=[],re=/<input\b([^>]*)>|ajaxEnvia\(\s*['"]([^'"]+)['"]|>([^<>]{2,120})</gi;let m;
+  while((m=re.exec(html))){
+    if(m[1]!==undefined){const a=m[1],g=n=>(a.match(new RegExp('\\b'+n+'=["\']?([^"\'\\s>]*)','i'))||[])[1]||'';const type=g('type').toLowerCase();if(type==='hidden'||type==='button'||type==='submit')continue;out.push({t:'in',name:g('name'),val:g('value'),pos:m.index})}
+    else if(m[2])out.push({t:'act',act:m[2],pos:m.index});
+    else{const tx=htmlText38(m[3]).trim();if(tx)out.push({t:'tx',tx,pos:m.index})}
+  }
+  return out
+}
+function fatBloco(tokens,rotulo){
+  const i=tokens.findIndex(x=>x.t==='tx'&&rotulo.test(x.tx));if(i<0)return null;
+  const ins=[];let act='';
+  for(let k=i+1;k<tokens.length;k++){const x=tokens[k];if(x.t==='in')ins.push(x);else if(x.t==='act'){act=x.act;break}}
+  return{ins,act}
+}
+function fatParseLista(html){
+  const tot={};
+  for(const[k,re]of[['valor',/Valor\s+Fatura:?\s*<?[^0-9]*([\d.]+,\d{2})/i],['pendente',/Pendente:?\s*[^0-9]*([\d.]+,\d{2})/i],['liquidado',/Liquidado:?\s*[^0-9]*([\d.]+,\d{2})/i],['atrasado',/Atrasado:?\s*[^0-9]*([\d.]+,\d{2})/i],['cancelado',/Cancelado:?\s*[^0-9]*([\d.]+,\d{2})/i],['perdido',/Perdido:?\s*[^0-9]*([\d.]+,\d{2})/i]]){
+    const m=htmlText38(html.replace(/<[^>]+>/g,' ')).match(re);if(m)tot[k]=fatNum(m[1])}
+  const linhas=[...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(m=>[...m[1].matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(c=>htmlText38(c[1].replace(/<[^>]+>/g,' ')).replace(/\s+/g,' ').trim()));
+  const hi=linhas.findIndex(c=>c.some(x=>/^fatura$/i.test(x))&&c.some(x=>/vencimento/i.test(x)));
+  const faturas=[];let header=[];
+  if(hi>=0){
+    header=linhas[hi];
+    const col=re=>header.findIndex(h=>re.test(h));
+    const cF=col(/^fatura/i),cCob=col(/cobran/i),cPag=col(/pagador/i),cVen=col(/^vencimento/i),cNov=col(/novo/i),cLiq=col(/liquida/i),cVal=col(/valor da f/i),cPago=col(/valor pago/i),cSal=col(/valor do s|saldo/i),cSit=col(/situa/i);
+    for(const c of linhas.slice(hi+1)){
+      if(c.length<header.length-1||!/^\d+/.test(c[cF]||''))continue;
+      faturas.push({fatura:c[cF],cobranca:c[cCob]||'',pagador:c[cPag]||'',vencimento:slaIso(c[cVen]),novoVencimento:slaIso(c[cNov]),liquidacao:slaIso(c[cLiq]),valor:fatNum(c[cVal]),pago:fatNum(c[cPago]),saldo:fatNum(c[cSal]),situacao:(c[cSit]||'').toUpperCase()})
+    }
+  }
+  return{tot,faturas,header}
+}
+async function buildFaturasSsw(de,ate,diag=false){
+  const hoje=spDateISO();
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(ate||''))ate=hoje;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(de||'')){const d=new Date(ate+'T12:00:00Z');d.setUTCMonth(d.getUTCMonth()-6);de=d.toISOString().slice(0,10)}
+  const key=de+'|'+ate;
+  if(!diag&&FATURAS_CACHE.key===key&&Date.now()-FATURAS_CACHE.at<10*60*1000)return FATURAS_CACHE.value;
+  if(!internalSswConfigured())throw new Error('Acesso ao SSW não configurado no servidor.');
+  const {apply,cookie}=await sswLoginFresh('faturas457');
+  const hdr=ref=>({'User-Agent':SSW_UA,'Cookie':cookie(),'Referer':ref||'https://sistema.ssw.inf.br/bin/menu01'});
+  // contas a receber fica na matriz; tenta a matriz e depois a unidade de Americana
+  let prog='ssw0183',form='',tokens=[],bloco=null;
+  for(const un of ['MTZ','AMR']){
+    let rr=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2='+un+'&f3=457',{headers:hdr(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
+    const nav=await rr.text();prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0183';
+    rr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:hdr(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
+    form=await rr.text();tokens=fatTokens(form);bloco=fatBloco(tokens,/per[ií]odo de pesquisa/i);
+    if(bloco&&bloco.ins.length>=2&&bloco.act)break
+  }
+  const info={prog,campos:tokens.filter(x=>x.t!=='tx'||x.tx.length<40).slice(0,80).map(x=>x.t==='in'?'['+x.name+'='+x.val+']':x.t==='act'?'<'+x.act+'>':x.tx)};
+  if(!bloco||bloco.ins.length<2||!bloco.act){const e=new Error('Não reconheci o formulário da opção 457 do SSW.');e.diag=info;throw e}
+  const params=deliveryProgramFormParams(form);
+  params.set(bloco.ins[0].name,ddmmaa(de));params.set(bloco.ins[1].name,ddmmaa(ate));params.set('act',bloco.act);
+  const post=async p=>{const r=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{method:'POST',headers:{...hdr('https://sistema.ssw.inf.br/bin/'+prog),'Content-Type':'application/x-www-form-urlencoded'},body:p.toString(),redirect:'manual',signal:AbortSignal.timeout(30000)});apply(r.headers);return await r.text()};
+  let html=await post(params);
+  let lista=fatParseLista(html);
+  info.acoesResultado=[...new Set([...html.matchAll(/ajaxEnvia\(\s*['"]([^'"]+)['"]/gi)].map(m=>m[1]))].slice(0,30);
+  info.cabecalho=lista.header;
+  if(!lista.header.length){info.inicio=htmlText38(html.replace(/<script[\s\S]*?<\/script>/gi,'').replace(/<[^>]+>/g,' ')).replace(/\s+/g,' ').slice(0,600);const e=new Error('O SSW não devolveu a lista de faturas.');e.diag=info;throw e}
+  // páginas seguintes (setas do rodapé): tenta a ação de "próxima" enquanto vierem faturas novas
+  const vistas=new Set(lista.faturas.map(f=>f.fatura));let todas=lista.faturas.slice();
+  const prox=info.acoesResultado.find(a=>/^(PRX|PROX|NEXT|PGD|DES|DOWN|AVA|SEG)/i.test(a));
+  if(prox){
+    for(let pg=0;pg<40;pg++){
+      const p2=deliveryProgramFormParams(html);p2.set('act',prox);
+      html=await post(p2);const l2=fatParseLista(html);const novas=l2.faturas.filter(f=>!vistas.has(f.fatura));
+      if(!novas.length)break;novas.forEach(f=>{vistas.add(f.fatura);todas.push(f)})
+    }
+  }
+  info.paginacao=prox||'(sem ação de próxima página encontrada)';
+  // resumo: em aberto = saldo > 0 e não liquidada/cancelada/perdida
+  const aberta=f=>f.saldo>0&&!/LIQUID|CANCEL|PERDID/.test(f.situacao);
+  const abertas=todas.filter(aberta).map(f=>{const v=f.novoVencimento||f.vencimento;return{...f,venc:v,diasAtraso:v&&v<hoje?slaDias(v,hoje):0}});
+  const faixa=f=>f.diasAtraso<=0?'aVencer':f.diasAtraso<=30?'ate30':f.diasAtraso<=60?'ate60':'mais60';
+  const faixas={aVencer:0,ate30:0,ate60:0,mais60:0};abertas.forEach(f=>faixas[faixa(f)]+=f.saldo);
+  const porCli=new Map();
+  for(const f of abertas){const g=porCli.get(f.pagador)||{pagador:f.pagador,faturas:0,saldo:0,vencido:0,maisAntiga:''};g.faturas++;g.saldo+=f.saldo;if(f.diasAtraso>0)g.vencido+=f.saldo;if(!g.maisAntiga||f.venc<g.maisAntiga)g.maisAntiga=f.venc;porCli.set(f.pagador,g)}
+  const r2=x=>Math.round(x*100)/100;
+  const value={ok:true,de,ate,fonte:'SSW opção 457 • Situação de Faturas',lidoEm:new Date().toISOString(),
+    totaisSsw:lista.tot,
+    emAberto:r2(abertas.reduce((t,f)=>t+f.saldo,0)),vencido:r2(abertas.filter(f=>f.diasAtraso>0).reduce((t,f)=>t+f.saldo,0)),
+    qtdAbertas:abertas.length,qtdLidas:todas.length,faixas:Object.fromEntries(Object.entries(faixas).map(([k,v])=>[k,r2(v)])),
+    clientes:[...porCli.values()].map(g=>({...g,saldo:r2(g.saldo),vencido:r2(g.vencido)})).sort((a,b)=>b.saldo-a.saldo),
+    faturas:abertas.sort((a,b)=>b.diasAtraso-a.diasAtraso||String(a.venc).localeCompare(String(b.venc))),
+    diag:diag?info:undefined};
+  if(!diag){FATURAS_CACHE.key=key;FATURAS_CACHE.at=Date.now();FATURAS_CACHE.value=value}
+  console.log('FATURAS SSW: '+JSON.stringify({de,ate,lidas:todas.length,abertas:abertas.length,emAberto:value.emAberto,paginacao:info.paginacao}));
+  return value
+}
 async function buildBi2Remetentes(from='',to=''){let rows=[],meta={},period=null;if(from&&to){const snaps=await fetchBi2RangeParsed(13,from,to);rows=mergeUniqueBi2Rows(snaps);period=bi2PeriodInfo(snaps,from,to);const latest=[...snaps].reverse().find(x=>x.ok);meta=latest?latest.meta:{}}else{const rep=await fetchBi2Report(13),p=parseBi2Csv(rep.text);rows=p.rows;meta=p.meta}const groups=new Map();for(const r of rows){const nome=pickField(r,'REMETENTE')||'Não informado';if(!groups.has(nome))groups.set(nome,{remetente:nome,ctrcs:0,frete:0,valorMercadoria:0,volumes:0,peso:0,m3:0,atrasoTotal:0,atrasoN:0,cidades:new Set(),destinatarios:new Set()});const g=groups.get(nome);g.ctrcs++;g.frete+=bi2Number(pickField(r,'FRETE'));g.valorMercadoria+=bi2Number(pickField(r,'VAL MERC'));g.volumes+=bi2Number(pickField(r,'QTD VOLUMES'));g.peso+=bi2Number(pickField(r,'PESO'));g.m3+=bi2Number(pickField(r,'M3'));const av=bi2Number(pickField(r,'ATRASO'));if(av||String(pickField(r,'ATRASO')).trim()==='0'){g.atrasoTotal+=av;g.atrasoN++}const cid=pickField(r,'CIDADE DESTINO');if(cid)g.cidades.add(cid);const dst=pickField(r,'DESTINATARIO');if(dst)g.destinatarios.add(dst)}const clientes=[...groups.values()].map(g=>({remetente:g.remetente,ctrcs:g.ctrcs,frete:g.frete,valorMercadoria:g.valorMercadoria,volumes:g.volumes,peso:g.peso,m3:g.m3,atrasoMedio:g.atrasoN?g.atrasoTotal/g.atrasoN:0,cidades:g.cidades.size,destinatarios:g.destinatarios.size})).sort((a,b)=>b.ctrcs-a.ctrcs);const hist=period?' • '+period.daysAvailable+'/'+period.daysRequested+' dia(s) com arquivo BI2':'';return{ok:true,sourceCode:13,sourceName:meta.relatorio||'CT-es atrasados',limited:true,note:'Base atual do BI2: CT-es atrasados únicos observados no período. O relatório 083 de performance por cliente emitente ainda não está disponível.'+hist,meta,period,totalClientes:clientes.length,totalCtrcs:rows.length,totalFrete:sumField(rows,['FRETE']),totalMercadoria:sumField(rows,['VAL MERC']),totalVolumes:sumField(rows,['QTD VOLUMES']),clientes}}
 async function buildBi2Atrasos(from='',to=''){let rows=[],meta={},bytes=0,headers=[],period=null;if(from&&to){const snaps=await fetchBi2RangeParsed(13,from,to);rows=mergeUniqueBi2Rows(snaps);period=bi2PeriodInfo(snaps,from,to);const latest=[...snaps].reverse().find(x=>x.ok);meta=latest?latest.meta:{};bytes=snaps.filter(x=>x.ok).reduce((a,x)=>a+(x.bytes||0),0);headers=latest?latest.headers:[]}else{const rep=await fetchBi2Report(13),p=parseBi2Csv(rep.text);rows=p.rows;meta=p.meta;bytes=rep.bytes;headers=p.headers}const clean=rows.slice(0,1000).map(r=>({filial:pickField(r,'FILIAL'),ctrc:pickField(r,'CTRC'),nf:pickField(r,'NF'),remetente:pickField(r,'REMETENTE'),pagador:pickField(r,'PAGADOR'),destinatario:pickField(r,'DESTINATARIO'),uf:pickField(r,'UF DESTINO','UF'),cidade:pickField(r,'CIDADE DESTINO','CIDADE'),entregaAgendada:pickField(r,'ENTREGA AGENDADA'),previsao:pickField(r,'PREVISAO ENTREGA','PREVISAO','DATA PREVISAO'),diasAtraso:pickField(r,'DIAS ATRASO','ATRASO'),unidadeAtual:pickField(r,'UNIDADE ATUAL'),localizacaoAtual:pickField(r,'LOCALIZACAO ATUAL'),ultimaOcorrencia:pickField(r,'COD ULTIMA OCORRENCIA'),instrucaoOcorrencia:pickField(r,'INSTRUCAO/COMPLEMENTO ULTIMA OCORRENCIA'),dataUltimaOcorrencia:pickField(r,'DATA ULTIMA OCORRENCIA'),responsabilidadeCliente:pickField(r,'RESPONSABILIDADE CLIENTE'),valorMercadoria:pickField(r,'VAL MERC'),frete:pickField(r,'FRETE'),volumes:pickField(r,'QTD VOLUMES'),peso:pickField(r,'PESO'),m3:pickField(r,'M3'),tipoDocumento:pickField(r,'TIPO DOCUMENTO')}));return{ok:true,codigo:13,bytes,meta,period,total:rows.length,filiaisCount:distinctCount(rows,['FILIAL']),cidadesCount:distinctCount(rows,['CIDADE DESTINO','CIDADE']),destinatariosCount:distinctCount(rows,['DESTINATARIO']),remetentesCount:distinctCount(rows,['REMETENTE']),valorMercadoria:sumField(rows,['VAL MERC']),freteTotal:sumField(rows,['FRETE']),volumesTotal:sumField(rows,['QTD VOLUMES']),pesoTotal:sumField(rows,['PESO']),m3Total:sumField(rows,['M3']),headers,filiais:topCounts(rows,['FILIAL'],12),cidades:topCounts(rows,['CIDADE DESTINO','CIDADE'],12),destinatarios:topCounts(rows,['DESTINATARIO'],12),remetentes:topCounts(rows,['REMETENTE'],12),localizacoes:topCounts(rows,['LOCALIZACAO ATUAL','UNIDADE ATUAL'],12),ocorrencias:topCounts(rows,['COD ULTIMA OCORRENCIA'],12),rows:clean}}
 async function refreshBi2ApiState(){const now=new Date().toISOString();const x=await testBi2WebApi();if(x.ok&&Array.isArray(x.reports)){const good=x.reports.filter(r=>r.status===200&&/text\/csv/i.test(r.type));BI2_API_STATE={connected:good.length>0,lastCheck:now,reports:x.reports.map(r=>({codigo:r.codigo,status:r.status,bytes:r.bytes,type:r.type})),message:good.length?'WebAPI BI2 conectada':'WebAPI BI2 sem relatórios disponíveis'};}else{BI2_API_STATE={connected:false,lastCheck:now,reports:[],message:'Falha na WebAPI BI2',error:x.error||''}}return BI2_API_STATE}
@@ -5984,6 +6081,11 @@ if(u.pathname==='/api/agendamento-teste'&&req.method==='POST'){try{
 // Situação das notas que ficaram no galpão (Roteirizador > Sobras):
 // entregue = baixa no BI2 (relatório 17) desde a data informada; em rota = saiu dos CTRCs disponíveis
 // para entrega (opção 38), ou seja, já entrou em romaneio; pendente = continua disponível no galpão.
+if(u.pathname==='/api/financeiro/faturas'&&req.method==='GET'){try{
+  if(!dashboardHasAny(authUser,['financeiro','receita_ssw','contas_pagar']))return dashboardDeny(res);
+  const x=await buildFaturasSsw(u.searchParams.get('de')||'',u.searchParams.get('ate')||'',u.searchParams.get('diag')==='1'&&!!authUser.is_admin);
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e),diag:authUser.is_admin?e.diag:undefined}))}}
 if(u.pathname==='/api/bi2/sla-clientes'&&req.method==='GET'){try{
   if(!dashboardHasAny(authUser,['dashboard','ssw_saidas','remetentes','operacional']))return dashboardDeny(res);
   const x=await buildSlaClientes(u.searchParams.get('from')||'',u.searchParams.get('to')||'');

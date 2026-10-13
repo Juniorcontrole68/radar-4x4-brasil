@@ -109,7 +109,7 @@ function hasAnyPerm(list){return list.some(hasPerm)}
 function tabAllowed(tab){
   const map={
     dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',carga:'montar_carga',lancamentos:'lancamentos','roteirizador-teste':'roteirizador','roteirizador-v02':'roteirizador','roteirizador-cargas':'roteirizador',rastreamento:'tracking',lotacao:'lotacao',frota:'frota','pdf-notas':'pdf_notas',
-    agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes',
+    agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes',faturas:'financeiro',
     'ssw-motoristas':'ssw_saidas','motoristas-evolucao':'evolucao',
     'ssw-atrasos':'ssw_atrasos','ssw-remetentes':'remetentes',
     'ssw-remetentes-comparativo':'remetentes_comparativo','receita-ssw':'receita_ssw','mapa-cidades':'cidade_destino'
@@ -1781,6 +1781,34 @@ function setupSla(){
   $('#slaGo').onclick=loadSla;$('#slaBusca').oninput=renderSla;
   loadSla()
 }
+// ---- Faturas em aberto (SSW opção 457)
+let FAT_DATA=null;
+const fatData=v=>v?String(v).split('-').reverse().join('/'):'—';
+function renderFaturas(){
+  const d=FAT_DATA;if(!d)return;
+  const k=(l,v,c)=>'<div class="sla-k '+(c||'')+'"><span>'+l+'</span><b>'+v+'</b></div>',F=d.faixas||{};
+  $('#fatKpis').innerHTML=k('Em aberto',brl(d.emAberto),'warn')+k('Vencido',brl(d.vencido),d.vencido?'bad':'good')+k('A vencer',brl(F.aVencer||0))+k('Vencido até 30 dias',brl(F.ate30||0))+k('31 a 60 dias',brl(F.ate60||0),F.ate60?'bad':'')+k('Mais de 60 dias',brl(F.mais60||0),F.mais60?'bad':'')+k('Faturas em aberto',nf(d.qtdAbertas));
+  $('#fatClientes tbody').innerHTML=(d.clientes||[]).map(c=>'<tr><td><b>'+safe(c.pagador)+'</b></td><td class="n">'+nf(c.faturas)+'</td><td class="n">'+brl(c.saldo)+'</td><td class="n">'+(c.vencido?'<b style="color:#b91c1c">'+brl(c.vencido)+'</b>':'—')+'</td><td class="n">'+fatData(c.maisAntiga)+'</td></tr>').join('')||'<tr><td colspan="5" class="muted">Nenhuma fatura em aberto no período.</td></tr>';
+  const q=String($('#fatBusca')?.value||'').toUpperCase().trim();
+  const fs=(d.faturas||[]).filter(f=>!q||(f.pagador+' '+f.fatura).toUpperCase().includes(q));
+  $('#fatLista tbody').innerHTML=fs.map(f=>'<tr><td><b>'+safe(f.fatura)+'</b></td><td>'+safe(f.pagador)+'</td><td class="muted">'+safe(f.cobranca)+'</td><td>'+fatData(f.venc)+(f.novoVencimento&&f.novoVencimento!==f.vencimento?'<div class="muted" style="font-size:11px">original '+fatData(f.vencimento)+'</div>':'')+'</td><td class="n">'+brl(f.valor)+'</td><td class="n"><b>'+brl(f.saldo)+'</b></td><td class="n">'+(f.diasAtraso>0?'<b style="color:'+(f.diasAtraso>30?'#b91c1c':'#b45309')+'">'+nf(f.diasAtraso)+'</b>':'—')+'</td><td>'+safe(f.situacao)+'</td></tr>').join('')||'<tr><td colspan="8" class="muted">Nenhuma fatura.</td></tr>';
+  $('#fatInfo').textContent='Lido do SSW em '+new Date(d.lidoEm).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})+' • '+nf(d.qtdLidas)+' fatura(s) emitidas de '+fatData(d.de)+' a '+fatData(d.ate)+(d.totaisSsw&&d.totaisSsw.pendente!==undefined?' • total pendente no SSW: '+brl(d.totaisSsw.pendente):'')
+}
+async function loadFaturas(forcar){
+  const de=$('#fatDe'),ate=$('#fatAte'),bt=$('#fatGo');if(!de)return;
+  if(!de.value){const t=new Date(),a=new Date();a.setMonth(a.getMonth()-6);ate.value=iso(t);de.value=iso(a)}
+  if(FAT_DATA&&!forcar&&FAT_DATA.de===de.value&&FAT_DATA.ate===ate.value){renderFaturas();return}
+  if(bt){bt.disabled=true;bt.textContent='Lendo o SSW…'}
+  $('#fatInfo').textContent='Consultando as faturas no SSW… (pode levar alguns segundos)';
+  try{
+    const r=await fetch('/api/financeiro/faturas?de='+encodeURIComponent(de.value)+'&ate='+encodeURIComponent(ate.value)+(AUTH?.is_admin?'&diag=1':''),{cache:'no-store'}),j=await r.json();
+    if(!r.ok||!j.ok){const e=new Error(j.error||'Falha ao ler as faturas');e.diag=j.diag;throw e}
+    FAT_DATA=j;renderFaturas()
+  }catch(e){
+    $('#fatInfo').innerHTML='<span style="color:#b91c1c">'+safe(e.message)+'</span>'+(e.diag?' <details style="display:inline"><summary style="cursor:pointer">detalhes técnicos</summary><pre style="white-space:pre-wrap;font-size:11px;max-width:900px">'+safe(JSON.stringify(e.diag,null,1))+'</pre></details>':'')
+  }finally{if(bt){bt.disabled=false;bt.textContent='Atualizar do SSW'}}
+}
+if(document.querySelector('#fatGo')){document.querySelector('#fatGo').onclick=()=>loadFaturas(true);document.querySelector('#fatBusca').oninput=renderFaturas}
 function cargoTypeLabel(v){return String(v||'carregamento').toLowerCase()==='descarga'?'Descarga':'Carregamento'}
 function renderLoadingRecords(rows){
   const box=$('#loadRecords');clearLoadingPhotoUrls();
@@ -5227,7 +5255,7 @@ function openTab(tab){
     'rastreamento':'Rastreio de Carga',
     'lotacao':'Lotação',
     'frota':'Frota',
-    'roteirizador':'Roteirizador SSW',
+    'roteirizador':'Roteirizador SSW','faturas':'Faturas em aberto',
     'carga':'Montar carga',
     'lancamentos':'Lançamentos',
     'agendamentos-copia':'Consulta de Agendamentos','agendamento-teste':'Agendamento Teste',
@@ -5241,6 +5269,7 @@ function openTab(tab){
   if(tab==='ssw-motoristas')setTimeout(renderSswMotoristas,30);
   if(tab==='motoristas-evolucao'){setTimeout(renderDriverProgress,30);setTimeout(refreshDriverProgress,60)}
   if(tab==='mapa-cidades'){cityBubbleSetDefaults();setTimeout(refreshCityBubbles,40)}
+  if(tab==='faturas')setTimeout(()=>loadFaturas(false),40);
   loadHeavyForTab(tab);
 }
 $$('.dash-open').forEach(b=>b.onclick=()=>{if(tabAllowed(b.dataset.open))openTab(b.dataset.open)});
