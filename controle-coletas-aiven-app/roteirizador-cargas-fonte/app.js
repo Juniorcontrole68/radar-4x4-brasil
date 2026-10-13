@@ -861,7 +861,9 @@
     try {
       const info = sswInfo();
       if (!info || Date.now() - Date.parse(info.em) > 30 * 60000) { const j = await window.RC_HOST.sswDisponiveis(false); await gravarSSW(j.rows || [], (j.fonte || 'SSW opção 038') + ' via CONSTRULOG'); }
-      const ign = ignoradas(); const novas = sswLinhas().filter((r) => !notaDaLinhaSSW(r) && !ign[nfChave(r.nf)]);
+      const ign = ignoradas(); const novas = sswLinhas().filter((r) => !notaDaLinhaSSW(r) && !ign[nfChave(r.nf)] && !devolvidaSSW(r));
+      // notas que já estavam aqui e o SSW passou a mostrar como devolvidas: saem das rotas
+      for (const r of sswLinhas()) { if (!devolvidaSSW(r)) continue; const n = notaDaLinhaSSW(r); if (n && !['cancelada', 'entregue'].includes(n.status)) await salvar('notas', n.id, Object.assign({}, n, { status: 'cancelada', canceladaMotivo: 'Devolvida ao remetente (SSW)' })); }
       for (const r of novas) await criarNotaDeSSW(r);
       if (novas.length) registrar('SSW', novas.length + ' CTRC(s) disponíveis trazidos automaticamente');
     } catch (e) { toast('Não foi possível ler o SSW: ' + e.message, true); }
@@ -997,6 +999,8 @@
     return sswLinhas().find((r) => nfKey(r.nf) === String(+k)) || (k.length >= 5 ? sswLinhas().find((r) => String(r.ctrc || '').replace(/\D/g, '').endsWith(k)) : null) || null;
   }
   // nota já existente para a linha do SSW (mesmo CTRC, ou mesma NF do mesmo remetente)
+  // mercadoria devolvida ao remetente: não é entrega, não entra no roteirizador
+  const devolvidaSSW = (r) => /DEVOLV|DEVOLU|RETORN\w* (A|AO|P) ?REMET|AO REMETENTE|DEV REMET/.test(RE.norm((r.status || '') + ' ' + (r.detalhes || '') + ' ' + (r.ocorrencia || '')));
   const nfChave = (v) => String(v || '').replace(/\D/g, '').replace(/^0+/, '');
   const ignoradas = () => (ST.ssw.get('ignoradas') || {}).nfs || {};
   async function excluirNotas(ids) {
@@ -1062,8 +1066,8 @@
     const f = ui.sswFiltro || (ui.sswFiltro = { q: '', so: 'novas' });
     const q = RE.norm(f.q);
     const enr = linhas.map((r) => ({ r, n: notaDaLinhaSSW(r) }));
-    const vis = enr.filter((x) => (f.so !== 'novas' || !x.n) && (!q || RE.norm([x.r.nf, x.r.ctrc, x.r.cliente, x.r.cidade, x.r.remetente].join(' ')).includes(q)));
-    const novas = enr.filter((x) => !x.n);
+    const vis = enr.filter((x) => (f.so !== 'novas' || (!x.n && !devolvidaSSW(x.r))) && (!q || RE.norm([x.r.nf, x.r.ctrc, x.r.cliente, x.r.cidade, x.r.remetente].join(' ')).includes(q)));
+    const novas = enr.filter((x) => !x.n && !devolvidaSSW(x.r));
     let h = '<div class="card"><div class="card-h"><h2>CTRCs disponíveis para entrega</h2>' + (info ? '<span class="chip info">' + esc(info.fonte || 'SSW') + ' · ' + new Date(info.em).toLocaleString('pt-BR') + '</span>' : '') + '</div>';
     const hostBtn = window.RC_HOST ? '<button class="btn pri" data-a="sswAtualizar"' + (ui.sswCarregando ? ' disabled' : '') + '>' + (ui.sswCarregando ? 'Lendo o SSW…' : 'Atualizar do SSW agora') + '</button>' : '';
     if (window.RC_HOST && !ui.sswAuto && (!info || Date.now() - Date.parse(info.em) > 30 * 60000)) { ui.sswAuto = true; setTimeout(() => atualizarSSW(false), 50); }
@@ -1071,7 +1075,7 @@
     h += '<p class="small muted">' + linhas.length + ' CTRC(s) disponíveis · ' + novas.length + ' ainda fora do roteirizador. “Trazer” cria a nota aqui com peso, volumes, m³, cidade e previsão do SSW; carga com tubo só sai em van de tubos.</p>' +
       '<div class="row" style="margin:10px 0"><input type="search" id="fSSWq" value="' + esc(f.q) + '" placeholder="NF, CTRC, cliente, cidade" style="max-width:280px"><select id="fSSWso" style="width:auto"><option value="novas"' + (f.so === 'novas' ? ' selected' : '') + '>Só as que faltam trazer</option><option value="todas"' + (f.so === 'todas' ? ' selected' : '') + '>Todas</option></select><span class="spacer"></span>' + hostBtn + '<label class="btn sm">' + I.up2 + 'Atualizar com arquivo<input type="file" id="fSSW" accept=".csv,.txt,.xlsx,.xls" hidden></label><button class="btn go" data-a="sswTrazer"' + (vis.some((x) => !x.n) ? '' : ' disabled') + '>Trazer ' + vis.filter((x) => !x.n).length + ' para o roteirizador</button></div>' +
       '<div class="tbl-wrap" style="max-height:560px;overflow:auto"><table><thead><tr><th>CTRC</th><th>NF</th><th>Remetente</th><th>Destinatário</th><th>Cidade</th><th class="r">Vol.</th><th class="r">Peso kg</th><th class="r">m³</th><th>Previsão</th><th>Mercadoria</th><th>No roteirizador</th></tr></thead><tbody>' +
-      vis.slice(0, 400).map((x) => '<tr><td class="mono small">' + esc(x.r.ctrc) + '</td><td class="mono">' + esc(x.r.nf) + '</td><td class="small">' + esc(x.r.remetente) + '</td><td class="small trunc">' + esc(x.r.cliente) + '</td><td>' + esc(x.r.cidade) + '</td><td class="r num">' + (x.r.volumes || '') + '</td><td class="r num">' + nf(x.r.peso, 0) + '</td><td class="r num">' + (x.r.m3 ? nf(x.r.m3, 2) : '<span class="muted">—</span>') + '</td><td class="mono small">' + esc(x.r.previsao ? dBR(x.r.previsao) : '') + (x.r.diasAtraso > 0 ? ' <span class="chip bad">' + x.r.diasAtraso + 'd</span>' : '') + '</td><td class="small trunc">' + esc([x.r.mercadoria, x.r.detalhes].filter(Boolean).join(' ')) + '</td><td>' + (x.n ? chipStatus(notaE(x.n.id)) : '<span class="chip">fora</span>') + '</td></tr>').join('') +
+      vis.slice(0, 400).map((x) => '<tr><td class="mono small">' + esc(x.r.ctrc) + '</td><td class="mono">' + esc(x.r.nf) + '</td><td class="small">' + esc(x.r.remetente) + '</td><td class="small trunc">' + esc(x.r.cliente) + '</td><td>' + esc(x.r.cidade) + '</td><td class="r num">' + (x.r.volumes || '') + '</td><td class="r num">' + nf(x.r.peso, 0) + '</td><td class="r num">' + (x.r.m3 ? nf(x.r.m3, 2) : '<span class="muted">—</span>') + '</td><td class="mono small">' + esc(x.r.previsao ? dBR(x.r.previsao) : '') + (x.r.diasAtraso > 0 ? ' <span class="chip bad">' + x.r.diasAtraso + 'd</span>' : '') + '</td><td class="small trunc">' + esc([x.r.mercadoria, x.r.detalhes].filter(Boolean).join(' ')) + '</td><td>' + (devolvidaSSW(x.r) ? '<span class="chip" title="' + esc(x.r.status || '') + '">devolvida ao remetente</span>' : x.n ? chipStatus(notaE(x.n.id)) : '<span class="chip">fora</span>') + '</td></tr>').join('') +
       (vis.length ? '' : '<tr><td colspan="11" class="muted">Nada com estes filtros</td></tr>') + '</tbody></table></div>' + (vis.length > 400 ? '<p class="tiny">Mostrando 400 de ' + vis.length + '.</p>' : '') + '</div>';
     return h;
   }
@@ -1082,7 +1086,9 @@
   async function trazerSSW(linhas) {
     let k = 0;
     const ign = Object.assign({}, ignoradas()); let mud = false;
-    for (const r of linhas) { if (!notaDaLinhaSSW(r)) { await criarNotaDeSSW(r); k++; if (ign[nfChave(r.nf)]) { delete ign[nfChave(r.nf)]; mud = true; } } }
+    let dev = 0;
+    for (const r of linhas) { if (devolvidaSSW(r)) { dev++; continue; } if (!notaDaLinhaSSW(r)) { await criarNotaDeSSW(r); k++; if (ign[nfChave(r.nf)]) { delete ign[nfChave(r.nf)]; mud = true; } } }
+    if (dev) toast(dev + ' devolvida(s) ao remetente ficaram de fora.');
     if (mud) await salvar('ssw', 'ignoradas', { id: 'ignoradas', nfs: ign });
     registrar('SSW', k + ' CTRC(s) disponíveis trazidos para o roteirizador');
     toast(k + ' nota(s) trazida(s) do SSW.');
