@@ -1093,7 +1093,7 @@
   // notas "em rota": confere no SSW se foram entregues (baixa no BI2 ou situação do CT-e)
   async function baixasPeloSSW() {
     if (!window.RC_HOST || !window.RC_HOST.statusNfs || ui.baixas) return;
-    const em = [...ST.notas.values()].filter((n) => n.status === 'em_rota' && n.numero && (!n.baixaConfEm || Date.now() - Date.parse(n.baixaConfEm) > 20 * 60000));
+    const em = [...ST.notas.values()].filter((n) => n.status === 'em_rota' && n.numero && (!n.baixaConfEm || Date.now() - Date.parse(n.baixaConfEm) > 5 * 60000));
     if (!em.length) return;
     ui.baixas = true;
     try {

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"><meta name="rc-versao" content="f218e24073cd"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="rc-versao" content="5a381b9f12b1"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
 <title>Roteirizador Inteligente de Cargas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -3089,7 +3089,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
   // notas "em rota": confere no SSW se foram entregues (baixa no BI2 ou situação do CT-e)
   async function baixasPeloSSW() {
     if (!window.RC_HOST || !window.RC_HOST.statusNfs || ui.baixas) return;
-    const em = [...ST.notas.values()].filter((n) => n.status === 'em_rota' && n.numero && (!n.baixaConfEm || Date.now() - Date.parse(n.baixaConfEm) > 20 * 60000));
+    const em = [...ST.notas.values()].filter((n) => n.status === 'em_rota' && n.numero && (!n.baixaConfEm || Date.now() - Date.parse(n.baixaConfEm) > 5 * 60000));
     if (!em.length) return;
     ui.baixas = true;
     try {

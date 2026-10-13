@@ -28,6 +28,7 @@ const SSW_DRIVER_CACHE=new Map();
 const SSW_DRIVER_INFLIGHT=new Map();
 let SSW_DRIVER_LAST=null;
 const SSW_TRACK_CACHE=new Map();
+const NF_DOC_174=new Map();   // NF -> CNPJ do destinatário (relatório 174), para o rastreamento
 const SSW_DRIVER_CONFIRMED_DAY=new Map();
 let SSW38_QUICK_CACHE={at:0,value:null};
 let SSW38_QUICK_INFLIGHT=null;
@@ -6175,7 +6176,8 @@ if(u.pathname==='/api/programacao-entregas/status-nfs'&&req.method==='GET'){try{
     const quer=new Set(nfs),nfCtrc=new Map();
     for(const r of r174){
       const k=normCtrcLoose(r.numero_ctrc||pickField(r,'CTRC'));if(!k)continue;
-      for(const n of String(r.numero_nf||pickField(r,'NF','NOTA FISCAL','NOTAS FISCAIS')||'').split(/[^0-9]+/).map(normNf).filter(Boolean))if(quer.has(n)){if(!nfCtrc.has(n))nfCtrc.set(n,new Set());nfCtrc.get(n).add(k)}
+      const doc=String(r.dest_cnpj||pickField(r,'CNPJ DESTINATARIO')||'').replace(/\D/g,'');
+      for(const n of String(r.numero_nf||pickField(r,'NF','NOTA FISCAL','NOTAS FISCAIS')||'').split(/[^0-9]+/).map(normNf).filter(Boolean))if(quer.has(n)){if(!nfCtrc.has(n))nfCtrc.set(n,new Set());nfCtrc.get(n).add(k);if(doc.length===14&&!NF_DOC_174.has(n))NF_DOC_174.set(n,doc)}
     }
     const entCtrc=new Map();
     for(const r of r17){
@@ -6192,6 +6194,9 @@ if(u.pathname==='/api/programacao-entregas/status-nfs'&&req.method==='GET'){try{
     else if(pendOk&&!pend.has(nf))itens[nf]={status:'em_rota',fonte:'Saiu dos CTRCs disponíveis (romaneio)'};
     else if(pendOk)itens[nf]={status:'pendente',fonte:'Disponível no galpão'};
   }
+  // saiu do galpão: rastreamento do SSW pelo CNPJ do destinatário (o mesmo que o dashboard usa, em tempo real)
+  {const rastrear=nfs.filter(nf=>itens[nf]&&itens[nf].status==='em_rota'&&NF_DOC_174.has(nf));
+   await mapLimit(rastrear,8,async nf=>{try{const t=await trackingDestQuery(NF_DOC_174.get(nf),nf);if(t&&t.entregue){const dh=String(t.delivery?.data_hora||'');const dm=(dh.match(/(\d{2}\/\d{2}\/\d{2,4})/)||[])[1];itens[nf]={status:'entregue',em:(dm&&brDateToIso(dm))||(/^\d{4}-\d{2}-\d{2}/.test(dh)?dh.slice(0,10):hoje),fonte:'Rastreamento SSW (mesma base do dashboard)'}}}catch(e){}})}
   // saiu do galpão mas a baixa ainda não apareceu no BI2: confere a situação do CT-e na opção 101 do SSW
   const conferir=nfs.filter(nf=>itens[nf]&&itens[nf].status==='em_rota').slice(0,20);
   if(conferir.length&&u.searchParams.get('rapido')!=='1'){
