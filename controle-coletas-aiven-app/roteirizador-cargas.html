@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"><meta name="rc-versao" content="0cd07281a2f1"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="rc-versao" content="55483216b9c4"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
 <title>Roteirizador Inteligente de Cargas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -2842,7 +2842,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     }
   }
   // cliente (remetente) abreviado: CL Comercial Leal, LD Leal Dutra, NV Navas, CN Conasid, SM Somerlog
-  const CLI_SIGLAS = [[/LEAL DUTRA/, 'LD'], [/COMERCIAL LEAL|^LEAL\b/, 'CL'], [/NAVAS/, 'NV'], [/CONASID/, 'CN'], [/SOMERLOG/, 'SM'], [/LOGMEL/, 'LM'], [/\bTHB\b/, 'THB'], [/\bFCB\b/, 'FCB']];
+  const CLI_SIGLAS = [[/LEAL DUTRA/, 'LD'], [/COMERCIAL LEAL|^LEAL\b/, 'CL'], [/NAVAS/, 'NV'], [/CONASID/, 'CN'], [/SOMERLOG/, 'SM'], [/LOGMEL/, 'LM'], [/\bTHB\b/, 'THB'], [/\bFCB\b|CONSTRUDEC|SARKE/, 'FC']];
   function cliSigla(nome) { const t = RE.norm(nome || ''); if (!t) return ''; for (const [re, s] of CLI_SIGLAS) if (re.test(t)) return s; const w = t.replace(/\b(LTDA|ME|EPP|SA|S A|EIRELI|COMERCIO|COMERCIAL|DE|DA|DO|E)\b/g, ' ').trim().split(/\s+/)[0] || t; return w.slice(0, 10); }
   const cliChip = (nome) => nome ? '<span class="chip cli" title="' + esc(nome) + '">' + esc(cliSigla(nome)) + '</span>' : '<span class="muted">—</span>';
   const cliDaParada = (s) => { const n = (s.notas || []).map((id) => ST.notas.get(id)).find((x) => x && x.emitente); return n ? n.emitente : ''; };

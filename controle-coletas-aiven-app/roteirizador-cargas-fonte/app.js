@@ -935,7 +935,7 @@
     }
   }
   // cliente (remetente) abreviado: CL Comercial Leal, LD Leal Dutra, NV Navas, CN Conasid, SM Somerlog
-  const CLI_SIGLAS = [[/LEAL DUTRA/, 'LD'], [/COMERCIAL LEAL|^LEAL\b/, 'CL'], [/NAVAS/, 'NV'], [/CONASID/, 'CN'], [/SOMERLOG/, 'SM'], [/LOGMEL/, 'LM'], [/\bTHB\b/, 'THB'], [/\bFCB\b/, 'FCB']];
+  const CLI_SIGLAS = [[/LEAL DUTRA/, 'LD'], [/COMERCIAL LEAL|^LEAL\b/, 'CL'], [/NAVAS/, 'NV'], [/CONASID/, 'CN'], [/SOMERLOG/, 'SM'], [/LOGMEL/, 'LM'], [/\bTHB\b/, 'THB'], [/\bFCB\b|CONSTRUDEC|SARKE/, 'FC']];
   function cliSigla(nome) { const t = RE.norm(nome || ''); if (!t) return ''; for (const [re, s] of CLI_SIGLAS) if (re.test(t)) return s; const w = t.replace(/\b(LTDA|ME|EPP|SA|S A|EIRELI|COMERCIO|COMERCIAL|DE|DA|DO|E)\b/g, ' ').trim().split(/\s+/)[0] || t; return w.slice(0, 10); }
   const cliChip = (nome) => nome ? '<span class="chip cli" title="' + esc(nome) + '">' + esc(cliSigla(nome)) + '</span>' : '<span class="muted">—</span>';
   const cliDaParada = (s) => { const n = (s.notas || []).map((id) => ST.notas.get(id)).find((x) => x && x.emitente); return n ? n.emitente : ''; };

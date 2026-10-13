@@ -4658,7 +4658,7 @@ const SLA_CACHE=new Map();
 // SLA é por cliente PAGADOR. Pagadores que são o mesmo cliente ficam juntos (informado pela operação em 13/10/2026).
 const SLA_GRUPOS=[
   {nome:'COMERCIAL LEAL (grupo)',re:/\bLEAL\b|LEAL DUTRA|CONASID|\bNAVAS\b|LOGMEL|SOMERLOG/},
-  {nome:'THB / FCB (grupo)',re:/\bTHB\b|\bFCB\b/}
+  {nome:'THB / FCB (grupo)',re:/\bTHB\b|\bFCB\b|CONSTRUDEC|SARKE/}   // Construdec e Sarke são clientes da FCB
 ];
 // nome do pagador no BI2 174 (nunca um CNPJ); sem ele, o remetente
 function slaPagador(r){
