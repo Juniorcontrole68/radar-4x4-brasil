@@ -1138,7 +1138,7 @@
   const ignoradas = () => (ST.ssw.get('ignoradas') || {}).nfs || {};
   // tira notas (excluídas ou bloqueadas) das programações de hoje em diante e recalcula as rotas
   async function tirarDosPlanos(ids) {
-    const fora = new Set(ids); if (!fora.size) return;
+    const fora = new Set(ids), refazer = []; if (!fora.size) return;
     const tem = (x) => (x && Array.isArray(x.notas) ? x.notas : [x && x.nota && (x.nota.id || x.nota), x && x.id]).some((id) => fora.has(id));
     for (const [d, p0] of [...ST.planos]) {
       if (d < hoje() || !p0 || !p0.rotas) continue;
@@ -1148,9 +1148,13 @@
       p.rotas = p.rotas.filter((r) => r.paradas.length);
       if (p.naoRoteirizadas) p.naoRoteirizadas = p.naoRoteirizadas.filter((x) => !tem(x));
       if (p.pendentes) p.pendentes = p.pendentes.filter((x) => !tem(x));
+      if (p0.status !== 'aprovado') { refazer.push(d); continue; }
       let rec = p; try { rec = Object.assign(RE.recalcularPlano(p, notasEnr().filter((n) => !fora.has(n.id)), ctx()), { naoRoteirizadas: p.naoRoteirizadas || [], pendentes: p.pendentes || [] }); } catch (e) { rec = p; }
       await salvar('planos', d, rec);
     }
+    // programação ainda não aprovada: é refeita do zero (a do dia na tela, na hora; as outras, ao abrir o dia)
+    for (const d of refazer) { if (d === ui.data) continue; await remover('planos', d); }
+    if (refazer.includes(ui.data)) setTimeout(() => { if (!ui.calc) otimizar(); }, 300);
   }
   async function excluirNotas(ids) {
     const ign = Object.assign({}, ignoradas()), nums = [];
@@ -1833,6 +1837,11 @@
     return '<select data-bind="cidades|' + esc(c.id) + '|regiaoFrete"' + dis() + ' style="width:auto"><option value="">Automática' + (auto ? ': ' + esc(auto) : '') + '</option>' + tab.regioes.map((r) => '<option' + (c.regiaoFrete === r ? ' selected' : '') + '>' + esc(r) + '</option>').join('') + '</select>';
   }
   const fmtTabMot = (x) => !x ? '' : x.km ? String(x.km).replace('.', ',') + '/km' : String(x.fixo).replace('.', ',');
+  function vFretePct() {
+    const l = ST.cfg.fretePctClientes || [];
+    return '<div class="card"><div class="card-h"><h2>Frete por cliente antes do CT-e</h2>' + (ST.admin ? '<button class="btn sm" data-a="fpcAdd">+ Cliente</button>' : '') + '</div><p class="tiny" style="margin:6px 0 10px">Enquanto a nota não tem CT-e (frete), a receita é este % sobre o valor da NF, pelo nome do remetente. O primeiro nome que bater vale (deixe “Leal Dutra” acima de “Comercial Leal”).</p><div class="tbl-wrap"><table><thead><tr><th>Remetente contém</th><th>% sobre a NF</th><th></th></tr></thead><tbody>' +
+      l.map((r, i) => '<tr><td><input data-fpc="' + i + '|nome" value="' + esc(r.nome || '') + '"' + dis() + '></td><td><input data-fpc="' + i + '|pct" value="' + esc(String(r.pct == null ? '' : r.pct).replace('.', ',')) + '" style="width:90px"' + dis() + '></td><td>' + (ST.admin ? '<button class="btn sm ghost danger" data-a="fpcDel" data-v="' + i + '">Excluir</button>' : '') + '</td></tr>').join('') + '</tbody></table></div></div>';
+  }
   function vTabelaMotorista() {
     const tab = ST.cfg.tabelaMotorista || RE.TABELA_MOTORISTA_PADRAO, tipos = [['fiorino', 'Fiorino'], ['van', 'Van sem tubo'], ['tubos', 'Van com tubo']];
     return '<div class="card"><h2>Pagamento do motorista por região</h2><p class="tiny" style="margin:6px 0 10px">Valor por saída em R$, ou R$ por km escrevendo “/km” (ex.: 2,50/km). Rota que passa por mais de uma região paga a de maior valor. A região de cada cidade é a mais próxima (ou a escolhida em Cadastros → Cidades). Vazio: usa a diária e o R$/km do cadastro do motorista.</p><div class="tbl-wrap"><table><thead><tr><th>Região</th>' + tipos.map(([, t]) => '<th>' + t + '</th>').join('') + '</tr></thead><tbody>' +
@@ -1844,6 +1853,7 @@
     let h = topo('Ajustes', 'Parâmetros de cálculo, histórico e dados');
     h += '<div class="card"><h2>Base e deslocamento</h2><div class="fields" style="margin-top:10px"><label class="f">Cidade da base<input type="text" list="dlMun" id="fBase" value="' + esc(c.base.nome) + '"' + dis() + '></label>' + f('base.lat', 'Latitude da base', 'num') + f('base.lon', 'Longitude da base', 'num') + f('fatorRodoviario', 'Fator rodoviário (× linha reta)', 'num') + f('velocidadeMedia', 'Velocidade média km/h', 'num') + f('kmUrbano', 'Km entre entregas na mesma cidade', 'num') + f('inicioJornada', 'Início da jornada', 'time') + f('jornadaMaxHoras', 'Jornada máxima h', 'num') + f('descargaPorNotaMin', 'Minutos extras por nota na mesma parada', 'num') + '</div></div>';
     h += '<div class="card"><h2>Custos</h2><div class="fields" style="margin-top:10px">' + f('precoDiesel', 'Diesel R$/l', 'num') + f('precoGasolina', 'Gasolina R$/l', 'num') + f('precoEtanol', 'Etanol R$/l', 'num') + f('pesoVeiculo', 'Penalidade por veículo usado R$ (desempate)', 'num') + '</div></div>';
+    h += vFretePct();
     h += vTabelaMotorista();
     h += '<div class="card"><h2>Motoristas por dia</h2><div class="row" style="margin-top:10px">' + f('minimizarMotoristas', 'Usar o menor número possível de motoristas (só abre outro veículo quando a carga não cabe ou uma entrega ficaria de fora)', 'bool') + '</div><p class="tiny" style="margin-top:8px">Com isso ligado, menos motoristas vale mais do que diferença de lucro entre rotas. Entregas no prazo continuam vindo antes. O plano nunca usa mais motoristas do que os marcados no Painel.</p></div>';
     h += '<div class="card"><h2>Mínimo de entregas por veículo</h2><div class="fields" style="margin-top:10px">' + f('minEntregas', 'Mínimo de entregas para um veículo sair (0 = sem mínimo)', 'num') + '</div><div class="row" style="margin-top:10px">' + f('minExcecaoPrazo', 'Exceção: o veículo sai abaixo do mínimo quando leva entrega no limite do prazo', 'bool') + '</div><p class="tiny" style="margin-top:8px">Cada parada conta como uma entrega (várias notas do mesmo cliente contam uma vez). Abaixo do mínimo, as entregas passam para outros veículos ou aguardam o próximo dia de rota da cidade. Cada veículo pode ter um mínimo próprio no cadastro.</p></div>';
@@ -1961,6 +1971,8 @@
       case 'selNota': break;
       case 'excluirUma': { ui.notasSel = new Set([v]); ui.confirmar = { a: 'excluirSel' }; render(); window.scrollTo(0, 0); break; }
       case 'excluirSel': ui.confirmar = { a: 'excluirSel' }; render(); break;
+      case 'fpcAdd': { const c = clone(ST.cfg); c.fretePctClientes = (c.fretePctClientes || []).concat([{ nome: '', pct: 0 }]); await salvar('cfg', 'main', c); render(); break; }
+      case 'fpcDel': { const c = clone(ST.cfg); c.fretePctClientes = (c.fretePctClientes || []).filter((_, i) => i !== +v); await salvar('cfg', 'main', c); ui.escalaSuja = true; render(); break; }
       case 'semNotasPend': ui.tab = 'notas'; ui.notasSub = 'revisao'; render(); break;
       case 'semNotasForcar': {
         const d = ui.data, wd = RE.weekday(d), c = ctx(), it = [];
@@ -2038,6 +2050,11 @@
     if (el.id === 'fConsol') { await salvar('cfg', 'main', Object.assign({}, ST.cfg, { consolidar: el.checked })); render(); return; }
     if (el.id === 'fBase') { const m = munPorTexto(el.value); if (!m) { toast('Escolha a cidade na lista (Cidade/UF).', true); return; } await salvar('cfg', 'main', Object.assign({}, ST.cfg, { base: { nome: m.nome + '/' + m.uf, lat: m.lat, lon: m.lon } })); render(); return; }
     if (el.classList.contains('mv')) { if (el.value) await moverParada(el.dataset.de, el.dataset.key, el.value); return; }
+    if (el.dataset.fpc) {
+      const [i, campo] = el.dataset.fpc.split('|'), c = clone(ST.cfg), l = c.fretePctClientes = (c.fretePctClientes || []).slice();
+      if (!l[+i]) return; l[+i] = Object.assign({}, l[+i], { [campo]: campo === 'pct' ? (parseFloat(String(el.value).replace(',', '.')) || 0) : String(el.value || '').trim() });
+      await salvar('cfg', 'main', c); ui.escalaSuja = true; toast('Frete por cliente salvo.'); render(); return;
+    }
     if (el.dataset.tabmot) {
       const [tipo, reg] = el.dataset.tabmot.split('|'), c = clone(ST.cfg), tab = c.tabelaMotorista || clone(RE.TABELA_MOTORISTA_PADRAO);
       const t = String(el.value || '').trim().toLowerCase(), num = parseFloat(t.replace(/[^\d,.-]/g, '').replace(/\.(?=\d{3}\b)/g, '').replace(',', '.'));

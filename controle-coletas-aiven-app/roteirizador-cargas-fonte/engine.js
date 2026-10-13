@@ -449,6 +449,11 @@
     else if (mun) { n.lat = mun.lat; n.lon = mun.lon; n.coordFonte = 'centro da cidade'; }
     // frete
     if (nota.frete != null && nota.frete !== '') { n.freteValor = +nota.frete; n.freteFonte = 'operador'; }
+    else if (RE.fretePctCliente(nota, cfg) && n.valorMerc > 0) {
+      // antes do CT-e: frete combinado com o cliente, em % do valor da nota
+      const r = RE.fretePctCliente(nota, cfg);
+      n.freteValor = round(n.valorMerc * r.pct / 100, 2); n.freteFonte = r.nome + ' ' + String(r.pct).replace('.', ',') + '% da NF';
+    }
     else if (nota.freteXml > 0) { n.freteValor = nota.freteXml; n.freteFonte = 'nota'; }
     else if (cidadeCad && (cidadeCad.freteKg > 0 || cidadeCad.freteMin > 0 || cidadeCad.fretePct > 0) && n.pesoKg) {
       n.freteValor = round(Math.max(cidadeCad.freteMin || 0, (cidadeCad.freteKg || 0) * n.pesoKg + (cidadeCad.fretePct || 0) / 100 * (n.valorMerc || 0)), 2);
@@ -461,6 +466,14 @@
     n.pendencias = pend; n.avisos = avisos;
     n.bloqueada = pend.some((p) => p.bloqueia);
     return n;
+  };
+  // % de frete sobre o valor da NF por cliente (remetente), usado enquanto não há CT-e
+  RE.fretePctCliente = (nota, cfg) => {
+    const lst = (cfg && cfg.fretePctClientes) || []; if (!lst.length) return null;
+    const t = norm([nota.emitente, nota.remetente].filter(Boolean).join(' '));
+    if (!t) return null;
+    for (const r of lst) { const k = norm(r.nome || ''); if (k && r.pct > 0 && t.includes(k)) return r; }
+    return null;
   };
   RE.clienteKey = (n) => {
     const e = n.endereco || {};
@@ -1434,6 +1447,8 @@
     descargaPorNotaMin: 5, precoDiesel: 6.19, precoGasolina: 6.29, precoEtanol: 4.39,
     folgaEncaixeMm: 10, folgaSecaoMm: 5, niveisEncaixe: 3, cargaInternaKgM: 25, aproveitamento: 0.85,
     tabelaMotorista: RE.TABELA_MOTORISTA_PADRAO,
+    // ordem importa: Leal Dutra antes de Comercial Leal
+    fretePctClientes: [{ nome: 'Leal Dutra', pct: 5.5 }, { nome: 'Comercial Leal', pct: 5.25 }, { nome: 'Conasid', pct: 6 }, { nome: 'Navas', pct: 5 }],
     cubagemKgM3: 0, prazoPadraoDias: 0, pesoVeiculo: 50, consolidar: false, combos: [], minEntregas: 20, minExcecaoPrazo: true, minimizarMotoristas: true,
   };
   RE.VEICULOS_PADRAO = [
