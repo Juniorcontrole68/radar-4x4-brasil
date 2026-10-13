@@ -769,6 +769,7 @@
       if (n.status === 'entregue' || n.status === 'cancelada' || n.status === 'em_rota') continue;
       if (n.planoData && n.planoData !== data && n.status === 'roteirizada') continue;
       if (filtroCidades && filtroCidades.length && !filtroCidades.includes(n.cidadeId)) continue;
+      if (n.bloqueioUsuario) { fora.push({ nota: n, motivo: 'Bloqueada pelo usuário' }); continue; }
       if (n.bloqueada) { fora.push({ nota: n, motivo: 'Dados pendentes' }); continue; }
       const cid = ctx.cidades[n.cidadeId];
       const forcado = n.diaForcado === data;

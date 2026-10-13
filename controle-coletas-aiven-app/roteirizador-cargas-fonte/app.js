@@ -939,14 +939,17 @@
   function cliSigla(nome) { const t = RE.norm(nome || ''); if (!t) return ''; for (const [re, s] of CLI_SIGLAS) if (re.test(t)) return s; const w = t.replace(/\b(LTDA|ME|EPP|SA|S A|EIRELI|COMERCIO|COMERCIAL|DE|DA|DO|E)\b/g, ' ').trim().split(/\s+/)[0] || t; return w.slice(0, 10); }
   const cliChip = (nome) => nome ? '<span class="chip cli" title="' + esc(nome) + '">' + esc(cliSigla(nome)) + '</span>' : '<span class="muted">—</span>';
   const cliDaParada = (s) => { const n = (s.notas || []).map((id) => ST.notas.get(id)).find((x) => x && x.emitente); return n ? n.emitente : ''; };
+  const chkBloqueio = (n) => n && n.id && ui.tab === 'notas' ? '<label class="bloq-nf" data-a="selNota" title="Bloquear: enquanto marcada, a NF não entra na programação"><input type="checkbox" data-bloq="' + esc(n.id) + '"' + (n.bloqueioUsuario ? ' checked' : '') + ' aria-label="Bloquear NF ' + esc(n.numero || '') + '"><svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2"/></svg></label>' : '';
+  const acoesNota = (n) => btnExcluirNota(n) + chkBloqueio(n);
   function chipStatus(n) {
+    if (n.bloqueioUsuario && !['entregue', 'cancelada'].includes(n.status)) return '<span class="chip bad" title="Bloqueada: não entra na programação">Bloqueada</span>' + (n.bloqueada ? btnCopiarNF(n.numero) : '') + acoesNota(n);
     if (n.status === 'cancelada') return '<span class="chip">Cancelada</span>';
     if (n.status === 'entregue') return '<span class="chip ok">Entregue</span>';
     if (n.status === 'em_rota') return '<span class="chip info">Em rota</span>';
-    if (n.bloqueada) return '<span class="chip bad">Pendente</span>' + btnCopiarNF(n.numero) + btnExcluirNota(n);
-    if (n.prioridade && n.status !== 'roteirizada') return '<span class="chip bad" title="' + esc(((n.ocorrencias || []).slice(-1)[0] || {}).motivo || '') + '">Prioridade</span>' + (n.avisos.length ? ' <span class="chip warn">' + n.avisos.length + '</span>' : '');
-    if (n.status === 'roteirizada') return '<span class="chip info">Roteirizada ' + dBR(n.planoData) + '</span>';
-    return '<span class="chip ok">Pronta</span>' + (n.avisos.length ? ' <span class="chip warn" title="' + esc(n.avisos.map((a) => a.msg).join('\n')) + '">' + n.avisos.length + ' aviso' + (n.avisos.length > 1 ? 's' : '') + '</span>' : '');
+    if (n.bloqueada) return '<span class="chip bad">Pendente</span>' + btnCopiarNF(n.numero) + acoesNota(n);
+    if (n.prioridade && n.status !== 'roteirizada') return '<span class="chip bad" title="' + esc(((n.ocorrencias || []).slice(-1)[0] || {}).motivo || '') + '">Prioridade</span>' + (n.avisos.length ? ' <span class="chip warn">' + n.avisos.length + '</span>' : '') + acoesNota(n);
+    if (n.status === 'roteirizada') return '<span class="chip info">Roteirizada ' + dBR(n.planoData) + '</span>' + acoesNota(n);
+    return '<span class="chip ok">Pronta</span>' + (n.avisos.length ? ' <span class="chip warn" title="' + esc(n.avisos.map((a) => a.msg).join('\n')) + '">' + n.avisos.length + ' aviso' + (n.avisos.length > 1 ? 's' : '') + '</span>' : '') + acoesNota(n);
   }
   function vImportar() {
     let h = '<div class="card"><div class="dz" id="dz"><h3 style="margin-bottom:6px">Solte os arquivos aqui</h3><p class="muted small">XML de NF-e (um ou vários), ZIP com centenas de XMLs, DANFE em PDF (uma ou várias notas por arquivo), planilha Excel ou CSV. Eventos de cancelamento em XML cancelam a nota correspondente.</p><label class="btn pri" style="margin-top:8px">' + I.up2 + 'Escolher arquivos<input type="file" id="fArq" multiple accept=".xml,.zip,.pdf,.csv,.txt,.xlsx,.xls,.ods" hidden></label></div>';
@@ -1801,6 +1804,7 @@
 
   document.addEventListener('change', async (e) => {
     const el = e.target;
+    if (el.dataset.bloq) { const n = ST.notas.get(el.dataset.bloq); if (n) { const q = Object.assign({}, n); if (el.checked) { q.bloqueioUsuario = true; q.bloqueioEm = agoraISO(); q.bloqueioPor = ST.uid; } else { delete q.bloqueioUsuario; delete q.bloqueioEm; delete q.bloqueioPor; } await salvar('notas', n.id, q); registrar('Nota ' + (el.checked ? 'bloqueada' : 'desbloqueada'), 'NF ' + n.numero); toast('NF ' + n.numero + (el.checked ? ' bloqueada: não entra na programação.' : ' desbloqueada.')); render(); } return; }
     if (el.dataset.sel) { const s = ui.notasSel || (ui.notasSel = new Set()); if (el.checked) s.add(el.dataset.sel); else s.delete(el.dataset.sel); ui.confirmar = null; render(); return; }
     if (el.dataset.selall) { const s = ui.notasSel || (ui.notasSel = new Set()); for (const c of $$('[data-sel]')) { if (el.checked) s.add(c.dataset.sel); else s.delete(c.dataset.sel); } ui.confirmar = null; render(); return; }
     if (el.id === 'fRomData') { if (el.value) { ui.romData = el.value; ui.romSel = null; ui.romTodos = false; render(); } return; }
