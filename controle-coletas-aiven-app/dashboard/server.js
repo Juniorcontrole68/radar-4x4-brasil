@@ -6164,6 +6164,28 @@ if(u.pathname==='/api/programacao-entregas/status-nfs'&&req.method==='GET'){try{
   for(const d of datas){try{const b=await buildBi2Baixas(d);baixasOk=true;for(const r of b.rows||[]){const em=brDateToIso((String(r.entrega||'').match(/\d{2}\/\d{2}\/\d{2,4}/)||[''])[0])||'';if(!em||em<desde)continue;
     // o campo NF pode trazer várias notas do mesmo CT-e ("456787/456788", "456787 - 456788"): cada uma conta
     for(const k of String(r.nf||'').split(/[^0-9]+/).map(normNf).filter(x=>x.length>=3))if(!entregues.has(k))entregues.set(k,em)}}catch(e){console.log('STATUS NFS baixas '+d+': '+String(e.message||e))}}
+  // Mesma base do dashboard (SLA/Fluxo): baixas do relatório 17 casadas pelo CTRC, com a NF ligada ao CTRC
+  // pelos CT-es emitidos (relatório 174). O campo NF do 17 nem sempre traz a nota (ou traz várias).
+  try{
+    const dd=new Date(desde+'T12:00:00Z');dd.setUTCDate(dd.getUTCDate()-20);const ini=dd.toISOString().slice(0,10);
+    const dias17=bi2DateRange(desde,hoje,25),dias174=bi2DateRange(ini,hoje,45);
+    const lerDias=async(cod,pasta,dias)=>{const out=[];for(let i=0;i<dias.length;i+=5){const r=await Promise.all(dias.slice(i,i+5).map(d=>fetchBi2FolderDayParsed(cod,pasta,d).catch(()=>({rows:[]}))));for(const x of r)out.push(...(x.rows||[]))}return out};
+    const r17=await lerDias(17,bi2Auth().pasta,dias17);try{r17.push(...(parseBi2Csv((await fetchBi2ReportFolder(17,'',bi2Auth().pasta)).text).rows||[]))}catch{}
+    const r174=await lerDias(174,'ctrc',dias174);try{r174.push(...(parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text).rows||[]))}catch{}
+    const quer=new Set(nfs),nfCtrc=new Map();
+    for(const r of r174){
+      const k=normCtrcLoose(r.numero_ctrc||pickField(r,'CTRC'));if(!k)continue;
+      for(const n of String(r.numero_nf||pickField(r,'NF','NOTA FISCAL','NOTAS FISCAIS')||'').split(/[^0-9]+/).map(normNf).filter(Boolean))if(quer.has(n)){if(!nfCtrc.has(n))nfCtrc.set(n,new Set());nfCtrc.get(n).add(k)}
+    }
+    const entCtrc=new Map();
+    for(const r of r17){
+      const em=brDateToIso((String(r['DATA ENTREGA']||pickField(r,'DATA ENTREGA','ENTREGA','DT ENTREGA')||'').match(/\d{2}\/\d{2}\/\d{2,4}/)||[''])[0])||'';if(!em||em<desde)continue;
+      const k=normCtrcLoose(r.CTRC||pickField(r,'CTRC'));if(k&&(!entCtrc.has(k)||em<entCtrc.get(k)))entCtrc.set(k,em);
+      for(const n of String(r.NF||pickField(r,'NF')||'').split(/[^0-9]+/).map(normNf).filter(x=>x.length>=3))if(quer.has(n)&&!entregues.has(n))entregues.set(n,em)
+    }
+    for(const [n,ks] of nfCtrc){if(entregues.has(n))continue;for(const k of ks)if(entCtrc.has(k)){entregues.set(n,entCtrc.get(k));break}}
+    baixasOk=baixasOk||r17.length>0;
+  }catch(e){console.log('STATUS NFS base do dashboard: '+String(e.message||e))}
   const itens={};
   for(const nf of nfs){
     if(entregues.has(nf))itens[nf]={status:'entregue',em:entregues.get(nf),fonte:'Baixa no SSW'};
