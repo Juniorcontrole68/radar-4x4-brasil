@@ -866,6 +866,43 @@ function clienteBloqueado(user){
   if(c.status==='trial'&&c.trial_ends_at&&new Date(c.trial_ends_at).getTime()<Date.now())return 'Seu teste grátis terminou. Fale com a MOVIT para contratar e continuar usando.';
   return ''
 }
+// ---- Unificador: XML das notas nos anexos (XML solto ou dentro de .zip) ----
+function pdfUnifXml(a,msg,out,vistos){
+  if(out.length>=500||!a||!a.content||!a.content.length)return;
+  const filename=String(a.filename||'anexo'),ct=String(a.contentType||'').toLowerCase(),buf=Buffer.from(a.content);
+  const add=(name,data)=>{
+    if(out.length>=500||!data||!data.length)return;
+    const txt=data.toString('utf8');
+    if(!/<(?:\w+:)?(?:nfeProc|NFe|infNFe|procEventoNFe)\b/.test(txt))return;     // só NF-e (e eventos de cancelamento)
+    const ch=(txt.match(/Id="NFe(\d{44})"/)||txt.match(/<chNFe>(\d{44})<\/chNFe>/)||[])[1]||'';
+    const k=ch?(ch+(/procEventoNFe/.test(txt)?'-ev':'')):crypto.createHash('sha1').update(data).digest('hex');
+    if(vistos.has(k))return;vistos.add(k);
+    let nm=String(name||'nota.xml').split(/[\\/]/).pop().replace(/[^\w.\-]+/g,'_');if(!/\.xml$/i.test(nm))nm+='.xml';
+    if(out.some(x=>x.name===nm))nm=nm.replace(/\.xml$/i,'')+'-'+out.length+'.xml';
+    out.push({name:nm,data,date:msg&&msg.internalDate?new Date(msg.internalDate).getTime():0});
+  };
+  if(/\.xml$/i.test(filename)||/xml/.test(ct))return add(filename,buf);
+  if(/\.zip$/i.test(filename)||/zip/.test(ct)){
+    try{for(const e of require('./dashboard/ssw-cte.js').zipEntries(buf))if(e.data&&/\.xml$/i.test(e.name||''))add(e.name,e.data)}catch(e){}
+  }
+}
+const CRC_TAB=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}return t})();
+function crc32(buf){let c=0xFFFFFFFF;for(let i=0;i<buf.length;i++)c=CRC_TAB[(c^buf[i])&0xFF]^(c>>>8);return(c^0xFFFFFFFF)>>>0}
+// .zip simples (deflate), suficiente para algumas centenas de XMLs
+function zipCriar(files){
+  const zlib=require('zlib'),locais=[],central=[];let off=0;
+  for(const f of files){
+    const name=Buffer.from(f.name,'utf8'),data=Buffer.isBuffer(f.data)?f.data:Buffer.from(f.data),comp=zlib.deflateRawSync(data),crc=crc32(data);
+    const h=Buffer.alloc(30);h.writeUInt32LE(0x04034b50,0);h.writeUInt16LE(20,4);h.writeUInt16LE(0x0800,6);h.writeUInt16LE(8,8);h.writeUInt32LE(0,10);
+    h.writeUInt32LE(crc,14);h.writeUInt32LE(comp.length,18);h.writeUInt32LE(data.length,22);h.writeUInt16LE(name.length,26);h.writeUInt16LE(0,28);
+    locais.push(h,name,comp);
+    const c=Buffer.alloc(46);c.writeUInt32LE(0x02014b50,0);c.writeUInt16LE(20,4);c.writeUInt16LE(20,6);c.writeUInt16LE(0x0800,8);c.writeUInt16LE(8,10);c.writeUInt32LE(0,12);
+    c.writeUInt32LE(crc,16);c.writeUInt32LE(comp.length,20);c.writeUInt32LE(data.length,24);c.writeUInt16LE(name.length,28);c.writeUInt32LE(off,42);
+    central.push(c,name);off+=30+name.length+comp.length;
+  }
+  const cd=Buffer.concat(central),e=Buffer.alloc(22);e.writeUInt32LE(0x06054b50,0);e.writeUInt16LE(files.length,8);e.writeUInt16LE(files.length,10);e.writeUInt32LE(cd.length,12);e.writeUInt32LE(off,16);
+  return Buffer.concat([...locais,cd,e]);
+}
 function dashboardHas(user,perm){
   if(tenantSandbox(user)&&!SANDBOX_PERMS.has(perm))return false;
   return !!(user&&(user.is_admin||user.permissions?.includes('*')||user.permissions?.includes(perm)))
@@ -3239,7 +3276,8 @@ async function start() {
           const password=String(body.password||'');
           const sender=String(body.sender||'').trim().slice(0,220);
           const scope=body.scope==='all'?'all':'inbox';
-          const pdfMode=body.mode==='city'?'city':'tubes';
+          const pdfMode=body.mode==='city'?'city':body.mode==='xml'?'xml':'tubes';
+          const xmlFound=[],xmlVistos=new Set();
           const requestedHost=String(body.host||'auto');
           const emailDomain=(email.split('@')[1]||'').toLowerCase();
           const providerHosts={
@@ -3313,7 +3351,7 @@ async function start() {
           const found=[];
           let scanned=0,matchedMessages=0,pdfAttachmentsSeen=0;
           for(const box of mailboxes){
-            if(found.length>=60||scanned>=250)break;
+            if(found.length>=60||xmlFound.length>=500||scanned>=250)break;
             let lock=null;
             try{
               lock=await client.getMailboxLock(box,{description:'CONSTRULOG PDF Unificador'});
@@ -3347,6 +3385,7 @@ async function start() {
                   }
                   matchedMessages++;
                   for(const a of parsed.attachments||[]){
+                    if(pdfMode==='xml'){pdfUnifXml(a,msg,xmlFound,xmlVistos);continue}
                     if(found.length>=60)break;
                     const filename=String(a.filename||'anexo');
                     const contentType=String(a.contentType||'').toLowerCase();
@@ -3386,6 +3425,7 @@ async function start() {
                   }
                   matchedMessages++;
                   for(const a of parsed.attachments||[]){
+                    if(pdfMode==='xml'){pdfUnifXml(a,msg,xmlFound,xmlVistos);continue}
                     if(found.length>=60)break;
                     const filename=String(a.filename||'anexo');
                     const contentType=String(a.contentType||'').toLowerCase();
@@ -3407,6 +3447,18 @@ async function start() {
             }
           }
 
+          if(pdfMode==='xml'){
+            if(!xmlFound.length){
+              let error='Nenhum XML de nota fiscal foi encontrado nos e-mails do período.';
+              if(scanned===0)error='A pasta foi aberta, mas não foi possível ler mensagens. Tente selecionar “Todas as pastas”.';
+              else if(sender&&matchedMessages===0)error='Nenhum e-mail desse remetente foi encontrado no período. Confira o remetente ou deixe o campo em branco.';
+              return sendJson(res,404,{ok:false,error,matchedMessages,scanned});
+            }
+            const zip=zipCriar(xmlFound.map(x=>({name:x.name,data:x.data})));
+            const nome='XML-notas-'+from+'-a-'+to+'.zip';
+            res.writeHead(200,{'Content-Type':'application/zip','Content-Disposition':'attachment; filename="'+nome+'"','Cache-Control':'no-store','X-XML-Count':String(xmlFound.length),'Access-Control-Expose-Headers':'X-XML-Count, Content-Disposition'});
+            return res.end(zip);
+          }
           if(!found.length){
             let error='Nenhum anexo PDF foi encontrado com esses filtros.';
             if(scanned===0)error='A pasta foi aberta, mas não foi possível ler mensagens. Tente selecionar “Todas as pastas”.';

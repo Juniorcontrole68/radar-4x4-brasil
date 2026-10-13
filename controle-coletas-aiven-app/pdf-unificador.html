@@ -21,7 +21,7 @@ details{margin-top:12px}summary{cursor:pointer;color:#334155;font-weight:650;fon
 </head>
 <body>
 <div class="wrap">
-  <div class="head"><div class="icon">PDF</div><div><h1>Unificador de PDF</h1><p>Busca os anexos em PDF no e-mail e gera um único arquivo na ordem escolhida.</p></div></div>
+  <div class="head"><div class="icon">PDF</div><div><h1>Unificador de PDF</h1><p>Busca os anexos em PDF no e-mail e gera um único arquivo na ordem escolhida, ou extrai os XML das notas para o Roteirizador.</p></div></div>
   <div class="card">
     <div class="grid">
       <label>E-mail
@@ -54,10 +54,11 @@ details{margin-top:12px}summary{cursor:pointer;color:#334155;font-weight:650;fon
     <div class="actions">
       <button id="runTubes" class="primary">Notas por Tubos</button>
       <button id="runCity" class="secondary">Notas por Cidade</button>
+      <button id="runXml" class="secondary" title="Baixa um .zip com os XML das notas, para importar no Roteirizador">📦 Extrair XML para o Roteirizador</button>
       <button id="clear" class="secondary" type="button">Limpar senha</button>
     </div>
     <div id="status" class="status">Informe o período e a conta de e-mail. Escolha “Notas por Tubos” ou “Notas por Cidade”. A senha é usada somente para esta consulta e não é armazenada.</div>
-    <div class="note">Limite de segurança: até 250 e-mails e 60 anexos PDF por consulta. “Notas por Tubos” coloca primeiro as notas com TUBO/TUBOS e depois as demais. “Notas por Cidade” agrupa todas as notas da mesma cidade destino. O arquivo final é gerado na hora e não fica salvo no servidor.<br><br><b>Importante:</b> se sua conta de e-mail usa verificação em duas etapas (2FA), use uma <b>senha de aplicativo</b> no lugar da senha normal do webmail.</div>
+    <div class="note">Limite de segurança: até 250 e-mails e 60 anexos PDF por consulta (ou 500 XML). “Extrair XML” junta num .zip os XML de NF-e anexados (soltos ou dentro de .zip), sem repetir notas; importe esse .zip em <b>Roteirizador → Notas → Importar</b>. “Notas por Tubos” coloca primeiro as notas com TUBO/TUBOS e depois as demais. “Notas por Cidade” agrupa todas as notas da mesma cidade destino. O arquivo final é gerado na hora e não fica salvo no servidor.<br><br><b>Importante:</b> se sua conta de e-mail usa verificação em duas etapas (2FA), use uma <b>senha de aplicativo</b> no lugar da senha normal do webmail.</div>
   </div>
 </div>
 <script>
@@ -84,9 +85,9 @@ async function runPdf(mode){
   };
   if(!body.email||!body.password||!body.from||!body.to){$('status').className='status err';$('status').textContent='Preencha e-mail, senha e período.';return}
   try{localStorage.setItem(EMAIL_KEY,body.email)}catch(e){}
-  $('runTubes').disabled=true;$('runCity').disabled=true;
+  $('runTubes').disabled=true;$('runCity').disabled=true;$('runXml').disabled=true;
   $('status').className='status';
-  $('status').textContent=mode==='city'?'Conectando ao e-mail e agrupando as notas por cidade destino…':'Conectando ao e-mail e colocando as notas com tubos primeiro…';
+  $('status').textContent=mode==='xml'?'Conectando ao e-mail e separando os XML das notas…':mode==='city'?'Conectando ao e-mail e agrupando as notas por cidade destino…':'Conectando ao e-mail e colocando as notas com tubos primeiro…';
   try{
     const r=await fetch('/api/painel/pdf-unificador',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(!r.ok){
@@ -96,16 +97,18 @@ async function runPdf(mode){
     const count=r.headers.get('X-PDF-Count')||'';
     const tubeCount=r.headers.get('X-Tube-Count')||'';
     const cityCount=r.headers.get('X-City-Count')||'';
-    const name=(r.headers.get('Content-Disposition')||'').match(/filename="([^"]+)"/)?.[1]||(mode==='city'?'Notas-por-cidade.pdf':'Notas-por-tubos.pdf');
+    const name=(r.headers.get('Content-Disposition')||'').match(/filename="([^"]+)"/)?.[1]||(mode==='xml'?'XML-notas.zip':mode==='city'?'Notas-por-cidade.pdf':'Notas-por-tubos.pdf');
     const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
     $('status').className='status ok';
+    if(mode==='xml'){$('status').innerHTML='Concluído • '+(r.headers.get('X-XML-Count')||'')+' XML de nota(s) no arquivo <b>'+name+'</b>. Agora abra o <a href="/#roteirizador-cargas" target="_top">Roteirizador</a> → Notas → Importar e solte esse arquivo.';return}
     $('status').textContent=mode==='city'
       ? 'Concluído'+(count?' • '+count+' nota(s)':'')+(cityCount?' • '+cityCount+' cidade(s) agrupada(s)':'')+'. O download foi iniciado.'
       : 'Concluído'+(count?' • '+count+' nota(s)':'')+(tubeCount?' • '+tubeCount+' com tubos primeiro':'')+'. O download foi iniciado.';
   }catch(e){$('status').className='status err';$('status').textContent=e.message||'Erro ao gerar o PDF.'}
-  finally{$('runTubes').disabled=false;$('runCity').disabled=false}
+  finally{$('runTubes').disabled=false;$('runCity').disabled=false;$('runXml').disabled=false}
 }
 $('runTubes').onclick=()=>runPdf('tubes');
 $('runCity').onclick=()=>runPdf('city');
+$('runXml').onclick=()=>runPdf('xml');
 </script>
 </body></html>
