@@ -93,7 +93,7 @@ const ctx = { cfg, cidades, motoristas: {}, clientes: {}, produtos: DEMO.PRODUTO
 const notas = xmls.map((x, i) => { const n = RE.parseNFeXML(x.xml).nota; n.id = n.chave; n.status = 'pronta'; n.prazo = RE.addDays('2026-10-12', 3 + (i % 4)); return RE.enriquecer(n, ctx); });
 const bloqueadas = notas.filter((n) => n.bloqueada);
 eq(bloqueadas.length, 1, 'uma nota com pendência (sem peso)');
-ok(bloqueadas[0].pendencias.some((p) => p.cod === 'peso') && bloqueadas[0].pendencias.some((p) => p.cod === 'tubo_diametro'), 'pendências de peso e diâmetro em polegadas');
+ok(bloqueadas[0].pendencias.some((p) => p.cod === 'peso') && bloqueadas[0].avisos.some((p) => p.cod === 'tubo_sem_medida') && bloqueadas[0].exigeTubo, 'sem peso trava; tubo sem medida vira aviso e exige van com tubo');
 const n3 = notas.find((n) => n.tubos.length > 2);
 ok(n3 && n3.qtdTubos > 0, 'tubos reconhecidos pelo cadastro');
 

@@ -203,6 +203,10 @@
       const ufMun = /MUNIC[ÍI]PIO\s+(?:FONE\s*\/?\s*FAX\s+)?UF\s+(?:INSCRI[ÇC][ÃA]O ESTADUAL\s+)?([A-ZÀ-Ú][A-ZÀ-Ú' \-]{2,40}?)\s+(?:\(?\d{2}\)?\s*[\d\- ]{8,}\s+)?([A-Z]{2})\b/i.exec(t);
       n.destNome = dn;
       n.endereco = { lgr: '', nro: '', bairro: '', cidade: ufMun ? ufMun[1].trim() : '', uf: ufMun ? ufMun[2] : '', cep: (ceps[1] || ceps[0] || '').replace(/\D/g, ''), cMun: '' };
+      // tubo na nota: procura nos produtos (do quadro de produtos até os dados adicionais)
+      const prod = (/DADOS\s+DOS?\s+PRODUTOS?([\s\S]*?)(?:DADOS\s+ADICIONAIS|C[ÁA]LCULO\s+DO\s+ISSQN|$)/i.exec(t) || [])[1] || t;
+      n.exigeTubo = /\bTUBOS?\b/i.test(prod);
+      n.mercadoria = n.exigeTubo ? 'COM TUBO' : '';
       n.pdfParcial = true;
       delete n.textoPdf;
     }
@@ -355,7 +359,7 @@
     const produtos = ctx.produtos || [];
     const cfg = ctx.cfg || {};
     const pend = [], avisos = [];
-    let volItens = 0, volItensCompleto = true, pesoItens = 0, pesoItensCompleto = true;
+    let volItens = 0, volItensCompleto = true, pesoItens = 0, pesoItensCompleto = true, tuboSemMedida = false;
     const itens = (nota.itens || []).map((it0) => {
       const it = Object.assign({}, it0);
       const p = RE.matchProduto(it, produtos);
@@ -379,8 +383,8 @@
         let barras = it.qtd;
         if ((un === 'M' || un === 'MT' || un === 'MTS' || un === 'METRO') && t.compr) barras = Math.ceil(it.qtd / t.compr - 1e-9);
         t.barras = Math.max(0, Math.round(barras));
-        if (!t.de) pend.push({ cod: 'tubo_diametro', bloqueia: true, item: it.desc, msg: 'Tubo sem diâmetro externo: ' + it.desc + (dd.dePol ? ' (bitola ' + dd.dePol + '" — confirme o diâmetro em mm no cadastro)' : '') });
-        if (!t.compr) pend.push({ cod: 'tubo_comprimento', bloqueia: true, item: it.desc, msg: 'Tubo sem comprimento: ' + it.desc });
+        // tubo sem medida não trava mais a nota: ela vai obrigatoriamente na van com tubo (sem a conta do encaixe)
+        if (!t.de || !t.compr) { tuboSemMedida = true; avisos.push({ cod: 'tubo_sem_medida', msg: 'Tubo sem ' + (!t.de ? 'diâmetro' : 'comprimento') + ' (' + it.desc + '): vai na van com tubo, sem conferir o encaixe' }); }
         if (t.de && !t.di) avisos.push({ cod: 'tubo_sem_di', msg: 'Sem diâmetro interno: ' + it.desc + ' não recebe outros tubos dentro' });
         if (t.de && t.compr) {
           it.volM3 = round((t.de / 1000) ** 2 * t.compr * t.barras, 4); // caixa envolvente
@@ -426,7 +430,7 @@
     n.tubos = [];
     itens.forEach((it, idx) => { if (it.tubo && it.tubo.de && it.tubo.compr && it.tubo.barras > 0) n.tubos.push({ item: idx, desc: it.desc, ...it.tubo }); });
     n.qtdTubos = n.tubos.reduce((s, t) => s + t.barras, 0);
-    n.exigeTubo = !!nota.exigeTubo && !n.tubos.length;
+    n.exigeTubo = (!!nota.exigeTubo && !n.tubos.length) || tuboSemMedida;
     n.volTubosM3 = round(n.tubos.reduce((s, t) => s + (t.de / 1000) ** 2 * t.compr * t.barras, 0), 4);
     // destino
     const e = nota.endereco || {};

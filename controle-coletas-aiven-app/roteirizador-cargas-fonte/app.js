@@ -357,6 +357,7 @@
     { const ign = Object.assign({}, ignoradas()); let mud = false; for (const g of gravar) { const kk = nfChave(g.data.numero); if (kk && ign[kk]) { delete ign[kk]; mud = true; } } if (mud) await salvar('ssw', 'ignoradas', { id: 'ignoradas', nfs: ign }); }
     ui.imp.fase = 'Gravando'; ui.imp.aGravar = gravar.length; atualizarProg();
     await salvarVarios('notas', gravar, (k) => { ui.imp.gravados = k; if (k % 10 === 0 || k === gravar.length) atualizarProg(); });
+    setTimeout(() => localizarEnderecosXML(), 800);
     ui.imp.res = res; ui.imp.fase = 'Concluído';
     await registrar('Importação', res.novas + ' novas, ' + res.atualizadas + ' atualizadas, ' + res.duplicadas + ' duplicadas, ' + res.canceladas + ' canceladas, ' + res.ign.length + ' ignoradas');
     render();
@@ -944,9 +945,34 @@
     const lim = Date.now() - 6 * 3600e3;
     return [...ST.notas.values()].filter((n) => n.ctrc && n.lat == null && !['entregue', 'cancelada'].includes(n.status) && !n.bloqueioUsuario && !(n.geoTentEm && Date.parse(n.geoTentEm) > lim));
   }
+  // notas com rua vinda do XML da NF-e (sem CTRC ou já com o endereço): localiza a rua e o número
+  function notasComRuaSemPonto() {
+    const lim = Date.now() - 6 * 3600e3;
+    return [...ST.notas.values()].filter((n) => n.lat == null && n.endereco && n.endereco.lgr && !n.pdfParcial && !['entregue', 'cancelada'].includes(n.status) && !n.bloqueioUsuario && !(n.geoRuaEm && Date.parse(n.geoRuaEm) > lim) && (!n.ctrc || n.geoTentEm));
+  }
+  async function localizarRuasXML() {
+    if (!window.RC_HOST || !window.RC_HOST.localizarEnderecos || ui.geoRua) return;
+    const fila = notasComRuaSemPonto(); if (!fila.length) return;
+    ui.geoRua = true; let ok = 0;
+    try {
+      while (fila.length) {
+        const lote = fila.splice(0, 15);
+        let j; try { j = await window.RC_HOST.localizarEnderecos(lote.map((n) => ({ id: n.id, endereco: n.endereco.lgr, numero: n.endereco.nro, bairro: n.endereco.bairro, cidade: n.endereco.cidade, uf: n.endereco.uf, cep: n.endereco.cep }))); } catch (e) { break; }
+        const por = new Map((j.rows || []).map((r) => [r.id, r])), it = [];
+        for (const n of lote) {
+          const r = por.get(n.id), o = ST.notas.get(n.id); if (!r || !o) continue;
+          const q = Object.assign({}, o, { geoRuaEm: agoraISO() });
+          if (r.ok && /endereco|rua/.test(r.precisao || '') && r.lat != null) { q.lat = +r.lat; q.lon = +r.lon; q.geoFonte = 'XML da NF-e · ' + (r.precisao === 'endereco' ? 'rua e número' : 'rua'); q.geoPrecisao = r.precisao; ok++; }
+          it.push({ id: n.id, data: q });
+        }
+        await salvarVarios('notas', it);
+        if (!(j.rows || []).length) break;
+      }
+    } finally { ui.geoRua = false; if (ok) { toast(ok + ' endereço(s) do XML localizados no mapa.'); ui.escalaSuja = true; } render(); }
+  }
   async function localizarEnderecosXML() {
     if (!window.RC_HOST || !window.RC_HOST.enderecosCtrc || ui.geo) return;
-    let fila = notasSemEndereco(); if (!fila.length) return;
+    let fila = notasSemEndereco(); if (!fila.length) { setTimeout(() => localizarRuasXML(), 200); return; }
     ui.geo = { feitos: 0, total: fila.length, ok: 0 }; render();
     try {
       while (fila.length) {
@@ -975,7 +1001,7 @@
     } finally {
       const g = ui.geo; ui.geo = null;
       if (g && g.ok) { toast(g.ok + ' endereço(s) localizados pelo XML do CT-e.'); ui.escalaSuja = true; }
-      render();
+      render(); setTimeout(() => localizarRuasXML(), 500);
     }
   }
   async function sincronizarSSW() {

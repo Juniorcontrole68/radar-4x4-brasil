@@ -162,6 +162,8 @@
     recalcularRota: (corpo) => api('POST', '/api/roteirizador/recalcular', corpo),
     rotaRomaneio: (data, romaneio) => api('GET', '/api/roteirizador/rota?date=' + encodeURIComponent(data) + '&romaneio=' + encodeURIComponent(romaneio)),
     // endereço certo pelo XML do CT-e (opção 101 do SSW), já localizado no mapa; até 12 CTRCs por chamada
+    // endereço do XML da NF-e localizado no mapa (até 15 por chamada)
+    localizarEnderecos: (itens) => api('POST', '/api/roteirizador/localizar-enderecos', { itens }),
     enderecosCtrc: (ctrcs) => api('POST', '/api/roteirizador/enderecos-ctrc', { ctrcs }),
     sswDisponiveis: (forcar) => api('GET', '/api/programacao-entregas/disponiveis' + (forcar ? '?force=1' : '')),
     // veículos e motoristas: tela Frota + quem rodou no Rastreio de carga nos últimos dias

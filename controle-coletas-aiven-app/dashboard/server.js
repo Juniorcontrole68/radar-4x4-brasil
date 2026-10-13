@@ -6515,6 +6515,25 @@ if(req.method==='POST'&&u.pathname==='/api/roteirizador/geometria-order'){try{
 }}
 // Endereço certo das notas do roteirizador de cargas: lê o XML do CT-e no SSW (opção 101) e localiza no mapa
 // do mesmo jeito do roteirizador de romaneio. Responde com o que der dentro do tempo; o resto vem na próxima chamada.
+// Endereço que veio do XML da NF-e (rua, número, bairro, CEP): localiza no mapa. Até 15 por chamada.
+if(req.method==='POST'&&u.pathname==='/api/roteirizador/localizar-enderecos'){try{
+  if(!dashboardHasAny(authUser,['dashboard','roteirizador','montar_carga']))return dashboardDeny(res);
+  const body=await routeReadJson(req);
+  const itens=(Array.isArray(body.itens)?body.itens:[]).slice(0,15);
+  const rows=[];const t0=Date.now();
+  await Promise.race([
+    Promise.all(itens.map(async it=>{
+      const id=String(it.id||'');
+      try{
+        const loc=await routeLocateAddress({endereco:String(it.endereco||'').slice(0,160),numero:String(it.numero||'').slice(0,20),cidade:String(it.cidade||'').slice(0,80),uf:String(it.uf||'SP').slice(0,2),cep:String(it.cep||'').replace(/\D/g,'').slice(0,8),bairro:String(it.bairro||'').slice(0,80)});
+        rows.push(loc?{id,ok:true,lat:loc.lat,lon:loc.lon,precisao:loc.precision||'',fonte:loc.coordinateSource||loc.query||''}:{id,ok:false,erro:'não localizado'})
+      }catch(e){rows.push({id,ok:false,erro:String(e.message||e)})}
+    })),
+    new Promise(r=>setTimeout(r,45000))
+  ]);
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:true,rows,ms:Date.now()-t0}))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(req.method==='POST'&&u.pathname==='/api/roteirizador/enderecos-ctrc'){try{
   if(!dashboardHasAny(authUser,['dashboard','roteirizador','montar_carga']))return dashboardDeny(res);
   const body=await routeReadJson(req);
