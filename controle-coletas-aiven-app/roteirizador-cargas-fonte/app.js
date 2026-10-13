@@ -138,13 +138,31 @@
   const motDisp = (m, d) => { const x = dispDia(d).motoristas[m.id]; return x === true ? true : x === false ? false : RE.motoristaDisponivel(m, d) && motRecente(m, d); };
   const cidadeCoord = (c) => { const m = RE.findMun(c.id); return Object.assign({}, c, { lat: c.lat != null ? c.lat : m && m.lat, lon: c.lon != null ? c.lon : m && m.lon }); };
   let CTX = null, CTX_V = -1;
+  // Motoristas com a mesma placa contam como um só: fica o que tem o veículo fixo ou o que rodou por último.
+  let MOTU_V = -1, MOTU = [];
+  function motoristasUnicos() {
+    if (MOTU_V === VER) return MOTU;
+    const placa = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const fixa = new Map(); for (const v of ST.veiculos.values()) if (v.motoristaId && v.placa) fixa.set(v.motoristaId, placa(v.placa));
+    const porPlaca = new Map(), soltos = [];
+    for (const m of ST.motoristas.values()) {
+      const p = fixa.get(m.id) || placa(m.ultimaPlaca);
+      if (!p) { soltos.push(m); continue; }
+      const cur = porPlaca.get(p);
+      const melhor = (x) => [fixa.has(x.id) ? 1 : 0, x.ultimoUso || '', x.telefone ? 1 : 0];
+      if (!cur) { porPlaca.set(p, m); continue; }
+      const a2 = melhor(m), b2 = melhor(cur);
+      if (a2[0] > b2[0] || (a2[0] === b2[0] && (a2[1] > b2[1] || (a2[1] === b2[1] && a2[2] > b2[2])))) porPlaca.set(p, m);
+    }
+    MOTU = [...porPlaca.values(), ...soltos]; MOTU_V = VER; return MOTU;
+  }
   // Cada motorista marcado no dia leva um veículo: o fixo dele, ou um veículo livre (de preferência a última placa que ele usou)
   function veiculosComMotorista(d) {
     const vs = [...ST.veiculos.values()].sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR', { numeric: true }));
     const dd = dispDia(d);
     const usavel = (v) => RE.veicDisponivel(v, d) && dd.veiculos[v.id] !== false;
     if (!ST.motoristas.size) return vs.map((v) => (dd.veiculos[v.id] === false ? Object.assign({}, v, { indispDia: true }) : v));
-    const disp = [...ST.motoristas.values()].filter((m) => motDisp(m, d));
+    const disp = motoristasUnicos().filter((m) => motDisp(m, d));
     const comVeic = new Set(vs.filter((v) => usavel(v) && v.motoristaId && disp.some((m) => m.id === v.motoristaId)).map((v) => v.motoristaId));
     const pool = disp.filter((m) => !comVeic.has(m.id));
     const placa = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -171,7 +189,7 @@
       produtos: [...ST.produtos.values()],
       veiculos: veiculosComMotorista(ui.data),
       base: ST.cfg.base, data: ui.data,
-      maxMotoristas: ST.motoristas.size ? [...ST.motoristas.values()].filter((m) => motDisp(m, ui.data)).length : undefined,
+      maxMotoristas: ST.motoristas.size ? motoristasUnicos().filter((m) => motDisp(m, ui.data)).length : undefined,
     };
     CTX_V = VER;
     return CTX;
@@ -817,7 +835,7 @@
     const d = ui.data, dd = dispDia(d);
     if (window.RC_HOST && ST.admin && !ui.frotaAuto) { ui.frotaAuto = true; setTimeout(() => importarFrota(), 50); }
     if (window.RC_HOST && !ui.sswSync) { ui.sswSync = true; setTimeout(() => sincronizarSSW(), 80); }
-    const todos = [...ST.motoristas.values()];
+    const todos = motoristasUnicos();
     const q = RE.norm(ui.motQ || '');
     const lista = (q ? todos.filter((m) => RE.norm(m.nome).includes(q)) : todos.filter((m) => motRecente(m, d) || dd.motoristas[m.id] === true))
       .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
