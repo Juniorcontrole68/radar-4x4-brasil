@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"><meta name="rc-versao" content="d8294a0c6510"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="rc-versao" content="47f0766a15ba"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
 <title>Roteirizador Inteligente de Cargas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -1136,6 +1136,40 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
   };
 
   // ---------- custos ----------
+  // ---------- tabela de pagamento do motorista por região ----------
+  // valor fixo por saída ou R$ por km, conforme o tipo de veículo e a região da rota. Rota que passa por
+  // mais de uma região paga a região de maior valor. A região de cada cidade é a do cadastro (regiaoFrete)
+  // ou, sem ela, a cidade-polo da tabela mais próxima.
+  const v = (fixo) => ({ fixo }), k = (km) => ({ km });
+  RE.TABELA_MOTORISTA_PADRAO = {
+    regioes: ['Sorocaba', 'Itapetininga', 'Cotia', 'Piedade', 'Mogi Mirim', 'Bragança Paulista', 'Campinas', 'Jundiaí', 'Americana', 'Limeira', 'Piracicaba', 'Pirassununga'],
+    valores: {
+      tubos: { Sorocaba: v(900), Itapetininga: k(2.5), Cotia: k(2.5), Piedade: k(2.5), 'Mogi Mirim': v(900), 'Bragança Paulista': v(900), Campinas: v(800), 'Jundiaí': v(850), Americana: v(800), Limeira: v(800), Piracicaba: v(800), Pirassununga: v(900) },
+      van: { Sorocaba: v(800), Itapetininga: v(1000), Cotia: v(800), Piedade: v(900), 'Mogi Mirim': v(800), 'Bragança Paulista': v(800), Campinas: v(700), 'Jundiaí': v(750), Americana: v(700), Limeira: v(700), Piracicaba: v(700), Pirassununga: v(800) },
+      fiorino: { Sorocaba: v(400), Itapetininga: v(600), Cotia: v(550), Piedade: v(550), 'Mogi Mirim': v(450), 'Bragança Paulista': v(450), Campinas: v(350), 'Jundiaí': v(400), Americana: v(350), Limeira: v(350), Piracicaba: v(350), Pirassununga: v(450) },
+    },
+  };
+  const POLOS = new Map();
+  const poloCoord = (nome) => { if (!POLOS.has(nome)) POLOS.set(nome, RE.findMun(null, nome, 'SP')); return POLOS.get(nome); };
+  RE.regiaoFrete = (cidadeId, ctx) => {
+    const tab = ctx.cfg && ctx.cfg.tabelaMotorista; if (!tab || !tab.regioes || !tab.regioes.length) return '';
+    const cad = ctx.cidades[cidadeId];
+    if (cad && cad.regiaoFrete && tab.regioes.includes(cad.regiaoFrete)) return cad.regiaoFrete;
+    const m = RE.findMun(cidadeId) || (cad ? RE.findMun(null, cad.nome, cad.uf) : null); if (!m) return '';
+    let best = '', d = Infinity;
+    for (const r of tab.regioes) { const c = poloCoord(r); if (!c) continue; const x = haversine(m, c); if (x < d) { d = x; best = r; } }
+    return best;
+  };
+  RE.pagamentoTabela = (tipo, km, cidadesIds, ctx) => {
+    const tab = ctx.cfg && ctx.cfg.tabelaMotorista; const vals = tab && tab.valores && tab.valores[tipo]; if (!vals) return null;
+    let melhor = null;
+    for (const r of new Set(cidadesIds.map((id) => RE.regiaoFrete(id, ctx)).filter(Boolean))) {
+      const x = vals[r]; if (!x) continue;
+      const valor = x.km ? round(x.km * km, 2) : +x.fixo || 0;
+      if (!melhor || valor > melhor.valor) melhor = { valor, regiao: r, regra: x.km ? 'R$ ' + String(x.km).replace('.', ',') + '/km' : 'fixo' };
+    }
+    return melhor;
+  };
   RE.custoRota = (veic, km, cidadesIds, ctx, extras) => {
     const cfg = ctx.cfg;
     const preco = veic.combustivel === 'gasolina' ? cfg.precoGasolina : veic.combustivel === 'etanol' ? cfg.precoEtanol : cfg.precoDiesel;
@@ -1145,10 +1179,12 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     ped *= veic.multPedagio || 1;
     // pagamento do motorista: diária + R$ por km (cadastro do motorista; sem motorista, o do veículo)
     const mc = ctx.motoristas && veic.motoristaId ? ctx.motoristas[veic.motoristaId] : null;
-    const mot = round(mc ? (+mc.diaria || 0) + km * (+mc.valorKm || 0) : (+veic.diariaMotorista || 0) + km * (+veic.valorKmMotorista || 0), 2);
+    const tabMot = RE.pagamentoTabela(veic.tipo, km, cidadesIds, ctx);
+    const mot = tabMot ? tabMot.valor : round(mc ? (+mc.diaria || 0) + km * (+mc.valorKm || 0) : (+veic.diariaMotorista || 0) + km * (+veic.valorKmMotorista || 0), 2);
     const c = {
-      veiculo: +veic.custoDiaria || 0, motorista: mot, ajudante: +veic.custoAjudante || 0,
-      combustivel: round(comb, 2), pedagio: round(ped, 2), manutencao: round(km * (+veic.custoKm || 0), 2), extras: +extras || 0,
+      // pela tabela da região, o valor pago já cobre carro, combustível e manutenção (motorista agregado)
+      veiculo: tabMot ? 0 : +veic.custoDiaria || 0, motorista: mot, ajudante: +veic.custoAjudante || 0,
+      combustivel: tabMot ? 0 : round(comb, 2), pedagio: round(ped, 2), manutencao: tabMot ? 0 : round(km * (+veic.custoKm || 0), 2), extras: +extras || 0,
     };
     c.total = round(Object.values(c).reduce((s, v) => s + v, 0), 2);
     return c;
@@ -1656,7 +1692,9 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     const custo = RE.custoRota(r.veic, a.km, [...new Set(r.seq.map((i) => S[i].cidadeId))], ctx, extras || 0);
     const receita = round(r.seq.reduce((s, i) => s + S[i].receita, 0), 2);
     const lucro = round(receita - custo.total, 2);
+    const pagTab = RE.pagamentoTabela(r.veic.tipo, a.km, [...new Set(r.seq.map((i) => S[i].cidadeId))], ctx);
     return {
+      pagamento: pagTab ? { regiao: pagTab.regiao, regra: pagTab.regra } : null,
       veiculoId: r.veic.id, veiculoNome: r.veic.nome, veiculoTipo: r.veic.tipo, placa: r.veic.placa || '',
       motoristaId: r.veic.motoristaId || '',
       paradas: r.seq.map((i, k) => ({
@@ -1791,6 +1829,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     fatorRodoviario: 1.25, velocidadeMedia: 55, kmUrbano: 4, inicioJornada: '07:00', jornadaMaxHoras: 10,
     descargaPorNotaMin: 5, precoDiesel: 6.19, precoGasolina: 6.29, precoEtanol: 4.39,
     folgaEncaixeMm: 10, folgaSecaoMm: 5, niveisEncaixe: 3, cargaInternaKgM: 25, aproveitamento: 0.85,
+    tabelaMotorista: RE.TABELA_MOTORISTA_PADRAO,
     cubagemKgM3: 0, prazoPadraoDias: 0, pesoVeiculo: 50, consolidar: false, combos: [], minEntregas: 20, minExcecaoPrazo: true, minimizarMotoristas: true,
   };
   RE.VEICULOS_PADRAO = [
@@ -2787,7 +2826,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
         const cid = []; for (const p of r.paradas) { const c = cid[cid.length - 1]; if (c && c.n === p.cidadeNome) c.k++; else cid.push({ n: p.cidadeNome, k: 1 }); }
         return '<div class="ideia"><div class="row"><div><b>' + esc(m.nome) + '</b><div class="small muted">' + esc(r.veiculoNome) + '</div></div>' + (r.paradas.filter(sobraDaParada).length ? '<span class="chip warn">' + r.paradas.filter(sobraDaParada).length + ' sobra(s)</span>' : '') + '<span class="spacer"></span><button class="btn sm" data-a="verCarga" data-v="' + esc(r.veiculoId) + '">Ver carga</button></div>' +
           '<div class="small">' + r.paradas.length + ' entregas · ' + nf(r.kg, 0) + ' kg · <b>' + nf(r.km, 0) + ' km</b></div>' +
-          '<div class="small ideia-din">Frete <b>' + brl(r.receita) + '</b> · Motorista <b>' + brl(r.custo && r.custo.motorista) + '</b> · Lucro <b class="' + (r.lucro >= 0 ? 'pos' : 'neg') + '">' + brl(r.lucro) + '</b> · Margem <b class="' + (r.margem == null || r.margem >= 0 ? 'pos' : 'neg') + '">' + (r.margem != null ? nf(r.margem, 1) + '%' : '—') + '</b></div>' +
+          '<div class="small ideia-din">Frete <b>' + brl(r.receita) + '</b> · Motorista <b>' + brl(r.custo && r.custo.motorista) + '</b>' + (r.pagamento ? ' <span class="tiny muted">(' + esc(r.pagamento.regiao) + (r.pagamento.regra !== 'fixo' ? ', ' + esc(r.pagamento.regra) : '') + ')</span>' : '') + ' · Lucro <b class="' + (r.lucro >= 0 ? 'pos' : 'neg') + '">' + brl(r.lucro) + '</b> · Margem <b class="' + (r.margem == null || r.margem >= 0 ? 'pos' : 'neg') + '">' + (r.margem != null ? nf(r.margem, 1) + '%' : '—') + '</b></div>' +
           '<div class="small" style="margin-top:4px">Trocar carro: ' + selTrocaCarro(pl, r) + '</div>' +
           '<div class="small rota-cid">Base → ' + cid.map((c) => esc(c.n) + (c.k > 1 ? ' (' + c.k + ')' : '')).join(' → ') + ' → Base</div></div>';
       }).join('') || '<div class="empty small">Nenhum veículo precisou sair.</div>';
@@ -3570,7 +3609,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     if (!r.ok) h += '<div class="note bad small" style="margin:10px 14px 0">' + esc(r.motivos.join(' · ')) + '</div>';
     h += '<ol class="stops">' + r.paradas.map((s, i) => '<li class="stop' + (s.travada ? ' locked' : '') + '"><span class="seq" style="background:' + cor + '">' + (i + 1) + '</span><div><div class="who">' + (cliDaParada(s) ? cliChip(cliDaParada(s)) + ' ' : '') + esc(s.dest) + (s.entregue ? ' <span class="chip ok">entregue</span>' : '') + (sobraDaParada(s) ? ' <span class="chip warn" title="Sobra ainda não baixada">sobra de ' + dBR(sobraDaParada(s)) + '</span>' : '') + (s.prioridade ? ' <span class="chip bad">prioridade</span>' : s.atrasada ? ' <span class="chip bad">atrasada</span>' : s.obrigatoria ? ' <span class="chip warn">prazo</span>' : '') + (s.coordFonte !== 'confirmada' ? ' <span class="chip" title="Sem coordenada confirmada do cliente: usa o centro da cidade">aprox.</span>' : '') + '</div><div class="meta"><span>' + esc(s.cidadeNome) + '</span><span class="mono">' + esc(s.chegada) + '–' + esc(s.saida) + '</span><span>NF ' + esc(nfsTxt(s.notas)) + '</span><span class="mono">' + nf(s.kg, 0) + ' kg · ' + nf(s.m3, 2) + ' m³' + (s.qtdTubos ? ' · ' + s.qtdTubos + ' tubos' : '') + '</span><span class="mono">' + brl(s.receita) + '</span></div></div>' +
       '<div class="act"><button class="btn ic sm" data-a="subir" data-v="' + esc(r.veiculoId) + '" data-i="' + i + '" aria-label="Antecipar"' + (i === 0 ? ' disabled' : '') + '>' + I.up + '</button><button class="btn ic sm" data-a="descer" data-v="' + esc(r.veiculoId) + '" data-i="' + i + '" aria-label="Adiar"' + (i === r.paradas.length - 1 ? ' disabled' : '') + '>' + I.down + '</button><button class="btn ic sm" data-a="travar" data-v="' + esc(r.veiculoId) + '" data-key="' + esc(s.key) + '" aria-label="' + (s.travada ? 'Destravar' : 'Travar neste veículo') + '" title="' + (s.travada ? 'Travada neste veículo' : 'Travar neste veículo') + '">' + (s.travada ? I.lock : I.unlock) + '</button>' + opMover(s.key) + (p.status === 'aprovado' && !s.entregue ? '<button class="btn sm" data-a="entregar" data-v="' + esc(r.veiculoId) + '" data-key="' + esc(s.key) + '">' + I.check + 'Entregue</button>' : '') + '</div></li>').join('') + '</ol>';
-    h += '<div class="vfoot money"><span>Frete <b>' + brl(r.receita) + '</b></span><span>Motorista <b>' + brl(r.custo.motorista) + '</b></span><span><b>' + nf(r.km, 0) + '</b> km</span><span>Margem <b class="' + (r.margem == null || r.margem >= 0 ? 'pos' : 'neg') + '">' + (r.margem != null ? nf(r.margem, 1) + '%' : '—') + '</b></span><span title="' + esc('Veículo ' + brl(r.custo.veiculo) + ' · motorista ' + brl(r.custo.motorista) + ' · ajudante ' + brl(r.custo.ajudante) + ' · combustível ' + brl(r.custo.combustivel) + ' · pedágio ' + brl(r.custo.pedagio) + ' · manutenção ' + brl(r.custo.manutencao) + ' · extras ' + brl(r.custo.extras)) + '">Custo <b>' + brl(r.custo.total) + '</b> <span class="tiny">(combustível ' + brl(r.custo.combustivel) + ', pedágio ' + brl(r.custo.pedagio) + ')</span></span><span>Lucro <b class="' + (r.lucro >= 0 ? 'pos' : 'neg') + '">' + brl(r.lucro) + '</b>' + (r.margem != null ? ' · ' + nf(r.margem, 1) + '%' : '') + '</span><span>Por entrega <b>' + brl(r.custoPorEntrega) + '</b></span><span>Por km <b>' + brl(r.custoPorKm) + '</b></span>' +
+    h += '<div class="vfoot money"><span>Frete <b>' + brl(r.receita) + '</b></span><span>Motorista <b>' + brl(r.custo.motorista) + '</b>' + (r.pagamento ? ' <span class="tiny muted">(' + esc(r.pagamento.regiao) + (r.pagamento.regra !== 'fixo' ? ', ' + esc(r.pagamento.regra) : '') + ')</span>' : '') + '</span><span><b>' + nf(r.km, 0) + '</b> km</span><span>Margem <b class="' + (r.margem == null || r.margem >= 0 ? 'pos' : 'neg') + '">' + (r.margem != null ? nf(r.margem, 1) + '%' : '—') + '</b></span><span title="' + esc('Veículo ' + brl(r.custo.veiculo) + ' · motorista ' + brl(r.custo.motorista) + ' · ajudante ' + brl(r.custo.ajudante) + ' · combustível ' + brl(r.custo.combustivel) + ' · pedágio ' + brl(r.custo.pedagio) + ' · manutenção ' + brl(r.custo.manutencao) + ' · extras ' + brl(r.custo.extras)) + '">Custo <b>' + brl(r.custo.total) + '</b> <span class="tiny">(combustível ' + brl(r.custo.combustivel) + ', pedágio ' + brl(r.custo.pedagio) + ')</span></span><span>Lucro <b class="' + (r.lucro >= 0 ? 'pos' : 'neg') + '">' + brl(r.lucro) + '</b>' + (r.margem != null ? ' · ' + nf(r.margem, 1) + '%' : '') + '</span><span>Por entrega <b>' + brl(r.custoPorEntrega) + '</b></span><span>Por km <b>' + brl(r.custoPorKm) + '</b></span>' +
       '<label class="row small">Despesas extras R$ <input type="number" step="0.01" min="0" data-extras="' + esc(r.veiculoId) + '" value="' + (r.custo.extras || '') + '" style="width:90px"></label><span class="spacer"></span><a class="btn sm" href="' + esc(linksMaps(r)[0]) + '" target="_blank" rel="noopener">' + I.map + 'Google Maps</a><a class="btn sm" href="' + esc(linkWhats(r, p)) + '" target="_blank" rel="noopener">' + I.wa + 'WhatsApp</a><button class="btn sm" data-a="verCarga" data-v="' + esc(r.veiculoId) + '">' + I.carga + 'Carga</button></div></div>';
     return h;
   }
@@ -3657,8 +3696,8 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     } else if (ui.cadTab === 'cidades') {
       const cs = [...ST.cidades.values()].sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
       h += (ST.admin ? '<div class="card"><div class="row"><label class="f" style="flex:1;min-width:220px">Adicionar cidade atendida<input type="text" id="novaCidade" list="dlMun" placeholder="Digite e escolha: Cidade/UF"></label><button class="btn pri" data-a="addCidadeTxt" style="align-self:flex-end">' + I.plus + 'Adicionar</button></div></div>' : '');
-      h += '<div class="card"><p class="small muted" style="margin-bottom:10px">Entregas só saem nos dias marcados. Pedágio é o valor ida e volta para veículo leve até a cidade; o maior pedágio entre as cidades da rota entra no custo. Frete por tabela só é usado quando a nota não traz frete e o operador não informou.</p><div class="tbl-wrap"><table><thead><tr><th>Cidade</th><th>Dias de rota</th><th>Freq.</th><th>Horário</th><th>Descarga min</th><th>Prior.</th><th>Veículos permitidos</th><th>Pedágio R$</th><th>Frete R$/kg</th><th>Frete mín. R$</th><th>Região</th><th>Restrições / observações</th><th></th></tr></thead><tbody>' +
-        cs.map((c) => { const b = (k, ty, w) => '<input type="' + (ty === 'num' ? 'number' : ty || 'text') + '" data-bind="cidades|' + esc(c.id) + '|' + k + '"' + (ty === 'num' ? ' data-t="num" step="any"' : '') + ' value="' + esc(c[k] == null ? '' : c[k]) + '"' + dis() + (w ? ' style="width:' + w + 'px"' : '') + '>'; return '<tr><td><b>' + esc(c.nome) + '</b>/' + esc(c.uf) + (c.exemplo ? ' <span class="chip acc">exemplo</span>' : '') + '</td><td><div class="daychips">' + DIAS.map((dn, i) => '<button type="button" data-a="dia" data-v="' + esc(c.id) + '" data-i="' + i + '" aria-pressed="' + (c.dias || []).includes(i) + '"' + dis() + '>' + dn + '</button>').join('') + '</div></td><td class="num">' + (c.dias || []).length + '×</td><td><div class="row" style="flex-wrap:nowrap">' + b('horaIni', 'time', 92) + b('horaFim', 'time', 92) + '</div></td><td>' + b('descargaMin', 'num', 70) + '</td><td><select data-bind="cidades|' + esc(c.id) + '|prioridade" data-t="num"' + dis() + '>' + [[1, 'Alta'], [2, 'Normal'], [3, 'Baixa']].map(([a, t]) => '<option value="' + a + '"' + (+c.prioridade === a ? ' selected' : '') + '>' + t + '</option>').join('') + '</select></td><td><div class="daychips">' + [['fiorino', 'Fio'], ['van', 'Van'], ['tubos', 'Tub']].map(([k, t]) => '<button type="button" data-a="tipoCid" data-v="' + esc(c.id) + '" data-i="' + k + '" aria-pressed="' + (c.tiposPermitidos || []).includes(k) + '"' + dis() + ' title="' + TIPO[k] + '">' + t + '</button>').join('') + '</div></td><td>' + b('pedagio', 'num', 80) + '</td><td>' + b('freteKg', 'num', 75) + '</td><td>' + b('freteMin', 'num', 80) + '</td><td>' + b('regiao', 'text', 110) + '</td><td>' + b('restricoes', 'text', 200) + '</td><td>' + (ST.admin ? '<button class="btn sm ghost danger" data-a="excluirCid" data-v="' + esc(c.id) + '">Excluir</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div></div>';
+      h += '<div class="card"><p class="small muted" style="margin-bottom:10px">Entregas só saem nos dias marcados. Pedágio é o valor ida e volta para veículo leve até a cidade; o maior pedágio entre as cidades da rota entra no custo. Frete por tabela só é usado quando a nota não traz frete e o operador não informou.</p><div class="tbl-wrap"><table><thead><tr><th>Cidade</th><th>Dias de rota</th><th>Freq.</th><th>Horário</th><th>Descarga min</th><th>Prior.</th><th>Veículos permitidos</th><th>Pedágio R$</th><th>Frete R$/kg</th><th>Frete mín. R$</th><th>Região</th><th title="Região da tabela de pagamento do motorista">Região do frete</th><th>Restrições / observações</th><th></th></tr></thead><tbody>' +
+        cs.map((c) => { const b = (k, ty, w) => '<input type="' + (ty === 'num' ? 'number' : ty || 'text') + '" data-bind="cidades|' + esc(c.id) + '|' + k + '"' + (ty === 'num' ? ' data-t="num" step="any"' : '') + ' value="' + esc(c[k] == null ? '' : c[k]) + '"' + dis() + (w ? ' style="width:' + w + 'px"' : '') + '>'; return '<tr><td><b>' + esc(c.nome) + '</b>/' + esc(c.uf) + (c.exemplo ? ' <span class="chip acc">exemplo</span>' : '') + '</td><td><div class="daychips">' + DIAS.map((dn, i) => '<button type="button" data-a="dia" data-v="' + esc(c.id) + '" data-i="' + i + '" aria-pressed="' + (c.dias || []).includes(i) + '"' + dis() + '>' + dn + '</button>').join('') + '</div></td><td class="num">' + (c.dias || []).length + '×</td><td><div class="row" style="flex-wrap:nowrap">' + b('horaIni', 'time', 92) + b('horaFim', 'time', 92) + '</div></td><td>' + b('descargaMin', 'num', 70) + '</td><td><select data-bind="cidades|' + esc(c.id) + '|prioridade" data-t="num"' + dis() + '>' + [[1, 'Alta'], [2, 'Normal'], [3, 'Baixa']].map(([a, t]) => '<option value="' + a + '"' + (+c.prioridade === a ? ' selected' : '') + '>' + t + '</option>').join('') + '</select></td><td><div class="daychips">' + [['fiorino', 'Fio'], ['van', 'Van'], ['tubos', 'Tub']].map(([k, t]) => '<button type="button" data-a="tipoCid" data-v="' + esc(c.id) + '" data-i="' + k + '" aria-pressed="' + (c.tiposPermitidos || []).includes(k) + '"' + dis() + ' title="' + TIPO[k] + '">' + t + '</button>').join('') + '</div></td><td>' + b('pedagio', 'num', 80) + '</td><td>' + b('freteKg', 'num', 75) + '</td><td>' + b('freteMin', 'num', 80) + '</td><td>' + b('regiao', 'text', 110) + '</td><td>' + selRegiaoFrete(c) + '</td><td>' + b('restricoes', 'text', 200) + '</td><td>' + (ST.admin ? '<button class="btn sm ghost danger" data-a="excluirCid" data-v="' + esc(c.id) + '">Excluir</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div></div>';
     } else if (ui.cadTab === 'produtos') {
       const ps = [...ST.produtos.values()].sort((a, b) => (a.padrao || '').localeCompare(b.padrao || ''));
       h += '<div class="row" style="margin-bottom:12px"><button class="btn sm" data-a="novoProduto">' + I.plus + 'Novo produto</button><span class="small muted">O produto é reconhecido pelo código exato ou quando o texto “Reconhecer por” aparece na descrição do item.</span></div>';
@@ -3679,12 +3718,24 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     return h;
   }
 
+  function selRegiaoFrete(c) {
+    const tab = ST.cfg.tabelaMotorista; if (!tab || !tab.regioes) return '—';
+    const cx = ctx(), auto = RE.regiaoFrete(c.id, Object.assign({}, cx, { cidades: Object.assign({}, cx.cidades, { [c.id]: Object.assign({}, c, { regiaoFrete: '' }) }) }));
+    return '<select data-bind="cidades|' + esc(c.id) + '|regiaoFrete"' + dis() + ' style="width:auto"><option value="">Automática' + (auto ? ': ' + esc(auto) : '') + '</option>' + tab.regioes.map((r) => '<option' + (c.regiaoFrete === r ? ' selected' : '') + '>' + esc(r) + '</option>').join('') + '</select>';
+  }
+  const fmtTabMot = (x) => !x ? '' : x.km ? String(x.km).replace('.', ',') + '/km' : String(x.fixo).replace('.', ',');
+  function vTabelaMotorista() {
+    const tab = ST.cfg.tabelaMotorista || RE.TABELA_MOTORISTA_PADRAO, tipos = [['fiorino', 'Fiorino'], ['van', 'Van sem tubo'], ['tubos', 'Van com tubo']];
+    return '<div class="card"><h2>Pagamento do motorista por região</h2><p class="tiny" style="margin:6px 0 10px">Valor por saída em R$, ou R$ por km escrevendo “/km” (ex.: 2,50/km). Rota que passa por mais de uma região paga a de maior valor. A região de cada cidade é a mais próxima (ou a escolhida em Cadastros → Cidades). Vazio: usa a diária e o R$/km do cadastro do motorista.</p><div class="tbl-wrap"><table><thead><tr><th>Região</th>' + tipos.map(([, t]) => '<th>' + t + '</th>').join('') + '</tr></thead><tbody>' +
+      tab.regioes.map((r) => '<tr><td><b>' + esc(r) + '</b></td>' + tipos.map(([k]) => '<td><input data-tabmot="' + esc(k) + '|' + esc(r) + '" value="' + esc(fmtTabMot(((tab.valores || {})[k] || {})[r])) + '" style="width:110px"' + dis() + '></td>').join('') + '</tr>').join('') + '</tbody></table></div></div>';
+  }
   function vCfg() {
     const c = ST.cfg;
     const f = (k, t, ty, extra) => campo('cfg', 'main', k, t, k.includes('.') ? k.split('.').reduce((o, x) => (o || {})[x], c) : c[k], ty, Object.assign({ dis: !ST.admin }, extra || {}));
     let h = topo('Ajustes', 'Parâmetros de cálculo, histórico e dados');
     h += '<div class="card"><h2>Base e deslocamento</h2><div class="fields" style="margin-top:10px"><label class="f">Cidade da base<input type="text" list="dlMun" id="fBase" value="' + esc(c.base.nome) + '"' + dis() + '></label>' + f('base.lat', 'Latitude da base', 'num') + f('base.lon', 'Longitude da base', 'num') + f('fatorRodoviario', 'Fator rodoviário (× linha reta)', 'num') + f('velocidadeMedia', 'Velocidade média km/h', 'num') + f('kmUrbano', 'Km entre entregas na mesma cidade', 'num') + f('inicioJornada', 'Início da jornada', 'time') + f('jornadaMaxHoras', 'Jornada máxima h', 'num') + f('descargaPorNotaMin', 'Minutos extras por nota na mesma parada', 'num') + '</div></div>';
     h += '<div class="card"><h2>Custos</h2><div class="fields" style="margin-top:10px">' + f('precoDiesel', 'Diesel R$/l', 'num') + f('precoGasolina', 'Gasolina R$/l', 'num') + f('precoEtanol', 'Etanol R$/l', 'num') + f('pesoVeiculo', 'Penalidade por veículo usado R$ (desempate)', 'num') + '</div></div>';
+    h += vTabelaMotorista();
     h += '<div class="card"><h2>Motoristas por dia</h2><div class="row" style="margin-top:10px">' + f('minimizarMotoristas', 'Usar o menor número possível de motoristas (só abre outro veículo quando a carga não cabe ou uma entrega ficaria de fora)', 'bool') + '</div><p class="tiny" style="margin-top:8px">Com isso ligado, menos motoristas vale mais do que diferença de lucro entre rotas. Entregas no prazo continuam vindo antes. O plano nunca usa mais motoristas do que os marcados no Painel.</p></div>';
     h += '<div class="card"><h2>Mínimo de entregas por veículo</h2><div class="fields" style="margin-top:10px">' + f('minEntregas', 'Mínimo de entregas para um veículo sair (0 = sem mínimo)', 'num') + '</div><div class="row" style="margin-top:10px">' + f('minExcecaoPrazo', 'Exceção: o veículo sai abaixo do mínimo quando leva entrega no limite do prazo', 'bool') + '</div><p class="tiny" style="margin-top:8px">Cada parada conta como uma entrega (várias notas do mesmo cliente contam uma vez). Abaixo do mínimo, as entregas passam para outros veículos ou aguardam o próximo dia de rota da cidade. Cada veículo pode ter um mínimo próprio no cadastro.</p></div>';
     h += '<div class="card"><h2>Carga e tubos</h2><div class="fields" style="margin-top:10px">' + f('folgaEncaixeMm', 'Folga radial mínima no encaixe mm', 'num') + f('folgaSecaoMm', 'Folga entre tubos na seção mm', 'num') + f('niveisEncaixe', 'Níveis de encaixe', 'num') + f('cargaInternaKgM', 'Carga máxima dentro de um tubo kg/m', 'num') + f('aproveitamento', 'Aproveitamento do volume (0 a 1)', 'num') + f('densidadeSecao', 'Densidade da seção na busca rápida (0 a 1)', 'num', { ph: '0.72' }) + f('cubagemKgM3', 'Fator de cubagem kg/m³ (0 = não estimar volume)', 'num') + f('prazoPadraoDias', 'Prazo padrão em dias após a emissão (0 = sem prazo)', 'num') + '</div><p class="tiny" style="margin-top:8px">Volume e prazo só são estimados se você definir o fator de cubagem ou o prazo padrão; nesse caso a nota mostra o aviso.</p></div>';
@@ -3878,6 +3929,13 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     if (el.id === 'fConsol') { await salvar('cfg', 'main', Object.assign({}, ST.cfg, { consolidar: el.checked })); render(); return; }
     if (el.id === 'fBase') { const m = munPorTexto(el.value); if (!m) { toast('Escolha a cidade na lista (Cidade/UF).', true); return; } await salvar('cfg', 'main', Object.assign({}, ST.cfg, { base: { nome: m.nome + '/' + m.uf, lat: m.lat, lon: m.lon } })); render(); return; }
     if (el.classList.contains('mv')) { if (el.value) await moverParada(el.dataset.de, el.dataset.key, el.value); return; }
+    if (el.dataset.tabmot) {
+      const [tipo, reg] = el.dataset.tabmot.split('|'), c = clone(ST.cfg), tab = c.tabelaMotorista || clone(RE.TABELA_MOTORISTA_PADRAO);
+      const t = String(el.value || '').trim().toLowerCase(), num = parseFloat(t.replace(/[^\d,.-]/g, '').replace(/\.(?=\d{3}\b)/g, '').replace(',', '.'));
+      tab.valores = tab.valores || {}; tab.valores[tipo] = tab.valores[tipo] || {};
+      if (!t || !(num >= 0)) delete tab.valores[tipo][reg]; else tab.valores[tipo][reg] = /km/.test(t) ? { km: num } : { fixo: num };
+      c.tabelaMotorista = tab; await salvar('cfg', 'main', c); ui.escalaSuja = true; toast('Tabela do motorista salva.'); render(); return;
+    }
     if (el.dataset.trocav) {
       const de = el.dataset.trocav, para = el.value; if (!para) return;
       await editarPlano((q) => { const r = q.rotas.find((x) => x.veiculoId === de); if (!r) return false; const o = q.rotas.find((x) => x.veiculoId === para); if (o) o.veiculoId = de; r.veiculoId = para; }, para);

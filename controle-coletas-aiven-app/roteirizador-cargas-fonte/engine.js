@@ -725,6 +725,40 @@
   };
 
   // ---------- custos ----------
+  // ---------- tabela de pagamento do motorista por região ----------
+  // valor fixo por saída ou R$ por km, conforme o tipo de veículo e a região da rota. Rota que passa por
+  // mais de uma região paga a região de maior valor. A região de cada cidade é a do cadastro (regiaoFrete)
+  // ou, sem ela, a cidade-polo da tabela mais próxima.
+  const v = (fixo) => ({ fixo }), k = (km) => ({ km });
+  RE.TABELA_MOTORISTA_PADRAO = {
+    regioes: ['Sorocaba', 'Itapetininga', 'Cotia', 'Piedade', 'Mogi Mirim', 'Bragança Paulista', 'Campinas', 'Jundiaí', 'Americana', 'Limeira', 'Piracicaba', 'Pirassununga'],
+    valores: {
+      tubos: { Sorocaba: v(900), Itapetininga: k(2.5), Cotia: k(2.5), Piedade: k(2.5), 'Mogi Mirim': v(900), 'Bragança Paulista': v(900), Campinas: v(800), 'Jundiaí': v(850), Americana: v(800), Limeira: v(800), Piracicaba: v(800), Pirassununga: v(900) },
+      van: { Sorocaba: v(800), Itapetininga: v(1000), Cotia: v(800), Piedade: v(900), 'Mogi Mirim': v(800), 'Bragança Paulista': v(800), Campinas: v(700), 'Jundiaí': v(750), Americana: v(700), Limeira: v(700), Piracicaba: v(700), Pirassununga: v(800) },
+      fiorino: { Sorocaba: v(400), Itapetininga: v(600), Cotia: v(550), Piedade: v(550), 'Mogi Mirim': v(450), 'Bragança Paulista': v(450), Campinas: v(350), 'Jundiaí': v(400), Americana: v(350), Limeira: v(350), Piracicaba: v(350), Pirassununga: v(450) },
+    },
+  };
+  const POLOS = new Map();
+  const poloCoord = (nome) => { if (!POLOS.has(nome)) POLOS.set(nome, RE.findMun(null, nome, 'SP')); return POLOS.get(nome); };
+  RE.regiaoFrete = (cidadeId, ctx) => {
+    const tab = ctx.cfg && ctx.cfg.tabelaMotorista; if (!tab || !tab.regioes || !tab.regioes.length) return '';
+    const cad = ctx.cidades[cidadeId];
+    if (cad && cad.regiaoFrete && tab.regioes.includes(cad.regiaoFrete)) return cad.regiaoFrete;
+    const m = RE.findMun(cidadeId) || (cad ? RE.findMun(null, cad.nome, cad.uf) : null); if (!m) return '';
+    let best = '', d = Infinity;
+    for (const r of tab.regioes) { const c = poloCoord(r); if (!c) continue; const x = haversine(m, c); if (x < d) { d = x; best = r; } }
+    return best;
+  };
+  RE.pagamentoTabela = (tipo, km, cidadesIds, ctx) => {
+    const tab = ctx.cfg && ctx.cfg.tabelaMotorista; const vals = tab && tab.valores && tab.valores[tipo]; if (!vals) return null;
+    let melhor = null;
+    for (const r of new Set(cidadesIds.map((id) => RE.regiaoFrete(id, ctx)).filter(Boolean))) {
+      const x = vals[r]; if (!x) continue;
+      const valor = x.km ? round(x.km * km, 2) : +x.fixo || 0;
+      if (!melhor || valor > melhor.valor) melhor = { valor, regiao: r, regra: x.km ? 'R$ ' + String(x.km).replace('.', ',') + '/km' : 'fixo' };
+    }
+    return melhor;
+  };
   RE.custoRota = (veic, km, cidadesIds, ctx, extras) => {
     const cfg = ctx.cfg;
     const preco = veic.combustivel === 'gasolina' ? cfg.precoGasolina : veic.combustivel === 'etanol' ? cfg.precoEtanol : cfg.precoDiesel;
@@ -734,10 +768,12 @@
     ped *= veic.multPedagio || 1;
     // pagamento do motorista: diária + R$ por km (cadastro do motorista; sem motorista, o do veículo)
     const mc = ctx.motoristas && veic.motoristaId ? ctx.motoristas[veic.motoristaId] : null;
-    const mot = round(mc ? (+mc.diaria || 0) + km * (+mc.valorKm || 0) : (+veic.diariaMotorista || 0) + km * (+veic.valorKmMotorista || 0), 2);
+    const tabMot = RE.pagamentoTabela(veic.tipo, km, cidadesIds, ctx);
+    const mot = tabMot ? tabMot.valor : round(mc ? (+mc.diaria || 0) + km * (+mc.valorKm || 0) : (+veic.diariaMotorista || 0) + km * (+veic.valorKmMotorista || 0), 2);
     const c = {
-      veiculo: +veic.custoDiaria || 0, motorista: mot, ajudante: +veic.custoAjudante || 0,
-      combustivel: round(comb, 2), pedagio: round(ped, 2), manutencao: round(km * (+veic.custoKm || 0), 2), extras: +extras || 0,
+      // pela tabela da região, o valor pago já cobre carro, combustível e manutenção (motorista agregado)
+      veiculo: tabMot ? 0 : +veic.custoDiaria || 0, motorista: mot, ajudante: +veic.custoAjudante || 0,
+      combustivel: tabMot ? 0 : round(comb, 2), pedagio: round(ped, 2), manutencao: tabMot ? 0 : round(km * (+veic.custoKm || 0), 2), extras: +extras || 0,
     };
     c.total = round(Object.values(c).reduce((s, v) => s + v, 0), 2);
     return c;
@@ -1245,7 +1281,9 @@
     const custo = RE.custoRota(r.veic, a.km, [...new Set(r.seq.map((i) => S[i].cidadeId))], ctx, extras || 0);
     const receita = round(r.seq.reduce((s, i) => s + S[i].receita, 0), 2);
     const lucro = round(receita - custo.total, 2);
+    const pagTab = RE.pagamentoTabela(r.veic.tipo, a.km, [...new Set(r.seq.map((i) => S[i].cidadeId))], ctx);
     return {
+      pagamento: pagTab ? { regiao: pagTab.regiao, regra: pagTab.regra } : null,
       veiculoId: r.veic.id, veiculoNome: r.veic.nome, veiculoTipo: r.veic.tipo, placa: r.veic.placa || '',
       motoristaId: r.veic.motoristaId || '',
       paradas: r.seq.map((i, k) => ({
@@ -1380,6 +1418,7 @@
     fatorRodoviario: 1.25, velocidadeMedia: 55, kmUrbano: 4, inicioJornada: '07:00', jornadaMaxHoras: 10,
     descargaPorNotaMin: 5, precoDiesel: 6.19, precoGasolina: 6.29, precoEtanol: 4.39,
     folgaEncaixeMm: 10, folgaSecaoMm: 5, niveisEncaixe: 3, cargaInternaKgM: 25, aproveitamento: 0.85,
+    tabelaMotorista: RE.TABELA_MOTORISTA_PADRAO,
     cubagemKgM3: 0, prazoPadraoDias: 0, pesoVeiculo: 50, consolidar: false, combos: [], minEntregas: 20, minExcecaoPrazo: true, minimizarMotoristas: true,
   };
   RE.VEICULOS_PADRAO = [
