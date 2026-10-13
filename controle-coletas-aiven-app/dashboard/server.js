@@ -4632,6 +4632,84 @@ async function buildSswCityBubbles(from='',to=''){
   return value
 }
 
+// SLA de entrega por cliente (remetente) e geral, com base na emissão do CT-e (BI2 174), na data da rota
+// (romaneio em que o CT-e saiu, gravado nos Lançamentos) e na data de entrega (baixas, BI2 17).
+// SLA = entregues até a previsão ÷ (entregues + vencidos sem entrega). Em aberto no prazo fica fora da conta.
+const SLA_CACHE=new Map();
+function slaIso(v){
+  const t=String(v||'').trim();let m=t.match(/^(\d{4})-(\d{2})-(\d{2})/);if(m)return m[1]+'-'+m[2]+'-'+m[3];
+  m=t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);if(!m)return'';
+  return(m[3].length===2?'20'+m[3]:m[3])+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0')
+}
+const slaDias=(a,b)=>a&&b?Math.round((Date.parse(b+'T12:00:00Z')-Date.parse(a+'T12:00:00Z'))/864e5):null;
+async function buildSlaClientes(from,to){
+  const hoje=spDateISO();
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(from||''))from=hoje.slice(0,8)+'01';
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(to||'')||to>hoje)to=hoje;
+  if(from>to)from=to;
+  const ck=from+'|'+to,hit=SLA_CACHE.get(ck);
+  if(hit&&Date.now()-hit.at<10*60*1000)return hit.value;
+  const ate=(()=>{const d=new Date(to+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+10);const x=d.toISOString().slice(0,10);return x>hoje?hoje:x})();
+  const dias=bi2DateRange(from,ate,45),avisos=[];
+  // 1) CT-es emitidos no período (174), 2) baixas (17)
+  const s174=[],s17=[];
+  for(let i=0;i<dias.length;i+=4){
+    const ds=dias.slice(i,i+4);
+    const par=await Promise.all([
+      Promise.all(ds.map(d=>fetchBi2FolderDayParsed(174,'ctrc',d).catch(e=>({ok:false,date:d,rows:[],erro:String(e.message||e)})))),
+      Promise.all(ds.map(d=>fetchBi2FolderDayParsed(17,bi2Auth().pasta,d).catch(e=>({ok:false,date:d,rows:[],erro:String(e.message||e)}))))
+    ]);
+    s174.push(...par[0]);s17.push(...par[1])
+  }
+  if(ate===hoje){try{s174.push({ok:true,rows:parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text).rows||[]})}catch{}try{s17.push({ok:true,rows:parseBi2Csv((await fetchBi2ReportFolder(17,'',bi2Auth().pasta)).text).rows||[]})}catch{}}
+  const ctes=new Map();
+  for(const sn of s174)for(const r of (sn.rows||[])){
+    const raw=r.numero_ctrc||pickField(r,'CTRC'),k=normCtrcLoose(raw);if(!k)continue;
+    const em=slaIso(pickField(r,'data_emissao','DATA EMISSAO','DATA AUTORIZACAO','AUTORIZACAO'));
+    if(!em||em<from||em>to)continue;
+    const cur=ctes.get(k)||{ctrc:raw,nf:normNf(r.numero_nf||pickField(r,'NF')),cliente:String(r.remetente_nome||pickField(r,'REMETENTE')||'Não informado').trim(),cidade:r.cidade_destino||pickField(r,'CIDADE DESTINO')||'',emissao:em,previsao:'',entrega:'',rota:''};
+    const pv=slaIso(r.prev_ent||pickField(r,'PREV ENTREGA','PREVISAO ENTREGA','DATA PREVISAO'));if(pv)cur.previsao=pv;
+    ctes.set(k,cur)
+  }
+  const porNf=new Map();for(const c of ctes.values())if(c.nf)porNf.set(c.nf,c);
+  for(const sn of s17)for(const r of (sn.rows||[])){
+    const k=normCtrcLoose(r.CTRC||pickField(r,'CTRC')),c=ctes.get(k)||porNf.get(normNf(r.NF||pickField(r,'NF')));if(!c)continue;
+    const en=slaIso((String(r['DATA ENTREGA']||pickField(r,'DATA ENTREGA')).match(/\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2}/)||[''])[0]);
+    if(en&&(!c.entrega||en<c.entrega))c.entrega=en;
+    const pv=slaIso(r['DATA PREVENTR']||pickField(r,'DATA PREVENTR'));if(pv&&!c.previsao)c.previsao=pv
+  }
+  // 3) data da rota: romaneio em que o CT-e saiu (Lançamentos)
+  try{
+    const j=await portalJson('/api/painel/lancamentos?soltos=1&de='+from+'&ate='+ate,{timeout:25000});
+    for(const l of (j.rows||[]))for(const x of (l.ctes||[])){const c=ctes.get(normCtrcLoose(x.c));if(c&&l.data&&(!c.rota||l.data<c.rota))c.rota=l.data}
+  }catch(e){avisos.push('Data da rota indisponível: '+String(e.message||e))}
+  // 4) contas
+  const zero=()=>({emitidos:0,entregues:0,noPrazo:0,atrasadas:0,vencidas:0,abertas:0,semPrevisao:0,mesmoDiaRota:0,comRota:0,sEmEnt:0,nEmEnt:0,sEmRota:0,nEmRota:0,sRotaEnt:0,nRotaEnt:0,cidades:new Set()});
+  const geral=zero(),porCli=new Map();
+  for(const c of ctes.values()){
+    const gs=[geral];if(!porCli.has(c.cliente))porCli.set(c.cliente,zero());gs.push(porCli.get(c.cliente));
+    for(const g of gs){
+      g.emitidos++;if(c.cidade)g.cidades.add(c.cidade);
+      if(c.rota){g.comRota++;const d=slaDias(c.emissao,c.rota);if(d!==null&&d>=0){g.sEmRota+=d;g.nEmRota++}}
+      if(c.entrega){
+        g.entregues++;const d=slaDias(c.emissao,c.entrega);if(d!==null&&d>=0){g.sEmEnt+=d;g.nEmEnt++}
+        if(c.rota){const d2=slaDias(c.rota,c.entrega);if(d2!==null&&d2>=0){g.sRotaEnt+=d2;g.nRotaEnt++;if(d2===0)g.mesmoDiaRota++}}
+        if(!c.previsao)g.semPrevisao++;else if(c.entrega<=c.previsao)g.noPrazo++;else g.atrasadas++
+      }else if(c.previsao&&c.previsao<hoje)g.vencidas++;
+      else g.abertas++
+    }
+  }
+  const fim=(g,extra)=>{const base=g.noPrazo+g.atrasadas+g.vencidas;return Object.assign({},extra,{emitidos:g.emitidos,entregues:g.entregues,noPrazo:g.noPrazo,atrasadas:g.atrasadas,vencidas:g.vencidas,abertas:g.abertas,semPrevisao:g.semPrevisao,comRota:g.comRota,
+    sla:base?Math.round(g.noPrazo/base*1000)/10:null,
+    mediaEmissaoEntrega:g.nEmEnt?Math.round(g.sEmEnt/g.nEmEnt*10)/10:null,mediaEmissaoRota:g.nEmRota?Math.round(g.sEmRota/g.nEmRota*10)/10:null,mediaRotaEntrega:g.nRotaEnt?Math.round(g.sRotaEnt/g.nRotaEnt*10)/10:null,
+    entregaNoDiaDaRota:g.nRotaEnt?Math.round(g.mesmoDiaRota/g.nRotaEnt*1000)/10:null,cidades:g.cidades.size})};
+  const clientes=[...porCli].map(([cliente,g])=>fim(g,{cliente})).sort((a,b)=>b.emitidos-a.emitidos);
+  const faltam=s174.filter(x=>x.missing).length;
+  if(faltam)avisos.push(faltam+' dia(s) sem arquivo BI2 174');
+  const value={ok:true,from,to,geral:fim(geral,{cliente:'Geral'}),clientes,avisos,regra:'SLA = entregues até a previsão ÷ (entregues + vencidas sem entrega). CT-e em aberto ainda no prazo não entra na conta.'};
+  SLA_CACHE.set(ck,{at:Date.now(),value});
+  return value
+}
 async function buildBi2Remetentes(from='',to=''){let rows=[],meta={},period=null;if(from&&to){const snaps=await fetchBi2RangeParsed(13,from,to);rows=mergeUniqueBi2Rows(snaps);period=bi2PeriodInfo(snaps,from,to);const latest=[...snaps].reverse().find(x=>x.ok);meta=latest?latest.meta:{}}else{const rep=await fetchBi2Report(13),p=parseBi2Csv(rep.text);rows=p.rows;meta=p.meta}const groups=new Map();for(const r of rows){const nome=pickField(r,'REMETENTE')||'Não informado';if(!groups.has(nome))groups.set(nome,{remetente:nome,ctrcs:0,frete:0,valorMercadoria:0,volumes:0,peso:0,m3:0,atrasoTotal:0,atrasoN:0,cidades:new Set(),destinatarios:new Set()});const g=groups.get(nome);g.ctrcs++;g.frete+=bi2Number(pickField(r,'FRETE'));g.valorMercadoria+=bi2Number(pickField(r,'VAL MERC'));g.volumes+=bi2Number(pickField(r,'QTD VOLUMES'));g.peso+=bi2Number(pickField(r,'PESO'));g.m3+=bi2Number(pickField(r,'M3'));const av=bi2Number(pickField(r,'ATRASO'));if(av||String(pickField(r,'ATRASO')).trim()==='0'){g.atrasoTotal+=av;g.atrasoN++}const cid=pickField(r,'CIDADE DESTINO');if(cid)g.cidades.add(cid);const dst=pickField(r,'DESTINATARIO');if(dst)g.destinatarios.add(dst)}const clientes=[...groups.values()].map(g=>({remetente:g.remetente,ctrcs:g.ctrcs,frete:g.frete,valorMercadoria:g.valorMercadoria,volumes:g.volumes,peso:g.peso,m3:g.m3,atrasoMedio:g.atrasoN?g.atrasoTotal/g.atrasoN:0,cidades:g.cidades.size,destinatarios:g.destinatarios.size})).sort((a,b)=>b.ctrcs-a.ctrcs);const hist=period?' • '+period.daysAvailable+'/'+period.daysRequested+' dia(s) com arquivo BI2':'';return{ok:true,sourceCode:13,sourceName:meta.relatorio||'CT-es atrasados',limited:true,note:'Base atual do BI2: CT-es atrasados únicos observados no período. O relatório 083 de performance por cliente emitente ainda não está disponível.'+hist,meta,period,totalClientes:clientes.length,totalCtrcs:rows.length,totalFrete:sumField(rows,['FRETE']),totalMercadoria:sumField(rows,['VAL MERC']),totalVolumes:sumField(rows,['QTD VOLUMES']),clientes}}
 async function buildBi2Atrasos(from='',to=''){let rows=[],meta={},bytes=0,headers=[],period=null;if(from&&to){const snaps=await fetchBi2RangeParsed(13,from,to);rows=mergeUniqueBi2Rows(snaps);period=bi2PeriodInfo(snaps,from,to);const latest=[...snaps].reverse().find(x=>x.ok);meta=latest?latest.meta:{};bytes=snaps.filter(x=>x.ok).reduce((a,x)=>a+(x.bytes||0),0);headers=latest?latest.headers:[]}else{const rep=await fetchBi2Report(13),p=parseBi2Csv(rep.text);rows=p.rows;meta=p.meta;bytes=rep.bytes;headers=p.headers}const clean=rows.slice(0,1000).map(r=>({filial:pickField(r,'FILIAL'),ctrc:pickField(r,'CTRC'),nf:pickField(r,'NF'),remetente:pickField(r,'REMETENTE'),pagador:pickField(r,'PAGADOR'),destinatario:pickField(r,'DESTINATARIO'),uf:pickField(r,'UF DESTINO','UF'),cidade:pickField(r,'CIDADE DESTINO','CIDADE'),entregaAgendada:pickField(r,'ENTREGA AGENDADA'),previsao:pickField(r,'PREVISAO ENTREGA','PREVISAO','DATA PREVISAO'),diasAtraso:pickField(r,'DIAS ATRASO','ATRASO'),unidadeAtual:pickField(r,'UNIDADE ATUAL'),localizacaoAtual:pickField(r,'LOCALIZACAO ATUAL'),ultimaOcorrencia:pickField(r,'COD ULTIMA OCORRENCIA'),instrucaoOcorrencia:pickField(r,'INSTRUCAO/COMPLEMENTO ULTIMA OCORRENCIA'),dataUltimaOcorrencia:pickField(r,'DATA ULTIMA OCORRENCIA'),responsabilidadeCliente:pickField(r,'RESPONSABILIDADE CLIENTE'),valorMercadoria:pickField(r,'VAL MERC'),frete:pickField(r,'FRETE'),volumes:pickField(r,'QTD VOLUMES'),peso:pickField(r,'PESO'),m3:pickField(r,'M3'),tipoDocumento:pickField(r,'TIPO DOCUMENTO')}));return{ok:true,codigo:13,bytes,meta,period,total:rows.length,filiaisCount:distinctCount(rows,['FILIAL']),cidadesCount:distinctCount(rows,['CIDADE DESTINO','CIDADE']),destinatariosCount:distinctCount(rows,['DESTINATARIO']),remetentesCount:distinctCount(rows,['REMETENTE']),valorMercadoria:sumField(rows,['VAL MERC']),freteTotal:sumField(rows,['FRETE']),volumesTotal:sumField(rows,['QTD VOLUMES']),pesoTotal:sumField(rows,['PESO']),m3Total:sumField(rows,['M3']),headers,filiais:topCounts(rows,['FILIAL'],12),cidades:topCounts(rows,['CIDADE DESTINO','CIDADE'],12),destinatarios:topCounts(rows,['DESTINATARIO'],12),remetentes:topCounts(rows,['REMETENTE'],12),localizacoes:topCounts(rows,['LOCALIZACAO ATUAL','UNIDADE ATUAL'],12),ocorrencias:topCounts(rows,['COD ULTIMA OCORRENCIA'],12),rows:clean}}
 async function refreshBi2ApiState(){const now=new Date().toISOString();const x=await testBi2WebApi();if(x.ok&&Array.isArray(x.reports)){const good=x.reports.filter(r=>r.status===200&&/text\/csv/i.test(r.type));BI2_API_STATE={connected:good.length>0,lastCheck:now,reports:x.reports.map(r=>({codigo:r.codigo,status:r.status,bytes:r.bytes,type:r.type})),message:good.length?'WebAPI BI2 conectada':'WebAPI BI2 sem relatórios disponíveis'};}else{BI2_API_STATE={connected:false,lastCheck:now,reports:[],message:'Falha na WebAPI BI2',error:x.error||''}}return BI2_API_STATE}
@@ -5887,6 +5965,11 @@ if(u.pathname==='/api/agendamento-teste'&&req.method==='POST'){try{
 // Situação das notas que ficaram no galpão (Roteirizador > Sobras):
 // entregue = baixa no BI2 (relatório 17) desde a data informada; em rota = saiu dos CTRCs disponíveis
 // para entrega (opção 38), ou seja, já entrou em romaneio; pendente = continua disponível no galpão.
+if(u.pathname==='/api/bi2/sla-clientes'&&req.method==='GET'){try{
+  if(!dashboardHasAny(authUser,['dashboard','ssw_saidas','remetentes','operacional']))return dashboardDeny(res);
+  const x=await buildSlaClientes(u.searchParams.get('from')||'',u.searchParams.get('to')||'');
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/programacao-entregas/status-nfs'&&req.method==='GET'){try{
   if(!dashboardHasAny(authUser,['programacao','roteirizador','dashboard','ssw_saidas']))return dashboardDeny(res);
   const nfs=[...new Set(String(u.searchParams.get('nfs')||'').split(/[\s,;]+/).map(normNf).filter(Boolean))].slice(0,400);

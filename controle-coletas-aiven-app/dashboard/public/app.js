@@ -1751,6 +1751,36 @@ async function renderOverviewLoadingPhotos(rows){
   }))
 }
 
+// ---- SLA de entregas por cliente (Visão Geral)
+let SLA_DATA=null;
+const slaCor=v=>v===null||v===undefined?'#94a3b8':v>=95?'#15803d':v>=85?'#b45309':'#b91c1c';
+const slaPct=v=>v===null||v===undefined?'—':String(v).replace('.',',')+'%';
+const slaDia=v=>v===null||v===undefined?'—':String(v).replace('.',',')+' d';
+function renderSla(){
+  const d=SLA_DATA,tb=$('#slaTabela tbody'),g=$('#slaGeral');if(!tb||!g)return;
+  if(!d){return}
+  const G=d.geral,k=(l,v,c)=>'<div class="sla-k '+(c||'')+'"><span>'+l+'</span><b>'+v+'</b></div>';
+  g.innerHTML=k('SLA geral',slaPct(G.sla),G.sla===null?'':G.sla>=95?'good':G.sla>=85?'warn':'bad')+k('CT-es emitidos',nf(G.emitidos))+k('Entregues',nf(G.entregues))+k('No prazo',nf(G.noPrazo),'good')+k('Atrasadas',nf(G.atrasadas),G.atrasadas?'bad':'')+k('Vencidas sem entrega',nf(G.vencidas),G.vencidas?'bad':'')+k('Em aberto no prazo',nf(G.abertas))+k('Emissão → entrega',slaDia(G.mediaEmissaoEntrega))+k('Emissão → rota',slaDia(G.mediaEmissaoRota))+k('Entregue no dia da rota',slaPct(G.entregaNoDiaDaRota));
+  const q=String($('#slaBusca')?.value||'').toUpperCase().trim();
+  const rows=(d.clientes||[]).filter(c=>!q||String(c.cliente).toUpperCase().includes(q));
+  tb.innerHTML=rows.length?rows.map(c=>'<tr><td><b>'+safe(c.cliente)+'</b><div class="muted" style="font-size:11px">'+nf(c.cidades)+' cidade(s)</div></td><td class="n">'+nf(c.emitidos)+'</td><td class="n">'+nf(c.entregues)+'</td><td class="n">'+nf(c.noPrazo)+'</td><td class="n">'+(c.atrasadas?'<b style="color:#b91c1c">'+nf(c.atrasadas)+'</b>':'0')+'</td><td class="n">'+(c.vencidas?'<b style="color:#b91c1c">'+nf(c.vencidas)+'</b>':'0')+'</td><td class="n">'+nf(c.abertas)+'</td><td class="n"><span class="sla-pill" style="background:'+slaCor(c.sla)+'1a;color:'+slaCor(c.sla)+'">'+slaPct(c.sla)+'</span></td><td class="n">'+slaDia(c.mediaEmissaoRota)+'</td><td class="n">'+slaDia(c.mediaRotaEntrega)+'</td><td class="n">'+slaDia(c.mediaEmissaoEntrega)+'</td><td class="n">'+slaPct(c.entregaNoDiaDaRota)+'</td></tr>').join(''):'<tr><td colspan="12" class="muted">Nenhum cliente no período.</td></tr>';
+  const info=$('#slaInfo');if(info)info.textContent=nf(rows.length)+' cliente(s) • '+String(d.from).split('-').reverse().join('/')+' a '+String(d.to).split('-').reverse().join('/')+(d.avisos&&d.avisos.length?' • '+d.avisos.join(' • '):'')
+}
+async function loadSla(){
+  const de=$('#slaDe'),ate=$('#slaAte'),bt=$('#slaGo');if(!de||!ate)return;
+  if(!de.value){const t=iso(new Date());de.value=t.slice(0,8)+'01';ate.value=t}
+  const tb=$('#slaTabela tbody');if(tb&&!SLA_DATA)tb.innerHTML='<tr><td colspan="12" class="muted">Calculando… (lê os CT-es emitidos e as baixas de cada dia do período no SSW; pode levar alguns segundos)</td></tr>';
+  if(bt){bt.disabled=true;bt.textContent='Calculando…'}
+  try{const r=await fetch('/api/bi2/sla-clientes?from='+encodeURIComponent(de.value)+'&to='+encodeURIComponent(ate.value),{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao calcular o SLA');SLA_DATA=j;renderSla()}
+  catch(e){if(tb)tb.innerHTML='<tr><td colspan="12" style="color:#b91c1c">'+safe(e.message)+'</td></tr>'}
+  finally{if(bt){bt.disabled=false;bt.textContent='Calcular'}}
+}
+function setupSla(){
+  if(!$('#slaClientes')||window.__slaSetup)return;window.__slaSetup=true;
+  if(!hasAnyPerm(['dashboard','ssw_saidas','remetentes','operacional'])){$('#slaClientes').style.display='none';return}
+  $('#slaGo').onclick=loadSla;$('#slaBusca').oninput=renderSla;
+  loadSla()
+}
 function cargoTypeLabel(v){return String(v||'carregamento').toLowerCase()==='descarga'?'Descarga':'Carregamento'}
 function renderLoadingRecords(rows){
   const box=$('#loadRecords');clearLoadingPhotoUrls();
@@ -5088,6 +5118,7 @@ async function start(){
   }
 
   loadHeavyForTab($('.section.active')?.id||target||'');
+  setTimeout(setupSla,1500);
   setInterval(()=>{if(!document.hidden)refreshData(false)},5000);
   setInterval(()=>{if(!document.hidden&&hasAnyPerm(['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo','receita_ssw']))checkSsw()},60000);
   setInterval(()=>{const t=$('.section.active')?.id;if(!document.hidden&&hasPerm('ssw_atrasos')&&['ssw-atrasos','dashboards'].includes(t))refreshSswAtrasos()},120000);
