@@ -154,6 +154,9 @@
     // CTRCs disponíveis para entrega: SSW opção 038 (pendências), com peso, m³ e frete do BI2
     // situação das notas que ficaram: em rota (saiu dos disponíveis = romaneio) ou entregue (baixa no BI2)
     statusNfs: (nfs, desde) => api('GET', '/api/programacao-entregas/status-nfs?nfs=' + encodeURIComponent(nfs.join(',')) + '&desde=' + encodeURIComponent(desde || '')),
+    // romaneios emitidos no SSW num dia (por motorista) e a rota de um romaneio (km e pontos de entrega)
+    romaneiosDoDia: (data) => api('GET', '/api/roteirizador/lista?date=' + encodeURIComponent(data)),
+    rotaRomaneio: (data, romaneio) => api('GET', '/api/roteirizador/rota?date=' + encodeURIComponent(data) + '&romaneio=' + encodeURIComponent(romaneio)),
     sswDisponiveis: (forcar) => api('GET', '/api/programacao-entregas/disponiveis' + (forcar ? '?force=1' : '')),
     // veículos e motoristas: tela Frota + quem rodou no Rastreio de carga nos últimos dias
     async frotaERastreio(dias) {
