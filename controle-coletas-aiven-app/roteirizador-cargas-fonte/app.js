@@ -986,7 +986,7 @@
   // notas com rua vinda do XML da NF-e (sem CTRC ou já com o endereço): localiza a rua e o número
   function notasComRuaSemPonto() {
     const lim = Date.now() - 6 * 3600e3;
-    return [...ST.notas.values()].filter((n) => n.lat == null && n.endereco && n.endereco.lgr && !n.pdfParcial && !['entregue', 'cancelada'].includes(n.status) && !n.bloqueioUsuario && !(n.geoRuaEm && Date.parse(n.geoRuaEm) > lim) && (!n.ctrc || n.geoTentEm));
+    return [...ST.notas.values()].filter((n) => n.lat == null && n.endereco && n.endereco.lgr && !['entregue', 'cancelada'].includes(n.status) && !n.bloqueioUsuario && !(n.geoRuaEm && Date.parse(n.geoRuaEm) > lim) && (!n.ctrc || n.geoTentEm));
   }
   async function localizarRuasXML() {
     if (!window.RC_HOST || !window.RC_HOST.localizarEnderecos || ui.geoRua) return;
@@ -1158,7 +1158,7 @@
     const pag = 100, tot = lista.length, pg = Math.min(ui.notasPag, Math.max(0, Math.ceil(tot / pag) - 1));
     const vis = lista.slice(pg * pag, pg * pag + pag);
     h += '<div class="card"><div class="row" style="margin-bottom:12px"><label class="f" style="flex:2;min-width:180px">Buscar<input type="search" id="fQ" value="' + esc(f.q) + '" placeholder="Número, chave, cliente, cidade"></label>' +
-      '<label class="f" style="min-width:150px">Situação<select id="fStatus">' + [['ativas', 'Ativas'], ['pendentes', 'Com pendência'], ['pronta', 'Prontas'], ['roteirizada', 'Roteirizadas'], ['entregue', 'Entregues'], ['cancelada', 'Canceladas'], ['todas', 'Todas']].map(([v, t]) => '<option value="' + v + '"' + (f.status === v ? ' selected' : '') + '>' + t + '</option>').join('') + '</select></label>' +
+      '<label class="f" style="min-width:150px">Situação<select id="fStatus">' + [['ativas', 'Ativas'], ['pendentes', 'Com pendência'], ['pronta', 'A programar'], ['roteirizada', 'Roteirizadas'], ['entregue', 'Entregues'], ['cancelada', 'Canceladas'], ['todas', 'Todas']].map(([v, t]) => '<option value="' + v + '"' + (f.status === v ? ' selected' : '') + '>' + t + '</option>').join('') + '</select></label>' +
       '<label class="f" style="min-width:170px">Cidade<select id="fCidade"><option value="">Todas</option>' + cidades.map(([id, nm]) => '<option value="' + id + '"' + (f.cidade === id ? ' selected' : '') + '>' + esc(nm) + '</option>').join('') + '</select></label></div>' +
       (() => { const sel = ui.notasSel || (ui.notasSel = new Set()); for (const id of [...sel]) if (!ST.notas.has(id)) sel.delete(id);
         return sel.size ? '<div class="note warn row" style="margin-bottom:10px;align-items:center"><b>' + sel.size + ' nota(s) selecionada(s)</b><span class="spacer"></span>' + (ui.confirmar && ui.confirmar.a === 'excluirSel' ? '<span class="small">Excluir do sistema? O SSW não traz de volta sozinho.</span><button class="btn sm danger" data-a="excluirSelOk">Sim, excluir ' + sel.size + '</button><button class="btn sm" data-a="cancelarConf">Cancelar</button>' : '<button class="btn sm danger" data-a="excluirSel">Excluir selecionadas</button><button class="btn sm" data-a="limparSel">Limpar seleção</button>') + '</div>' : ''; })() +
@@ -1190,7 +1190,7 @@
     if (n.bloqueada) return '<span class="chip bad">Pendente</span>' + btnCopiarNF(n.numero) + acoesNota(n);
     if (n.prioridade && n.status !== 'roteirizada') return '<span class="chip bad" title="' + esc(((n.ocorrencias || []).slice(-1)[0] || {}).motivo || '') + '">Prioridade</span>' + (n.avisos.length ? ' <span class="chip warn">' + n.avisos.length + '</span>' : '') + acoesNota(n);
     if (n.status === 'roteirizada') return '<span class="chip info">Roteirizada ' + dBR(n.planoData) + '</span>' + acoesNota(n);
-    return '<span class="chip ok">Pronta</span>' + (n.avisos.length ? ' <span class="chip warn" title="' + esc(n.avisos.map((a) => a.msg).join('\n')) + '">' + n.avisos.length + ' aviso' + (n.avisos.length > 1 ? 's' : '') + '</span>' : '') + acoesNota(n);
+    return '<span class="chip ok" title="No galpão, liberada para entrar na programação">A programar</span>' + (n.avisos.length ? ' <span class="chip warn" title="' + esc(n.avisos.map((a) => a.msg).join('\n')) + '">' + n.avisos.length + ' aviso' + (n.avisos.length > 1 ? 's' : '') + '</span>' : '') + acoesNota(n);
   }
   function vImportar() {
     let h = '<div class="card"><div class="dz" id="dz"><h3 style="margin-bottom:6px">Solte os arquivos aqui</h3><p class="muted small">XML de NF-e (um ou vários), ZIP com centenas de XMLs, DANFE em PDF (uma ou várias notas por arquivo), planilha Excel ou CSV. Eventos de cancelamento em XML cancelam a nota correspondente.</p><label class="btn pri" style="margin-top:8px">' + I.up2 + 'Escolher arquivos<input type="file" id="fArq" multiple accept=".xml,.zip,.pdf,.csv,.txt,.xlsx,.xls,.ods" hidden></label></div>';

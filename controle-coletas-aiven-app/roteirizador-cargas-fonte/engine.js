@@ -203,6 +203,11 @@
       const ufMun = /MUNIC[ÍI]PIO\s+(?:FONE\s*\/?\s*FAX\s+)?UF\s+(?:INSCRI[ÇC][ÃA]O ESTADUAL\s+)?([A-ZÀ-Ú][A-ZÀ-Ú' \-]{2,40}?)\s+(?:\(?\d{2}\)?\s*[\d\- ]{8,}\s+)?([A-Z]{2})\b/i.exec(t);
       n.destNome = dn;
       n.endereco = { lgr: '', nro: '', bairro: '', cidade: ufMun ? ufMun[1].trim() : '', uf: ufMun ? ufMun[2] : '', cep: (ceps[1] || ceps[0] || '').replace(/\D/g, ''), cMun: '' };
+      // endereço do destinatário na DANFE: "ENDEREÇO ... BAIRRO/DISTRITO ... CEP" dentro do quadro DESTINATÁRIO/REMETENTE
+      const qd = (/DESTINAT[ÁA]RIO\s*\/?\s*REMETENTE([\s\S]{0,900}?)(?:FATURA|DUPLICATA|C[ÁA]LCULO\s+DO\s+IMPOSTO|$)/i.exec(t) || [])[1] || '';
+      const lg = /ENDERE[ÇC]O\s+(?:BAIRRO\s*\/\s*DISTRITO\s+CEP\s+)?(.{4,90}?)\s*,?\s*(?:N[º°O.]?\s*)?(\d{1,6}|S\/?N)\b/i.exec(qd);
+      if (lg) { n.endereco.lgr = lg[1].replace(/[,\-\s]+$/, '').trim(); n.endereco.nro = /S\/?N/i.test(lg[2]) ? '' : lg[2]; }
+      const cepQd = (qd.match(/\b\d{5}-?\d{3}\b/) || [])[0]; if (cepQd) n.endereco.cep = cepQd.replace(/\D/g, '');
       // tubo na nota: procura nos produtos (do quadro de produtos até os dados adicionais)
       const prod = (/DADOS\s+DOS?\s+PRODUTOS?([\s\S]*?)(?:DADOS\s+ADICIONAIS|C[ÁA]LCULO\s+DO\s+ISSQN|$)/i.exec(t) || [])[1] || t;
       n.exigeTubo = /\bTUBOS?\b/i.test(prod);
