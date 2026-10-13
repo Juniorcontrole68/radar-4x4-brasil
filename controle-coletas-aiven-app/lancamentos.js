@@ -99,7 +99,7 @@ function juntar(rs){
     ao_vivo:rs.some(r=>r.realizadas!==null||r.ao_vivo!==null)?rs.reduce((t,r)=>t+Number(r.realizadas??r.ao_vivo??0),0):null,
     auto:rs.every(r=>r.auto),
     calculo:{status,msg:rs.map(r=>r.calculo?.msg?r.romaneio+': '+r.calculo.msg:'').filter(Boolean).join(' • ').slice(0,500),fechado:rs.every(r=>r.calculo?.fechado),tentativas:Math.max(...rs.map(r=>Number(r.calculo?.tentativas||0)))},
-    por_km:prim(r=>r.por_km),
+    por_km:prim(r=>r.por_km),km_nao:prim(r=>r.km_nao),km_nao_keys:prim(r=>r.km_nao_keys),
     partes:rs.map(r=>({id:r.id,romaneio:r.romaneio,romaneio_ssw:r.romaneio_ssw,entregas:r.entregas,km:r.km,frete_vialog:r.frete_vialog,status:r.calculo?.status||''})),
     conjunto:undefined
   }
@@ -157,18 +157,30 @@ function resumir(row){
     // entregas do romaneio, uma a uma (frete e situação), e o km da rota única quando o motorista tem mais de um romaneio
     ctes:Array.isArray(s.ctes)?s.ctes:null,conjunto:s.conjunto||null,seq:s.seq||'',
     // cobrança por km rodado: valor = km × valor do km; desconto = km das entregas não feitas × valor do km
-    por_km:s.por_km&&s.por_km.valor_km>0?{valor_km:s.por_km.valor_km,km_nao:s.por_km.km_nao??null,keys:s.por_km.keys??null,em:s.por_km.em||null}:null,
+    por_km:s.por_km&&s.por_km.valor_km>0?{valor_km:s.por_km.valor_km,km_nao:s.km_nao?.km??s.por_km.km_nao??null,keys:s.km_nao?.keys??s.por_km.keys??null,em:s.por_km.em||null}:null,
+    // km das entregas não feitas (rota com todas − rota só com as feitas), para o líquido do motorista
+    km_nao:s.km_nao?.km??s.por_km?.km_nao??null,km_nao_keys:s.km_nao?.keys??s.por_km?.keys??null,desconto_manual:!!s.desconto_manual,
     calculo:s.calculo||null,criado_por:row.created_by||'',atualizado_em:row.updated_at||null
   }
 }
 // Cobrança por km: o valor negociado passa a ser km × valor do km (km da rota única quando o motorista
 // tem mais de um romaneio) e o desconto é o km das entregas não feitas × valor do km.
+// Sem cobrança por km: o valor negociado vale para todas as entregas; o líquido desconta a parte do km
+// das entregas não feitas (valor × km não feito ÷ km da rota). Desconto digitado à mão prevalece.
 function aplicarPorKm(c,ssw){
-  const pk=ssw.por_km;if(!pk||!(pk.valor_km>0))return;
   const km=Number(ssw.conjunto?.km)>0?Number(ssw.conjunto.km):numero(c.km);
-  if(Number.isFinite(km)&&km>0)c.valor=Math.round(km*pk.valor_km*100)/100;
-  const kn=Number(pk.km_nao);
-  c.desconto=Number.isFinite(kn)&&kn>0?Math.round(kn*pk.valor_km*100)/100:null
+  const knRaw=ssw.km_nao&&ssw.km_nao.km!==undefined?ssw.km_nao.km:ssw.por_km?.km_nao;
+  const kn=Number(knRaw);
+  const pk=ssw.por_km;
+  if(pk&&pk.valor_km>0){
+    if(Number.isFinite(km)&&km>0)c.valor=Math.round(km*pk.valor_km*100)/100;
+    c.desconto=Number.isFinite(kn)&&kn>0?Math.round(kn*pk.valor_km*100)/100:null;
+    return
+  }
+  if(ssw.desconto_manual)return;
+  const v=numero(c.valor);
+  if(knRaw===null||knRaw===undefined||!Number.isFinite(v))return;
+  c.desconto=Number.isFinite(kn)&&kn>0&&Number.isFinite(km)&&km>0?Math.round(v*Math.min(1,kn/km)*100)/100:null
 }
 // Campos do lançamento a partir da linha guardada (para regravar depois de uma alteração).
 function campos(row){
@@ -410,7 +422,7 @@ async function atender(req,res,u,ctx){
       if(tem('data')){const d=dataIso(b.data);if(!d)return sendJson(res,400,{ok:false,error:'Data inválida.'});c.data=d}
       if(tem('motorista')){c.motorista=limpo(b.motorista,120);if(c.motorista.length<2)return sendJson(res,400,{ok:false,error:'Informe o motorista.'})}
       if(tem('valor')){const v=numero(b.valor);if(!Number.isFinite(v)||v<0||v>100000)return sendJson(res,400,{ok:false,error:'Valor negociado inválido.'});c.valor=v}
-      if(tem('desconto')){const v=numero(b.desconto);c.desconto=Number.isFinite(v)&&v>0?v:null}
+      if(tem('desconto')){const v=numero(b.desconto);c.desconto=Number.isFinite(v)&&v>0?v:null;if(b.desconto===null||b.desconto==='')delete ssw.desconto_manual;else ssw.desconto_manual=true}
       for(const k of['veiculo_tipo','operacao','conferente','filial'])if(tem(k))c[k]=limpo(b[k],80);
       if(tem('erros')){const v=numero(b.erros);c.erros=Number.isFinite(v)&&v>0?v:null}
       if(tem('romaneio')||tem('romaneio_ssw')){
@@ -437,7 +449,8 @@ async function atender(req,res,u,ctx){
           delete ssw.por_km
         }
       }
-      if(user.internal&&b.km_nao&&typeof b.km_nao==='object'&&ssw.por_km){const kn=numero(b.km_nao.km);ssw.por_km.km_nao=Number.isFinite(kn)&&kn>=0?Math.round(kn):null;ssw.por_km.keys=limpo(b.km_nao.keys,4000);ssw.por_km.em=new Date().toISOString()}
+      if(user.internal&&b.km_nao&&typeof b.km_nao==='object'&&!ssw.km_nao&&!ssw.por_km&&Number(c.desconto)>0)ssw.desconto_manual=true; // desconto digitado antes desta conta existir
+      if(user.internal&&b.km_nao&&typeof b.km_nao==='object'){const kn=numero(b.km_nao.km);ssw.km_nao={km:Number.isFinite(kn)&&kn>=0?Math.round(kn):null,keys:limpo(b.km_nao.keys,4000),em:new Date().toISOString()};if(ssw.por_km){ssw.por_km.km_nao=ssw.km_nao.km;ssw.por_km.keys=ssw.km_nao.keys}}
       // km da rota única dos romaneios do mesmo motorista (só o próprio sistema grava)
       if(user.internal&&b.conjunto&&typeof b.conjunto==='object'){const kmc=numero(b.conjunto.km);ssw.conjunto=Number.isFinite(kmc)&&kmc>0?{km:Math.round(kmc),keys:limpo(b.conjunto.keys,200),em:new Date().toISOString()}:undefined}
       if(b.calculo&&typeof b.calculo==='object'){

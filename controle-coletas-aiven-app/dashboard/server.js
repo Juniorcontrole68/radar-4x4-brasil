@@ -5219,17 +5219,16 @@ async function lancConjunto(data,id){
 // Cobrança por km: km das entregas não feitas = km da rota com todas as entregas − km da rota só com as
 // entregues (e as que ainda não têm situação lida). Refaz só quando muda o conjunto de entregas não feitas.
 const LANC_PORKM_BUSY=new Set();
-async function lancPorKm(data,id){
-  const j=await portalJson('/api/painel/lancamentos?soltos=1&de='+data+'&ate='+data,{timeout:20000});
+async function lancPorKm(data,id,linhas){
+  const j=linhas?{rows:linhas.filter(r=>r.data===data)}:await portalJson('/api/painel/lancamentos?soltos=1&de='+data+'&ate='+data,{timeout:20000});
   const eu=(j.rows||[]).find(r=>r.id===String(id));if(!eu)return;
   const nome=String(eu.motorista||'').toUpperCase().trim();
   const grupo=(nome&&nome!=='SEM MOTORISTA'?(j.rows||[]).filter(r=>String(r.motorista||'').toUpperCase().trim()===nome):[eu]).sort(lancOrdemRom);
-  const principal=grupo[0],pk=principal.por_km;
-  if(!pk||!(pk.valor_km>0))return;
+  const principal=grupo[0],pk=principal.por_km||{};
   const nao=new Set();
   for(const r of grupo)for(const x of (r.ctes||[]))if(x.s==='o'||x.s==='p')nao.add(normCtrc(x.c));
   const keys=[...nao].sort().join(',');
-  if(pk.keys===keys&&pk.km_nao!==null&&pk.km_nao!==undefined)return;
+  if(principal.km_nao_keys===keys&&principal.km_nao!==null&&principal.km_nao!==undefined)return;
   const ck=principal.id+'|'+keys;if(LANC_PORKM_BUSY.has(ck))return;
   LANC_PORKM_BUSY.add(ck);
   try{
@@ -5339,7 +5338,8 @@ async function lancManutencao(force=false){
   LANC_MANUT_AT=Date.now();
   const hoje=spDateISO(),ontem=spDateISO(new Date(Date.now()-864e5)),desde=spDateISO(new Date(Date.now()-3*864e5));
   const j=await portalJson('/api/painel/lancamentos?soltos=1&de='+desde+'&ate='+hoje,{timeout:20000});
-  for(const l of (j.rows||[]))if(l.por_km&&Array.isArray(l.ctes))lancPorKm(l.data,l.id).catch(e=>console.log('LANCAMENTOS por km ERRO: '+String(e?.message||e)));
+  // km das entregas não feitas: ao vivo para quem é pago por km; para os demais, com o dia fechado
+  for(const l of (j.rows||[]))if(Array.isArray(l.ctes)&&l.ctes.length&&(l.por_km||l.calculo?.fechado||l.data<hoje))lancPorKm(l.data,l.id,j.rows).catch(e=>console.log('LANCAMENTOS km não feito ERRO: '+String(e?.message||e)));
   for(const l of (j.rows||[])){
     // lançado "mesmo assim" sem o romaneio estar no SSW: confere de novo (hoje e ontem) e completa quando aparecer
     if(!l.romaneio_ssw){

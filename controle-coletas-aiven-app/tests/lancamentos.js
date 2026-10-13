@@ -24,6 +24,11 @@ const temPdf=!require('child_process').spawnSync('pdftotext',['-v']).error;
    const c3={km:180,valor:900,desconto:null};lib.aplicarPorKm(c3,{});
    const d=lib.montarDados(Object.assign({data:'2026-10-13',motorista:'X',romaneio:'1-1'},c));
    check('cobrança por km: valor = km × R$/km, desconto = km não feito × R$/km, rota única quando há vários romaneios',c.valor===450&&c.desconto===60&&d['Frete Mot Liq']==='390,00'&&c2.valor===525&&c2.desconto===null&&c3.valor===900,{c,c2,c3,liq:d['Frete Mot Liq']})}
+  {const c={km:200,valor:800,desconto:null};lib.aplicarPorKm(c,{km_nao:{km:50}});
+   const c2={km:200,valor:800,desconto:120};lib.aplicarPorKm(c2,{km_nao:{km:50},desconto_manual:true});
+   const c3={km:200,valor:800,desconto:null};lib.aplicarPorKm(c3,{km_nao:{km:0}});
+   const c4={km:200,valor:800,desconto:null};lib.aplicarPorKm(c4,{});
+   check('líquido do motorista: negociado − parte do km não feito; desconto à mão prevalece',c.desconto===200&&c2.desconto===120&&c3.desconto===null&&c4.desconto===null,{c,c2,c3,c4})}
   check('romaneio gravado como a operação escreve',lib.romaneioCurto('AMR001061-8')==='1061-8'&&lib.romaneioCurto('TBT000321-1')==='321-1');
   const d=lib.montarDados({data:'2026-10-09',motorista:'gilmar souza',veiculo_tipo:'van',filial:'amr',romaneio:'1060-0',operacao:'matcom/ecom',entregas:12,km:414,valor:1100,desconto:100,frete_vialog:4000});
   check('linha no formato da planilha: todas as colunas, valores em reais e valor por km',lib.COLUNAS.every(k=>k in d)&&d.Data==='09/10/2026'&&d.Motorista==='GILMAR SOUZA'&&d.Veiculo==='VAN'&&d['Operação']==='MATCOM/ECOM'&&d.Entregas==='12'&&d.KM==='414'&&d['Frete Comb']==='1.100,00'&&d['Desc.']==='100,00'&&d['Frete Mot Liq']==='1.000,00'&&d['Valor KM']==='2,42'&&d['Frete Vialog']==='4.000,00'&&d['Frete Vialog Liq']==='4.000,00',d);
