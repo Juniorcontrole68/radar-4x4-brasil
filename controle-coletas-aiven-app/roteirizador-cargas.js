@@ -14,6 +14,19 @@ const path = require('path');
 const PERM = 'roteirizador';
 const MAX_DOC = 900 * 1024;
 const SEED_FILE = path.join(__dirname, 'roteirizador-cargas.seed.json');
+const PAGE_FILE = path.join(__dirname, 'roteirizador-cargas.html');
+// versão publicada da página (meta rc-versao gravada pelo build); a página compara para avisar que há versão nova
+let versaoCache = { mtime: 0, v: '' };
+function versaoPagina() {
+  try {
+    const st = fs.statSync(PAGE_FILE);
+    if (st.mtimeMs !== versaoCache.mtime) {
+      const head = fs.readFileSync(PAGE_FILE, 'utf8').slice(0, 2000);
+      versaoCache = { mtime: st.mtimeMs, v: ((head.match(/name="rc-versao" content="([^"]+)"/) || [])[1]) || '' };
+    }
+  } catch { /* sem arquivo */ }
+  return versaoCache.v;
+}
 
 // caminho de documento: segmentos alternados coleção/documento, número par de segmentos
 function caminhoValido(p) {
@@ -69,6 +82,8 @@ async function handle(req, res, u, ctx) {
     if (!dashboardHas(user, PERM)) return sendJson(res, 403, { ok: false, error: 'Seu usuário não tem acesso ao Roteirizador. Peça a liberação a um administrador.' }), true;
     const cliente = clienteDe(user);
 
+    if (p === '/api/rc/versao' && req.method === 'GET') return sendJson(res, 200, { ok: true, versao: versaoPagina() }), true;
+
     if (p === '/api/rc/eu' && req.method === 'GET') {
       await semear(pool, cliente);
       return sendJson(res, 200, { ok: true, id: 'u' + user.id, username: user.username, admin: !!user.is_admin, permissions: user.permissions || [] }), true;
@@ -114,4 +129,4 @@ async function handle(req, res, u, ctx) {
   }
 }
 
-module.exports = { ensureSchema, handle, semear, caminhoValido, colecaoDe, podeGravar, PERM };
+module.exports = { ensureSchema, handle, semear, versaoPagina, caminhoValido, colecaoDe, podeGravar, PERM };

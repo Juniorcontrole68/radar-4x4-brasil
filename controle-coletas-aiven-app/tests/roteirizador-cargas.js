@@ -36,6 +36,9 @@ const login = async (u, s) => { const r = await call('POST', '/api/auth/login', 
   check('login', !!adm);
   r = await call('GET', '/roteirizador-cargas', { cookie: adm });
   check('página abre (ponte do CONSTRULOG + aplicativo)', r.status === 200 && r.text.includes('RC_HOST') && r.text.includes('Roteirizador'), r.status);
+  r = await call('GET', '/api/rc/versao', { cookie: adm });
+  const pag = fs.readFileSync(path.join(__dirname, '..', 'roteirizador-cargas.html'), 'utf8');
+  check('versão publicada igual à da página (aviso de versão nova)', r.status === 200 && r.json.versao && pag.includes('name="rc-versao" content="' + r.json.versao + '"'), r.json);
   r = await call('GET', '/api/rc/eu', { cookie: adm });
   check('usuário e perfil de administrador', r.status === 200 && r.json.admin === true && r.json.username === ADMIN_USER, r.json);
   r = await call('GET', '/api/rc/mudancas', { cookie: adm });

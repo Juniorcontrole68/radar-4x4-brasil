@@ -113,6 +113,38 @@
   };
   window.claude = { use: async (nome) => ({ db, user, downloads }[nome] || null) };
 
+  // ---- aviso de versão nova ----
+  (function () {
+    const meta = document.querySelector('meta[name="rc-versao"]');
+    const minha = meta && meta.content;
+    if (!minha) return;
+    let avisado = false;
+    async function conferir() {
+      if (avisado) return;
+      try {
+        const r = await fetch('/api/rc/versao', { cache: 'no-store', credentials: 'same-origin' });
+        const j = await r.json();
+        if (j && j.versao && j.versao !== minha) mostrar();
+      } catch (e) { /* sem rede: tenta depois */ }
+    }
+    function mostrar() {
+      avisado = true;
+      const d = document.createElement('div');
+      d.setAttribute('role', 'status');
+      d.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:99999;background:#16142f;color:#fff;padding:10px 12px 10px 16px;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.25);display:flex;gap:12px;align-items:center;font:14px system-ui,sans-serif;max-width:calc(100% - 32px)';
+      d.innerHTML = '<span>Nova versão do Roteirizador disponível.</span>';
+      const b = document.createElement('button');
+      b.textContent = 'Atualizar agora';
+      b.style.cssText = 'background:#f5b301;color:#16142f;border:0;border-radius:7px;padding:7px 12px;font:600 14px system-ui,sans-serif;cursor:pointer';
+      b.onclick = () => location.reload();
+      d.appendChild(b);
+      document.body.appendChild(d);
+    }
+    setInterval(() => { if (document.visibilityState !== 'hidden') conferir(); }, 5 * 60000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') conferir(); });
+    setTimeout(conferir, 20000);
+  })();
+
   // ---- integrações do CONSTRULOG ----
   const diasAtras = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }); };
   window.RC_HOST = {
