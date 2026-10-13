@@ -198,7 +198,8 @@
   function notasEnr() {
     if (ENR_V === VER) return ENR;
     const c = ctx();
-    ENR = [...ST.notas.values()].map((n) => RE.enriquecer(n, c));
+    const ign = ignoradas();
+    ENR = [...ST.notas.values()].filter((n) => n.origem === 'manual' || !ign[nfChave(n.numero)]).map((n) => RE.enriquecer(n, c));
     ENR_MAP = new Map(ENR.map((n) => [n.id, n]));
     ENR_V = VER;
     return ENR;
@@ -846,13 +847,13 @@
     if (nNotas && nm && !ui.calc && (!pl || ui.escalaSuja) && !(pl && pl.status === 'aprovado') && ui.autoEm !== VER) { ui.autoEm = VER; setTimeout(() => { if (!ui.calc) otimizar(); }, 400); }
     const rotaDe = new Map(pl ? pl.rotas.filter((r) => r.motoristaId).map((r) => [r.motoristaId, r]) : []);
     const marca = (m) => '<label class="dsp"><input type="checkbox" data-disp="m|' + esc(m.id) + '"' + (motDisp(m, d) ? ' checked' : '') + '><span><b>' + esc(m.nome) + '</b><small>' + (m.ultimoUso ? 'rodou em ' + dBR(m.ultimoUso) : 'sem registro recente') + '</small></span></label>';
-    let h = '<div class="card escala"><div class="card-h"><h2>Escala de ' + dBR(d) + '</h2><span class="small muted">' + (ui.sswLendo ? 'buscando CTRCs no SSW… · ' : '') + nNotas + ' nota(s) para este dia · ' + nm + ' motorista(s) marcado(s)</span></div>';
+    let h = '<div class="card escala"><div class="card-h"><h2>Escala de ' + dBR(d) + '</h2><span class="small muted">' + (ui.sswLendo ? 'buscando CTRCs no SSW… · ' : '') + nNotas + ' nota(s) para este dia · ' + nm + ' motorista(s) marcado(s)</span>' + (nNotas && nm ? '<button class="btn sm go" data-a="otimizar"' + (ui.calc ? ' disabled' : '') + '>' + I.play + (pl ? 'Otimizar de novo' : 'Otimizar') + '</button>' : '') + '</div>';
     h += '<div class="escala-cols"><div><p class="small" style="margin:0 0 8px"><b>1. Quem trabalha hoje?</b></p>' +
       '<input id="fMotQ" class="dsp-q" placeholder="Procurar motorista mais antigo" value="' + esc(ui.motQ || '') + '">' +
       (lista.length ? '<div class="dsp-list">' + lista.map(marca).join('') + '</div>' : '<p class="muted small">' + (q ? 'Nenhum motorista com esse nome.' : ui.frotaImp && ui.frotaImp.carregando ? 'Lendo o Rastreio de carga…' : 'Nenhum motorista rodou nos últimos 30 dias.') + '</p>') + '</div>';
     h += '<div><p class="small" style="margin:0 0 8px"><b>2. Ideia de rota de cada um</b></p>';
     if (ui.calc) h += '<div class="empty small">Montando as rotas…</div>';
-    else if (!nNotas) h += '<div class="empty small">Nenhuma nota liberada para ' + dBR(d) + '.' + (window.RC_HOST ? (ui.sswLendo ? ' Buscando os CTRCs disponíveis no SSW…' : ' <button class="btn sm pri" data-a="sswSync">Buscar CTRCs no SSW</button>') : '') + '</div>';
+    else if (!nNotas) h += '<div class="empty small">Nenhuma nota liberada para ' + dBR(d) + '.' + (window.RC_HOST ? (ui.sswLendo ? ' Buscando os CTRCs disponíveis no SSW…' : ' <button class="btn sm pri" data-a="sswSync">Buscar CTRCs no SSW</button>') : '') + '</div>' + porQueSemNotas(d);
     else if (!nm) h += '<div class="empty small">Marque ao lado os motoristas disponíveis.</div>';
     else if (!pl) h += '<div class="empty small">Montando as rotas…</div>';
     else {
@@ -872,6 +873,28 @@
     }
     h += '</div></div></div>';
     return h;
+  }
+  // por que nenhuma nota entra no dia: dados pendentes, cidade sem rota nesse dia da semana, já programada em outro dia
+  function porQueSemNotas(d) {
+    const wd = RE.weekday(d), c = ctx(), DIAS = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+    let pend = 0, outroDia = 0, minima = 0; const semDia = new Map(), motivos = new Map();
+    const NOME = { peso: 'sem peso', volume: 'sem m³', cidade: 'cidade não reconhecida', cidade_sem_rota: 'cidade sem dias de rota cadastrados', pdf: 'lida de PDF, falta conferir', tubo_diametro: 'tubo sem diâmetro', tubo_comprimento: 'tubo sem comprimento' };
+    for (const n of notasEnr()) {
+      if (['entregue', 'cancelada', 'em_rota'].includes(n.status) || n.bloqueioUsuario) continue;
+      if (n.planoData && n.planoData !== d && n.status === 'roteirizada') { outroDia++; continue; }
+      if (n.bloqueada) { pend++; for (const cod of new Set((n.pendencias || []).filter((x) => x.bloqueia).map((x) => x.cod))) motivos.set(cod, (motivos.get(cod) || 0) + 1); continue; }
+      const cid = c.cidades[n.cidadeId];
+      if (cid && n.diaForcado !== d && !(cid.dias || []).includes(wd)) { semDia.set(cid.nome, (semDia.get(cid.nome) || 0) + 1); continue; }
+      if (n.dataMinima && d < n.dataMinima) minima++;
+    }
+    const nSem = [...semDia.values()].reduce((a, b) => a + b, 0);
+    if (!pend && !nSem && !outroDia && !minima) return '';
+    let h = '<div class="note warn small" style="margin-top:10px"><b>Por que não há notas para ' + dBR(d) + ' (' + DIAS[wd] + '):</b><ul style="margin:6px 0 0 18px;padding:0">';
+    if (pend) h += '<li><b>' + pend + '</b> nota(s) com dados pendentes: ' + [...motivos].sort((a, b) => b[1] - a[1]).map(([k, v]) => esc(NOME[k] || k) + ' (' + v + ')').join(', ') + '. <button class="btn sm" data-a="semNotasPend">Resolver pendências</button></li>';
+    if (nSem) h += '<li><b>' + nSem + '</b> nota(s) de cidades que não têm rota na ' + DIAS[wd] + ': ' + [...semDia].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, v]) => esc(k) + ' (' + v + ')').join(', ') + (semDia.size > 6 ? '…' : '') + '. <button class="btn sm" data-a="semNotasForcar">Programar mesmo assim neste dia</button> <button class="btn sm" data-a="tab" data-v="cad">Ajustar dias das cidades</button></li>';
+    if (outroDia) h += '<li><b>' + outroDia + '</b> nota(s) já aprovadas em programação de outro dia.</li>';
+    if (minima) h += '<li><b>' + minima + '</b> nota(s) só podem sair depois desta data.</li>';
+    return h + '</ul></div>';
   }
   async function sincronizarSSW() {
     if (!window.RC_HOST || ui.sswLendo) return;
@@ -1786,6 +1809,16 @@
       case 'selNota': break;
       case 'excluirUma': { ui.notasSel = new Set([v]); ui.confirmar = { a: 'excluirSel' }; render(); window.scrollTo(0, 0); break; }
       case 'excluirSel': ui.confirmar = { a: 'excluirSel' }; render(); break;
+      case 'semNotasPend': ui.tab = 'notas'; ui.notasSub = 'revisao'; render(); break;
+      case 'semNotasForcar': {
+        const d = ui.data, wd = RE.weekday(d), c = ctx(), it = [];
+        for (const n of notasEnr()) {
+          if (['entregue', 'cancelada', 'em_rota', 'roteirizada'].includes(n.status) || n.bloqueioUsuario || n.bloqueada) continue;
+          const cid = c.cidades[n.cidadeId]; if (!cid || (cid.dias || []).includes(wd) || n.diaForcado === d) continue;
+          const o = ST.notas.get(n.id); if (o) it.push({ id: n.id, data: Object.assign({}, o, { diaForcado: d }) });
+        }
+        await salvarVarios('notas', it); registrar('Programação', it.length + ' nota(s) forçadas para ' + dBR(d)); toast(it.length + ' nota(s) entram na programação de ' + dBR(d) + '.'); ui.escalaSuja = true; render(); break;
+      }
       case 'excluirSelOk': await excluirNotas([...(ui.notasSel || [])]); break;
       case 'limparSel': ui.notasSel = new Set(); ui.confirmar = null; render(); break;
       case 'copiarNF': { const ok = await copiarTexto(v); toast(ok ? 'NF ' + v + ' copiada.' : 'Não consegui copiar a NF ' + v + '.', !ok); break; }

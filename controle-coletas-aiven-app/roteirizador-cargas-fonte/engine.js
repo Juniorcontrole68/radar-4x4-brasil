@@ -794,7 +794,7 @@
   RE.alertasPrazo = (notasEnr, hoje, ctx) => {
     const al = [];
     for (const n of notasEnr) {
-      if (['entregue', 'cancelada', 'roteirizada'].includes(n.status) || !n.prazoEfetivo || !n.cidadeId) continue;
+      if (['entregue', 'cancelada', 'roteirizada', 'em_rota'].includes(n.status) || n.bloqueioUsuario || !n.prazoEfetivo || !n.cidadeId) continue;
       const cid = ctx.cidades[n.cidadeId];
       if (!cid) continue;
       if (n.prazoEfetivo < hoje) { al.push({ nota: n, tipo: 'atrasada', msg: 'Prazo vencido em ' + RE.dBR(n.prazoEfetivo) }); continue; }
