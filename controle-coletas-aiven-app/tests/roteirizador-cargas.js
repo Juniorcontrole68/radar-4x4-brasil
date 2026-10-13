@@ -89,8 +89,10 @@ const login = async (u, s) => { const r = await call('POST', '/api/auth/login', 
   check('logo do portal é uma imagem válida', imgs.length >= 2 && imgs.every((b) => Buffer.from(b, 'base64').toString('base64') === b && Buffer.from(b, 'base64').slice(1, 4).toString() === 'PNG'));
   check('portal tem o Roteirizador novo e não tem mais o Teste nem o V02', portal.includes('data-module="roteirizador-cargas"') && !portal.includes('data-module="roteirizador-teste"') && !portal.includes('data-module="roteirizador-v02"'));
 
+  check('portal tem o card Financeiro com Financeiro, Receita SSW e Clientes Remetentes', portal.includes('data-group="financeiro"') && ['fin-op', 'receita-ssw', 'remetentes'].every((m) => portal.includes('data-module="' + m + '"')));
   const dash = fs.readFileSync(path.join(__dirname, '..', 'dashboard', 'public', 'index.html'), 'utf8');
   check('menu do dashboard tem o botão Atualizar sistema', dash.includes('id="sysUpdate"'));
+  check('Dashboards sem os cards Financeiro, Receita SSW e Clientes Remetentes', !/<h3>(Financeiro|Receita SSW|Entregas por Cliente Remetente)<\/h3>/.test(dash));
   check('menu do dashboard tem o Roteirizador novo e não tem o Teste nem o V02', dash.includes('data-tab="roteirizador-cargas"') && !dash.includes('data-tab="roteirizador-v02"') && !dash.includes('data-tab="roteirizador-teste"'));
 
   console.log('\n' + pass + ' ok, ' + fail + ' falha(s)');

@@ -5003,11 +5003,15 @@ async function start(){
     await refreshData(true);
   }
 
-  const view=new URLSearchParams(location.search).get('view');
-  const target=view&&tabAllowed(view)?view:firstAllowedTab();
+  let view=new URLSearchParams(location.search).get('view');
+  // "Financeiro" do portal: abre a Visão Geral já no resultado financeiro (permissão financeiro)
+  const finOp=view==='financeiro-op'&&hasPerm('financeiro');
+  if(finOp){view='dashboard';setTimeout(()=>{const el=$('#financeDriverPanel');const c=el&&(el.closest('.card')||el);if(c)c.scrollIntoView({behavior:'smooth',block:'start'})},900)}
+  const target=view&&(tabAllowed(view)||finOp)?view:firstAllowedTab();
   if(target){
     const b=$('.nav button[data-tab="'+target+'"]');
-    if(b)b.click();else openTab(target)
+    if(finOp&&!tabAllowed('dashboard')){$$('.section').forEach(x=>x.classList.remove('active'));$('#dashboard')?.classList.add('active');$('#pageTitle').textContent='Financeiro'}
+    else if(b)b.click();else openTab(target)
   }else{
     $('#err').style.display='block';
     $('#err').textContent='Este usuário ainda não possui nenhum card liberado.'
