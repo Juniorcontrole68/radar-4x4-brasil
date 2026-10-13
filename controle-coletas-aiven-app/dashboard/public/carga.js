@@ -30,10 +30,10 @@ function carregar(){
   try{
     const j=JSON.parse(localStorage.getItem(KEY)||'null');
     if(!j||!Array.isArray(j.items))return;
+    // carga de outro dia não volta: a tela começa vazia a cada dia
+    if(!j.date||j.date!==hoje()){localStorage.removeItem(KEY);return}
     S={date:hoje(),driver:String(j.driver||''),plate:String(j.plate||''),items:j.items.filter(x=>x&&x.stop&&x.id),route:j.route&&Array.isArray(j.route.order)?j.route:null,stale:!!j.stale,sent:null};
-    seq=S.items.reduce((a,x)=>Math.max(a,Number(String(x.id).replace(/\D/g,''))||0),0);
-    // carga montada em outro dia continua na tela, mas a rota precisa ser refeita antes de enviar
-    if(j.date&&j.date!==S.date&&S.route)S.stale=true
+    seq=S.items.reduce((a,x)=>Math.max(a,Number(String(x.id).replace(/\D/g,''))||0),0)
   }catch{}
 }
 
@@ -384,7 +384,8 @@ function setup(){
 // Chamado pelo painel quando a aba "Montar carga" é aberta.
 window.cargaAbrir=()=>{
   setup();
-  if(S.date!==hoje()){S.date=hoje();if(S.route)S.stale=true;render()}
+  // virou o dia com a tela aberta: zera a carga do dia anterior
+  if(S.date!==hoje()){S={date:hoje(),driver:'',plate:'',items:[],route:null,stale:false,sent:null};seq=0;try{localStorage.removeItem(KEY)}catch{}render();msg('Carga do dia anterior zerada. Comece a bipar a carga de hoje.')}
   setTimeout(()=>{q('#cgCode')?.focus();if(map)map.invalidateSize()},60)
 };
 })();
