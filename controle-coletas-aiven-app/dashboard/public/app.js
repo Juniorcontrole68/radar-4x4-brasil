@@ -231,7 +231,7 @@ function renderGroups(){
 }
 async function loadDashboardGroups(redesenhar=true){
   if(!AUTH?.is_admin)return;
-  try{const r=await fetch('/api/painel/auth/groups',{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar grupos.');window.__dashboardGroups=j.rows||[]}
+  try{const r=await fetch('/api/painel/auth/groups',{cache:'no-cache'}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar grupos.');window.__dashboardGroups=j.rows||[]}
   catch(e){const b=document.querySelector('#groupList');if(b)b.innerHTML='<div class="muted">'+safe(e.message)+'</div>';return}
   renderGroupSelect();if(redesenhar)renderGroups();syncUserPermLocks()
 }
@@ -273,7 +273,7 @@ async function loadDashboardUsers(){
   if(!AUTH?.is_admin)return;
   const box=document.querySelector('#userList');if(box)box.innerHTML='<div class="muted">Carregando usuários…</div>';
   try{
-    const r=await fetch('/api/painel/auth/users',{cache:'no-store'}),j=await r.json();
+    const r=await fetch('/api/painel/auth/users',{cache:'no-cache'}),j=await r.json();
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar usuários.');
     if(!(window.__dashboardGroups||[]).length)await loadDashboardGroups(false);
     renderDashboardUsers(j.rows||[]);renderGroups()
@@ -355,7 +355,7 @@ async function bootstrapAuth(){
     finally{btn.disabled=false;btn.textContent='Entrar'}
   };
   try{
-    const r=await fetch('/api/auth/me',{cache:'no-store'}),j=await r.json();
+    const r=await fetch('/api/auth/me',{cache:'no-cache'}),j=await r.json();
     if(r.ok&&j.ok)return showAuthenticatedApp(j.user)
   }catch{}
   document.body.classList.add('auth-pending');
@@ -366,7 +366,7 @@ async function authenticateEmbeddedToken(token){
   if(!token)return false;
   setDashboardSessionToken(token);
   try{
-    const r=await fetch('/api/auth/me',{cache:'no-store'});
+    const r=await fetch('/api/auth/me',{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(r.ok&&j.ok){
       await showAuthenticatedApp(j.user);
@@ -492,7 +492,7 @@ function normalizeDriverNames(value){
 async function load(n){
   const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),18000);
   try{
-    const r=await fetch('/api/sheet/'+n+'?t='+Date.now(),{cache:'no-store',headers:{'Cache-Control':'no-cache','Pragma':'no-cache'},signal:ctrl.signal}),j=await r.json();
+    const r=await fetch('/api/sheet/'+n+'',{cache:'no-cache',signal:ctrl.signal}),j=await r.json();
     if(!r.ok||!j.ok)throw Error(j.error||'Falha ao carregar '+n);
     S.sheetWarnings=S.sheetWarnings||{};S.sheetWarnings[n]=String(j.warning||'');
     return normalizeDriverNames(j.rows||[])
@@ -500,10 +500,10 @@ async function load(n){
 }
 async function loadColetasStatus(){
   const q=new URLSearchParams(),f=$('#from')?.value||'',t=$('#to')?.value||'';
-  if(f)q.set('from',f);if(t)q.set('to',t);q.set('t',Date.now());
+  if(f)q.set('from',f);if(t)q.set('to',t);
   const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),7000);
   try{
-    const r=await fetch('/api/coletas/status?'+q.toString(),{cache:'no-store',headers:{'Cache-Control':'no-cache','Pragma':'no-cache'},signal:ctrl.signal}),j=await r.json();
+    const r=await fetch('/api/coletas/status?'+q.toString(),{cache:'no-cache',signal:ctrl.signal}),j=await r.json();
     if(!r.ok||!j.ok)throw Error(j.error||'Falha ao carregar status das coletas');
     return j
   }finally{clearTimeout(timer)}
@@ -661,7 +661,7 @@ async function refreshAgCopy(force=false){
   window.__agCopyLoading=true;
   const info=$('#agcInfo');if(info)info.textContent='Atualizando dados da Cópia de AGENDAMENTOS…';
   try{
-    const r=await fetch('/api/sheet/agendamentos_copia?t='+Date.now(),{cache:'no-store',headers:{'Cache-Control':'no-cache','Pragma':'no-cache'}});
+    const r=await fetch('/api/sheet/agendamentos_copia',{cache:'no-cache'});
     const j=await r.json();
     if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível carregar a Cópia de AGENDAMENTOS.');
     S.agCopy=j.rows||[];window.__agCopyLoadedAt=Date.now();
@@ -1101,7 +1101,7 @@ async function refreshCheckerCarsLoaded(){
   const date=$('#checkerValueTo')?.value||iso(new Date());
   el.textContent='…';
   try{
-    const r=await fetch('/api/carregamentos-count?data='+encodeURIComponent(date)+'&t='+Date.now(),{cache:'no-store'});
+    const r=await fetch('/api/carregamentos-count?data='+encodeURIComponent(date)+'',{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao consultar carregamentos.');
     el.textContent=nf(Number(j.total||0))
@@ -1285,7 +1285,7 @@ async function refreshCityBubbles(force=false){
   try{
     const from=$('#cityBubbleFrom')?.value||'',to=$('#cityBubbleTo')?.value||'';
     const q=new URLSearchParams({from,to,t:String(Date.now()),force:force?'1':'0'});
-    const r=await fetch('/api/ssw/cidades-mapa?'+q.toString(),{cache:'no-store'});
+    const r=await fetch('/api/ssw/cidades-mapa?'+q.toString(),{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar mapa de cidades.');
     CITY_BUBBLE_DATA=j;renderCityBubbles()
@@ -1299,7 +1299,7 @@ async function refreshCityBubbles(force=false){
 
 function sswRangeQuery(){const f=$('#from')?.value||'',t=$('#to')?.value||'';return f&&t?'?from='+encodeURIComponent(f)+'&to='+encodeURIComponent(t):''}
 function renderSswAtrasos(){const d=S.ssw;if(!d||!d.ok)return;const set=(id,v)=>{const e=$(id);if(e)e.textContent=v};set('#sswLateTotal',nf(d.total||0));set('#sswLateBranches',nf(d.filiaisCount||0));set('#sswLateCities',nf(d.cidadesCount||0));set('#sswLateRecipients',nf(d.destinatariosCount||0));set('#sswLateTime',(d.meta&&d.meta.hora)||'—');set('#sswLateGoods',brl(d.valorMercadoria||0));set('#sswLateFreight',brl(d.freteTotal||0));set('#sswLateVolumes',nf(d.volumesTotal||0));set('#sswLateWeight',nf(d.pesoTotal||0));set('#sswLateM3',(d.m3Total||0).toLocaleString('pt-BR',{maximumFractionDigits:2}));set('#hubSswLate',nf(d.total||0));set('#hubSswBranches',nf(d.filiaisCount||0));const p=d.period,periodText=p?('Período '+p.from+' a '+p.to+' • '+p.daysAvailable+'/'+p.daysRequested+' dia(s) com arquivo BI2'):'';const metaText=(d.meta&&d.meta.relatorio?d.meta.relatorio+' • ':'')+((d.meta&&d.meta.data)||'')+((d.meta&&d.meta.hora)?' '+d.meta.hora:'')+(periodText?' • '+periodText:'');set('#sswLateMeta',metaText||'Relatório BI2');set('#hubSswLateMeta',metaText||'Relatório BI2');set('#sswHistoryInfo',periodText||'Arquivo mais recente do BI2');if(p&&Array.isArray(p.series)){const hs=p.series.filter(x=>x.total!==null);lines('#sswHistoryChart',hs.map(x=>x.date.slice(5)),hs.map(x=>x.total),[])}const f=d.filiais||[],ci=d.cidades||[];bars('#sswBranchChart',f.map(x=>x.label),f.map(x=>x.value));bars('#sswCityChart',ci.map(x=>x.label),ci.map(x=>x.value));set('#sswLocationsList',(d.localizacoes||[]).slice(0,10).map((x,i)=>(i+1)+'. '+x.label+' — '+nf(x.value)).join(' | ')||'Sem dados');set('#sswOccurrencesList',(d.ocorrencias||[]).slice(0,10).map((x,i)=>(i+1)+'. '+x.label+' — '+nf(x.value)).join(' | ')||'Sem dados');set('#sswRecipientsList',(d.destinatarios||[]).slice(0,10).map((x,i)=>(i+1)+'. '+x.label+' — '+nf(x.value)).join(' | ')||'Sem dados');set('#sswSendersList',(d.remetentes||[]).slice(0,10).map((x,i)=>(i+1)+'. '+x.label+' — '+nf(x.value)).join(' | ')||'Sem dados');table('#sswLateTable',[['Filial','filial'],['CTRC','ctrc'],['NF','nf'],['Remetente','remetente'],['Destinatário','destinatario'],['UF','uf'],['Cidade','cidade'],['Agendada','entregaAgendada'],['Previsão','previsao'],['Atraso','diasAtraso'],['Unidade atual','unidadeAtual'],['Localização atual','localizacaoAtual'],['Última ocorrência','ultimaOcorrencia'],['Data ocorrência','dataUltimaOcorrencia'],['Tipo documento','tipoDocumento']],(d.rows||[]).slice(0,500))}
-async function refreshSswAtrasos(){try{const q=sswRangeQuery(),sep=q?'&':'?';const r=await fetch('/api/bi2/atrasos'+q+sep+'t='+Date.now(),{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw Error(j.error||'Falha ao carregar relatório SSW');S.ssw=j;renderSswAtrasos()}catch(e){const m=$('#sswLateMeta');if(m)m.textContent='Não foi possível carregar os CT-es atrasados: '+e.message;const h=$('#hubSswLateMeta');if(h)h.textContent='SSW indisponível neste momento.'}}
+async function refreshSswAtrasos(){try{const q=sswRangeQuery(),sep=q?'&':'?';const r=await fetch('/api/bi2/atrasos'+q,{cache:'no-cache'}),j=await r.json();if(!r.ok||!j.ok)throw Error(j.error||'Falha ao carregar relatório SSW');S.ssw=j;renderSswAtrasos()}catch(e){const m=$('#sswLateMeta');if(m)m.textContent='Não foi possível carregar os CT-es atrasados: '+e.message;const h=$('#hubSswLateMeta');if(h)h.textContent='SSW indisponível neste momento.'}}
 function driverProgressStatus(r){
   if(r&&r.entregue)return'entregue';
   const t=((r?.ocorrenciaCodigo||'')+' '+(r?.ocorrencia||'')).toUpperCase().trim();
@@ -1480,7 +1480,7 @@ async function refreshDriverProgress(){
   try{
     const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
     TRACKING_CURRENT_DATE=today;
-    const r=await fetch('/api/evolucao-motoristas?date='+encodeURIComponent(today)+'&t='+Date.now(),{cache:'no-store'});
+    const r=await fetch('/api/evolucao-motoristas?date='+encodeURIComponent(today)+'',{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar evolução dos motoristas.');
     S.driverProgress=normalizeDriverNames(j);
@@ -1503,7 +1503,7 @@ async function refreshSswMotoristas(){
   window.__sswMotoristasLoading=true;
   try{
     const q=sswRangeQuery(),sep=q?'&':'?';
-    const r=await fetch('/api/bi2/saidas-baixas'+q+sep+'t='+Date.now(),{cache:'no-store'}),j=await r.json();
+    const r=await fetch('/api/bi2/saidas-baixas'+q,{cache:'no-cache'}),j=await r.json();
     if(!r.ok||!j.ok)throw Error(j.error||'Falha ao carregar saídas e baixas do SSW');
     S.sswMotoristas=normalizeDriverNames(j);renderSswMotoristas();loadingDriverOptions();
     clearTimeout(window.__sswMotoristasRetry);
@@ -1544,7 +1544,7 @@ async function refreshSswReceita(){
   if(!hasPerm('receita_ssw'))return;
   try{
     const q=sswRangeQuery(),sep=q?'&':'?';
-    const r=await fetch('/api/bi2/receita'+q+sep+'t='+Date.now(),{cache:'no-store'});
+    const r=await fetch('/api/bi2/receita'+q,{cache:'no-cache'});
     const j=await r.json().catch(()=>({ok:false,error:'Resposta inválida do SSW.'}));
     S.receita=j;renderSswReceita()
   }catch(e){
@@ -1554,8 +1554,8 @@ async function refreshSswReceita(){
 
 function renderRemetentes(){const d=S.remetentes;if(!d||!d.ok)return;const set=(id,v)=>{const e=$(id);if(e)e.textContent=v},C=d.clientes||[];set('#hubRemClients',nf(d.totalClientes||0));set('#hubRemCtrcs',nf(d.totalCtrcs||0));set('#hubRemFreight',brl(d.totalFrete||0));set('#hubRemVolumes',nf(d.totalVolumes||0));set('#hubRemNote',d.note||'Dados SSW / BI2');set('#remClients',nf(d.totalClientes||0));set('#remCtrcs',nf(d.totalCtrcs||0));set('#remFreight',brl(d.totalFrete||0));set('#remGoods',brl(d.totalMercadoria||0));set('#remVolumes',nf(d.totalVolumes||0));const p=d.period,pt=p?('Período '+p.from+' a '+p.to+' • '+p.daysAvailable+'/'+p.daysRequested+' dia(s) com arquivo BI2'):'';const meta=(d.meta&&d.meta.data?d.meta.data+' '+(d.meta.hora||''):'')+(pt?' • '+pt:'')+' • '+(d.note||'');set('#remMeta',meta);const top=C.slice(0,10),topF=C.slice().sort((a,b)=>b.frete-a.frete).slice(0,10);bars('#remCtrcChart',top.map(x=>x.remetente),top.map(x=>x.ctrcs));bars('#remFreightChart',topF.map(x=>x.remetente),topF.map(x=>x.frete));const rows=C.map((x,i)=>({pos:String(i+1),remetente:x.remetente,ctrcs:nf(x.ctrcs),frete:brl(x.frete),mercadoria:brl(x.valorMercadoria),volumes:nf(x.volumes),peso:nf(x.peso),m3:(x.m3||0).toLocaleString('pt-BR',{maximumFractionDigits:2}),atraso:(x.atrasoMedio||0).toFixed(1).replace('.',',')+' d',cidades:nf(x.cidades),destinatarios:nf(x.destinatarios)}));table('#remTable',[['#','pos'],['Cliente remetente','remetente'],['CT-es','ctrcs'],['Frete','frete'],['Valor mercadoria','mercadoria'],['Volumes','volumes'],['Peso','peso'],['Atraso médio','atraso'],['Cidades','cidades'],['Destinatários','destinatarios']],rows);table('#remCompareTable',[['#','pos'],['Cliente remetente','remetente'],['CT-es','ctrcs'],['Frete','frete'],['Volumes','volumes'],['Atraso médio','atraso'],['Cidades','cidades'],['Destinatários','destinatarios']],rows);const a=$('#remClientA'),b=$('#remClientB');if(a&&b){const va=a.value,vb=b.value,opts=C.map(x=>'<option value="'+safe(x.remetente)+'">'+safe(x.remetente)+'</option>').join('');a.innerHTML=opts;b.innerHTML=opts;if(C.some(x=>x.remetente===va))a.value=va;else if(C[0])a.value=C[0].remetente;if(C.some(x=>x.remetente===vb))b.value=vb;else if(C[1])b.value=C[1].remetente;else if(C[0])b.value=C[0].remetente;renderRemCompare()}}
 function renderRemCompare(){const d=S.remetentes;if(!d||!d.ok)return;const C=d.clientes||[],a=$('#remClientA'),b=$('#remClientB');if(!a||!b)return;const A=C.find(x=>x.remetente===a.value),B=C.find(x=>x.remetente===b.value),set=(id,v)=>{const e=$(id);if(e)e.textContent=v};const fill=(p,x)=>{set('#rem'+p+'Name',x?x.remetente:'—');set('#rem'+p+'Ctrcs',x?nf(x.ctrcs):'—');set('#rem'+p+'Freight',x?brl(x.frete):'—');set('#rem'+p+'Goods',x?brl(x.valorMercadoria):'—');set('#rem'+p+'Volumes',x?nf(x.volumes):'—');set('#rem'+p+'Weight',x?nf(x.peso):'—');set('#rem'+p+'Delay',x?(x.atrasoMedio||0).toFixed(1).replace('.',',')+' d':'—');set('#rem'+p+'Cities',x?nf(x.cidades):'—');set('#rem'+p+'Recipients',x?nf(x.destinatarios):'—')};fill('A',A);fill('B',B);set('#remCompareMeta',(d.note||'')+(d.meta&&d.meta.data?' • '+d.meta.data+' '+(d.meta.hora||''):''))}
-async function refreshSswRemetentes(){try{const q=sswRangeQuery(),sep=q?'&':'?';const r=await fetch('/api/bi2/remetentes'+q+sep+'t='+Date.now(),{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw Error(j.error||'Falha ao carregar clientes remetentes');S.remetentes=j;renderRemetentes()}catch(e){const ids=['#remMeta','#hubRemNote','#remCompareMeta'];ids.forEach(id=>{const el=$(id);if(el)el.textContent='Não foi possível carregar os clientes remetentes: '+e.message})}}
-async function checkSsw(){try{const [rs,rb,ra]=await Promise.all([fetch('/api/ssw/status?t='+Date.now(),{cache:'no-store'}),fetch('/api/bi2/status?t='+Date.now(),{cache:'no-store'}),fetch('/api/bi2/api-status?t='+Date.now(),{cache:'no-store'})]),s=await rs.json(),b2=await rb.json(),api=await ra.json(),b=$('#sswSource');if(!b)return;if(api.connected){b.textContent='BI2 WebAPI conectada • consulta a cada 1 min • usando Google Sheets';const tag=$('#hubBi2Tag'),txt=$('#hubBi2Text');if(tag){tag.textContent='WEBAPI BI2 CONECTADA';tag.classList.remove('wait');tag.classList.add('live')}if(txt)txt.textContent='WebAPI BI2 conectada. Relatórios monitorados a cada 1 minuto; SFTP mantido como contingência.';b.style.background='#dcfce7';b.style.color='#166534';b.style.borderColor='#86efac'}else if(b2.connected){b.textContent=(b2.fileCount>0?'BI2 SFTP conectado • '+b2.fileCount+' arquivo(s) disponível(is) • usando Google Sheets':'BI2 SFTP conectado • aguardando arquivos do SSW • usando Google Sheets');const tag=$('#hubBi2Tag'),txt=$('#hubBi2Text');if(tag){tag.textContent=b2.fileCount>0?'ARQUIVOS DISPONÍVEIS':'BI2 CONECTADO';tag.classList.remove('wait');tag.classList.add('live')}if(txt)txt.textContent=b2.fileCount>0?'BI2 conectado com '+b2.fileCount+' arquivo(s) disponível(is) para processamento.':'BI2 conectado com sucesso. Aguardando o SSW publicar os primeiros arquivos.';b.style.background='#dcfce7';b.style.color='#166534';b.style.borderColor='#86efac'}else if(b2.configured){b.textContent='BI2 configurado • conexão indisponível • usando Google Sheets';const tag=$('#hubBi2Tag'),txt=$('#hubBi2Text');if(tag){tag.textContent='BI2 INDISPONÍVEL';tag.classList.remove('live');tag.classList.add('wait')}if(txt)txt.textContent='Credenciais configuradas, mas a conexão BI2 não está disponível neste momento.';b.style.background='#fee2e2';b.style.color='#991b1b';b.style.borderColor='#fecaca'}else if(s.connected){b.textContent='SSW WebAPI conectado • usando Google Sheets';b.style.background='#dcfce7';b.style.color='#166534';b.style.borderColor='#86efac'}else if(s.configured){b.textContent='SSW WebAPI: falha de autenticação • usando Google Sheets';b.style.background='#fee2e2';b.style.color='#991b1b';b.style.borderColor='#fecaca'}else{b.textContent='SSW/BI2 aguardando configuração • usando Google Sheets';b.style.background='#ecfeff';b.style.color='#0f766e';b.style.borderColor='#99f6e4'}}catch(e){const b=$('#sswSource');if(b)b.textContent='Fontes SSW indisponíveis • usando Google Sheets'}}
+async function refreshSswRemetentes(){try{const q=sswRangeQuery(),sep=q?'&':'?';const r=await fetch('/api/bi2/remetentes'+q,{cache:'no-cache'}),j=await r.json();if(!r.ok||!j.ok)throw Error(j.error||'Falha ao carregar clientes remetentes');S.remetentes=j;renderRemetentes()}catch(e){const ids=['#remMeta','#hubRemNote','#remCompareMeta'];ids.forEach(id=>{const el=$(id);if(el)el.textContent='Não foi possível carregar os clientes remetentes: '+e.message})}}
+async function checkSsw(){try{const [rs,rb,ra]=await Promise.all([fetch('/api/ssw/status',{cache:'no-cache'}),fetch('/api/bi2/status',{cache:'no-cache'}),fetch('/api/bi2/api-status',{cache:'no-cache'})]),s=await rs.json(),b2=await rb.json(),api=await ra.json(),b=$('#sswSource');if(!b)return;if(api.connected){b.textContent='BI2 WebAPI conectada • consulta a cada 1 min • usando Google Sheets';const tag=$('#hubBi2Tag'),txt=$('#hubBi2Text');if(tag){tag.textContent='WEBAPI BI2 CONECTADA';tag.classList.remove('wait');tag.classList.add('live')}if(txt)txt.textContent='WebAPI BI2 conectada. Relatórios monitorados a cada 1 minuto; SFTP mantido como contingência.';b.style.background='#dcfce7';b.style.color='#166534';b.style.borderColor='#86efac'}else if(b2.connected){b.textContent=(b2.fileCount>0?'BI2 SFTP conectado • '+b2.fileCount+' arquivo(s) disponível(is) • usando Google Sheets':'BI2 SFTP conectado • aguardando arquivos do SSW • usando Google Sheets');const tag=$('#hubBi2Tag'),txt=$('#hubBi2Text');if(tag){tag.textContent=b2.fileCount>0?'ARQUIVOS DISPONÍVEIS':'BI2 CONECTADO';tag.classList.remove('wait');tag.classList.add('live')}if(txt)txt.textContent=b2.fileCount>0?'BI2 conectado com '+b2.fileCount+' arquivo(s) disponível(is) para processamento.':'BI2 conectado com sucesso. Aguardando o SSW publicar os primeiros arquivos.';b.style.background='#dcfce7';b.style.color='#166534';b.style.borderColor='#86efac'}else if(b2.configured){b.textContent='BI2 configurado • conexão indisponível • usando Google Sheets';const tag=$('#hubBi2Tag'),txt=$('#hubBi2Text');if(tag){tag.textContent='BI2 INDISPONÍVEL';tag.classList.remove('live');tag.classList.add('wait')}if(txt)txt.textContent='Credenciais configuradas, mas a conexão BI2 não está disponível neste momento.';b.style.background='#fee2e2';b.style.color='#991b1b';b.style.borderColor='#fecaca'}else if(s.connected){b.textContent='SSW WebAPI conectado • usando Google Sheets';b.style.background='#dcfce7';b.style.color='#166534';b.style.borderColor='#86efac'}else if(s.configured){b.textContent='SSW WebAPI: falha de autenticação • usando Google Sheets';b.style.background='#fee2e2';b.style.color='#991b1b';b.style.borderColor='#fecaca'}else{b.textContent='SSW/BI2 aguardando configuração • usando Google Sheets';b.style.background='#ecfeff';b.style.color='#0f766e';b.style.borderColor='#99f6e4'}}catch(e){const b=$('#sswSource');if(b)b.textContent='Fontes SSW indisponíveis • usando Google Sheets'}}
 function lotacaoIsoDate(v){
   const s=String(v||'').slice(0,10);
   return /^\d{4}-\d{2}-\d{2}$/.test(s)?s:''
@@ -1587,7 +1587,7 @@ async function refreshLotacao(){
     const q=new URLSearchParams();
     const from=$('#lotacaoFrom')?.value||'',to=$('#lotacaoTo')?.value||'';
     if(from)q.set('from',from);if(to)q.set('to',to);
-    const r=await fetch('/api/lotacao?'+q.toString(),{cache:'no-store'});
+    const r=await fetch('/api/lotacao?'+q.toString(),{cache:'no-cache'});
     const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível carregar lotações.');
     S.lotacao=normalizeDriverNames(Array.isArray(j.rows)?j.rows:[]);
     renderLotacao()
@@ -1771,7 +1771,7 @@ async function loadSla(){
   if(!de.value){const t=iso(new Date());de.value=t.slice(0,8)+'01';ate.value=t}
   const tb=$('#slaTabela tbody');if(tb&&!SLA_DATA)tb.innerHTML='<tr><td colspan="12" class="muted">Calculando… (lê os CT-es emitidos e as baixas de cada dia do período no SSW; pode levar alguns segundos)</td></tr>';
   if(bt){bt.disabled=true;bt.textContent='Calculando…'}
-  try{const r=await fetch('/api/bi2/sla-clientes?from='+encodeURIComponent(de.value)+'&to='+encodeURIComponent(ate.value),{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao calcular o SLA');SLA_DATA=j;renderSla()}
+  try{const r=await fetch('/api/bi2/sla-clientes?from='+encodeURIComponent(de.value)+'&to='+encodeURIComponent(ate.value),{cache:'no-cache'}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao calcular o SLA');SLA_DATA=j;renderSla()}
   catch(e){if(tb)tb.innerHTML='<tr><td colspan="12" style="color:#b91c1c">'+safe(e.message)+'</td></tr>'}
   finally{if(bt){bt.disabled=false;bt.textContent='Calcular'}}
 }
@@ -1801,7 +1801,7 @@ async function loadFaturas(forcar){
   if(bt){bt.disabled=true;bt.textContent='Lendo o SSW…'}
   $('#fatInfo').textContent='Consultando as faturas no SSW… (pode levar alguns segundos)';
   try{
-    const r=await fetch('/api/financeiro/faturas?de='+encodeURIComponent(de.value)+'&ate='+encodeURIComponent(ate.value)+(AUTH?.is_admin?'&diag=1':''),{cache:'no-store'}),j=await r.json();
+    const r=await fetch('/api/financeiro/faturas?de='+encodeURIComponent(de.value)+'&ate='+encodeURIComponent(ate.value)+(AUTH?.is_admin?'&diag=1':''),{cache:'no-cache'}),j=await r.json();
     if(!r.ok||!j.ok){const e=new Error(j.error||'Falha ao ler as faturas');e.diag=j.diag;throw e}
     FAT_DATA=j;renderFaturas()
   }catch(e){
@@ -1889,7 +1889,7 @@ async function refreshLoadingRecords(useFilters=true){
     if(tipo)q.set('tipo',tipo);
     if(motorista)q.set('motorista',motorista);
     if(data)q.set('data',data);
-    const r=await fetch('/api/carregamentos-finais?'+q.toString(),{cache:'no-store'});
+    const r=await fetch('/api/carregamentos-finais?'+q.toString(),{cache:'no-cache'});
     const j=await r.json();
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar registros.');
     const rows=Array.isArray(j.rows)?j.rows:[];
@@ -2147,7 +2147,7 @@ function renderProgramMaterials(){
 }
 async function loadProgramMaterials(){
   try{
-    const r=await fetch('/api/nf-materiais?special=1&limit=3000&t='+Date.now(),{cache:'no-store'});
+    const r=await fetch('/api/nf-materiais?special=1&limit=3000',{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao consultar materiais.');
     PROGRAM_MATERIALS=Array.isArray(j.rows)?j.rows:[];
@@ -2215,7 +2215,7 @@ async function refreshDeliveryProgram(force=false){
   if(btn)btn.disabled=true;if(rf)rf.disabled=true;
   try{
     const q=new URLSearchParams({date});if(force)q.set('force','1');q.set('t',Date.now());
-    const r=await fetch('/api/programacao-entregas?'+q.toString(),{cache:'no-store'});
+    const r=await fetch('/api/programacao-entregas?'+q.toString(),{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível gerar a programação.');
     renderDeliveryProgram(j);
@@ -2346,7 +2346,7 @@ async function refreshProgramSimulation(force=true){
   if(status)status.textContent='Lendo os romaneios emitidos hoje, cruzando peso/frete e recalculando a frota e as rotas…';
   try{
     const q=new URLSearchParams({t:String(Date.now())});if(force)q.set('force','1');
-    const r=await fetch('/api/programacao-simulacao?'+q.toString(),{cache:'no-store'});
+    const r=await fetch('/api/programacao-simulacao?'+q.toString(),{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível simular os romaneios.');
     renderProgramSimulation(j)
@@ -2408,7 +2408,7 @@ async function loadRouteManifests(force=false){
   const date=$('#routeDate')?.value||iso(new Date()),status=$('#routeStatus');
   if(status)status.textContent='Carregando romaneios do SSW…';
   try{
-    const r=await fetch('/api/roteirizador/lista?date='+encodeURIComponent(date)+(force?'&t='+Date.now():''),{cache:'no-store'});
+    const r=await fetch('/api/roteirizador/lista?date='+encodeURIComponent(date)+'',{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível carregar os romaneios.');
     ROUTE_MANIFESTS=j.rows||[];
@@ -2533,7 +2533,7 @@ async function routeAddManualAddress(){
   if(!raw){if(msg)msg.textContent='Digite o endereço da entrega.';return}
   const btn=$('#routeAddAddress');if(btn?.disabled)return;if(btn){btn.disabled=true;btn.textContent='Localizando…'}
   try{
-    const r=await fetch('/api/roteirizador/endereco?endereco='+encodeURIComponent(raw),{cache:'no-store'});
+    const r=await fetch('/api/roteirizador/endereco?endereco='+encodeURIComponent(raw),{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Endereço não localizado.');
     ROUTE_EXTRA_STOPS.push(j.stop);
@@ -2549,7 +2549,7 @@ async function routeAddCteBarcode(){
   const btn=$('#routeAddCte');if(btn?.disabled)return;if(btn){btn.disabled=true;btn.textContent='Consultando…'}
   try{
     const date=$('#routeDate')?.value||'';
-    const r=await fetch('/api/roteirizador/cte?codigo='+encodeURIComponent(raw)+'&date='+encodeURIComponent(date),{cache:'no-store'});
+    const r=await fetch('/api/roteirizador/cte?codigo='+encodeURIComponent(raw)+'&date='+encodeURIComponent(date),{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'CT-e não localizado.');
     const exists=ROUTE_EXTRA_STOPS.some(x=>x.barcode&&x.barcode===j.stop.barcode);
@@ -2575,7 +2575,7 @@ async function calculateRoute(){
   const btn=$('#routeCalculate');if(btn){btn.disabled=true;btn.textContent='Calculando…'}
   if(status)status.textContent='Localizando clientes e calculando a menor sequência. Na primeira consulta isso pode levar alguns segundos…';
   try{
-    const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(date)+'&romaneio='+encodeURIComponent(rom)+'&prioridade=1',{cache:'no-store'});
+    const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(date)+'&romaneio='+encodeURIComponent(rom)+'&prioridade=1',{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível calcular a rota.');
     ROUTE_PLAN=j;ROUTE_MANUAL_ORDER=(j.originalOrder||[]).slice();
@@ -2988,7 +2988,7 @@ async function trackingHistoryLoadDrivers(preserve=true){
   const previous=preserve?sel.value:'';
   sel.disabled=true;
   try{
-    const r=await fetch('/api/tracking/history-drivers?date='+encodeURIComponent(date)+'&t='+Date.now(),{cache:'no-store'});
+    const r=await fetch('/api/tracking/history-drivers?date='+encodeURIComponent(date)+'',{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao listar motoristas.');
     const grouped=new Map();
@@ -3087,7 +3087,7 @@ async function refreshTrackingHistory(){
   if(info)info.textContent='Carregando percurso e identificando pontos de parada…';
   try{
     const q=new URLSearchParams({date});if(driver)q.set('driver',driver);q.set('t',String(Date.now()));
-    const r=await fetch('/api/tracking/history?'+q.toString(),{cache:'no-store'});
+    const r=await fetch('/api/tracking/history?'+q.toString(),{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível consultar o histórico.');
     trackingHistoryRender(j)
@@ -3115,7 +3115,7 @@ function printTrackingHistory(){
 async function trackingFetchPlan(romaneio,date){
   const key=date+'|'+romaneio,hit=TRACKING_PLAN_CACHE.get(key);
   if(hit&&Date.now()-hit.at<30*1000)return hit.value;
-  const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(date)+'&romaneio='+encodeURIComponent(romaneio)+'&prioridade=1&t='+Date.now(),{cache:'no-store'});
+  const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(date)+'&romaneio='+encodeURIComponent(romaneio)+'&prioridade=1',{cache:'no-cache'});
   const j=await r.json().catch(()=>({}));
   if(!r.ok||!j.ok)throw new Error(j.error||('Falha ao montar rota '+romaneio));
   TRACKING_PLAN_CACHE.set(key,{at:Date.now(),value:j});
@@ -3128,7 +3128,7 @@ async function trackingBuildLogicalPlan(row,date){
   if(hit&&Date.now()-hit.at<20*1000)return hit.value;
   try{
     const q=new URLSearchParams({date,driver,plate,prioridade:'1',t:String(Date.now())});
-    const r=await fetch('/api/tracking/planned-route?'+q.toString(),{cache:'no-store'});
+    const r=await fetch('/api/tracking/planned-route?'+q.toString(),{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(r.ok&&j.ok){
       const plan={...j,logical:true,plannedSource:'romaneios',motorista:driver||j.motorista||'',veiculo:plate||j.veiculo||''};
@@ -3171,7 +3171,7 @@ async function trackingHistory(sessionId){
   if(!sessionId)return[];
   const hit=TRACKING_HISTORY_CACHE.get(sessionId);
   if(hit&&Date.now()-hit.at<12000)return hit.rows;
-  const r=await fetch('/api/tracking/history?session_id='+encodeURIComponent(sessionId)+'&t='+Date.now(),{cache:'no-store'});
+  const r=await fetch('/api/tracking/history?session_id='+encodeURIComponent(sessionId)+'',{cache:'no-cache'});
   const j=await r.json().catch(()=>({}));
   const rows=r.ok&&j.ok&&Array.isArray(j.rows)?j.rows:[];
   TRACKING_HISTORY_CACHE.set(sessionId,{at:Date.now(),rows});
@@ -3201,7 +3201,7 @@ async function trackingDayHistory(date,driver,plate=''){
   if(TRACKING_DAY_HISTORY_INFLIGHT.has(key))return TRACKING_DAY_HISTORY_INFLIGHT.get(key);
   const job=(async()=>{
     const q=new URLSearchParams({date,driver,plate:String(plate||''),raw:'1',t:String(Date.now())});
-    const r=await fetch('/api/tracking/history?'+q.toString(),{cache:'no-store'});
+    const r=await fetch('/api/tracking/history?'+q.toString(),{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao consultar histórico GPS do dia.');
     let merged=[];
@@ -3707,7 +3707,7 @@ function trackingPhoneLabel(d){
 async function trackingLoadContacts(force=false){
   if(!force&&TRACKING_CONTACTS_AT&&Date.now()-TRACKING_CONTACTS_AT<120000)return;
   try{
-    const r=await fetch('/api/tracking/contacts?t='+Date.now(),{cache:'no-store'});
+    const r=await fetch('/api/tracking/contacts',{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(r.ok&&j.ok&&Array.isArray(j.rows)){
       TRACKING_CONTACTS=new Map(j.rows.map(x=>[String(x.driver_key||''),String(x.phone||'')]));
@@ -3720,7 +3720,7 @@ async function trackingLoadAppVersions(){
   if(TRACKING_APP_VERSIONS.at&&Date.now()-TRACKING_APP_VERSIONS.at<300000)return;
   try{
     const get=async canal=>{
-      const r=await fetch('/api/tracking/app-update?channel='+canal+'&version_code=0&t='+Date.now(),{cache:'no-store'});
+      const r=await fetch('/api/tracking/app-update?channel='+canal+'&version_code=0',{cache:'no-cache'});
       const j=await r.json().catch(()=>({}));
       return r.ok&&j.ok&&Number(j.latestVersionCode)>0?{code:Number(j.latestVersionCode),name:String(j.latestVersionName||'').replace(/-teste$/,'')}:null
     };
@@ -3882,7 +3882,7 @@ async function trackingExportLoad(date){
   if(date===today&&Array.isArray(TRACKING_DRIVER_ROWS)&&TRACKING_DRIVER_ROWS.length){st.rows=TRACKING_DRIVER_ROWS;trackingExportRender();return}
   st.loading=true;trackingExportRender();
   try{
-    const r=await fetch('/api/roteirizador/lista?date='+encodeURIComponent(date)+'&t='+Date.now(),{cache:'no-store'});
+    const r=await fetch('/api/roteirizador/lista?date='+encodeURIComponent(date)+'',{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao ler os romaneios.');
     if(st.date!==date)return;
@@ -3898,7 +3898,7 @@ async function trackingExportGo(){
     for(let i=0;i<roms.length;i++){
       st.note='Lendo o romaneio '+roms[i]+' ('+(i+1)+' de '+roms.length+')… pode levar até um minuto.';trackingExportRender();
       try{
-        const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(st.date)+'&romaneio='+encodeURIComponent(roms[i])+'&prioridade=1&t='+Date.now(),{cache:'no-store'});
+        const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(st.date)+'&romaneio='+encodeURIComponent(roms[i])+'&prioridade=1',{cache:'no-cache'});
         const p=await r.json().catch(()=>({}));
         if(!r.ok||p.ok===false||!Array.isArray(p.points))throw new Error(p.error||'rota não disponível');
         const owner=st.rows.find(x=>(Array.isArray(x.romaneios)?x.romaneios:[x.romaneio]).map(String).includes(roms[i]));
@@ -3908,7 +3908,7 @@ async function trackingExportGo(){
     }
     if(!plans.length)throw new Error('não consegui ler nenhum dos romaneios: '+failed.join('; '));
     st.note='Montando o link…';trackingExportRender();
-    const r=await fetch('/api/tracking/movit-exportar',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({date:st.date,plans})});
+    const r=await fetch('/api/tracking/movit-exportar',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-cache',body:JSON.stringify({date:st.date,plans})});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao exportar os romaneios.');
     const fora=[...failed,...(Array.isArray(j.semEntregas)?j.semEntregas.map(x=>x+' (nenhuma entrega localizada no mapa)'):[])];
@@ -4006,7 +4006,7 @@ async function trackingSimulateRoute(item,button){
   const label=button?button.textContent:'';
   if(button){button.disabled=true;button.textContent='Gerando…'}
   try{
-    const r=await fetch('/api/tracking/movit-simulacao',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',
+    const r=await fetch('/api/tracking/movit-simulacao',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-cache',
       body:JSON.stringify({driver_name:item.r.driver_name||'',vehicle_plate:item.r.vehicle_plate||''})});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao preparar a simulação.');
@@ -4192,10 +4192,10 @@ async function refreshTracking(){
   try{
     const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
     const [liveRes,testLiveRes,driverRes,requestRes]=await Promise.all([
-      fetch('/api/tracking/live?light=1&t='+Date.now(),{cache:'no-store'}),
-      fetch('/api/tracking/test-live?t='+Date.now(),{cache:'no-store'}),
-      fetch('/api/roteirizador/lista?date='+encodeURIComponent(today)+'&t='+Date.now(),{cache:'no-store'}),
-      fetch('/api/tracking/requests?t='+Date.now(),{cache:'no-store'})
+      fetch('/api/tracking/live?light=1',{cache:'no-cache'}),
+      fetch('/api/tracking/test-live',{cache:'no-cache'}),
+      fetch('/api/roteirizador/lista?date='+encodeURIComponent(today)+'',{cache:'no-cache'}),
+      fetch('/api/tracking/requests',{cache:'no-cache'})
     ]);
     const live=await liveRes.json().catch(()=>({})),testLive=await testLiveRes.json().catch(()=>({})),drivers=await driverRes.json().catch(()=>({})),requests=await requestRes.json().catch(()=>({}));
     if(!liveRes.ok||!live.ok)throw new Error(live.error||'Falha ao consultar GPS.');
@@ -4352,7 +4352,7 @@ async function refreshTracking(){
     const now=Date.now();
     if(!window.__trackingRouteBusy&&(!window.__trackingRouteAt||now-window.__trackingRouteAt>60000)){
       window.__trackingRouteBusy=true;
-      fetch('/api/programacao-simulacao?t='+now,{cache:'no-store'})
+      fetch('/api/programacao-simulacao?t='+now,{cache:'no-cache'})
         .then(async r=>({ok:r.ok,j:await r.json().catch(()=>({}))}))
         .then(x=>{
           if(x.ok&&x.j?.ok){
@@ -4398,7 +4398,7 @@ async function refreshTrackingRequests(){
   if(!tableEl)return;
   if(info)info.textContent='Buscando solicitações de aparelhos…';
   try{
-    const r=await fetch('/api/tracking/requests?t='+Date.now(),{cache:'no-store'});
+    const r=await fetch('/api/tracking/requests',{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar solicitações.');
     const rows=Array.isArray(j.rows)?j.rows:[],pending=rows.filter(x=>x.status==='pending');
@@ -4436,7 +4436,7 @@ async function trackingDecideRequest(id,action,button=null){
       const options=trackingRequestOptions(),pick=reqRow?options.find(o=>o.key===trackingRequestChoice(reqRow,options)):null;
       if(pick){payload.driver_name=pick.name;payload.vehicle_plate=pick.plate}
     }
-    const r=await fetch('/api/tracking/requests/'+encodeURIComponent(id)+'/'+action,{method:'POST',headers:{'Accept':'application/json','Content-Type':'application/json'},body:JSON.stringify(payload),cache:'no-store'});
+    const r=await fetch('/api/tracking/requests/'+encodeURIComponent(id)+'/'+action,{method:'POST',headers:{'Accept':'application/json','Content-Type':'application/json'},body:JSON.stringify(payload),cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||('Falha ao '+verb+' aparelho.'));
     if(info)info.textContent=action==='approve'?'Aparelho aprovado. O celular será liberado automaticamente.':'Solicitação recusada.';
@@ -4631,7 +4631,7 @@ async function rtLoadManifests(force=true){
   const date=$('#rtDate')?.value||iso(new Date()),status=$('#rtStatus');
   if(status)status.textContent='Carregando romaneios do SSW no ambiente de teste…';
   try{
-    const r=await fetch('/api/roteirizador/lista?date='+encodeURIComponent(date)+(force?'&t='+Date.now():''),{cache:'no-store'});
+    const r=await fetch('/api/roteirizador/lista?date='+encodeURIComponent(date)+'',{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível carregar os romaneios.');
     RT_MANIFESTS=j.rows||[];
@@ -4742,7 +4742,7 @@ async function rtOptimize(){
   if(btn){btn.disabled=true;btn.textContent='Otimizando…'}
   if(status)status.textContent='Calculando sequência de teste com a mesma base de dados do SSW…';
   try{
-    const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(date)+'&romaneio='+encodeURIComponent(rom)+'&test=1&prioridade=1&t='+Date.now(),{cache:'no-store'});
+    const r=await fetch('/api/roteirizador/rota?date='+encodeURIComponent(date)+'&romaneio='+encodeURIComponent(rom)+'&test=1&prioridade=1',{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível calcular a rota.');
     RT_PLAN=j;RT_ORDER=(j.optimizedOrder||[]).slice();
@@ -4844,7 +4844,7 @@ async function rv2AddAddress(rawText=''){
   if(!raw){if(status)status.textContent='Digite ou fale um endereço.';return}
   if(btn){btn.disabled=true;btn.textContent='Localizando…'}
   try{
-    const r=await fetch('/api/roteirizador/endereco?endereco='+encodeURIComponent(raw),{cache:'no-store'});
+    const r=await fetch('/api/roteirizador/endereco?endereco='+encodeURIComponent(raw),{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Endereço não localizado.');
     RV2_STOPS.push(j.stop);RV2_PLAN=null;
@@ -5201,7 +5201,7 @@ async function agtBuscar(){
   if(!nf){if(msg)msg.textContent='Informe o número da nota fiscal.';return}
   if(btn){btn.disabled=true;btn.textContent='Buscando…'};if(msg)msg.textContent='Consultando nota no SSW…';
   try{
-    const r=await fetch('/api/agendamento-teste/nf?nf='+encodeURIComponent(nf)+'&t='+Date.now(),{cache:'no-store'});
+    const r=await fetch('/api/agendamento-teste/nf?nf='+encodeURIComponent(nf)+'',{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Nota não localizada.');
     AGT_CURRENT=j.row;
@@ -5236,7 +5236,7 @@ async function agtSalvar(e){
 async function agtLista(){
   const table=$('#agtTabela');if(!table)return;
   try{
-    const r=await fetch('/api/agendamento-teste?limit=100&t='+Date.now(),{cache:'no-store'}),j=await r.json().catch(()=>({}));
+    const r=await fetch('/api/agendamento-teste?limit=100',{cache:'no-cache'}),j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar.');
     const rows=j.rows||[];
     const body=rows.length?rows.map(x=>'<tr><td><b>'+safe(x.nf||'')+'</b></td><td>'+safe(x.cliente||'')+'</td><td>'+safe(x.cidade||'')+'</td><td>'+safe(x.dia_rota||'')+'</td><td>'+safe(x.status_ssw||'')+'</td><td>'+programFmtNumber(Number(x.peso||0),0)+' kg</td><td>'+(x.agendado?'SIM':'NÃO')+'</td><td>'+safe(x.data_agendamento?String(x.data_agendamento).slice(0,10).split('-').reverse().join('/'):'—')+'</td><td>'+safe(x.contato_nome||'—')+'</td><td class="agt-wrap">'+safe(String(x.produtos||'').split('\n').filter(Boolean).join(' • ')||'—')+'</td><td class="agt-wrap">'+safe(x.observacoes||'—')+'</td></tr>').join(''):'<tr><td colspan="11" class="muted">Nenhum registro salvo.</td></tr>';

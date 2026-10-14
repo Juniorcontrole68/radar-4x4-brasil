@@ -28,6 +28,7 @@ const { initDb, pool } = require('../contas-a-pagar-v3/src/db');
 const { initColetasDb } = require('../contas-a-pagar-v3/src/coletas');
 const lancamentos = require('./lancamentos');
 const roteirizadorCargas = require('./roteirizador-cargas');
+const { economizarBanda } = require('./compressao');
 const lotacaoRastreio = require('./lotacao-rastreio');
 const { handler } = require('../contas-a-pagar-v3/src/handler');
 
@@ -1765,6 +1766,7 @@ async function start() {
 
   http.createServer(async (req, res) => {
     try {
+      economizarBanda(req,res);
       const u = new URL(req.url, 'http://localhost');
 
       // Torre de Controle unificada: dashboard e APIs do dashboard rodam neste mesmo serviço.
