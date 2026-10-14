@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rastreio de lotação • CONSTRULOG</title>
+<style>
+:root{--nav:#0f172a;--teal:#0f766e;--line:#e2e8f0;--bg:#f5f7fa;--muted:#64748b}
+*{box-sizing:border-box}body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:var(--bg);color:#1f2937}
+.page{max-width:1180px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:0}.muted{color:var(--muted);font-size:12px}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:14px}
+.card h2{font-size:15px;margin:0 0 4px}
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:10px}
+.grid .wide{grid-column:span 2}.grid .full{grid-column:1/-1}
+label{display:grid;gap:4px;font-size:11px;font-weight:700;color:#475569}
+input,select{border:1px solid #cbd5e1;border-radius:9px;padding:9px;font-size:13px;background:#fff;color:#0f172a;min-height:38px;width:100%}
+fieldset{border:1px solid var(--line);border-radius:10px;padding:10px;margin:0}
+legend{font-size:12px;font-weight:800;color:#0f172a;padding:0 6px}
+.btn{border:1px solid #cbd5e1;background:#fff;color:#0f172a;border-radius:9px;padding:8px 12px;font-weight:700;font-size:12px;cursor:pointer;text-decoration:none;display:inline-block}
+.btn:hover{background:#f1f5f9}.btn.primary{background:var(--teal);border-color:var(--teal);color:#fff}.btn.wa{background:#16a34a;border-color:#16a34a;color:#fff}
+.btn.danger{color:#b91c1c}.btn:disabled{opacity:.6;cursor:default}
+.msg{margin-top:10px;padding:9px 12px;border-radius:9px;font-size:13px;font-weight:700;display:none}
+.msg.ok{display:block;background:#ecfdf5;color:#065f46}.msg.err{display:block;background:#fee2e2;color:#991b1b}
+table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:9px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-size:11px;color:#475569;text-transform:uppercase}
+.link{font-size:11px;word-break:break-all;color:var(--teal)}
+.acts{display:flex;gap:6px;flex-wrap:wrap}
+.chip{display:inline-block;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:800;background:#e2e8f0;color:#334155}
+.chip.ok{background:#dcfce7;color:#166534}.chip.warn{background:#fef3c7;color:#92400e}.chip.end{background:#e0f2fe;color:#075985}
+@media(max-width:800px){.grid{grid-template-columns:1fr 1fr}.grid .wide{grid-column:1/-1}table,tbody,tr,td{display:block}thead{display:none}td{border:0;padding:4px 0}tr{border-bottom:1px solid var(--line);padding:8px 0;display:block}}
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>🚛 Rastreio de carga lotação</h1>
+  <div class="muted">Para clientes de outras regiões: a viagem começa na base do cliente, não em Americana. Cada viagem gera um link para quem recebe acompanhar o motorista até o destino. Quando a entrega é confirmada, o link para de mostrar o motorista.</div>
+
+  <div class="card">
+    <h2>Nova viagem</h2>
+    <div class="muted">O motorista precisa estar com o app CONSTRULOG Motorista aprovado. Assim que a viagem é criada, o app liga o GPS mesmo sem romaneio.</div>
+    <div class="grid">
+      <label class="full">Coleta da Lotação (opcional, preenche os campos)
+        <select id="fColeta"><option value="">— sem coleta vinculada —</option></select>
+      </label>
+      <label class="wide">Cliente
+        <input id="fCliente" list="lsClientes" placeholder="Nome do cliente" autocomplete="off">
+      </label>
+      <label>Motorista
+        <input id="fMotorista" list="lsMotoristas" placeholder="Nome como está no app" autocomplete="off">
+      </label>
+      <label>Placa
+        <input id="fPlaca" placeholder="ABC1D23" maxlength="8">
+      </label>
+      <fieldset class="wide"><legend>Base do cliente (início do rastreio)</legend>
+        <div class="grid" style="grid-template-columns:1fr 80px;margin-top:0">
+          <label>Cidade<input id="oCidade" placeholder="Ex.: Curitiba"></label>
+          <label>UF<input id="oUf" maxlength="2" placeholder="PR"></label>
+          <label style="grid-column:1/-1">Endereço (opcional)<input id="oEnd"></label>
+          <label style="grid-column:1/-1">Localização exata (opcional): cole o link do Google Maps ou "lat, lon"<input id="oCoord" placeholder="-25.4284, -49.2733"></label>
+        </div>
+      </fieldset>
+      <fieldset class="wide"><legend>Destino</legend>
+        <div class="grid" style="grid-template-columns:1fr 80px;margin-top:0">
+          <label style="grid-column:1/-1">Recebedor (aparece no link)<input id="dNome" placeholder="Nome de quem recebe"></label>
+          <label>Cidade<input id="dCidade"></label>
+          <label>UF<input id="dUf" maxlength="2"></label>
+          <label style="grid-column:1/-1">Endereço (opcional)<input id="dEnd"></label>
+          <label style="grid-column:1/-1">Localização exata (opcional)<input id="dCoord" placeholder="cole o link do Google Maps"></label>
+        </div>
+      </fieldset>
+    </div>
+    <div style="margin-top:12px"><button id="btnCriar" class="btn primary" type="button">Criar viagem e gerar link</button></div>
+    <div id="msg" class="msg"></div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap"><h2>Viagens</h2><button id="btnAtualizar" class="btn" type="button">Atualizar</button></div>
+    <table><thead><tr><th>Cliente</th><th>Motorista</th><th>Origem → Destino</th><th>Situação</th><th>Link</th></tr></thead><tbody id="lista"><tr><td colspan="5" class="muted">Carregando…</td></tr></tbody></table>
+  </div>
+</div>
+<datalist id="lsClientes"></datalist><datalist id="lsMotoristas"></datalist>
+<script>
+const $=id=>document.getElementById(id);
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const quando=v=>v?new Date(v).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+let DADOS={viagens:[],bases:[],motoristas:[],coletas:[]};
+function msg(t,ok){const m=$('msg');m.className='msg '+(t?(ok?'ok':'err'):'');m.textContent=t||''}
+async function api(path,opt={}){
+  const r=await fetch(path,{cache:'no-store',...opt,headers:{'Content-Type':'application/json',...(opt.headers||{})}});
+  if(r.status===401){location.href='/?login=1#rastreamento';throw new Error('Sessão expirada.')}
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok||!j.ok)throw new Error(j.error||('Erro '+r.status));
+  return j
+}
+function situacao(v){
+  if(v.status==='entregue')return'<span class="chip end">Entregue</span><div class="muted">'+esc(quando(v.ended_at))+'</div>';
+  if(v.status!=='ativo')return'<span class="chip">'+esc(v.status==='cancelado'?'Cancelada':'Vencida')+'</span><div class="muted">'+esc(v.motivo_fim||'')+'</div>';
+  const u=v.ultima_posicao;
+  if(!u)return'<span class="chip warn">Aguardando GPS</span><div class="muted">desde '+esc(quando(v.created_at))+'</div>';
+  const min=Math.round((Date.now()-new Date(u.captured_at).getTime())/60000);
+  return'<span class="chip '+(min<=30?'ok':'warn')+'">Em viagem</span><div class="muted">última posição '+esc(quando(u.captured_at))+'</div>'
+}
+function render(){
+  const tb=$('lista');
+  if(!DADOS.viagens.length){tb.innerHTML='<tr><td colspan="5" class="muted">Nenhuma viagem de lotação nos últimos 7 dias.</td></tr>';return}
+  tb.innerHTML=DADOS.viagens.map(v=>{
+    const ativo=v.status==='ativo';
+    const wa='https://wa.me/?text='+encodeURIComponent('Acompanhe sua carga ('+v.cliente+') até a entrega: '+v.link);
+    return'<tr><td><b>'+esc(v.cliente)+'</b>'+(v.coleta_id?'<div class="muted">coleta #'+esc(v.coleta_id)+'</div>':'')+'</td>'+
+      '<td>'+esc(v.driver_name)+'<div class="muted">'+esc(v.vehicle_plate||'')+'</div></td>'+
+      '<td>'+esc(v.origem.cidade)+'/'+esc(v.origem.uf)+' → '+esc(v.destino.cidade)+'/'+esc(v.destino.uf)+(v.destino.nome?'<div class="muted">'+esc(v.destino.nome)+'</div>':'')+'</td>'+
+      '<td>'+situacao(v)+'</td>'+
+      '<td>'+(ativo?'<div class="link">'+esc(v.link)+'</div><div class="acts" style="margin-top:6px">'+
+        '<button class="btn" data-copiar="'+esc(v.link)+'">Copiar link</button>'+
+        '<a class="btn wa" target="_blank" rel="noopener" href="'+esc(wa)+'">WhatsApp</a>'+
+        '<a class="btn" target="_blank" rel="noopener" href="'+esc(v.link)+'">Abrir</a>'+
+        '<button class="btn primary" data-entregue="'+esc(v.id)+'">Entregue: encerrar</button>'+
+        '<button class="btn danger" data-cancelar="'+esc(v.id)+'">Cancelar</button></div>':'<span class="muted">link encerrado</span>')+'</td></tr>'
+  }).join('')
+}
+function preencherListas(){
+  $('lsClientes').innerHTML=DADOS.bases.map(b=>'<option value="'+esc(b.cliente)+'">'+esc(b.cidade+'/'+b.uf)+'</option>').join('');
+  $('lsMotoristas').innerHTML=DADOS.motoristas.map(m=>'<option value="'+esc(m.driver_name)+'">'+esc(m.vehicle_plate||'')+'</option>').join('');
+  const sel=$('fColeta'),atual=sel.value;
+  sel.innerHTML='<option value="">— sem coleta vinculada —</option>'+DADOS.coletas.map(c=>'<option value="'+esc(c.id)+'">'+esc((c.os?c.os+' • ':'#'+c.id+' • ')+(c.cliente||'?')+' → '+(c.destinatario||c.destino||'?')+(c.data?' • '+c.data:''))+'</option>').join('');
+  sel.value=atual
+}
+async function carregar(){
+  try{DADOS=await api('/api/painel/lotacao-rastreios');preencherListas();render()}
+  catch(e){$('lista').innerHTML='<tr><td colspan="5" style="color:#991b1b">'+esc(e.message)+'</td></tr>'}
+}
+$('fCliente').addEventListener('change',()=>{
+  const b=DADOS.bases.find(x=>x.cliente.toLowerCase()===$('fCliente').value.trim().toLowerCase());
+  if(!b)return;
+  $('oCidade').value=b.cidade;$('oUf').value=b.uf;$('oEnd').value=b.endereco||'';
+  $('oCoord').value=b.precisao==='exata'?(b.lat+', '+b.lon):''
+});
+$('fMotorista').addEventListener('change',()=>{
+  const m=DADOS.motoristas.find(x=>x.driver_name.toLowerCase()===$('fMotorista').value.trim().toLowerCase());
+  if(m&&!$('fPlaca').value)$('fPlaca').value=m.vehicle_plate||''
+});
+$('fColeta').addEventListener('change',()=>{
+  const c=DADOS.coletas.find(x=>x.id===$('fColeta').value);if(!c)return;
+  $('fCliente').value=c.cliente||'';$('fCliente').dispatchEvent(new Event('change'));
+  if(c.motorista)$('fMotorista').value=c.motorista;
+  if(c.placa)$('fPlaca').value=c.placa;
+  if(c.origem){$('oEnd').value=c.origem;if(c.origem_sugerida){$('oCidade').value=c.origem_sugerida.cidade;$('oUf').value=c.origem_sugerida.uf}}
+  $('dNome').value=c.destinatario||'';
+  if(c.destino){$('dEnd').value=c.destino;if(c.destino_sugerido){$('dCidade').value=c.destino_sugerido.cidade;$('dUf').value=c.destino_sugerido.uf}}
+});
+$('btnCriar').addEventListener('click',async()=>{
+  const btn=$('btnCriar');btn.disabled=true;msg('');
+  try{
+    const j=await api('/api/painel/lotacao-rastreios',{method:'POST',body:JSON.stringify({
+      coleta_id:$('fColeta').value,cliente:$('fCliente').value,driver_name:$('fMotorista').value,vehicle_plate:$('fPlaca').value,
+      origem:{cidade:$('oCidade').value,uf:$('oUf').value,endereco:$('oEnd').value,coordenadas:$('oCoord').value},
+      destino:{nome:$('dNome').value,cidade:$('dCidade').value,uf:$('dUf').value,endereco:$('dEnd').value,coordenadas:$('dCoord').value}
+    })});
+    msg('Viagem criada. Link: '+j.viagem.link,true);
+    try{await navigator.clipboard.writeText(j.viagem.link);msg('Viagem criada e link copiado: '+j.viagem.link,true)}catch{}
+    ['fColeta','fCliente','fMotorista','fPlaca','oCidade','oUf','oEnd','oCoord','dNome','dCidade','dUf','dEnd','dCoord'].forEach(id=>$(id).value='');
+    await carregar()
+  }catch(e){msg(e.message,false)}finally{btn.disabled=false}
+});
+$('lista').addEventListener('click',async ev=>{
+  const b=ev.target.closest('button');if(!b)return;
+  if(b.dataset.copiar){try{await navigator.clipboard.writeText(b.dataset.copiar);b.textContent='Copiado'}catch{prompt('Copie o link:',b.dataset.copiar)}return}
+  const id=b.dataset.entregue||b.dataset.cancelar;if(!id)return;
+  const entregue=!!b.dataset.entregue;
+  if(!confirm(entregue?'Confirmar a entrega? O link para de mostrar o motorista.':'Cancelar esta viagem? O link para de funcionar.'))return;
+  b.disabled=true;
+  try{await api('/api/painel/lotacao-rastreios/'+encodeURIComponent(id)+'/'+(entregue?'entregue':'cancelar'),{method:'POST',body:'{}'});await carregar()}
+  catch(e){alert(e.message);b.disabled=false}
+});
+$('btnAtualizar').addEventListener('click',carregar);
+carregar();setInterval(carregar,60000);
+</script>
+</body></html>

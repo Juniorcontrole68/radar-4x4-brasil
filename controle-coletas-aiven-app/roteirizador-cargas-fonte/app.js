@@ -69,7 +69,7 @@
     cfg: Object.assign({}, RE.CFG_PADRAO), veiculos: new Map(), motoristas: new Map(), cidades: new Map(), produtos: new Map(),
     clientes: new Map(), notas: new Map(), planos: new Map(), log: new Map(), sobras: new Map(), disponibilidade: new Map(), ssw: new Map(), carregado: {}, admin: true, uid: 'local', nomes: {},
   };
-  let ui = { tab: 'notas', data: null, notasFiltro: { status: 'ativas', cidade: '', q: '' }, notasPag: 0, cadTab: 'veiculos', notaAberta: null, relTipo: 'romaneio', cargaVeic: null, imp: null, cenarios: null, calc: null, confirmar: null, notasSub: 'lista', mapaFoco: null, filtroCombo: '' };
+  let ui = { tab: 'notas', data: null, notasFiltro: { status: 'ativas', cidade: '', q: '' }, notasPag: 0, alertasPag: 0, cadTab: 'veiculos', notaAberta: null, relTipo: 'romaneio', cargaVeic: null, imp: null, cenarios: null, calc: null, confirmar: null, notasSub: 'lista', mapaFoco: null, filtroCombo: '' };
   try { const s = JSON.parse(localStorage.getItem('rot-ui') || 'null'); if (s) { ui.tab = s.tab || ui.tab; ui.cadTab = s.cadTab || ui.cadTab; ui.relTipo = s.relTipo || ui.relTipo; } } catch (e) { /* sem armazenamento */ }
   const lembrarUI = () => { try { localStorage.setItem('rot-ui', JSON.stringify({ tab: ui.tab, cadTab: ui.cadTab, relTipo: ui.relTipo })); } catch (e) { /* ok */ } };
   let VER = 0;
@@ -851,7 +851,7 @@
     const al = RE.alertasPrazo(enr, ui.data, ctx());
     h += '<div class="split" style="margin-top:14px"><div class="card"><div class="card-h"><h2>Rotas de ' + dBR(ui.data) + '</h2><div class="row">' + (p ? '' : '<button class="btn go" data-a="otimizar">' + I.play + 'Otimizar agora</button>') + '<button class="btn" data-a="tab" data-v="rotas">Abrir rotas</button></div></div>' + mapaHTML(p, null) + '</div>' +
       '<div class="stack"><div class="card"><div class="card-h"><h2>Alertas de prazo</h2><span class="chip ' + (al.length ? 'bad' : 'ok') + '">' + al.length + '</span></div>' +
-      (al.length ? '<div class="tbl-wrap"><table><tbody>' + al.slice(0, 10).map((a) => '<tr class="click" data-a="nota" data-v="' + esc(a.nota.id) + '"><td><b>NF ' + esc(a.nota.numero) + '</b><div class="tiny">' + esc(a.nota.destNome) + ' · ' + esc(a.nota.cidadeNome) + '</div></td><td class="small">' + esc(a.msg) + '</td></tr>').join('') + '</tbody></table></div>' + (al.length > 10 ? '<p class="tiny">+ ' + (al.length - 10) + ' alertas</p>' : '') : '<p class="muted small">Todas as notas têm dia de rota disponível dentro do prazo.</p>') + '</div>' +
+      (al.length ? alertasPrazoHTML(al) : '<p class="muted small">Todas as notas têm dia de rota disponível dentro do prazo.</p>') + '</div>' +
       (p ? '<div class="card"><h2>Veículos</h2><div class="stack" style="margin-top:10px">' + p.rotas.map((r) => '<div class="row small"><i style="width:10px;height:10px;border-radius:2px;background:' + corRota(p, r.veiculoId) + '"></i><b>' + esc(r.veiculoNome) + '</b><span class="muted">' + r.paradas.length + ' parada(s) · ' + nf(r.km, 0) + ' km</span><span class="spacer"></span><span class="num ' + (r.lucro >= 0 ? 'pos' : 'neg') + '">' + brl(r.lucro) + '</span></div>').join('') + '</div></div>' : '') +
       '</div></div>';
     return h;
@@ -1167,6 +1167,18 @@
       (vis.length ? '' : '<tr><td colspan="11" class="muted">Nenhuma nota com estes filtros</td></tr>') + '</tbody></table></div>' +
       (tot > pag ? '<div class="row" style="margin-top:10px"><button class="btn sm" data-a="pag" data-v="-1"' + (pg === 0 ? ' disabled' : '') + '>Anteriores</button><span class="small muted">' + (pg * pag + 1) + '–' + Math.min(tot, pg * pag + pag) + ' de ' + tot + '</span><button class="btn sm" data-a="pag" data-v="1"' + (pg * pag + pag >= tot ? ' disabled' : '') + '>Próximas</button></div>' : '') + '</div>';
     return h;
+  }
+  // Alertas de prazo em páginas de 10, com os números das páginas no rodapé.
+  function alertasPrazoHTML(al) {
+    const pag = 10, np = Math.ceil(al.length / pag), pg = Math.min(ui.alertasPag || 0, np - 1);
+    const linhas = al.slice(pg * pag, pg * pag + pag).map((a) => '<tr class="click" data-a="nota" data-v="' + esc(a.nota.id) + '"><td><b>NF ' + esc(a.nota.numero) + '</b><div class="tiny">' + esc(a.nota.destNome) + ' · ' + esc(a.nota.cidadeNome) + '</div></td><td class="small">' + esc(a.msg) + '</td></tr>').join('');
+    if (np <= 1) return '<div class="tbl-wrap"><table><tbody>' + linhas + '</tbody></table></div>';
+    const nums = []; for (let i = 0; i < np; i++) if (np <= 9 || i === 0 || i === np - 1 || Math.abs(i - pg) <= 2) nums.push(i); else if (nums[nums.length - 1] !== '…') nums.push('…');
+    return '<div class="tbl-wrap"><table><tbody>' + linhas + '</tbody></table></div>' +
+      '<div class="paginas" role="navigation" aria-label="Páginas de alertas"><button class="btn sm" data-a="alertasPag" data-v="' + (pg - 1) + '"' + (pg === 0 ? ' disabled' : '') + ' aria-label="Página anterior">‹</button>' +
+      nums.map((i) => i === '…' ? '<span class="muted small">…</span>' : '<button class="btn sm' + (i === pg ? ' pri' : '') + '" data-a="alertasPag" data-v="' + i + '"' + (i === pg ? ' aria-current="page"' : '') + '>' + (i + 1) + '</button>').join('') +
+      '<button class="btn sm" data-a="alertasPag" data-v="' + (pg + 1) + '"' + (pg >= np - 1 ? ' disabled' : '') + ' aria-label="Próxima página">›</button>' +
+      '<span class="tiny muted">' + (pg * pag + 1) + '–' + Math.min(al.length, pg * pag + pag) + ' de ' + al.length + '</span></div>';
   }
   const btnCopiarNF = (nf) => nf ? '<button type="button" class="copiar-nf" data-a="copiarNF" data-v="' + esc(nf) + '" title="Copiar NF ' + esc(nf) + '" aria-label="Copiar NF ' + esc(nf) + '"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>' : '';
   const btnExcluirNota = (n) => n && n.id && ui.tab === 'notas' ? '<button type="button" class="copiar-nf lixo" data-a="excluirUma" data-v="' + esc(n.id) + '" title="Excluir NF ' + esc(n.numero || '') + ' do sistema" aria-label="Excluir NF ' + esc(n.numero || '') + '"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' : '';
@@ -1843,7 +1855,7 @@
     h += '<div class="kpis" style="margin-top:14px">' + kpi('Veículos', t.veiculos, '', 'de ' + p.veiculosDisponiveis) + kpi('Entregas', t.entregas, '', t.notas + ' NF') + kpi('Km', nf(t.km, 0)) + kpi('Receita', brl(t.receita)) + kpi('Custo', brl(t.custo)) + kpi('Lucro', brl(t.lucro), t.lucro >= 0 ? 'good' : 'bad', t.margem != null ? nf(t.margem, 1) + '%' : '') + '</div>';
     if (p.estimativa) h += '<p class="tiny" style="margin-top:8px">Rota estimada: distâncias em linha reta × fator ' + nf(ST.cfg.fatorRodoviario, 2) + ', velocidade média ' + ST.cfg.velocidadeMedia + ' km/h e posição pelo centro da cidade onde o cliente não tem coordenada confirmada. Pedágios conforme o cadastro das cidades.</p>';
     h += '<div class="split" style="margin-top:14px"><div>' + p.rotas.map((r) => vRota(p, r)).join('') + (p.rotas.length ? '' : '<div class="card empty"><h3>Nenhuma rota</h3><p>Nenhuma entrega coube na frota disponível ou nenhuma nota está liberada.</p></div>') + vFora(p) + '</div><div class="stack"><div class="card">' + mapaHTML(p, ui.mapaFoco) + (p.rotas.length > 1 ? '<div class="row" style="margin-top:10px"><span class="small muted">Mostrar</span><select id="fFoco"><option value="">Todas as rotas</option>' + p.rotas.map((r) => '<option value="' + esc(r.veiculoId) + '"' + (ui.mapaFoco === r.veiculoId ? ' selected' : '') + '>' + esc(r.veiculoNome) + '</option>').join('') + '</select></div>' : '') + '</div>' +
-      (() => { const al = RE.alertasPrazo(notasEnr(), ui.data, ctx()); return '<div class="card"><div class="card-h"><h2>Alertas de prazo</h2><span class="chip ' + (al.length ? 'bad' : 'ok') + '">' + al.length + '</span></div>' + (al.length ? '<div class="tbl-wrap"><table><tbody>' + al.slice(0, 10).map((a) => '<tr class="click" data-a="nota" data-v="' + esc(a.nota.id) + '"><td><b>NF ' + esc(a.nota.numero) + '</b><div class="tiny">' + esc(a.nota.destNome) + ' · ' + esc(a.nota.cidadeNome) + '</div></td><td class="small">' + esc(a.msg) + '</td></tr>').join('') + '</tbody></table></div>' + (al.length > 10 ? '<p class="tiny">+ ' + (al.length - 10) + ' alertas</p>' : '') : '<p class="muted small">Nenhum prazo em risco.</p>') + '</div>'; })() +
+      (() => { const al = RE.alertasPrazo(notasEnr(), ui.data, ctx()); return '<div class="card"><div class="card-h"><h2>Alertas de prazo</h2><span class="chip ' + (al.length ? 'bad' : 'ok') + '">' + al.length + '</span></div>' + (al.length ? alertasPrazoHTML(al) : '<p class="muted small">Nenhum prazo em risco.</p>') + '</div>'; })() +
       '<div class="card"><details' + ((p.decisoes || []).length ? ' open' : '') + '><summary>Auditoria das decisões (' + ((p.decisoes || []).length + 2) + ')</summary><ul class="small" style="margin-top:8px;padding-left:18px">' + '<li>' + p.veiculosDisponiveis + ' veículo(s) disponível(is) em ' + dBR(p.data) + '; ' + (p.opcoes && p.opcoes.consolidar ? 'veículos só saem com entrega no limite do prazo.' : 'entregas liberadas saem assim que houver veículo.') + '</li><li>Cálculo em ' + nf((p.tempoMs || 0) / 1000, 1) + ' s; versão ' + (p.versao || 1) + (p.editadoManual ? ', com edições manuais' : '') + '.</li>' + (p.decisoes || []).map((d) => '<li>' + esc(d) + '</li>').join('') + (p.historico || []).map((x) => '<li class="muted">Versão ' + x.versao + ' (' + x.status + '): ' + (x.totais ? x.totais.veiculos + ' veículo(s), lucro ' + brl(x.totais.lucro) : '') + '</li>').join('') + '</ul></details></div></div></div>';
     return h;
   }
@@ -2067,6 +2079,7 @@
       case 'verCarga': ui.cargaVeic = v; ui.tab = 'carga'; render(); window.scrollTo(0, 0); break;
       case 'cargaVeic': ui.cargaVeic = v; render(); break;
       case 'notasSub': ui.notasSub = v; render(); break;
+      case 'alertasPag': ui.alertasPag = Math.max(0, +v || 0); render(); break;
       case 'pag': ui.notasPag = Math.max(0, ui.notasPag + (+v)); render(); break;
       case 'nota': ui.notaAberta = v; ui.confirmar = null; render(); break;
       case 'fecharNota': ui.notaAberta = null; ui.confirmar = null; render(); break;
@@ -2111,7 +2124,7 @@
       case 'cadTab': ui.cadTab = v; ui.confirmar = null; render(); break;
       case 'novoCombo': { const c = clone(ST.cfg); c.combos = (c.combos || []).concat([{ id: 'c-' + uid(), nome: 'Nova combinação', cidades: [] }]); await salvar('cfg', 'main', c); render(); break; }
       case 'excluirCombo': { const c = clone(ST.cfg); c.combos.splice(+v, 1); await salvar('cfg', 'main', c); render(); break; }
-      case 'abrirPlano': ui.data = v; ui.tab = 'rotas'; render(); window.scrollTo(0, 0); break;
+      case 'abrirPlano': ui.data = v; ui.alertasPag = 0; ui.tab = 'rotas'; render(); window.scrollTo(0, 0); break;
       case 'sbBuscar': buscarSobra(); break;
       case 'sbLimpar': ui.sb = null; render(); setTimeout(() => { const i = $('#sbNF'); if (i) i.focus(); }, 30); break;
       case 'sbRegistrar': await registrarSobra(); break;
@@ -2195,7 +2208,7 @@
     if (el.dataset.sel) { const s = ui.notasSel || (ui.notasSel = new Set()); if (el.checked) s.add(el.dataset.sel); else s.delete(el.dataset.sel); ui.confirmar = null; render(); return; }
     if (el.dataset.selall) { const s = ui.notasSel || (ui.notasSel = new Set()); for (const c of $$('[data-sel]')) { if (el.checked) s.add(c.dataset.sel); else s.delete(c.dataset.sel); } ui.confirmar = null; render(); return; }
     if (el.id === 'fRomData') { if (el.value) { ui.romData = el.value; ui.romSel = null; ui.romTodos = false; render(); } return; }
-    if (el.id === 'fData') { if (el.value) { ui.data = el.value; ui.cenarios = null; render(); } return; }
+    if (el.id === 'fData') { if (el.value) { ui.data = el.value; ui.alertasPag = 0; ui.cenarios = null; render(); } return; }
     if (el.dataset.vdia) { const id = el.dataset.vdia, on = el.checked; await salvarDispVeic((o) => { if (on) o.veiculos[id] = true; else delete o.veiculos[id]; }); registrar('Veículos do dia', ((ST.veiculos.get(id) || {}).nome || id) + (on ? ' sai' : ' não sai') + ' em ' + dBR(ui.data)); return; }
     if (el.dataset.vmot) { const id = el.dataset.vmot, m = el.value; await salvarDispVeic((o) => { if (m) o.motoristaDe[id] = m; else delete o.motoristaDe[id]; if (m) o.veiculos[id] = true; }); return; }
     if (el.dataset.disp) {
