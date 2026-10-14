@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Rastreio da carga</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+<style>
+:root{--nav:#0f172a;--teal:#0f766e;--line:#e2e8f0;--bg:#f5f7fa;--muted:#64748b}
+*{box-sizing:border-box}html,body{margin:0;height:100%;font-family:Segoe UI,Arial,sans-serif;background:var(--bg);color:#1f2937}
+.wrap{display:flex;flex-direction:column;height:100%}
+.top{background:var(--nav);color:#fff;padding:12px 16px}
+.top h1{margin:0;font-size:17px}.top .sub{font-size:12px;color:#cbd5e1;margin-top:2px}
+.info{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;padding:10px 16px;background:#fff;border-bottom:1px solid var(--line)}
+.info div{font-size:12px;color:var(--muted)}.info b{display:block;font-size:14px;color:#0f172a;margin-top:2px}
+#map{flex:1;min-height:300px}
+.aviso{padding:10px 16px;font-size:13px;font-weight:700;background:#ecfdf5;color:#065f46;border-bottom:1px solid var(--line)}
+.aviso.warn{background:#fef3c7;color:#92400e}.aviso.end{background:#e0f2fe;color:#075985}.aviso.err{background:#fee2e2;color:#991b1b}
+.fim{margin:24px 16px;padding:22px;border-radius:14px;background:#fff;border:1px solid var(--line);text-align:center}
+.fim h2{margin:0 0 6px;color:#0f172a}.rod{font-size:11px;color:var(--muted);text-align:center;padding:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top"><h1>📍 Rastreio da carga</h1><div class="sub" id="sub">Carregando…</div></div>
+  <div id="aviso" class="aviso" style="display:none"></div>
+  <div id="info" class="info" style="display:none"></div>
+  <div id="map"></div>
+  <div class="rod">Atualiza sozinho a cada minuto. O rastreio termina quando a entrega é confirmada.</div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script>
+const token=(location.pathname.match(/\/rastreio\/([A-Za-z0-9_-]+)/)||[])[1]||'';
+const $=id=>document.getElementById(id);
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const quando=v=>{if(!v)return'—';const d=new Date(v);return d.toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})};
+const idade=s=>s==null?'—':s<90?'agora há pouco':s<3600?'há '+Math.round(s/60)+' min':s<86400?'há '+Math.floor(s/3600)+' h '+Math.round((s%3600)/60)+' min':'há '+Math.floor(s/86400)+' dia(s)';
+let MAP=null,LAYER=null,ENQUADRADO=false,TIMER=null;
+function aviso(txt,cls){const a=$('aviso');a.style.display=txt?'block':'none';a.className='aviso'+(cls?' '+cls:'');a.textContent=txt||''}
+function pin(txt,bg){return L.divIcon({className:'',html:'<div style="padding:4px 8px;border-radius:8px;background:'+bg+';color:#fff;border:2px solid #fff;box-shadow:0 2px 7px #0005;font-size:11px;font-weight:900;white-space:nowrap">'+txt+'</div>',iconSize:null,iconAnchor:[20,14]})}
+function desenhar(j){
+  if(typeof L==='undefined'){$('map').innerHTML='<div style="padding:20px">Mapa indisponível.</div>';return}
+  if(!MAP){MAP=L.map('map',{zoomControl:true}).setView([-15.8,-47.9],4);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(MAP)}
+  if(LAYER)LAYER.remove();LAYER=L.layerGroup().addTo(MAP);
+  const b=[],o=j.origem,d=j.destino;
+  if(o&&Number.isFinite(o.lat)){L.marker([o.lat,o.lon],{icon:pin('ORIGEM','#0f172a')}).addTo(LAYER).bindPopup('<b>Origem</b><br>'+esc(o.cidade)+'/'+esc(o.uf));b.push([o.lat,o.lon])}
+  if(d&&Number.isFinite(d.lat)){L.marker([d.lat,d.lon],{icon:pin('DESTINO','#b91c1c')}).addTo(LAYER).bindPopup('<b>Destino</b><br>'+esc(d.nome||'')+'<br>'+esc(d.cidade)+'/'+esc(d.uf));b.push([d.lat,d.lon])}
+  if(Array.isArray(j.trilha)&&j.trilha.length>1){
+    L.polyline(j.trilha,{color:'#fff',weight:8,opacity:.9}).addTo(LAYER);
+    L.polyline(j.trilha,{color:'#0f766e',weight:5}).addTo(LAYER);
+    j.trilha.forEach(x=>b.push(x))
+  }
+  if(j.posicao){
+    const icon=L.divIcon({className:'',html:'<div style="width:34px;height:34px;border-radius:50%;background:#0f766e;border:3px solid #fff;box-shadow:0 2px 8px #0006;display:grid;place-items:center;font-size:17px">🚚</div>',iconSize:[34,34],iconAnchor:[17,17]});
+    L.marker([j.posicao.lat,j.posicao.lon],{icon}).addTo(LAYER).bindPopup('<b>'+esc(j.motorista||'Motorista')+'</b><br>Última posição: '+esc(idade(j.posicao.idade_segundos)));
+    b.push([j.posicao.lat,j.posicao.lon])
+  }
+  if(!ENQUADRADO&&b.length){MAP.fitBounds(L.latLngBounds(b).pad(.15));ENQUADRADO=true}
+  setTimeout(()=>MAP.invalidateSize(),80)
+}
+async function carregar(){
+  try{
+    const r=await fetch('/api/rastreio-publico/'+encodeURIComponent(token)+'?t='+Date.now(),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Link de rastreio inválido.');
+    const destino=(j.destino.nome?j.destino.nome+' • ':'')+j.destino.cidade+'/'+j.destino.uf;
+    $('sub').textContent=j.cliente+' • '+j.origem.cidade+'/'+j.origem.uf+' → '+j.destino.cidade+'/'+j.destino.uf;
+    if(j.status!=='ativo'){
+      clearInterval(TIMER);
+      $('info').style.display='none';
+      const titulo=j.status==='entregue'?'✅ Entrega concluída':'Rastreio encerrado';
+      const texto=j.status==='entregue'?'A carga foi entregue em '+destino+(j.encerrado_em?' ('+quando(j.encerrado_em)+')':'')+'. O rastreio do motorista foi encerrado.':'Este link não está mais ativo.';
+      $('map').outerHTML='<div class="fim"><h2>'+esc(titulo)+'</h2><div>'+esc(texto)+'</div></div>';
+      aviso('','');return
+    }
+    $('info').style.display='grid';
+    $('info').innerHTML='<div>Motorista<b>'+esc(j.motorista||'—')+'</b></div><div>Veículo<b>'+esc(j.placa||'—')+'</b></div>'+
+      '<div>Destino<b>'+esc(destino)+'</b></div>'+
+      '<div>Distância até o destino<b>'+(j.distancia_destino_km!=null?esc(String(j.distancia_destino_km).replace('.',','))+' km (linha reta)':'—')+'</b></div>'+
+      '<div>Última posição<b>'+(j.posicao?esc(idade(j.posicao.idade_segundos)):'aguardando GPS')+'</b></div>';
+    if(!j.posicao)aviso('Aguardando a primeira posição do motorista. A viagem começa na origem ('+j.origem.cidade+'/'+j.origem.uf+').','warn');
+    else if(j.posicao.idade_segundos>1800)aviso('Sem posição nova '+idade(j.posicao.idade_segundos)+'. O celular do motorista pode estar sem sinal.','warn');
+    else aviso('','');
+    desenhar(j)
+  }catch(e){clearInterval(TIMER);$('sub').textContent='';aviso(e.message,'err');$('map').style.display='none'}
+}
+carregar();TIMER=setInterval(carregar,60000);
+</script>
+</body></html>

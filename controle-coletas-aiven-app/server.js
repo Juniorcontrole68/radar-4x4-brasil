@@ -28,6 +28,7 @@ const { initDb, pool } = require('../contas-a-pagar-v3/src/db');
 const { initColetasDb } = require('../contas-a-pagar-v3/src/coletas');
 const lancamentos = require('./lancamentos');
 const roteirizadorCargas = require('./roteirizador-cargas');
+const lotacaoRastreio = require('./lotacao-rastreio');
 const { handler } = require('../contas-a-pagar-v3/src/handler');
 
 const PORT = process.env.PORT || 10000;
@@ -1605,6 +1606,7 @@ async function start() {
   await pool.query(`INSERT INTO fleet_state(id,data) VALUES(1,'{"vehicles":[],"fuel":[],"maintenance":[],"tires":[],"people":[],"documents":[],"checklists":[]}'::jsonb) ON CONFLICT (id) DO NOTHING`);
   await lancamentos.ensureSchema(pool);
   await roteirizadorCargas.ensureSchema(pool);
+  await lotacaoRastreio.ensureSchema(pool);
   await pool.query(`CREATE TABLE IF NOT EXISTS fleet_maintenance_files (
     maintenance_id TEXT PRIMARY KEY,
     nome_arquivo TEXT NOT NULL,
@@ -2719,6 +2721,8 @@ async function start() {
       if (await lancamentos.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,sessionOrInternal,dashboardSession,dashboardHas,spToday})) return;
       // Roteirizador de Cargas (substitui o Roteirizador Teste e o Roteirizador V02): ver roteirizador-cargas.js
       if (await roteirizadorCargas.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
+      // Rastreio de carga lotação (viagem a partir da base do cliente + link público): ver lotacao-rastreio.js
+      if (await lotacaoRastreio.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,sqlNome,sqlPlaca,publicBase:DRIVER_PUBLIC_BASE,testMode:TEST_MODE})) return;
 
       if (u.pathname === '/api/painel/frota-state' && req.method === 'GET') {
         try {
@@ -2853,7 +2857,13 @@ async function start() {
              LIMIT 1`,
             [device.vehicle_plate||'',device.driver_name]
           );
-          const assignment=q.rows[0]||null;
+          let assignment=q.rows[0]||null;
+          if(!assignment){
+            // Carga lotação não tem romaneio: a viagem ativa conta como romaneio para o aplicativo
+            // ligar o GPS (ele só envia posição quando há "assignment").
+            const v=await lotacaoRastreio.viagemDoAparelho(pool,device);
+            if(v)return sendJson(res,200,{ok:true,assignment:{driver_name:v.driver_name,vehicle_plate:v.vehicle_plate,romaneios:[],work_date:spToday(),lotacao:{id:v.id,cliente:v.cliente}}});
+          }
           if(assignment){
             // Achou o romaneio pelo nome, mas a placa do cadastro do celular é outra (erro de
             // digitação ou troca de veículo): o cadastro passa a acompanhar a placa do romaneio.
@@ -3963,6 +3973,8 @@ async function start() {
           if(user.client_id){params.push(user.client_id);where+=' AND client_id=$3'}
           const q=await pool.query('UPDATE coletas SET status=$1,updated_at=NOW() WHERE '+where+' RETURNING id::text AS id,status',params);
           if(!q.rowCount)return sendJson(res,404,{ok:false,error:'Coleta não encontrada.'});
+          // Entrega confirmada: o link de rastreio da carga para de mostrar o motorista.
+          if(status==='Entregue')await lotacaoRastreio.encerrarPorColeta(pool,q.rows[0].id).catch(e=>console.log('LOTACAO encerrar: '+String(e.message||e)));
           return sendJson(res,200,{ok:true,row:q.rows[0]});
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Não foi possível atualizar o status da coleta.'})}
       }
@@ -4163,7 +4175,11 @@ async function start() {
              LIMIT 1`,
             [deviceId]
           );
-          if(!assigned.rowCount)return '';
+          if(!assigned.rowCount){
+            // Viagem de lotação ativa também reabre (não tem romaneio do dia).
+            const dev=await pool.query('SELECT driver_name,vehicle_plate FROM driver_tracking_devices WHERE id=$1',[deviceId]);
+            if(!dev.rowCount||!(await lotacaoRastreio.viagemDoAparelho(pool,dev.rows[0])))return '';
+          }
         }
         const q=await pool.query("INSERT INTO driver_tracking_sessions(device_id,status) VALUES($1,'active') RETURNING id::text AS id",[deviceId]);
         return q.rows[0]?.id||'';
@@ -4223,7 +4239,7 @@ async function start() {
           const sessionId=String(body.session_id||'').trim(),lat=Number(body.latitude),lon=Number(body.longitude);
           const captured=new Date(body.captured_at||Date.now());
           if(!Number.isFinite(lat)||lat<-90||lat>90||!Number.isFinite(lon)||lon<-180||lon>180)return sendJson(res,400,{ok:false,error:'Coordenadas inválidas.'});
-          if(!trackingPointPlausible(lat,lon)){
+          if(!trackingPointPlausible(lat,lon)&&!(await lotacaoRastreio.pontoValidoNaViagem(pool,device,lat,lon))){
             console.log('TRACKING GPS descartado fora da área operacional: '+JSON.stringify({driver:device.driver_name,plate:device.vehicle_plate,lat,lon}));
             await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
             return sendJson(res,200,{ok:true,ignored:true,reason:'outside_operational_area'});
@@ -4269,7 +4285,7 @@ async function start() {
             const t=captured.getTime();
             // Só entra o que é do período recente: a fila serve para cobrir trechos sem internet,
             // não para regravar dias anteriores.
-            if(!Number.isFinite(lat)||!Number.isFinite(lon)||!Number.isFinite(t)||t>now+5*60*1000||t<now-18*3600*1000||!trackingPointPlausible(lat,lon)){ignored++;continue}
+            if(!Number.isFinite(lat)||!Number.isFinite(lon)||!Number.isFinite(t)||t>now+5*60*1000||t<now-18*3600*1000||(!trackingPointPlausible(lat,lon)&&!(await lotacaoRastreio.pontoValidoNaViagem(pool,device,lat,lon)))){ignored++;continue}
             const n=k=>Number.isFinite(Number(p[k]))&&p[k]!==null&&p[k]!==''?Number(p[k]):null;
             const r=await pool.query(
               `INSERT INTO driver_tracking_points(session_id,device_id,latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at)
@@ -4618,8 +4634,8 @@ async function start() {
               FROM driver_tracking_points
               WHERE device_id=d.id
                 AND captured_at >= NOW()-INTERVAL '7 days'
-                AND latitude BETWEEN -27.5 AND -18.0
-                AND longitude BETWEEN -52.5 AND -42.0
+                AND latitude BETWEEN -34.5 AND 6.0
+                AND longitude BETWEEN -75.0 AND -28.0
               ORDER BY ((captured_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date) DESC,
                        (s.id IS NOT NULL AND session_id=s.id) DESC,captured_at DESC LIMIT 1
             ) p ON TRUE
@@ -4648,8 +4664,8 @@ async function start() {
               FROM driver_tracking_points
               WHERE device_id=d.id
                 AND captured_at >= NOW()-INTERVAL '7 days'
-                AND latitude BETWEEN -27.5 AND -18.0
-                AND longitude BETWEEN -52.5 AND -42.0
+                AND latitude BETWEEN -34.5 AND 6.0
+                AND longitude BETWEEN -75.0 AND -28.0
               ORDER BY ((captured_at AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date) DESC,
                        (s.id IS NOT NULL AND session_id=s.id) DESC,captured_at DESC LIMIT 1
             ) p ON TRUE
@@ -4663,8 +4679,8 @@ async function start() {
                 SELECT latitude,longitude,accuracy_m,speed_mps,bearing_deg,battery_pct,captured_at
                 FROM driver_tracking_points
                 WHERE s.id IS NOT NULL AND session_id=s.id
-                  AND latitude BETWEEN -27.5 AND -18.0
-                  AND longitude BETWEEN -52.5 AND -42.0
+                  AND latitude BETWEEN -34.5 AND 6.0
+                  AND longitude BETWEEN -75.0 AND -28.0
                 ORDER BY captured_at DESC
                 LIMIT 1200
               ) x
@@ -4722,6 +4738,7 @@ async function start() {
               row.movit_route=rr.rowCount?rr.rows[0]:null;
             }
           }
+          await lotacaoRastreio.anexarAoMapa(pool,rows,user,DRIVER_PUBLIC_BASE).catch(e=>console.log('LOTACAO no mapa: '+String(e.message||e)));
           return sendJson(res,200,{ok:true,light,rows,server_time:new Date().toISOString()})
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao consultar rastreamento.'})}
       }
