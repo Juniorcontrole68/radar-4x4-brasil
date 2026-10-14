@@ -143,15 +143,20 @@ async function recalcular(id){
 }
 
 // ---------------------------------------------------------------- lista
+// Cobrança por km sem valor: o valor depende da busca no SSW, então a situação é a da busca
+// (fila, erro, sem SSW); "aguardando o km" só enquanto ela não terminou.
 function situacao(r){
-  if(r.valor===null&&r.por_km)return'<span class="lc-tag wait" title="O valor sai do km da rota vezes o valor do km">aguardando o km</span>';
-  if(r.valor===null)return'<span class="lc-tag bad" title="Informe o valor negociado com o motorista">falta o valor</span>';
+  if(r.valor===null&&!r.por_km)return'<span class="lc-tag bad" title="Informe o valor negociado com o motorista">falta o valor</span>';
   if(!r.operacao)return'<span class="lc-tag warn" title="Escolha a operação">falta a operação</span>';
   if(!r.veiculo_tipo)return'<span class="lc-tag warn" title="Escolha o tipo de carro">falta o carro</span>';
-  if((r.ids||[r.id]).some(i=>naFila.includes(i)))return'<span class="lc-tag wait" title="Buscando km, frete e cidades no SSW">buscando no SSW…</span>';
-  if(r.calculo?.status==='pendente')return r.romaneio_ssw?'<span class="lc-tag wait" title="O sistema busca km, frete e cidades alguns minutos depois de o romaneio parar de mudar no SSW">aguardando o SSW</span>':'<span class="lc-tag warn" title="O romaneio não foi encontrado no SSW na data do lançamento">sem SSW</span>';
+  // naFila vem na ordem da fila do servidor: o primeiro é o que está sendo buscado agora
+  const pos=Math.min(...(r.ids||[r.id]).map(i=>naFila.indexOf(String(i))).filter(i=>i>=0));
+  if(pos===0)return'<span class="lc-tag wait" title="Buscando km, frete e cidades no SSW">buscando no SSW…</span>';
+  if(Number.isFinite(pos))return'<span class="lc-tag wait" title="Os romaneios são buscados no SSW um por vez">na fila do SSW ('+int(pos)+' na frente)</span>';
+  if(r.calculo?.status==='pendente')return r.romaneio_ssw?'<span class="lc-tag wait" title="O sistema busca km, frete e cidades alguns minutos depois de o romaneio parar de mudar no SSW">'+(r.por_km&&r.valor===null?'aguardando o km':'aguardando o SSW')+'</span>':'<span class="lc-tag warn" title="O romaneio não foi encontrado no SSW na data do lançamento">sem SSW</span>';
   if(!r.romaneio_ssw)return'<span class="lc-tag warn" title="O romaneio não foi encontrado no SSW na data do lançamento">sem SSW</span>';
-  if(r.calculo?.status==='erro')return'<span class="lc-tag bad" title="'+esc(r.calculo.msg||'')+'">não completou</span>';
+  if(r.calculo?.status==='erro')return'<span class="lc-tag bad longo" title="'+esc(r.calculo.msg||'')+'">não completou'+(r.calculo.msg?': '+esc(r.calculo.msg.length>40?r.calculo.msg.slice(0,40)+'…':r.calculo.msg):'')+'</span>';
+  if(r.valor===null&&r.por_km)return r.calculo?'<span class="lc-tag bad" title="'+esc(r.calculo.msg||'A busca terminou sem o km da rota. Use ↻ para buscar de novo ou desligue a cobrança por km e informe o valor.')+'">sem o km da rota</span>':'<span class="lc-tag wait" title="O valor sai do km da rota vezes o valor do km">aguardando o km</span>';
   if(r.calculo?.status==='parcial'||r.calculo?.msg)return'<span class="lc-tag warn" title="'+esc(r.calculo.msg||'')+'">conferir</span>';
   return'<span class="lc-tag ok">completo</span>'
 }
