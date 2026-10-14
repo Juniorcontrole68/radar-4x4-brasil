@@ -156,10 +156,10 @@ function situacao(r){
   return'<span class="lc-tag ok">completo</span>'
 }
 const kmTexto=v=>v===null||v===undefined?'':Number(v).toLocaleString('pt-BR',{maximumFractionDigits:1});
-// diferença Circuit − sistema; acima de 10% fica em destaque
+// diferença Circuit − sistema; acima de 5% fica em destaque
 function difKm(circ,km){
   const d=Math.round((circ-km)*10)/10,pct=km>0?Math.abs(d)/km:0;
-  return'<small class="'+(pct>0.1?'lc-dif alto':'lc-dif')+'" title="Circuit '+kmTexto(circ)+' km • sistema '+int(km)+' km">'+(d>0?'+':d<0?'−':'')+kmTexto(Math.abs(d))+' km</small>'
+  return'<small class="'+(pct>0.05?'lc-dif alto':'lc-dif')+'" title="Circuit '+kmTexto(circ)+' km • sistema '+int(km)+' km">'+(d>0?'+':d<0?'−':'')+kmTexto(Math.abs(d))+' km</small>'
 }
 const valorTexto=v=>v===null||v===undefined?'':Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const opcoes=(lista,atual)=>'<option value="">—</option>'+[...new Set([...lista,atual].filter(Boolean))].map(t=>'<option'+(t===atual?' selected':'')+'>'+esc(t)+'</option>').join('');
