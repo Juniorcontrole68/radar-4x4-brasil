@@ -41,6 +41,7 @@
 .lc-tag.wait{background:#e0f2fe;color:#075985}
 .lc-tag.warn{background:#fef3c7;color:#92400e}
 .lc-tag.bad{background:#fee2e2;color:#991b1b}
+.lc-tag.longo{white-space:normal;max-width:220px}
 .lc-empty{padding:26px 12px;text-align:center;color:var(--muted);font-size:13px;border:1px dashed var(--line);border-radius:10px}
 .lc-table td input,.lc-table td select{box-sizing:border-box;border:1px solid var(--line);border-radius:7px;height:30px;padding:0 6px;background:#fff;font-size:12.5px;color:var(--ink);font-family:inherit}
 .lc-table td input{width:88px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
