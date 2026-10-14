@@ -6102,9 +6102,18 @@ if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
     }catch(e){console.log('AGENDAMENTO NF regra cidade: '+String(e.message||e))}
   }
 
+  // Produtos da NF: vêm dos XMLs de NF-e já importados (tabela nf_materiais).
+  let produtos=[];
+  try{
+    const m=await portalJson('/api/painel/nf-materiais?nf='+encodeURIComponent(nf)+'&limit=5',{timeout:15000});
+    const seen=new Set();
+    for(const r of (m?.rows||[]))for(const p of (Array.isArray(r.produtos)?r.produtos:[])){const t=String(p||'').trim();if(t&&!seen.has(t)){seen.add(t);produtos.push(t)}}
+  }catch(e){console.log('AGENDAMENTO NF produtos: '+String(e.message||e))}
+
   const out={
     ok:true,
     row:{
+      produtos,
       nf:row.nf||nf,ctrc:row.ctrc||'',cliente:row.cliente||'',cidade:row.cidade||'',uf:row.uf||'SP',
       status_ssw:row.status||'',mercadoria:row.tipoMercadoria||row.mercadoria||row.especieMercadoria||'',
       peso:Number(row.peso||0),volumes:Number(row.volumes||0),previsao_ssw:row.previsao||'',
