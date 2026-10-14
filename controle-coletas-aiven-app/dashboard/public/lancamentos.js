@@ -160,6 +160,12 @@ function situacao(r){
   if(r.calculo?.status==='parcial'||r.calculo?.msg)return'<span class="lc-tag warn" title="'+esc(r.calculo.msg||'')+'">conferir</span>';
   return'<span class="lc-tag ok">completo</span>'
 }
+const kmTexto=v=>v===null||v===undefined?'':Number(v).toLocaleString('pt-BR',{maximumFractionDigits:1});
+// diferença Circuit − sistema; acima de 5% fica em destaque
+function difKm(circ,km){
+  const d=Math.round((circ-km)*10)/10,pct=km>0?Math.abs(d)/km:0;
+  return'<small class="'+(pct>0.05?'lc-dif alto':'lc-dif')+'" title="Circuit '+kmTexto(circ)+' km • sistema '+int(km)+' km">'+(d>0?'+':d<0?'−':'')+kmTexto(Math.abs(d))+' km</small>'
+}
 const valorTexto=v=>v===null||v===undefined?'':Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const opcoes=(lista,atual)=>'<option value="">—</option>'+[...new Set([...lista,atual].filter(Boolean))].map(t=>'<option'+(t===atual?' selected':'')+'>'+esc(t)+'</option>').join('');
 // Enquanto o usuário está digitando numa linha, a lista não é redesenhada (perderia o que foi digitado).
@@ -186,6 +192,8 @@ function renderLista(){
           return '<label class="lc-pk" title="Este motorista, neste dia, recebe por km rodado"><input type="checkbox" data-lc-porkm="'+id+'"'+(on?' checked':'')+'> por km</label>'+
             (on?'<input class="lc-vkm" data-lc-vkm="'+id+'" data-no-titlecase="true" type="text" inputmode="decimal" autocomplete="off" maxlength="8" placeholder="R$/km" value="'+(r.por_km?valorTexto(r.por_km.valor_km):'')+'" aria-label="Valor por km do romaneio '+esc(r.romaneio)+'">':'')+
 ''})()+'</td>'+
+      // km do Circuit (digitado) ao lado do km do sistema, com a diferença entre os dois
+      '<td class="n lc-circ"><input data-lc-campo="km_circuit" data-id="'+id+'" data-no-titlecase="true" type="text" inputmode="decimal" autocomplete="off" maxlength="8" placeholder="km" value="'+kmTexto(r.km_circuit)+'" aria-label="Km do Circuit do romaneio '+esc(r.romaneio)+'">'+(r.km_circuit!==null&&r.km_circuit!==undefined&&r.km?difKm(r.km_circuit,r.km):'')+'</td>'+
       (r.por_km?'<td class="n" title="Valor com todas as entregas: km da rota × valor do km"><b>'+reais(r.valor)+'</b><small>'+(r.km?int(r.km)+' km × '+reais(r.por_km.valor_km):'aguardando o km')+'</small></td>':'')+(r.por_km?'':'<td class="n"><input data-lc-campo="valor" data-id="'+id+'" data-no-titlecase="true" type="text" inputmode="decimal" autocomplete="off" maxlength="12" placeholder="0,00" value="'+valorTexto(r.valor)+'" aria-label="Valor negociado do romaneio '+esc(r.romaneio)+'"'+(r.valor===null?' class="falta"':'')+'></td>')+
       // líquido do motorista: o negociado menos o km das entregas que ele não fez
       '<td class="n lc-liq" title="'+(r.km_nao>0?'Descontado o km das entregas não feitas ('+int(r.km_nao)+' km de '+int(r.km)+' km)':r.desconto>0?'Desconto informado à mão':'Sem desconto')+'">'+(r.valor===null?'—':'<b>'+reais(r.frete_mot_liq??r.valor)+'</b>'+(r.desconto>0?'<small class="lc-kmnao">− '+reais(r.desconto)+(r.km_nao>0&&!r.desconto_manual?' • '+int(r.km_nao)+' km não feitos':'')+'</small>':r.km_nao===0?'<small>todas feitas</small>':''))+'</td>'+
@@ -193,15 +201,19 @@ function renderLista(){
       '<td class="rota">'+(r.rota?'<button type="button" class="lc-link" data-lc-cidades="'+id+'" title="Ver as cidades do romaneio">'+esc(r.rota)+'</button>':'—')+'</td>'+(comConf?'<td>'+esc(r.conferente||'—')+(r.erros?'<small>'+int(r.erros)+' erro(s)</small>':'')+'</td>':'')+'<td>'+situacao(r)+'</td>'+
       '<td class="acts"><button type="button" data-lc-edit="'+id+'" title="Alterar data, motorista, conferente" aria-label="Alterar o romaneio '+esc(r.romaneio)+'">✎</button><button type="button" data-lc-calc="'+id+'" title="Buscar de novo no SSW" aria-label="Buscar de novo no SSW">↻</button><button type="button" class="rm" data-lc-del="'+id+'" title="Excluir" aria-label="Excluir o romaneio '+esc(r.romaneio)+'">✕</button></td></tr>'
   }).join('');
-  box.innerHTML='<table><thead><tr>'+(varios?'<th>Data</th>':'')+'<th>Romaneio</th><th>Motorista</th><th>Carro</th><th>Operação</th><th class="n" title="Entregas feitas / entregas do romaneio">Entregas</th><th class="n">Km</th><th class="n" title="Valor se o motorista fizer todas as entregas">Valor negociado</th><th class="n" title="Valor negociado menos o km das entregas que ele não fez">Líquido motorista</th><th class="n">Frete Construlog</th><th class="n" title="Frete do romaneio menos o frete das entregas não feitas">Frete líquido</th><th class="n" title="Valor do motorista sobre o frete líquido">% do frete</th><th>Cidades</th>'+(comConf?'<th>Conferente</th>':'')+'<th>Situação</th><th></th></tr></thead><tbody>'+corpo+'</tbody></table>'
+  box.innerHTML='<table><thead><tr>'+(varios?'<th>Data</th>':'')+'<th>Romaneio</th><th>Motorista</th><th>Carro</th><th>Operação</th><th class="n" title="Entregas feitas / entregas do romaneio">Entregas</th><th class="n">Km</th><th class="n" title="Km apontado no Circuit, para comparar com o km do sistema">Circuit</th><th class="n" title="Valor se o motorista fizer todas as entregas">Valor negociado</th><th class="n" title="Valor negociado menos o km das entregas que ele não fez">Líquido motorista</th><th class="n">Frete Construlog</th><th class="n" title="Frete do romaneio menos o frete das entregas não feitas">Frete líquido</th><th class="n" title="Valor do motorista sobre o frete líquido">% do frete</th><th>Cidades</th>'+(comConf?'<th>Conferente</th>':'')+'<th>Situação</th><th></th></tr></thead><tbody>'+corpo+'</tbody></table>'
 }
 // Valor, operação e carro são gravados direto na linha.
 async function salvarCampo(el){
   const id=el.dataset.id,campo=el.dataset.lcCampo,r=linhas.find(x=>x.id===id);
   if(!r)return;
-  const volta=()=>{el.value=campo==='valor'?valorTexto(r.valor):(r[campo]||'')};
+  const volta=()=>{el.value=campo==='valor'?valorTexto(r.valor):campo==='km_circuit'?kmTexto(r.km_circuit):(r[campo]||'')};
   let v=el.value;
-  if(campo==='valor'){
+  if(campo==='km_circuit'){
+    v=v.trim()?valorDigitado(v.replace(/km/i,'')):null;
+    if(Number.isNaN(v)){msg('Não entendi o km do Circuit do romaneio '+r.romaneio+'. Digite assim: 212 ou 212,5','warn');volta();return}
+    if(v===(r.km_circuit??null)){volta();return}
+  }else if(campo==='valor'){
     if(!v.trim()){volta();return}
     v=valorDigitado(v);
     if(!Number.isFinite(v)){msg('Não entendi o valor do romaneio '+r.romaneio+'. Digite assim: 850,00','warn');volta();return}
@@ -210,9 +222,9 @@ async function salvarCampo(el){
   try{
     const j=await api('/api/lancamentos/'+id,{method:'PATCH',body:JSON.stringify({[campo]:v})});
     const i=linhas.findIndex(x=>(x.ids||[x.id]).includes(id));if(i>=0)linhas[i]=j.row;
-    msg('Gravado: romaneio '+j.row.romaneio+' • '+j.row.motorista+' • '+(campo==='valor'?reais(j.row.valor):campo==='operacao'?'operação '+(j.row.operacao||'em branco'):'carro '+(j.row.veiculo_tipo||'em branco'))+'.','ok');
+    msg('Gravado: romaneio '+j.row.romaneio+' • '+j.row.motorista+' • '+(campo==='valor'?reais(j.row.valor):campo==='km_circuit'?(j.row.km_circuit===null?'km do Circuit apagado':'Circuit '+kmTexto(j.row.km_circuit)+' km'):campo==='operacao'?'operação '+(j.row.operacao||'em branco'):'carro '+(j.row.veiculo_tipo||'em branco'))+'.','ok');
     if(campo==='valor')el.value=valorTexto(j.row.valor);
-    el.classList.toggle('falta',campo==='valor'?j.row.valor===null:!v);
+    if(campo!=='km_circuit')el.classList.toggle('falta',campo==='valor'?j.row.valor===null:!v);
     renderLista()
   }catch(e){msg('✗ '+e.message,'bad');volta()}
 }
