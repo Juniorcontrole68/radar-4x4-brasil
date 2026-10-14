@@ -79,3 +79,5 @@
 .lc-table td .lc-pk input{width:12px;height:12px;min-width:0;padding:0;margin:0;border:0;accent-color:var(--brand,#0f766e);cursor:pointer}
 .lc-table td input.lc-vkm{display:block;width:70px;height:26px;margin:3px 0 0 auto;font-size:12px}
 .lc-table td .lc-kmnao{display:block;color:#b91c1c}
+.lc-table td.lc-circ input{width:70px;text-align:right}
+.lc-table td small.lc-dif.alto{color:#b42318;font-weight:800}

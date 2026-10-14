@@ -99,7 +99,7 @@ function juntar(rs){
     ao_vivo:rs.some(r=>r.realizadas!==null||r.ao_vivo!==null)?rs.reduce((t,r)=>t+Number(r.realizadas??r.ao_vivo??0),0):null,
     auto:rs.every(r=>r.auto),
     calculo:{status,msg:rs.map(r=>r.calculo?.msg?r.romaneio+': '+r.calculo.msg:'').filter(Boolean).join(' • ').slice(0,500),fechado:rs.every(r=>r.calculo?.fechado),tentativas:Math.max(...rs.map(r=>Number(r.calculo?.tentativas||0)))},
-    por_km:prim(r=>r.por_km),km_nao:prim(r=>r.km_nao),km_nao_keys:prim(r=>r.km_nao_keys),
+    por_km:prim(r=>r.por_km),km_nao:prim(r=>r.km_nao),km_nao_keys:prim(r=>r.km_nao_keys),km_circuit:prim(r=>r.km_circuit),
     partes:rs.map(r=>({id:r.id,romaneio:r.romaneio,romaneio_ssw:r.romaneio_ssw,entregas:r.entregas,km:r.km,frete_vialog:r.frete_vialog,status:r.calculo?.status||''})),
     conjunto:undefined
   }
@@ -160,6 +160,8 @@ function resumir(row){
     por_km:s.por_km&&s.por_km.valor_km>0?{valor_km:s.por_km.valor_km,km_nao:s.km_nao?.km??s.por_km.km_nao??null,keys:s.km_nao?.keys??s.por_km.keys??null,em:s.por_km.em||null}:null,
     // km das entregas não feitas (rota com todas − rota só com as feitas), para o líquido do motorista
     km_nao:s.km_nao?.km??s.por_km?.km_nao??null,km_nao_keys:s.km_nao?.keys??s.por_km?.keys??null,desconto_manual:!!s.desconto_manual,
+    // km que o Circuit apontou para a rota, digitado pelo usuário para comparar com o km do sistema
+    km_circuit:Number.isFinite(Number(s.km_circuit))&&s.km_circuit!==null?Number(s.km_circuit):null,
     calculo:s.calculo||null,criado_por:row.created_by||'',atualizado_em:row.updated_at||null
   }
 }
@@ -425,6 +427,10 @@ async function atender(req,res,u,ctx){
       if(tem('desconto')){const v=numero(b.desconto);c.desconto=Number.isFinite(v)&&v>0?v:null;if(b.desconto===null||b.desconto==='')delete ssw.desconto_manual;else ssw.desconto_manual=true}
       for(const k of['veiculo_tipo','operacao','conferente','filial'])if(tem(k))c[k]=limpo(b[k],80);
       if(tem('erros')){const v=numero(b.erros);c.erros=Number.isFinite(v)&&v>0?v:null}
+      if(tem('km_circuit')){
+        if(b.km_circuit===null||String(b.km_circuit).trim()==='')delete ssw.km_circuit;
+        else{const v=numero(b.km_circuit);if(!Number.isFinite(v)||v<0||v>10000)return sendJson(res,400,{ok:false,error:'Km do Circuit inválido.'});ssw.km_circuit=Math.round(v*10)/10}
+      }
       if(tem('romaneio')||tem('romaneio_ssw')){
         const nk=romaneioKey(b.romaneio_ssw||b.romaneio);
         if(!nk)return sendJson(res,400,{ok:false,error:'Informe o número do romaneio.'});
