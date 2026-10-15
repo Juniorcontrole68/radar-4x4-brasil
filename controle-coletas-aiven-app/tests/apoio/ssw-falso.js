@@ -2,7 +2,7 @@
 // (opção 101 + XML) sem tocar no SSW real.
 const http=require('http');
 const PORT=Number(process.env.MOCK_PORT||10555);
-let logins=0,seq=0,recusados=0;const tokens=new Map(),paths={};
+let logins=0,seq=0,recusados=0,ultimoLogin=null;const porDominio={};const tokens=new Map(),paths={};
 // Romaneios incluídos hoje (colunas da opção 38: romaneio, veículo, inclusão, motorista, qtde de CTRCs, falta ocorrência).
 // /__mock/romaneio?rom=AMR001057-1&qtde=6&falta=0 muda a quantidade e as baixas que faltam, como acontece ao longo do dia.
 const HOJE=new Date().toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit',year:'2-digit'});
@@ -98,7 +98,7 @@ http.createServer(async(req,res)=>{
   let body='';for await(const c of req)body+=c;
   const tok=(String(req.headers.cookie||'').match(/(?:^|;\s*)token=([^;]+)/)||[])[1]||'';
   const send=(code,txt,h={})=>{res.writeHead(code,{'Content-Type':'text/html; charset=utf-8',...h});res.end(txt)};
-  if(u.pathname==='/__mock/stats')return send(200,JSON.stringify({logins,recusados,activeTokens:tokens.size,paths}),{'Content-Type':'application/json'});
+  if(u.pathname==='/__mock/stats')return send(200,JSON.stringify({logins,recusados,activeTokens:tokens.size,paths,ultimoLogin,porDominio}),{'Content-Type':'application/json'});
   if(u.pathname==='/__mock/expire'){tokens.clear();return send(200,'{}')}
   // /__mock/cte?nro=15326&sit=09/10/26 15:20 01-MERCADORIA ENTREGUE  muda a situação atual do CT-e (sit vazio volta ao normal)
   if(u.pathname==='/__mock/cte'){
@@ -118,6 +118,8 @@ http.createServer(async(req,res)=>{
   if(u.pathname==='/bin/ssw0422'&&req.method==='POST'){
     const p=new URLSearchParams(body);
     if(p.get('act')!=='L'||!p.get('f4')){recusados++;return send(200,loginPage)}
+    if(p.get('f4')==='senha-errada')return send(200,loginPage);   // login recusado pelo SSW (teste da demo)
+    ultimoLogin={dominio:p.get('f1'),cpf:p.get('f2'),usuario:p.get('f3')};porDominio[p.get('f1')]=(porDominio[p.get('f1')]||0)+1;
     logins++;const t='T'+logins;tokens.set(t,{unit:null});
     return send(200,'<html>ok</html>',{'Set-Cookie':'token='+t+'; Path=/'});
   }
