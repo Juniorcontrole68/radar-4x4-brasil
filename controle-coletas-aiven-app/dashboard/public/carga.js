@@ -16,8 +16,12 @@ const codigoKey=c=>{const d=digitos(c);return d.length===44?'K'+d:'C'+String(c||
 const ctrcKey=c=>String(c||'').toUpperCase().replace(/\s+/g,'').replace(/^([A-Z]{3})0+/,'$1');
 
 // items: {id, code, status:'pending'|'ok'|'erro', stop, error}
-// route: null ou {order:[id...], points:[base,...], idx:{id:índice em points}, matrix, seconds, method, geometry}
-let S={date:hoje(),driver:'',plate:'',items:[],route:null,stale:false,sent:null};
+// route: null ou {order:[id...], points:[base,...], idx:{id:índice em points}, matrix, seconds, method, geometry,
+//   casa:null ou {idx:índice da casa em points, label}, kmBase: metros da rota saindo e voltando para a base}
+// casaOn: o motorista termina a rota em casa. casa: endereço dele (guardado no sistema ou lido do SSW).
+const vazio=()=>({date:hoje(),driver:'',plate:'',items:[],route:null,stale:false,sent:null,casaOn:false,casa:null});
+let S=vazio();
+let casaBusca={nome:'',carregando:false,motivo:'',editando:false,seq:0};
 let seq=0,fila=[],rodando=false,map=null,layer=null,pronto=false,audio=null;
 
 function salvar(){
@@ -32,7 +36,8 @@ function carregar(){
     if(!j||!Array.isArray(j.items))return;
     // carga de outro dia não volta: a tela começa vazia a cada dia
     if(!j.date||j.date!==hoje()){localStorage.removeItem(KEY);return}
-    S={date:hoje(),driver:String(j.driver||''),plate:String(j.plate||''),items:j.items.filter(x=>x&&x.stop&&x.id),route:j.route&&Array.isArray(j.route.order)?j.route:null,stale:!!j.stale,sent:null};
+    S={date:hoje(),driver:String(j.driver||''),plate:String(j.plate||''),items:j.items.filter(x=>x&&x.stop&&x.id),route:j.route&&Array.isArray(j.route.order)?j.route:null,stale:!!j.stale,sent:null,
+      casaOn:!!j.casaOn,casa:j.casa&&Number.isFinite(Number(j.casa.lat))?j.casa:null};
     seq=S.items.reduce((a,x)=>Math.max(a,Number(String(x.id).replace(/\D/g,''))||0),0)
   }catch{}
 }
@@ -121,25 +126,32 @@ function trechos(){
   const ids=r.order.filter(id=>r.idx[id]!==undefined&&validos().some(x=>x.id===id));
   let ant=0;
   for(const id of ids){const i=r.idx[id],d=Number(r.matrix[ant]?.[i]||0);out.por[id]=d;out.total+=d;ant=i}
-  if(ids.length){out.volta=Number(r.matrix[ant]?.[0]||0);out.total+=out.volta}
+  if(ids.length){out.volta=Number(r.matrix[ant]?.[r.casa?r.casa.idx:0]||0);out.total+=out.volta}
   return out
 }
 async function roteirizar(){
   const ok=validos();
   if(!ok.length){msg('Bipe pelo menos um CT-e antes de roteirizar.','warn');return}
   if(fila.length||rodando){msg('Espere terminar a consulta dos CT-es bipados.','warn');return}
+  const casa=S.casaOn?S.casa:null;
+  if(S.casaOn&&!casa){msg(casaBusca.carregando?'Espere achar o endereço da casa do motorista.':'Informe o endereço da casa do motorista (ou desmarque “volta para casa”).','warn');return}
   const btn=q('#cgRoute');btn.disabled=true;btn.textContent='Roteirizando…';
   try{
-    const r=await fetch('/api/roteirizador/recalcular',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({date:S.date,romaneio:'',motorista:S.driver,veiculo:S.plate,stops:ok.map(x=>({...x.stop,cargaId:x.id}))})});
-    const j=await r.json().catch(()=>({}));
-    if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível roteirizar.');
+    const pede=end=>fetch('/api/roteirizador/recalcular',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({date:S.date,romaneio:'',motorista:S.driver,veiculo:S.plate,stops:ok.map(x=>({...x.stop,cargaId:x.id})),...(end?{end}:{})})})
+      .then(async r=>{const j=await r.json().catch(()=>({}));if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível roteirizar.');return j});
+    // Volta para casa: a ordem e os km são os da rota que termina na casa; a rota saindo e
+    // voltando para a base continua sendo calculada, como referência.
+    const [j,ref]=await Promise.all([pede(casa?{lat:casa.lat,lon:casa.lon,label:'Casa do motorista: '+casaTexto(casa)}:null),casa?pede(null).catch(()=>null):Promise.resolve(null)]);
     const idx={};(j.points||[]).forEach((p,i)=>{if(i&&p.cargaId)idx[p.cargaId]=i});
     const order=(j.optimizedOrder||[]).map(i=>j.points[i]?.cargaId).filter(Boolean);
-    S.route={date:hoje(),order,idx,points:j.points,matrix:j.matrix,seconds:Number(j.durationSeconds||0),method:j.method||'',geometry:j.geometry||null};
+    S.route={date:hoje(),order,idx,points:j.points,matrix:j.matrix,seconds:Number(j.durationSeconds||0),method:j.method||'',geometry:j.geometry||null,
+      casa:casa?{idx:j.points.length-1,label:casaTexto(casa)}:null,kmBase:ref?Number(ref.optimizedDistanceMeters||0):0};
     S.stale=false;S.sent=null;
     const fora=ok.filter(x=>idx[x.id]===undefined);
-    msg(fora.length?'Rota pronta, mas '+fora.length+' CT-e(s) ficaram de fora por não terem sido localizados no mapa.':'Rota pronta: '+order.length+' entrega(s), '+km(trechos().total)+' saindo e voltando para a base.',fora.length?'warn':'ok');
+    msg(fora.length?'Rota pronta, mas '+fora.length+' CT-e(s) ficaram de fora por não terem sido localizados no mapa.'
+      :casa?'Rota pronta: '+order.length+' entrega(s), '+km(trechos().total)+' saindo da base e terminando na casa do motorista'+(S.route.kmBase?' (voltando para a base seriam '+km(S.route.kmBase)+').':'.')
+      :'Rota pronta: '+order.length+' entrega(s), '+km(trechos().total)+' saindo e voltando para a base.',fora.length?'warn':'ok');
     salvar()
   }catch(e){msg('✗ '+String(e.message||e),'bad')}
   btn.textContent='Roteirizar';
@@ -155,8 +167,8 @@ async function redesenhar(){
   const meu=++desenhoSeq;
   try{
     // só as paradas que continuam na carga, na ordem atual
-    const points=[r.points[0],...ids.map(id=>r.points[r.idx[id]])].map(p=>({lat:p.lat,lon:p.lon}));
-    const rr=await fetch('/api/roteirizador/geometria-order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({points,order:ids.map((_,i)=>i+1)})});
+    const points=[r.points[0],...ids.map(id=>r.points[r.idx[id]]),...(r.casa?[r.points[r.casa.idx]]:[])].map(p=>({lat:p.lat,lon:p.lon}));
+    const rr=await fetch('/api/roteirizador/geometria-order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({points,order:ids.map((_,i)=>i+1),fim:!!r.casa})});
     const j=await rr.json().catch(()=>({}));
     if(meu!==desenhoSeq||!rr.ok||!j.ok)return;
     r.geometry=j.geometry||null;r.seconds=Number(j.durationSeconds||r.seconds||0);
@@ -185,7 +197,7 @@ function retirar(id){
   if(S.route){
     S.route.order=S.route.order.filter(i=>i!==id);
     // saiu justamente o CT-e que tinha entrado depois da roteirização: a rota volta a valer
-    if(S.stale&&S.route.date===hoje()&&!validos().some(x=>S.route.idx[x.id]===undefined))S.stale=false;
+    if(S.stale&&S.route.date===hoje()&&casaConfere()&&!validos().some(x=>S.route.idx[x.id]===undefined))S.stale=false;
     // retirar não exige roteirizar de novo: a ordem das que ficaram continua valendo
     if(!S.stale){redesenhar();return}
   }
@@ -197,8 +209,8 @@ function tentar(id){
 }
 function limpar(){
   if(S.items.length&&!confirm('Limpar a carga inteira? Os CT-es bipados saem da lista.'))return;
-  S={date:hoje(),driver:'',plate:'',items:[],route:null,stale:false,sent:null};fila=[];
-  q('#cgDriver').value='';q('#cgPlate').value='';
+  S=vazio();fila=[];casaBusca={nome:'',carregando:false,motivo:'',editando:false,seq:casaBusca.seq+1};
+  q('#cgDriver').value='';q('#cgPlate').value='';q('#cgCasa').checked=false;
   msg('Carga limpa. Pode bipar a próxima.');salvar();render();q('#cgCode').focus()
 }
 
@@ -220,7 +232,7 @@ function imprimir(){
     'td.c{text-align:center}td.r{text-align:right}td.big{font-size:16px;font-weight:800}td span{color:#444;font-size:11px}td i{display:inline-block;width:16px;height:16px;border:1.5px solid #333;border-radius:3px}'+
     '.nota{margin-top:10px;color:#444}@media print{body{margin:8mm}.no-print{display:none}}'+
     '</style></head><body><h1>Ordem de carregamento</h1><div class="sub">A última entrega entra primeiro no caminhão. A coluna “Entrega” mostra a ordem em que o motorista vai entregar.</div>'+
-    '<div class="box"><div>Motorista<b>'+esc(S.driver||'—')+'</b></div><div>Placa<b>'+esc(S.plate||'—')+'</b></div><div>Entregas<b>'+n+'</b></div><div>Volumes<b>'+(tot.v?num(tot.v):'—')+'</b></div><div>Peso<b>'+(tot.p?num(tot.p,1)+' kg':'—')+'</b></div><div>Rota (base → entregas → base)<b>'+km(t.total)+'</b></div><div>Impresso em<b>'+esc(agora)+'</b></div></div>'+
+    '<div class="box"><div>Motorista<b>'+esc(S.driver||'—')+'</b></div><div>Placa<b>'+esc(S.plate||'—')+'</b></div><div>Entregas<b>'+n+'</b></div><div>Volumes<b>'+(tot.v?num(tot.v):'—')+'</b></div><div>Peso<b>'+(tot.p?num(tot.p,1)+' kg':'—')+'</b></div><div>'+(S.route.casa?'Rota (base → entregas → casa do motorista)':'Rota (base → entregas → base)')+'<b>'+km(t.total)+'</b></div>'+(S.route.casa&&S.route.kmBase?'<div>Voltando para a base seria<b>'+km(S.route.kmBase)+'</b></div>':'')+'<div>Impresso em<b>'+esc(agora)+'</b></div></div>'+
     '<table><thead><tr><th>Carregar</th><th>Entrega</th><th>CT-e / NF</th><th>Destinatário e endereço</th><th>Cidade</th><th>Vol.</th><th>Peso (kg)</th><th>OK</th></tr></thead><tbody>'+linhas+'</tbody></table>'+
     '<div class="nota">Conferente: ____________________________ &nbsp;&nbsp; Motorista: ____________________________</div>'+
     '<script>window.onload=function(){setTimeout(function(){window.print()},200)}<\/script></body></html>';
@@ -238,6 +250,7 @@ async function enviar(){
     const by=new Map(validos().map(x=>[x.id,x.stop]));
     const points=[r.points[0],...ids.map(id=>({...by.get(id),lat:r.points[r.idx[id]].lat,lon:r.points[r.idx[id]].lon}))];
     const plan={points,optimizedOrder:ids.map((_,i)=>i+1),geometry:r.geometry,optimizedDistanceMeters:trechos().total,durationSeconds:r.seconds,baseAddress:r.points[0]?.label||''};
+    if(r.casa){const c=r.points[r.casa.idx];plan.fim={lat:c.lat,lon:c.lon,label:'Casa do motorista: '+r.casa.label};plan.kmBaseMeters=r.kmBase||0}
     const rr=await fetch('/api/roteirizador/enviar-carga',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:S.date,driver_name:S.driver.trim(),vehicle_plate:S.plate.trim(),plan})});
     const j=await rr.json().catch(()=>({}));
     if(!rr.ok||!j.ok)throw new Error(j.error||'Não foi possível enviar.');
@@ -266,6 +279,11 @@ function renderMapa(){
     L.marker([p.lat,p.lon],{icon}).addTo(layer).bindPopup('<b>'+esc(p.destinatario||p.label||'')+'</b><br>'+esc([p.endereco,p.numero].filter(Boolean).join(', '))+'<br>'+esc((p.cidade||'')+(p.uf?' / '+p.uf:'')));
     pts.push([p.lat,p.lon])
   });
+  if(r.casa&&r.points[r.casa.idx]){
+    const c=r.points[r.casa.idx];
+    L.marker([c.lat,c.lon],{icon:L.divIcon({className:'',html:'<div style="font-size:24px;line-height:1">🏠</div>',iconSize:[26,26],iconAnchor:[13,13]})}).addTo(layer).bindTooltip('Casa do motorista: '+esc(r.casa.label));
+    pts.push([c.lat,c.lon])
+  }
   const coords=(r.geometry?.coordinates||[]).map(x=>[x[1],x[0]]);
   if(coords.length)L.polyline(coords,{weight:5,opacity:.8,color:'#0f766e'}).addTo(layer);
   const b=L.latLngBounds(pts);if(b.isValid())map.fitBounds(b.pad(.12));
@@ -280,7 +298,7 @@ function render(){
   q('#cgKpiPeso').textContent=tot.p?num(tot.p,1)+' kg':'—';
   q('#cgKpiKm').textContent=roteada?km(t.total):'—';
   q('#cgKpiTempo').textContent=roteada?tempo(S.route.seconds):'—';
-  q('#cgKpiKmSub').textContent=roteada?'base → entregas → base':(S.stale?'roteirize de novo':'aparece ao roteirizar');
+  q('#cgKpiKmSub').textContent=roteada?(S.route.casa?'base → entregas → casa'+(S.route.kmBase?' • pela base: '+km(S.route.kmBase):''):'base → entregas → base'):(S.stale?'roteirize de novo':'aparece ao roteirizar');
   q('#cgKpiTempoSub').textContent=roteada?'só de estrada, sem as paradas':'';
   document.querySelectorAll('#carga .kpi.route').forEach(el=>el.classList.toggle('off',!roteada));
   q('#cgRoute').disabled=!ok.length||pend>0;
@@ -290,7 +308,7 @@ function render(){
   q('#cgSend').classList.toggle('primary',roteada);
   q('#cgClear').disabled=!S.items.length;
   const st=q('#cgStale');st.hidden=!S.stale;
-  if(S.stale)st.textContent='A lista mudou depois da roteirização. Clique em “Roteirizar de novo” para colocar tudo em ordem antes de imprimir ou enviar.';
+  if(S.stale)st.textContent='A carga mudou depois da roteirização (CT-es, motorista ou o fim da rota). Clique em “Roteirizar de novo” para colocar tudo em ordem antes de imprimir ou enviar.';
 
   const lista=q('#cgList'),head=q('#cgColHead');
   const erros=S.items.filter(x=>x.status!=='ok');
@@ -317,11 +335,16 @@ function render(){
         '<div class="acts">'+(S.route?'<button type="button" data-cg-up="'+x.id+'" '+(!roteada||pos<=0?'disabled':'')+' title="Entregar antes" aria-label="Entregar antes">↑</button><button type="button" data-cg-down="'+x.id+'" '+(!roteada||!naRota||pos>=nRota-1?'disabled':'')+' title="Entregar depois" aria-label="Entregar depois">↓</button>':'')+
         '<button type="button" class="rm" data-cg-rm="'+x.id+'" title="Retirar da carga" aria-label="Retirar '+esc(s.ctrc)+' da carga">✕</button></div></div>')
     });
-    if(roteada&&nRota)linhas.push('<div class="cg-base"><span>↩ Volta para a base (Av. do Algodão, 316 – Americana)</span><span>'+km(t.volta)+'</span></div>');
+    if(roteada&&nRota&&S.route.casa){
+      linhas.push('<div class="cg-base"><span>🏠 Vai para casa ('+esc(S.route.casa.label)+')</span><span>'+km(t.volta)+'</span></div>');
+      if(S.route.kmBase)linhas.push('<div class="cg-base ref"><span>Referência: a melhor rota saindo e voltando para a base dá</span><span>'+km(S.route.kmBase)+'</span></div>')
+    }
+    else if(roteada&&nRota)linhas.push('<div class="cg-base"><span>↩ Volta para a base (Av. do Algodão, 316 – Americana)</span><span>'+km(t.volta)+'</span></div>');
     lista.innerHTML=linhas.join('')
   }
   q('#cgListTitle').textContent=S.route&&!S.stale?'Ordem de entrega':'CT-es bipados';
-  q('#cgListSub').textContent=S.route&&!S.stale?'Saindo da base e voltando para a base. Use ↑ ↓ para ajustar ou ✕ para retirar.':'O último bipado aparece em cima. Use ✕ para retirar.';
+  q('#cgListSub').textContent=S.route&&!S.stale?(S.route.casa?'Saindo da base e terminando na casa do motorista.':'Saindo da base e voltando para a base.')+' Use ↑ ↓ para ajustar ou ✕ para retirar.':'O último bipado aparece em cima. Use ✕ para retirar.';
+  renderCasa();
 
   const sb=q('#cgSendBox');
   if(S.sent){
@@ -336,6 +359,67 @@ function render(){
   renderMapa()
 }
 
+// ---------------------------------------------------------------- volta para casa
+const casaTexto=c=>[[c.endereco,c.numero].filter(Boolean).join(', '),c.bairro,(c.cidade||'')+(c.uf?'/'+c.uf:'')].filter(Boolean).join(' – ');
+// A rota feita deixa de valer quando muda o fim (liga/desliga a casa, outro motorista, outro endereço).
+const casaConfere=()=>!S.route||(S.route.casa?!!(S.casaOn&&S.casa)&&S.route.casa.label===casaTexto(S.casa):!S.casaOn);
+function casaMudou(){
+  if(S.route&&!S.stale&&!casaConfere())S.stale=true;
+  S.sent=null;salvar();render()
+}
+async function buscarCasa(forcarSsw=false){
+  const nome=S.driver.trim();
+  if(!S.casaOn||nome.length<2){render();return}
+  if(!forcarSsw&&S.casa&&casaBusca.nome.toLowerCase()===nome.toLowerCase())return;
+  const meu=++casaBusca.seq;
+  casaBusca={...casaBusca,nome,carregando:true,motivo:'',editando:false,seq:meu};
+  S.casa=null;render();
+  try{
+    const r=await fetch('/api/roteirizador/casa-motorista?nome='+encodeURIComponent(nome)+(forcarSsw?'&ssw=1':''),{cache:'no-store'});
+    const j=await r.json().catch(()=>({}));
+    if(meu!==casaBusca.seq)return;
+    if(!r.ok||!j.ok)throw new Error(j.error||'Não consegui buscar o endereço (erro '+r.status+').');
+    S.casa=j.casa&&Number.isFinite(Number(j.casa.lat))?j.casa:null;
+    casaBusca.motivo=S.casa?'':(j.motivo||'endereço não encontrado');
+    if(j.ssw&&!S.casa)casaBusca.sugestao=j.ssw
+  }catch(e){if(meu!==casaBusca.seq)return;casaBusca.motivo=String(e.message||e)}
+  casaBusca.carregando=false;
+  casaMudou()
+}
+async function salvarCasa(){
+  const f=k=>(q('#cgCasa_'+k)?.value||'').trim();
+  const body={driver_name:S.driver.trim(),endereco:f('rua'),numero:f('num'),bairro:f('bairro'),cidade:f('cidade'),uf:f('uf')||'SP'};
+  if(!body.cidade){msg('Informe pelo menos a cidade da casa do motorista.','warn');return}
+  const b=q('#cgCasaSalvar');if(b){b.disabled=true;b.textContent='Procurando no mapa…'}
+  try{
+    const r=await fetch('/api/roteirizador/casa-motorista',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível salvar.');
+    S.casa=j.casa;casaBusca={...casaBusca,nome:S.driver.trim(),motivo:'',editando:false,carregando:false};
+    msg('Casa de '+S.driver.trim()+' guardada. Da próxima vez ela já vem pronta.','ok');
+    casaMudou()
+  }catch(e){msg('✗ '+String(e.message||e),'bad');if(b){b.disabled=false;b.textContent='Salvar endereço'}}
+}
+function renderCasa(){
+  const box=q('#cgCasaInfo');if(!box)return;
+  q('#cgCasa').checked=S.casaOn;
+  if(!S.casaOn){box.hidden=true;box.innerHTML='';return}
+  box.hidden=false;box.classList.remove('warn');
+  if(S.driver.trim().length<2){box.innerHTML='Escolha o motorista para buscar o endereço da casa dele no SSW.';return}
+  if(casaBusca.carregando){box.innerHTML='Buscando o endereço de '+esc(S.driver.trim())+' no SSW…';return}
+  if(S.casa&&!casaBusca.editando){
+    box.innerHTML='<div class="linha"><span>🏠 <b>'+esc(casaTexto(S.casa))+'</b></span><span><button type="button" class="cg-btn" data-casa="editar">Alterar</button> <button type="button" class="cg-btn" data-casa="ssw" title="Ler de novo o cadastro do motorista no SSW">Ler do SSW</button></span></div>'+
+      '<div class="fonte">'+esc(S.casa.fonte?'Fonte: '+S.casa.fonte:'')+'</div>';
+    return
+  }
+  const c=casaBusca.editando&&S.casa?S.casa:(casaBusca.sugestao||{});
+  if(!casaBusca.editando)box.classList.add('warn');
+  box.innerHTML=(casaBusca.editando?'Corrija o endereço da casa de '+esc(S.driver.trim())+':':'Não achei a casa de '+esc(S.driver.trim())+' ('+esc(casaBusca.motivo||'sem endereço')+'). Digite o endereço uma vez e ele fica guardado:')+
+    '<div class="form"><input id="cgCasa_rua" placeholder="Rua" value="'+esc(c.endereco||'')+'"><input id="cgCasa_num" placeholder="Nº" value="'+esc(c.numero||'')+'">'+
+    '<input id="cgCasa_bairro" class="wide" placeholder="Bairro (opcional)" value="'+esc(c.bairro||'')+'">'+
+    '<input id="cgCasa_cidade" placeholder="Cidade" value="'+esc(c.cidade||'')+'"><input id="cgCasa_uf" placeholder="UF" maxlength="2" value="'+esc(c.uf||'SP')+'">'+
+    '<div class="wide"><button id="cgCasaSalvar" type="button" class="cg-btn primary" data-casa="salvar">Salvar endereço</button>'+(casaBusca.editando?' <button type="button" class="cg-btn" data-casa="cancelar">Cancelar</button>':'')+'</div></div>'
+}
 async function motoristas(){
   try{
     const r=await fetch('/api/roteirizador/motoristas',{cache:'no-store'}),j=await r.json().catch(()=>({}));
@@ -346,17 +430,35 @@ async function motoristas(){
       S.driver=q('#cgDriver').value.trim();
       const hit=rows.find(x=>x.driver_name.toLowerCase()===S.driver.toLowerCase());
       if(hit&&hit.vehicle_plate&&!q('#cgPlate').value.trim()){q('#cgPlate').value=hit.vehicle_plate;S.plate=hit.vehicle_plate}
-      S.sent=null;salvar();render()
+      S.sent=null;salvar();render();trocouMotorista()
     }
   }catch{}
+}
+// Outro motorista: a casa é a dele (o endereço do anterior não vale mais).
+function trocouMotorista(){
+  if(casaBusca.nome.toLowerCase()===S.driver.trim().toLowerCase())return;
+  S.casa=null;casaBusca={nome:'',carregando:false,motivo:'',editando:false,seq:casaBusca.seq+1};
+  if(S.casaOn)buscarCasa();
+  casaMudou()
 }
 function setup(){
   if(pronto||!q('#carga'))return;
   pronto=true;carregar();
+  if(S.casa)casaBusca.nome=S.driver;
   const code=q('#cgCode'),drv=q('#cgDriver'),plt=q('#cgPlate');
   drv.value=S.driver;plt.value=S.plate;
   drv.oninput=()=>{S.driver=drv.value.trim();S.sent=null;salvar()};
-  drv.onchange=()=>{S.driver=drv.value.trim();S.sent=null;salvar();render()};
+  drv.onchange=()=>{S.driver=drv.value.trim();S.sent=null;salvar();render();trocouMotorista()};
+  q('#cgCasa').onchange=()=>{S.casaOn=q('#cgCasa').checked;if(S.casaOn&&!S.casa)buscarCasa();casaMudou()};
+  q('#cgCasaInfo').onclick=e=>{
+    const b=e.target.closest('[data-casa]');if(!b)return;
+    const a=b.dataset.casa;
+    if(a==='salvar')salvarCasa();
+    else if(a==='editar'){casaBusca.editando=true;render()}
+    else if(a==='cancelar'){casaBusca.editando=false;render()}
+    else if(a==='ssw')buscarCasa(true)
+  };
+  q('#cgCasaInfo').onkeydown=e=>{if(e.key==='Enter'&&e.target.matches('input')){e.preventDefault();salvarCasa()}};
   plt.oninput=()=>{plt.value=plt.value.toUpperCase().replace(/[^A-Z0-9]/g,'');S.plate=plt.value;S.sent=null;salvar()};
   const envia=()=>{const v=code.value;code.value='';bipar(v);code.focus()};
   let timer=null;
@@ -385,7 +487,7 @@ function setup(){
 window.cargaAbrir=()=>{
   setup();
   // virou o dia com a tela aberta: zera a carga do dia anterior
-  if(S.date!==hoje()){S={date:hoje(),driver:'',plate:'',items:[],route:null,stale:false,sent:null};seq=0;try{localStorage.removeItem(KEY)}catch{}render();msg('Carga do dia anterior zerada. Comece a bipar a carga de hoje.')}
+  if(S.date!==hoje()){S=vazio();seq=0;try{localStorage.removeItem(KEY)}catch{}render();msg('Carga do dia anterior zerada. Comece a bipar a carga de hoje.')}
   setTimeout(()=>{q('#cgCode')?.focus();if(map)map.invalidateSize()},60)
 };
 })();

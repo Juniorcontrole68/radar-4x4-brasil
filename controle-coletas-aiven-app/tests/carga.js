@@ -71,6 +71,56 @@ const chave=n=>'35'+'2610'+'54582567000142'+'57'+'001'+String(n).padStart(9,'0')
   check('lista de motoristas responde',r.status===200&&mot.ok&&Array.isArray(mot.rows),mot);
   r=await fetch(B+'/api/roteirizador/motoristas');check('lista de motoristas exige login',r.status===401,'veio '+r.status);
 
+  console.log('Volta para casa');
+  {
+    const casaUrl=n=>B+'/api/roteirizador/casa-motorista?nome='+encodeURIComponent(n);
+    const fulano='Fulano '+Array.from({length:6},()=>'abcdefghij'[Math.floor(Math.random()*10)]).join('');   // nome novo a cada rodada
+    r=await fetch(casaUrl('Motorista Bipagem'));check('casa do motorista exige login',r.status===401,'veio '+r.status);
+    r=await fetch(casaUrl('Motorista Bipagem'),{headers:H});let c=await r.json();
+    check('sem endereço guardado: lê o cadastro do motorista no SSW (opção 028, pelo nome) e localiza no mapa',
+      r.status===200&&c.ok&&c.casa&&c.casa.endereco==='RUA CONCEICAO TRAVAGLIA BLANCO'&&c.casa.numero==='80'&&c.casa.cidade==='MOGI GUACU'&&Number.isFinite(c.casa.lat)&&/SSW/.test(c.casa.fonte),c);
+    const antes28=(await (await fetch(M+'/__mock/stats')).json()).paths['POST /bin/ssw0029']||0;
+    r=await fetch(casaUrl('motorista  bipagem'),{headers:H});const c2=await r.json();
+    check('  ...fica guardado: da segunda vez não volta ao SSW',c2.ok&&c2.casa&&c2.casa.endereco===c.casa.endereco&&((await (await fetch(M+'/__mock/stats')).json()).paths['POST /bin/ssw0029']||0)===antes28,c2);
+    r=await fetch(casaUrl('Jose da Silva'),{headers:H});let c3=await r.json();
+    check('dois motoristas com o mesmo nome no SSW: não escolhe sozinho e explica',r.status===200&&c3.ok&&c3.casa===null&&/mais de um/.test(c3.motivo||''),c3);
+    r=await fetch(casaUrl(fulano),{headers:H});c3=await r.json();
+    check('motorista fora do cadastro: sem casa, com o motivo',c3.ok&&c3.casa===null&&/não encontrado/.test(c3.motivo||''),c3);
+    r=await fetch(B+'/api/roteirizador/casa-motorista',{method:'PUT',headers:{...H,'Content-Type':'application/json'},body:JSON.stringify({driver_name:fulano,endereco:'RUA DAS PORCELANAS',numero:'10',cidade:'PEDREIRA',uf:'SP'})});c3=await r.json();
+    check('operador digita a casa: localiza e guarda',r.status===200&&c3.ok&&c3.casa.cidade==='PEDREIRA'&&c3.casa.fonte==='digitado'&&Number.isFinite(c3.casa.lat),c3);
+    r=await fetch(casaUrl(fulano),{headers:H});c3=await r.json();
+    check('  ...e da próxima vez já vem pronta',c3.ok&&c3.casa&&c3.casa.endereco==='RUA DAS PORCELANAS',c3);
+    r=await fetch(B+'/api/roteirizador/casa-motorista',{method:'PUT',headers:{...H,'Content-Type':'application/json'},body:JSON.stringify({driver_name:fulano,endereco:'RUA X'})});
+    check('casa sem cidade: 400',r.status===400,'veio '+r.status);
+
+    const end={lat:c.casa.lat,lon:c.casa.lon,label:'Casa do motorista'};
+    r=await fetch(B+'/api/roteirizador/recalcular',{method:'POST',headers:{...H,'Content-Type':'application/json'},body:JSON.stringify({date:'',stops,end})});
+    const pc=await r.json();
+    const fimIdx=(pc.points||[]).length-1;
+    check('roteirizar com a casa: sai da base, faz as 4 entregas e termina na casa',r.status===200&&pc.ok&&pc.points.length===6&&pc.points[fimIdx].precision==='fixed-end'&&pc.optimizedOrder.length===4&&!pc.optimizedOrder.includes(fimIdx),{status:r.status,erro:pc.error,n:pc.points?.length});
+    // a ordem escolhida é a de menor caminho até a casa (nenhuma outra ordem das 4 entregas é mais curta)
+    const mt=pc.matrix,aberta=o=>{let d=0,a=0;for(const i of o){d+=mt[a][i];a=i}return d+mt[a][fimIdx]};
+    const perm=a=>a.length<2?[a]:a.flatMap((x,i)=>perm([...a.slice(0,i),...a.slice(i+1)]).map(p=>[x,...p]));
+    const melhor=Math.min(...perm([1,2,3,4]).map(aberta));
+    check('  ...na ordem de menor caminho terminando na casa',Array.isArray(mt)&&aberta(pc.optimizedOrder)<=melhor+1,{escolhida:aberta(pc.optimizedOrder),melhor});
+    r=await fetch(B+'/api/roteirizador/geometria-order',{method:'POST',headers:{...H,'Content-Type':'application/json'},
+      body:JSON.stringify({points:[pc.points[0],...pc.optimizedOrder.map(i=>pc.points[i]),pc.points[fimIdx]].map(p=>({lat:p.lat,lon:p.lon})),order:[1,2,3,4],fim:true})});
+    const g=await r.json();
+    const ult=g.geometry?.coordinates?.slice(-1)[0]||[];
+    check('redesenhar depois de mexer na ordem: a linha termina na casa, não na base',r.status===200&&g.ok&&Math.abs(ult[0]-c.casa.lon)<1e-4&&Math.abs(ult[1]-c.casa.lat)<1e-4,{status:r.status,ult});
+    const ordemCasa=pc.optimizedOrder.map(i=>pc.points[i]);
+    const corpoCasa={date:corpo.date,driver_name:'Motorista Bipagem',vehicle_plate:'abc-1d23',
+      plan:{points:[pc.points[0],...ordemCasa],optimizedOrder:[1,2,3,4],geometry:pc.geometry,optimizedDistanceMeters:pc.optimizedDistanceMeters,durationSeconds:pc.durationSeconds,
+        fim:{lat:c.casa.lat,lon:c.casa.lon,label:'Casa do motorista'},kmBaseMeters:plan.optimizedDistanceMeters}};
+    r=await fetch(B+'/api/roteirizador/enviar-carga',{method:'POST',headers:{...H,'Content-Type':'application/json'},body:JSON.stringify(corpoCasa)});
+    const ec=await r.json();
+    check('enviar com a casa: as 4 entregas vão para o motorista (a casa não vira entrega)',r.status===201&&ec.ok&&ec.stops===4&&ec.para_motorista===true,ec);
+    r=await fetch(B+'/movit/rota/'+ec.token);const pg2=await r.text();
+    check('  ...e o link abre com as entregas na ordem até a casa',r.status===200&&ordemCasa.every(p=>pg2.includes(String(p.destinatario).replace(/&/g,'&amp;'))),r.status);
+    r=await fetch(B+'/api/ssw/diagnostico-motorista?nome=Motorista%20Bipagem',{headers:H});const dg=await r.json();
+    check('diagnóstico da opção 028 (administrador): mostra os campos achados e a tela lida',r.status===200&&dg.ok&&dg.campos?.cpf==='f2'&&dg.campos?.nome==='f3'&&dg.act==='PES'&&dg.tentativas?.length>=1,dg);
+  }
+
   console.log('Permissão própria: Montar carga é liberada usuário a usuário');
   {
     const sufixo=Date.now().toString(36);
