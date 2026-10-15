@@ -1717,6 +1717,11 @@ async function start() {
   await pool.query(`INSERT INTO fleet_state(id,data) VALUES(1,'{"vehicles":[],"fuel":[],"maintenance":[],"tires":[],"people":[],"documents":[],"checklists":[]}'::jsonb) ON CONFLICT (id) DO NOTHING`);
   await lancamentos.ensureSchema(pool);
   await dre.ensureSchema(pool);
+  // despesas da opção 475 do SSW: DRE e Contas a Pagar acompanham sozinhos (o painel lê o SSW, aqui grava)
+  if(!TEST_MODE&&process.env.DRE_SSW_AUTO!=='0'&&process.env.SSW_INTERNAL_USUARIO)dre.iniciarLeituraAutomatica({pool,buscar:async(from,to)=>{
+    const r=await fetch('http://'+DASH_INTERNAL_HOST+':'+DASH_INTERNAL_PORT+'/api/ssw/despesas475?'+new URLSearchParams({from,to}),{headers:{'X-Internal-Key':INTERNAL_KEY,'Accept':'application/json'},signal:AbortSignal.timeout(120000)});
+    return r.json().catch(()=>null)
+  }});
   await roteirizadorCargas.ensureSchema(pool);
   await lotacaoRastreio.ensureSchema(pool);
   await pool.query(`CREATE TABLE IF NOT EXISTS fleet_maintenance_files (

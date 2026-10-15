@@ -135,10 +135,10 @@ async function portalAuth(pathname,{method='GET',body=null,token='',timeout=2000
 }
 async function dashboardUserFromReq(req){
   // Chamada do próprio servidor principal (ex.: rota do dia para o MOVIT), identificada pela
-  // chave sorteada a cada inicialização. Vale só para a rota planejada do rastreio.
+  // chave sorteada a cada inicialização. Vale só para a rota planejada do rastreio e a leitura da opção 475.
   const ik=String(req.headers['x-internal-key']||'');
   if(INTERNAL_KEY&&ik.length===INTERNAL_KEY.length&&crypto.timingSafeEqual(Buffer.from(ik),Buffer.from(INTERNAL_KEY))
-     &&String(req.url||'').startsWith('/api/tracking/planned-route'))
+     &&(String(req.url||'').startsWith('/api/tracking/planned-route')||String(req.url||'').startsWith('/api/ssw/despesas475?')))
     return{token:'',id:0,username:'servidor',is_admin:true,permissions:['*'],internal:true};
   const token=dashboardRequestToken(req);
   if(!token){const e=new Error('Não autenticado.');e.status=401;throw e}
@@ -1504,6 +1504,27 @@ function sswDiagActions(html){
 }
 // ---------------------------------------------------------------- CT-e no SSW: tela 101 + XML
 const sswCte=require('./ssw-cte.js');
+const sswDespesas=require('./ssw-despesas.js');
+// Despesas da opção 475 (só a listagem; nada é incluído, alterado ou liquidado no SSW).
+async function fetchSswDespesas475(from,to,unidade=SSW_UNIDADE){
+  if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
+  return withSswSession('op475',async({apply,cookie})=>{
+    const H={'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'};
+    let r=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2='+encodeURIComponent(unidade)+'&f3=475',{headers:H,redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
+    const nav=await r.text(),prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0094';
+    sswAssertLoggedIn(nav,prog);
+    r=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:{...H,'Cookie':cookie()},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
+    const tela=await r.text();sswAssertLoggedIn(tela);
+    const envio=sswDespesas.envioDaListagem(tela,from,to);
+    if(!envio.ok)return{ok:false,error:envio.motivo,diag:{prog,blocos:envio.blocos}};
+    r=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{method:'POST',headers:{...H,'Cookie':cookie(),'Content-Type':'application/x-www-form-urlencoded','Referer':'https://sistema.ssw.inf.br/bin/'+prog},body:envio.params.toString(),redirect:'manual',signal:AbortSignal.timeout(30000)});apply(r.headers);
+    const body=await r.text();sswAssertLoggedIn(body);
+    const lido=sswDespesas.despesasDaListagem(body);
+    const diag={prog,act:envio.act,campos:envio.campos,colunas:lido.colunas,linhas:lido.linhas,amostra:sswDespesas.texto(body).slice(0,3000)};
+    console.log('SSW475 DESPESAS: '+JSON.stringify({from,to,act:envio.act,linhas:lido.linhas,despesas:lido.despesas.length,colunas:lido.colunas}));
+    return{ok:true,from,to,unidade,despesas:lido.despesas,total:lido.despesas.reduce((t,x)=>t+x.valor,0),diag}
+  })
+}
 // Baixa o arquivo que a tela manda abrir: abrir("nome","nome",1,1,"binary",3).
 async function sswAbrirArquivo(session,html){
   const webBody=(String(html||'').match(/name=web_body[^>]*value=["']([^"']+)["']/i)||[])[1]||'';
@@ -6791,6 +6812,13 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
   if(!dashboardHasAny(authUser,['receita_ssw','financeiro','remetentes']))return dashboardDeny(res);
   const x=await buildBi2Receita(u.searchParams.get('from')||'',u.searchParams.get('to')||'');
   res.writeHead(x.ok?200:503,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/ssw/despesas475'){try{
+  if(!dashboardHas(authUser,'financeiro'))return dashboardDeny(res);
+  const from=u.searchParams.get('from')||'',to=u.searchParams.get('to')||'',re=/^\d{4}-\d{2}-\d{2}$/;
+  if(!re.test(from)||!re.test(to)||from>to||(Date.parse(to)-Date.parse(from))>62*86400000){res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'});return res.end(JSON.stringify({ok:false,error:'Período inválido (até 62 dias)'}))}
+  const x=await fetchSswDespesas475(from,to);
+  res.writeHead(x.ok?200:502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/ssw/cidades-mapa'){try{
   if(!dashboardHas(authUser,'cidade_destino'))return dashboardDeny(res);

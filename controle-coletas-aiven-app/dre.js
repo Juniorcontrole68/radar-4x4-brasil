@@ -4,6 +4,8 @@
 //   manual   = lançado no card (qualquer conta)
 //   ssw      = receita de fretes do mês, lida dos CT-es emitidos no SSW (o painel lê e manda aqui)
 //   holerite = conta Salários (e FGTS em Encargos), somada dos holerites em PDF enviados no card
+//   ssw 475  = despesas lançadas no SSW (opção 475), lidas pelo painel por mês de pagamento; cada evento
+//              do SSW vai para uma conta (sugerida pelo nome do evento, ou escolhida no card)
 // Testado em tests/dre.js.
 
 // Plano de contas. sinal +1 soma no resultado, -1 subtrai. Os subtotais são calculados na ordem.
@@ -52,6 +54,36 @@ const CONTAS=new Map(GRUPOS.flatMap(g=>(g.contas||[]).map(c=>[c.id,{...c,grupo:g
 
 const limpo=(v,max=200)=>String(v??'').replace(/\s+/g,' ').trim().slice(0,max);
 const r2=n=>Math.round(Number(n||0)*100)/100;
+// Evento do SSW -> conta da DRE. 'ignorar' = não entra na DRE (salário já vem dos holerites;
+// parcela de empréstimo/financiamento não é despesa do resultado).
+const IGNORAR='ignorar';
+const SUGESTOES=[
+  [/IRPJ|CSLL/,'irpj_csll'],
+  [/INSS|FGTS|\bGPS\b|ENCARGO/,'encargos'],
+  [/SALARI|FOLHA|FERIAS|RESCIS|DECIMO|13\s*O?\s*SAL/,IGNORAR],
+  [/EMPREST|FINANCIAM|CONSORCIO|LEASING/,IGNORAR],
+  [/PRO.?LABORE/,'pro_labore'],
+  [/\bVALE\b|\bVR\b|\bVT\b|REFEI|ALIMENTA|PLANO DE SAUDE|UNIMED|CONVENIO|CESTA BASICA|BENEFICIO/,'beneficios'],
+  [/COMBUST|DIESEL|GASOL|ETANOL|ARLA|ABASTEC|\bPOSTO\b/,'combustivel'],
+  [/PNEU|RECAP|BORRACHAR/,'pneus'],
+  [/MANUT|\bPECAS?\b|OFICINA|MECANIC|REVISAO|LUBRIF|\bOLEO\b|FUNILAR/,'manutencao'],
+  [/PEDAG|SEM PARAR|CONECTCAR|VELOE/,'pedagio'],
+  [/SEGUR|APOLICE|\bRCTR|\bRCF/,'seguros'],
+  [/AGREGAD|TERCEIR|CARRETEIRO|\bFRETE|\bCTRB|SUBCONTRAT|REDESPACH/,'fretes_terceiros'],
+  [/AJUDANTE|DIARIA|\bCHAPA\b|ESTADIA/,'ajudantes'],
+  [/ALUGUE|CONDOMIN|IPTU/,'aluguel'],
+  [/ENERGIA|\bLUZ\b|\bAGUA\b|TELEF|INTERNET|CELULAR|SANEAMENTO|\bCPFL\b|SABESP|\bVIVO\b|\bCLARO\b|\bTIM\b/,'utilidades'],
+  [/SISTEMA|SOFTWARE|\bSSW\b|LICENC|RASTREA/,'sistemas'],
+  [/CONTAB|CONTADOR|ADVOG|JURIDIC|HONORARIO/,'contabilidade'],
+  [/JUROS|TARIFA|\bIOF\b|BANCARI/,'despesas_fin'],
+  [/ICMS|\bPIS\b|COFINS|\bISS\b|SIMPLES NACIONAL|\bDAS\b/,'impostos_venda'],
+  [/COMISS|MARKETING|PUBLICID|PROPAGANDA|BRINDE/,'comerciais']
+];
+const maiusculo=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();
+function contaSugerida(evento){const t=maiusculo(evento);for(const[re,c]of SUGESTOES)if(re.test(t))return c;return'adm_outras'}
+// "0420 - COMBUSTIVEL" e "420 COMBUSTÍVEL" são o mesmo evento: a chave é o código, ou o nome quando não há código.
+function eventoChave(evento){const t=limpo(evento,120),m=t.match(/^0*(\d{1,6})\b/);return m?m[1]:(maiusculo(t)||'SEM EVENTO')}
+
 // "1.704,05" / "R$ 550,00" / "1704.05" / 550 -> número (NaN quando não é número)
 function numero(v){
   if(typeof v==='number')return v;
@@ -226,6 +258,91 @@ async function ensureSchema(pool){
     inss NUMERIC(14,2), irrf NUMERIC(14,2), fgts NUMERIC(14,2), competencia_pdf TEXT NOT NULL DEFAULT '',
     criado_por TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
   await pool.query('CREATE INDEX IF NOT EXISTS idx_dre_hol_cliente ON dre_holerites(client_id,competencia)');
+  await pool.query(`CREATE TABLE IF NOT EXISTS dre_ssw_despesas (
+    id BIGSERIAL PRIMARY KEY, client_id BIGINT, competencia DATE NOT NULL, lancamento TEXT NOT NULL DEFAULT '', data_pgto DATE,
+    evento TEXT NOT NULL DEFAULT '', evento_chave TEXT NOT NULL, fornecedor TEXT NOT NULL DEFAULT '', descricao TEXT NOT NULL DEFAULT '',
+    valor NUMERIC(14,2) NOT NULL DEFAULT 0, criado_por TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+  await pool.query("ALTER TABLE dre_ssw_despesas ADD COLUMN IF NOT EXISTS situacao TEXT NOT NULL DEFAULT ''");
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_dre_sswd_cliente ON dre_ssw_despesas(client_id,competencia)');
+  // Contas a Pagar (contas-a-pagar-v3): a conta lembra de qual lançamento da 475 ela veio
+  await pool.query('ALTER TABLE IF EXISTS bills ADD COLUMN IF NOT EXISTS ssw_lancamento TEXT');
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_bills_ssw_lancamento ON bills(ssw_lancamento)').catch(()=>{});
+  await pool.query(`CREATE TABLE IF NOT EXISTS dre_ssw_eventos (
+    client_id BIGINT, evento_chave TEXT NOT NULL, conta TEXT NOT NULL, criado_por TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+  await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_dre_ssw_eventos ON dre_ssw_eventos(COALESCE(client_id,0),evento_chave)');
+}
+// Contas a Pagar acompanha a 475: cada lançamento do SSW vira (ou se liga a) uma conta da empresa, e quando
+// a 475 mostra a despesa liquidada (paga na 476) a conta fica paga também. Nunca desfaz um pagamento.
+// Ligação a uma conta já lançada à mão: mesma quantia, ainda pendente, da empresa e com vencimento até 5 dias de diferença.
+const liquidada=s=>/LIQUIDAD|QUITAD|BAIXAD|\bPAG[OA]\b/i.test(String(s||''));
+async function sincronizarContas(pool,despesas,hojeIso){
+  const out={criadas:0,ligadas:0,liquidadas:0};
+  const tem=await pool.query("SELECT 1 FROM information_schema.columns WHERE table_name='bills' AND column_name='ssw_lancamento'");
+  if(!tem.rowCount)return out;
+  const crypto=require('crypto');
+  for(const d of despesas){
+    const lanc=limpo(d.lancamento,40),valor=r2(Math.abs(numero(d.valor)));
+    if(!lanc||!Number.isFinite(valor)||!valor)continue;
+    const pago=liquidada(d.situacao),venc=/^\d{4}-\d{2}-\d{2}$/.test(String(d.data||''))?d.data:hojeIso;
+    let b=(await pool.query('SELECT id,status FROM bills WHERE ssw_lancamento=$1 LIMIT 1',[lanc])).rows[0];
+    if(!b){
+      b=(await pool.query("SELECT id,status FROM bills WHERE ssw_lancamento IS NULL AND status='pending' AND amount=$1 AND ABS(due_date-$2::date)<=5 AND lower(translate(area,'ÁáÍí','AaIi')) NOT IN ('pessoal','casa','familia') ORDER BY ABS(due_date-$2::date),created_at LIMIT 1",[valor,venc])).rows[0];
+      if(b){await pool.query('UPDATE bills SET ssw_lancamento=$2,updated_at=NOW() WHERE id=$1',[b.id,lanc]);out.ligadas++}
+    }
+    if(!b){
+      const conta=CONTAS.get(contaSugerida(d.evento));
+      await pool.query("INSERT INTO bills(id,description,supplier,area,category,amount,due_date,status,payment_date,ssw_lancamento) VALUES($1,$2,$3,'Empresa',$4,$5,$6,$7,$8,$9)",
+        [crypto.randomUUID(),limpo((limpo(d.evento,120)||'Despesa')+' (SSW 475 nº '+lanc+')',200),limpo(d.fornecedor,160),conta?conta.nome.slice(0,60):'Outros',valor,venc,pago?'paid':'pending',pago?venc:null,lanc]);
+      out.criadas++;if(pago)out.liquidadas++;continue
+    }
+    if(pago&&b.status!=='paid'){await pool.query("UPDATE bills SET status='paid',payment_date=COALESCE(payment_date,$2),updated_at=NOW() WHERE id=$1",[b.id,venc]);out.liquidadas++}
+  }
+  return out
+}
+// Grava a leitura da 475 de um mês: troca as linhas da DRE desse mês e acompanha o Contas a Pagar.
+async function gravarDespesasSsw(pool,cli,c,lista,quem,{contas=true}={}){
+  const linhas=[];
+  for(const x of lista){
+    const v=numero(x&&x.valor);if(!Number.isFinite(v)||v===0)continue;
+    const ev=limpo(x.evento,120),dt=/^\d{4}-\d{2}-\d{2}$/.test(String(x.data||''))?x.data:null;
+    linhas.push([limpo(x.lancamento,40),dt,ev,eventoChave(ev),limpo(x.fornecedor,160),limpo(x.descricao,200),r2(Math.abs(v)),limpo(x.situacao,40)])
+  }
+  const cn=await pool.connect();
+  try{
+    await cn.query('BEGIN');
+    await cn.query('DELETE FROM dre_ssw_despesas WHERE client_id IS NOT DISTINCT FROM $1 AND competencia=$2',[cli,c+'-01']);
+    for(const l of linhas)await cn.query('INSERT INTO dre_ssw_despesas(client_id,competencia,lancamento,data_pgto,evento,evento_chave,fornecedor,descricao,valor,situacao,criado_por) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',[cli,c+'-01',...l,quem]);
+    await cn.query('COMMIT')
+  }catch(e){await cn.query('ROLLBACK');throw e}finally{cn.release()}
+  const hojeIso=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+  const cp=contas?await sincronizarContas(pool,lista,hojeIso):null;
+  return{despesas:linhas.length,total:r2(linhas.reduce((t,l)=>t+l[6],0)),contasPagar:cp}
+}
+// Leitura automática (servidor principal, fora do modo teste): mês atual e anterior a cada 30 minutos,
+// pedida ao painel com a chave interna. Só a CONSTRULOG tem o SSW interno.
+function iniciarLeituraAutomatica({pool,buscar,intervaloMs=30*60*1000}){
+  const rodar=async()=>{
+    try{
+      const cq=await pool.query("SELECT id::text FROM movit_clients WHERE lower(slug)='construlog' LIMIT 1").catch(()=>({rows:[]}));
+      const cli=cq.rows[0]?.id||null,hoje=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+      const [y,m]=hoje.split('-').map(Number),meses=[[y,m],m===1?[y-1,12]:[y,m-1]];
+      for(const[a,mm]of meses){
+        const c=a+'-'+String(mm).padStart(2,'0'),fim=new Date(Date.UTC(a,mm,0)).toISOString().slice(0,10);
+        const j=await buscar(c+'-01',fim);
+        if(!j||!j.ok||!Array.isArray(j.despesas)||!j.despesas.length)continue;
+        const g=await gravarDespesasSsw(pool,cli,c,j.despesas,'leitura automática');
+        console.log('DRE SSW475 automático: '+JSON.stringify({mes:c,...g}))
+      }
+    }catch(e){console.error('DRE SSW475 automático ERRO: '+(e.message||e))}
+  };
+  setTimeout(rodar,90*1000);
+  return setInterval(rodar,intervaloMs)
+}
+
+// Despesas do SSW somadas por mês e evento, com a conta de cada evento (escolhida no card ou sugerida).
+async function despesasSsw(pool,cli,de,ate){
+  const q=await pool.query("SELECT to_char(d.competencia,'YYYY-MM') AS mes,d.evento_chave,MIN(d.evento) AS evento,SUM(d.valor)::float8 AS valor,COUNT(*)::int AS n,MIN(e.conta) AS conta FROM dre_ssw_despesas d LEFT JOIN dre_ssw_eventos e ON COALESCE(e.client_id,0)=COALESCE(d.client_id,0) AND e.evento_chave=d.evento_chave WHERE d.client_id IS NOT DISTINCT FROM $1 AND d.competencia BETWEEN $2 AND $3 GROUP BY 1,2 ORDER BY 1,4 DESC",[cli,de,ate]);
+  return q.rows.map(r=>({...r,escolhida:!!r.conta,conta:r.conta||contaSugerida(r.evento)}))
 }
 
 const LIMITE_ARQUIVOS=30,LIMITE_PDF=8*1024*1024;
@@ -254,6 +371,7 @@ async function atender(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSes
       const hq=await pool.query("SELECT to_char(competencia,'YYYY-MM') AS mes,SUM(COALESCE(vencimentos,liquido,0))::float8 AS salarios,SUM(COALESCE(fgts,0))::float8 AS fgts,COUNT(*)::int AS n FROM dre_holerites WHERE client_id IS NOT DISTINCT FROM $1 AND competencia BETWEEN $2 AND $3 GROUP BY 1",[cli,de,ate]);
       const valores=lq.rows.slice();
       for(const h of hq.rows){valores.push({conta:'salarios',mes:h.mes,valor:h.salarios});if(h.fgts)valores.push({conta:'encargos',mes:h.mes,valor:h.fgts})}
+      for(const d of await despesasSsw(pool,cli,de,ate))if(CONTAS.has(d.conta))valores.push({conta:d.conta,mes:d.mes,valor:d.valor});
       const dre=montarDre(ano,valores);
       const holerites={};for(const h of hq.rows)holerites[h.mes]=h.n;
       return sendJson(res,200,{ok:true,...dre,holerites,plano:GRUPOS})
@@ -263,7 +381,8 @@ async function atender(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSes
       if(!c)return sendJson(res,400,{ok:false,error:'Informe o mês.'});
       const lq=await pool.query("SELECT id::text,conta,descricao,valor::float8,origem,criado_por,created_at FROM dre_lancamentos WHERE client_id IS NOT DISTINCT FROM $1 AND competencia=$2 ORDER BY conta,id",[cli,c+'-01']);
       const hq=await pool.query(holSel+' WHERE client_id IS NOT DISTINCT FROM $1 AND competencia=$2 ORDER BY funcionario,id',[cli,c+'-01']);
-      return sendJson(res,200,{ok:true,competencia:c,lancamentos:lq.rows,holerites:hq.rows})
+      const sswDespesas=await despesasSsw(pool,cli,c+'-01',c+'-01');
+      return sendJson(res,200,{ok:true,competencia:c,lancamentos:lq.rows,holerites:hq.rows,sswDespesas})
     }
     if(p==='/api/dre/lancamentos'&&req.method==='POST'){
       const b=await readJsonBodyLimited(req,64*1024);
@@ -294,6 +413,26 @@ async function atender(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSes
         await cn.query('COMMIT')
       }catch(e){await cn.query('ROLLBACK');throw e}finally{cn.release()}
       return sendJson(res,200,{ok:true,valor:r2(valor)})
+    }
+    // despesas da opção 475 do SSW (mês de pagamento), lidas pelo painel: trocam a leitura anterior do mesmo mês
+    if(p==='/api/dre/ssw-despesas'&&req.method==='POST'){
+      const b=await readJsonBodyLimited(req,4*1024*1024);
+      const c=competencia(b.competencia),lista=Array.isArray(b.despesas)?b.despesas:null;
+      if(!c)return sendJson(res,400,{ok:false,error:'Informe o mês.'});
+      if(!lista||lista.length>20000)return sendJson(res,400,{ok:false,error:'Lista de despesas inválida.'});
+      // o Contas a Pagar não separa empresas: só a casa (CONSTRULOG) acompanha a 475 nele
+      const casa=!user.client||String(user.client.slug||'').toLowerCase()==='construlog';
+      const g=await gravarDespesasSsw(pool,cli,c,lista,quem,{contas:casa});
+      return sendJson(res,200,{ok:true,...g,eventos:await despesasSsw(pool,cli,c+'-01',c+'-01')})
+    }
+    // conta da DRE escolhida para um evento do SSW (vale para todos os meses)
+    if(p==='/api/dre/ssw-eventos'&&req.method==='PUT'){
+      const b=await readJsonBodyLimited(req,16*1024);
+      const chave=limpo(b.evento_chave,120),conta=String(b.conta||'');
+      if(!chave)return sendJson(res,400,{ok:false,error:'Evento inválido.'});
+      if(conta!==IGNORAR&&!CONTAS.has(conta))return sendJson(res,400,{ok:false,error:'Escolha a conta.'});
+      await pool.query('INSERT INTO dre_ssw_eventos(client_id,evento_chave,conta,criado_por) VALUES($1,$2,$3,$4) ON CONFLICT (COALESCE(client_id,0),evento_chave) DO UPDATE SET conta=EXCLUDED.conta,criado_por=EXCLUDED.criado_por,updated_at=NOW()',[cli,chave,conta,quem]);
+      return sendJson(res,200,{ok:true})
     }
     // holerites em PDF: lê cada página e grava um holerite por funcionário
     if(p==='/api/dre/holerites'&&req.method==='POST'){
@@ -359,4 +498,4 @@ async function atender(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSes
   }
 }
 
-module.exports={GRUPOS,CONTAS,numero,competencia,montarDre,lerHolerite,paginasDoPdf,holeritesDoPdf,ensureSchema,handle};
+module.exports={GRUPOS,CONTAS,IGNORAR,liquidada,sincronizarContas,gravarDespesasSsw,iniciarLeituraAutomatica,contaSugerida,eventoChave,numero,competencia,montarDre,lerHolerite,paginasDoPdf,holeritesDoPdf,ensureSchema,handle};
