@@ -10,6 +10,8 @@ const CLIENTE_SITE={
   client_secret:'1ddca911996812ffa3b9bc8e7a5bb96aabdac1358b7bae213cb50e15753e7a71',
   scope:'transacao-query'
 };
+// O site manda este cabeçalho em toda chamada à API; sem ele a consulta de transações volta 401.
+const ISSUER_ID=String(process.env.VEIC_ISSUER_ID||'4b0fe997782a4502a447b752dfac4fdb');
 const POR_PAGINA=500, MAX_PAGINAS=40, MAX_DIAS=92;
 const FROTA_SEM_ACESSO='Seu usuário não tem acesso à Frota.';
 
@@ -89,7 +91,7 @@ async function entrar({usuario,senha}){
   const corpo=new URLSearchParams({grant_type:'password',...CLIENTE_SITE}).toString();
   let r;
   try{
-    r=await fetch(base()+'/auth/token',{method:'POST',headers:{authorization:'Basic '+Buffer.from(usuario+':'+senha).toString('base64'),'Content-Type':'application/x-www-form-urlencoded',Accept:'application/json'},body:corpo,signal:AbortSignal.timeout(30000)});
+    r=await fetch(base()+'/auth/token',{method:'POST',headers:{'x-issuer-id':ISSUER_ID,authorization:'Basic '+Buffer.from(usuario+':'+senha).toString('base64'),'Content-Type':'application/x-www-form-urlencoded',Accept:'application/json'},body:corpo,signal:AbortSignal.timeout(30000)});
   }catch(e){throw erro('Não consegui falar com o Veic: '+(e.message||e))}
   const j=await r.json().catch(()=>({}));
   if(r.status===400||r.status===401)throw erro('O Veic recusou o usuário ou a senha (VEIC_USUARIO / VEIC_SENHA).',502);
@@ -102,8 +104,9 @@ async function listarTransacoes(token,from,to){
   for(let pagina=1;pagina<=MAX_PAGINAS;pagina++){
     const qs=new URLSearchParams({sortOrder:'desc',pageIndex:String(pagina),pageSize:String(POR_PAGINA),dataInicioTransacao:from,dataFimTransacao:to,dataInicio:from,dataFim:to});
     let r;
-    try{r=await fetch(base()+'/transacao-query/transacao?'+qs,{headers:{Authorization:'Bearer '+token,Accept:'application/json'},signal:AbortSignal.timeout(60000)})}
+    try{r=await fetch(base()+'/transacao-query/transacao?'+qs,{headers:{'x-issuer-id':ISSUER_ID,Authorization:'Bearer '+token,Accept:'application/json'},signal:AbortSignal.timeout(60000)})}
     catch(e){throw erro('Não consegui ler as transações do Veic: '+(e.message||e))}
+    if(!r.ok)console.warn('VEIC transações HTTP '+r.status+': '+String(await r.clone().text().catch(()=>'')).slice(0,300));
     if(r.status===401||r.status===403)throw erro('O Veic não liberou a consulta de transações para este usuário (HTTP '+r.status+').');
     if(!r.ok)throw erro('Falha ao ler as transações do Veic (HTTP '+r.status+').');
     const j=await r.json().catch(()=>null);
