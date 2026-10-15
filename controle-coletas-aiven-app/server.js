@@ -33,6 +33,7 @@ const { economizarBanda } = require('./compressao');
 const lotacaoRastreio = require('./lotacao-rastreio');
 const movitDemo = require('./movit-demo');
 const movitGuia = require('./movit-guia');
+const veic = require('./veic');
 const { handler } = require('../contas-a-pagar-v3/src/handler');
 
 const PORT = process.env.PORT || 10000;
@@ -1722,6 +1723,7 @@ async function start() {
     const r=await fetch('http://'+DASH_INTERNAL_HOST+':'+DASH_INTERNAL_PORT+'/api/ssw/despesas475?'+new URLSearchParams({from,to}),{headers:{'X-Internal-Key':INTERNAL_KEY,'Accept':'application/json'},signal:AbortSignal.timeout(120000)});
     return r.json().catch(()=>null)
   }});
+  if(!TEST_MODE)veic.iniciarImportacaoAutomatica(pool);
   await roteirizadorCargas.ensureSchema(pool);
   await lotacaoRastreio.ensureSchema(pool);
   await pool.query(`CREATE TABLE IF NOT EXISTS fleet_maintenance_files (
@@ -2856,6 +2858,9 @@ async function start() {
       if (await roteirizadorCargas.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
       // Rastreio de carga lotação (viagem a partir da base do cliente + link público): ver lotacao-rastreio.js
       if (await lotacaoRastreio.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,sqlNome,sqlPlaca,publicBase:DRIVER_PUBLIC_BASE,testMode:TEST_MODE})) return;
+
+      // Abastecimentos do Veic na Frota → Combustível (só leitura no Veic): ver veic.js
+      if (await veic.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
 
       if (u.pathname === '/api/painel/frota-state' && req.method === 'GET') {
         try {

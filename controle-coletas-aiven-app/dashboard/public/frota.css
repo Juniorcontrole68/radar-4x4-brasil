@@ -31,3 +31,5 @@
 .fleet-uso:disabled{cursor:default}
 .fleet-uso-total td{background:#f8fafc;border-top:2px solid #e2e8f0}
 .fleet-kpi-uso{font-size:12px;margin-top:4px}
+.fleet-veic .fleet-form{align-items:end}.fleet-veic-info{grid-column:span 2;align-self:center;font-size:11px}
+.fleet-veic-tag{display:inline-block;margin-left:4px;padding:1px 6px;border-radius:999px;background:#ecfeff;color:#0e7490;font-size:10px;font-weight:700}
