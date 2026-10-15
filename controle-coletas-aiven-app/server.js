@@ -1746,6 +1746,10 @@ async function start() {
         await pool.query('ALTER TABLE '+tableName+' ADD COLUMN IF NOT EXISTS client_id BIGINT REFERENCES movit_clients(id)');
         await pool.query('UPDATE '+tableName+' SET client_id=$1 WHERE client_id IS NULL',[construlogId]);
         await pool.query('CREATE INDEX IF NOT EXISTS idx_'+tableName+'_client_id ON '+tableName+'(client_id)');
+        // Coletas e contas são gravadas pelo sistema antigo, que não conhece client_id: sem este padrão a
+        // coleta nova ficava sem empresa até o próximo reinício e sumia das telas filtradas por empresa.
+        if((tableName==='coletas'||tableName==='bills')&&Number.isSafeInteger(Number(construlogId)))
+          await pool.query('ALTER TABLE '+tableName+' ALTER COLUMN client_id SET DEFAULT '+Number(construlogId));
       }catch(e){
         console.warn('Migração multiempresa pendente para '+tableName+': '+e.message);
       }
