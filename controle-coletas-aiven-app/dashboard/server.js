@@ -1392,7 +1392,7 @@ async function deliveryProgramFetchSsw101Detail(session,row,force=false){
     const volumesText=sswField('Volumes',['Peso','Previsão','Valor','Tipo'])||sswField('Quantidade de volumes',['Peso','Previsão','Valor','Tipo']);
     const previsao=sswField('Previsão de entrega',['Status','Situação','Ocorrência','Filial','Rota']).match(/\d{2}\/\d{2}\/\d{4}/)?.[0]||'';
     const status=sswField('Status',['Data','Previsão','Ocorrência','Entrega','Filial','Rota'])||sswField('Situação',['Data','Previsão','Ocorrência','Entrega','Filial','Rota']);
-    let productText='',products=[];
+    let productText='',products=[],productLines=[];
     try{
       const prodParams=deliveryProgramFormParams(html);
       prodParams.set('act','RELPROD');
@@ -1414,7 +1414,9 @@ async function deliveryProgramFetchSsw101Detail(session,row,force=false){
           session.apply(fileRes.headers);
           const fileBuf=Buffer.from(await fileRes.arrayBuffer());
           productText=fileBuf.toString('latin1');
-          products=deliveryProgramSpecialLines(productText)
+          products=deliveryProgramSpecialLines(productText);
+          productLines=sswCte.parseRelacaoProdutos(productText);
+          if(!productLines.length)console.log('PROGRAMAÇÃO SSW101 PRODUTO '+ctrc+': relação sem itens lidos ('+fileBuf.length+' bytes): '+productText.slice(0,400).replace(/\s+/g,' '))
         }
       }
     }catch(e){console.log('PROGRAMAÇÃO SSW101 PRODUTO '+ctrc+': '+String(e.message||e))}
@@ -1426,7 +1428,8 @@ async function deliveryProgramFetchSsw101Detail(session,row,force=false){
       cliente,cidade,uf,
       peso:bi2Number(pesoText),volumes:bi2Number(volumesText),previsao,status,
       specialClass:deliveryProgramSpecialClass(combined),
-      specialProducts:products
+      specialProducts:products,
+      productLines
     };
     SSW101_DETAIL_CACHE.set(key,{at:Date.now(),value});
     return value
@@ -6100,6 +6103,7 @@ if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
         row.volumes=Number(row.volumes||0)||Number(det.volumes||0);
         row.previsao=row.previsao||det.previsao||'';
         row.status=row.status||det.status||'';
+        row.produtosSsw=Array.isArray(det.productLines)?det.productLines:[];
       }
     }catch(e){console.log('AGENDAMENTO NF detalhe 101: '+String(e.message||e))}
   }
@@ -6121,11 +6125,14 @@ if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
     const seen=new Set();
     for(const r of (m?.rows||[]))for(const p of (Array.isArray(r.produtos)?r.produtos:[])){const t=String(p||'').trim();if(t&&!seen.has(t)){seen.add(t);produtos.push(t)}}
   }catch(e){console.log('AGENDAMENTO NF produtos: '+String(e.message||e))}
+  // Sem XML importado: usa a relação de produtos que o SSW guarda do CT-e (opção 101).
+  let produtosFonte=produtos.length?'xml':'';
+  if(!produtos.length&&row.produtosSsw?.length){produtos=row.produtosSsw.slice(0,60);produtosFonte='ssw'}
 
   const out={
     ok:true,
     row:{
-      produtos,
+      produtos,produtos_fonte:produtosFonte,
       nf:row.nf||nf,ctrc:row.ctrc||'',cliente:row.cliente||'',cidade:row.cidade||'',uf:row.uf||'SP',
       status_ssw:row.status||'',mercadoria:row.tipoMercadoria||row.mercadoria||row.especieMercadoria||'',
       peso:Number(row.peso||0),volumes:Number(row.volumes||0),previsao_ssw:row.previsao||'',

@@ -275,4 +275,32 @@ function parseComprovantes(body){
   return{ehComprovantes:/Comprovantes/i.test(plano)||itens.length>0,motorista:((plano.match(/Motorista:\s*(.{0,60}?)\s+Data:/i)||[])[1]||'').trim(),veiculo:((plano.match(/Ve[ií]culo:\s*([A-Z0-9]{7})/i)||[])[1]||''),itens}
 }
 
-module.exports={parseComprovantes,zipEntries,isZip,xmlFromDownload,parseCteXml,parseTela101,parseMapaCall,xmlValue,xmlBlock,entregaNoComplemento,enderecosEntrega,recebedorEhOutroLocal};
+// Relação de produtos do CT-e na opção 101 (ação RELPROD): arquivo que o SSW monta com os itens das
+// notas fiscais. Pode vir como texto de relatório, CSV (;) ou HTML; devolve só as descrições dos itens.
+function parseRelacaoProdutos(body){
+  let src=String(body||'');
+  if(/<(?:tr|td|table|br|div|p)\b/i.test(src)){
+    src=src.replace(/<\/(?:tr|p|div|li)>|<br\s*\/?>/gi,'\n').replace(/<\/t[dh]>/gi,';').replace(/<[^>]+>/g,' ')
+      .replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#39;/gi,"'")
+  }
+  const sem=t=>String(t).normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase();
+  const cabecalho=/\b(RELACAO|SSW|PAGINA|PAG\.?\s*\d|EMISSAO|EMITIDO|CNPJ|CPF|REMETENTE|DESTINATARIO|TOTAL|CTRC|CT-E|USUARIO|SISTEMA|IMPRESSO|DATA\s*:|HORA\s*:)\b/;
+  const titulos=/^(?:ITEM|COD(?:IGO)?|DESCRICAO|PRODUTOS?|QTDE?|QUANTIDADE|UN(?:ID(?:ADE)?)?|VALOR|PESO|NCM|CFOP|NF|NOTA|[\s;|.:/-])+$/;
+  const out=[],vistos=new Set();
+  for(const linha of src.split(/\r?\n/)){
+    let t=linha.replace(/\s+/g,' ').trim();
+    if(!t)continue;
+    if(/[;|]/.test(t)){
+      const campos=t.split(/[;|]/).map(x=>x.trim()).filter(Boolean);
+      t=campos.sort((a,b)=>(b.match(/[A-Za-zÀ-ÿ]/g)||[]).length-(a.match(/[A-Za-zÀ-ÿ]/g)||[]).length)[0]||''
+    }
+    const n=sem(t);
+    if((n.match(/[A-Z]/g)||[]).length<3)continue;
+    if(/^[-=_*.\s]+$/.test(n)||titulos.test(n)||cabecalho.test(n))continue;
+    if(!vistos.has(n)){vistos.add(n);out.push(t.slice(0,200))}
+    if(out.length>=60)break
+  }
+  return out
+}
+
+module.exports={parseRelacaoProdutos,parseComprovantes,zipEntries,isZip,xmlFromDownload,parseCteXml,parseTela101,parseMapaCall,xmlValue,xmlBlock,entregaNoComplemento,enderecosEntrega,recebedorEhOutroLocal};
