@@ -88,7 +88,8 @@ function render(){
  ['#fleetFuelVehicle','#fleetMaintVehicle','#fleetTireVehicle','#fleetDocVehicle','#fleetCheckVehicle'].forEach(s=>{if(q(s))q(s).innerHTML=vopt});
  ['#fleetFuelDriver','#fleetCheckDriver'].forEach(s=>{if(q(s))q(s).innerHTML=popt});
  q('#fleetPeopleBody').innerHTML=db.people.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+esc(x.role)+'</td><td>'+esc(x.cnh)+'</td><td>'+esc(x.cnhExpiry)+'</td><td>'+esc(x.phone)+'</td><td>'+esc(x.status)+'</td><td>'+rowDel('people',x.id)+'</td></tr>').join('')||'<tr><td colspan="7" class="muted">Nenhuma pessoa cadastrada.</td></tr>';
- q('#fleetFuelBody').innerHTML=db.fuel.map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.driver)+'</td><td>'+esc(x.km)+'</td><td>'+esc(x.liters)+'</td><td>'+money(x.price)+'</td><td>'+money(x.total)+'</td><td>'+rowDel('fuel',x.id)+'</td></tr>').join('')||'<tr><td colspan="8" class="muted">Nenhum abastecimento.</td></tr>';
+ {const med=mediasCombustivel(db.fuel),n2=v=>v?Number(v).toLocaleString('pt-BR',{maximumFractionDigits:2}):'';
+  q('#fleetFuelBody').innerHTML=db.fuel.map(x=>{const m=med.get(x.id)||{};return '<tr'+(x.source==='veic'?' title="Importado do Veic"':'')+'><td>'+esc(x.date)+'</td><td>'+esc(x.time||'')+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.driver)+'</td><td>'+esc(x.fuelType||'')+'</td><td>'+esc(x.km)+'</td><td>'+esc(n2(m.kmDriven))+'</td><td>'+esc(n2(x.liters))+'</td><td>'+(m.kmPerLiter?'<b>'+esc(n2(m.kmPerLiter))+'</b>':'')+'</td><td>'+money(x.price)+'</td><td>'+money(x.total)+'</td><td>'+esc(x.station||'')+(x.source==='veic'?' <span class="fleet-veic-tag">Veic</span>':'')+'</td><td>'+rowDel('fuel',x.id)+'</td></tr>'}).join('')||'<tr><td colspan="13" class="muted">Nenhum abastecimento.</td></tr>'}
  q('#fleetMaintBody').innerHTML=db.maintenance.map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.service)+(x.note?'<div class="muted">'+esc(x.note)+'</div>':'')+'</td><td>'+esc(x.km)+'</td><td>'+esc(x.workshop)+'</td><td>'+money(x.total)+'</td><td>'+esc(x.nextKm||x.nextDate)+'</td><td>'+(x.attachmentName?'<button class="fleet-file-btn" type="button" data-fleet-file="'+esc(x.id)+'">Ver NF</button>':'—')+'</td><td>'+rowDel('maintenance',x.id)+'</td></tr>').join('')||'<tr><td colspan="9" class="muted">Nenhuma manutenção.</td></tr>';
  q('#fleetTireBody').innerHTML=db.tires.map(x=>'<tr><td>'+esc(x.code)+'</td><td>'+esc(x.brand)+'</td><td>'+esc(x.size)+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.position)+'</td><td>'+esc(x.kmInstall)+'</td><td>'+money(x.cost)+'</td><td>'+rowDel('tires',x.id)+'</td></tr>').join('')||'<tr><td colspan="8" class="muted">Nenhum pneu cadastrado.</td></tr>';
  q('#fleetDocBody').innerHTML=db.documents.map(x=>'<tr><td>'+esc(x.plate)+'</td><td>'+esc(x.type)+'</td><td>'+esc(x.expiry)+'</td><td>'+esc(x.note)+'</td><td>'+rowDel('documents',x.id)+'</td></tr>').join('')||'<tr><td colspan="5" class="muted">Nenhum documento.</td></tr>';
@@ -100,6 +101,37 @@ function render(){
   q('#fleetCostBody').innerHTML=(linhas+rodape)||'<tr><td colspan="6" class="muted">Sem dados.</td></tr>'; if(q('#fleetCostBody2'))q('#fleetCostBody2').innerHTML=q('#fleetCostBody').innerHTML}
  bindDelete();bindFileButtons();bindUso()
 }
+// KM rodado e média km/L de cada abastecimento: usa o KM anterior que veio do Veic ou, se não veio,
+// o abastecimento anterior do mesmo veículo.
+function mediasCombustivel(lista){
+ const out=new Map(),porPlaca=new Map();
+ lista.slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||String(a.time||'').localeCompare(String(b.time||''))||Number(a.km||0)-Number(b.km||0)).forEach(x=>{
+  const km=Number(x.km||0),lit=Number(x.liters||0),ant=porPlaca.get(x.plate);
+  let rod=Number(x.kmDriven||0);
+  if(!rod&&km>0){const prev=Number(x.kmPrev||0)||(ant||0);if(prev>0&&km>prev)rod=km-prev}
+  out.set(x.id,{kmDriven:rod,kmPerLiter:rod&&lit?Math.round(rod/lit*100)/100:0});
+  if(km>0&&x.plate)porPlaca.set(x.plate,Math.max(km,ant||0))
+ });
+ return out
+}
+async function veicStatus(){
+ const info=q('#fleetVeicInfo');if(!info)return;
+ try{const r=await fetch('/api/painel/frota-veic',{cache:'no-store'}),j=await r.json().catch(()=>({}));
+  if(!r.ok||!j.ok)return;
+  if(!j.configurado){info.textContent='Para importar do Veic, cadastre VEIC_USUARIO e VEIC_SENHA nas variáveis do Render.';return}
+  const u=j.ultima;if(u)info.textContent=u.ok?'Última importação: '+new Date(u.em).toLocaleString('pt-BR')+' • '+u.abastecimentos+' abastecimentos ('+u.criados+' novos)':'Última tentativa falhou: '+u.error;
+ }catch{}
+}
+async function veicImportar(e){
+ e.preventDefault();const f=e.currentTarget,btn=q('#fleetVeicBtn'),info=q('#fleetVeicInfo');
+ btn.disabled=true;btn.textContent='Importando…';
+ try{const r=await fetch('/api/painel/frota-veic/importar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:val(f,'from'),to:val(f,'to')})}),j=await r.json().catch(()=>({}));
+  if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao importar do Veic.');
+  info.textContent='Importado: '+j.abastecimentos+' abastecimentos de '+j.veiculos+' veículos ('+j.criados+' novos, '+j.atualizados+' atualizados).';
+  await loadRemote();render()
+ }catch(err){info.textContent=err.message||String(err);alert(err.message||err)}
+ finally{btn.disabled=false;btn.textContent='⛽ Importar do Veic'}
+}
 async function setup(){
  qa('.fleet-sub').forEach(b=>b.onclick=()=>setSub(b.dataset.fleet));
  ['#fleetMaintFile','#fleetMaintCamera'].forEach(sel=>{const el=q(sel);if(el)el.onchange=()=>{if(sel==='#fleetMaintFile'&&q('#fleetMaintCamera'))q('#fleetMaintCamera').value='';if(sel==='#fleetMaintCamera'&&q('#fleetMaintFile'))q('#fleetMaintFile').value='';updateMaintFileLabel()}});
@@ -110,7 +142,8 @@ async function setup(){
  q('#fleetTireForm').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('tires',{code:val(f,'code'),brand:val(f,'brand'),size:val(f,'size'),plate:val(f,'plate'),position:val(f,'position'),kmInstall:Number(val(f,'kmInstall')||0),cost:Number(val(f,'cost')||0)});f.reset()};
  q('#fleetDocForm').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('documents',{plate:val(f,'plate'),type:val(f,'type'),expiry:val(f,'expiry'),note:val(f,'note')});f.reset()};
  q('#fleetCheckForm').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('checklists',{date:val(f,'date'),plate:val(f,'plate'),driver:val(f,'driver'),status:val(f,'status'),note:val(f,'note')});f.reset()};
- await loadRemote();render();setSub('resumo')
+ {const vf=q('#fleetVeicForm');if(vf){const hoje=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}),d=new Date(hoje+'T12:00:00Z');d.setUTCDate(d.getUTCDate()-30);vf.elements.to.value=hoje;vf.elements.from.value=d.toISOString().slice(0,10);vf.onsubmit=veicImportar}}
+ await loadRemote();render();setSub('resumo');veicStatus()
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',setup);else setup();
 })();
