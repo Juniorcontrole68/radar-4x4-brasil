@@ -5,6 +5,12 @@ const tc=s=>String(s||'').toLocaleLowerCase('pt-BR').replace(/(^|[\s\-\/])([\p{L
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let bills=[];
 let until='';
+// Contas pessoais x da empresa, pela área da conta (as já lançadas entram pelo que está gravado nelas).
+const AREAS_PESSOAIS=['pessoal','casa','familia'];
+const semAc=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+const tipoDa=x=>AREAS_PESSOAIS.includes(semAc(x?.area))?'pessoal':'empresa';
+let tipo='empresa';try{tipo=localStorage.getItem('contas_tipo')||'empresa'}catch{}
+const doTipo=l=>tipo==='todas'?l:l.filter(x=>tipoDa(x)===tipo);
 const today=()=>new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
 
 async function api(url,options={}){const r=await fetch(url,options);if(!r.ok)throw new Error(await r.text()||'Erro');const ct=r.headers.get('content-type')||'';return ct.includes('json')?r.json():r.text();}
@@ -69,7 +75,17 @@ async function editPix(id){
  await api('/api/bills/'+id+'/pix',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pixType:type,pixKey:key})});
  await load();
 }
-async function load(){bills=await api('/api/bills');render();}
+let todas=[];
+async function load(){todas=await api('/api/bills');render();}
+async function moverConta(id){
+ const x=todas.find(b=>b.id===id);if(!x)return;
+ const destino=tipoDa(x)==='pessoal'?'Empresa':'Pessoal';
+ const rec=x.recurrence_group&&todas.filter(b=>b.recurrence_group===x.recurrence_group).length>1;
+ if(!confirm('Mover "'+tc(x.description)+'" para '+destino+'?'))return;
+ const tudo=rec&&confirm('Mover também as outras parcelas desta recorrência?');
+ await api('/api/bills/'+id+'/area',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({area:destino,applyToRecurrence:!!tudo})});
+ await load();
+}
 function pendingFiltered(){
  const p=bills.filter(x=>x.status!=='paid');
  return until?p.filter(x=>String(x.due_date||'').slice(0,10)<=until):p;
@@ -80,13 +96,17 @@ function visibleBills(){
 }
 function recurrenceCount(x){
  if(!x?.recurrence_group)return 1;
- return bills.filter(b=>b.recurrence_group===x.recurrence_group).length;
+ return todas.filter(b=>b.recurrence_group===x.recurrence_group).length;
 }
 function render(){
+ bills=doTipo(todas);
+ document.querySelectorAll('.tipoBtn').forEach(b=>b.classList.toggle('on',b.dataset.tipo===tipo));
+ const nP=todas.filter(x=>x.status!=='paid'&&tipoDa(x)==='pessoal').length,nE=todas.filter(x=>x.status!=='paid'&&tipoDa(x)==='empresa').length;
+ $('#tipoNEmpresa').textContent='('+nE+' em aberto)';$('#tipoNPessoal').textContent='('+nP+' em aberto)';
  const t=today(),cm=t.slice(0,7),pending=bills.filter(x=>x.status!=='paid'),overdue=pending.filter(x=>String(x.due_date).slice(0,10)<t),month=bills.filter(x=>String(x.due_date).slice(0,7)===cm),paidMonth=bills.filter(x=>x.status==='paid'&&x.payment_date&&String(x.payment_date).slice(0,7)===cm),filtered=pendingFiltered(),visible=visibleBills().sort((a,b)=>String(a.due_date||'').localeCompare(String(b.due_date||'')));
  $('#cardPending').textContent=money(pending.reduce((s,x)=>s+Number(x.amount),0));$('#cardOverdue').textContent=money(overdue.reduce((s,x)=>s+Number(x.amount),0));$('#cardMonth').textContent=money(month.reduce((s,x)=>s+Number(x.amount),0));$('#cardPaidMonth').textContent=money(paidMonth.reduce((s,x)=>s+Number(x.amount),0));
  $('#filterLabel').textContent=until?'Em aberto até '+fmt(until):'Todas as contas em aberto';$('#filterTotal').textContent=money(filtered.reduce((s,x)=>s+Number(x.amount),0));$('#filterCount').textContent=filtered.length+' conta(s)';
- $('#printFilterLabel').textContent=until?'Vencimentos até '+fmt(until):'Todas as contas em aberto';$('#printTotal').textContent='Total: '+money(filtered.reduce((s,x)=>s+Number(x.amount),0));
+ $('#printFilterLabel').textContent=(tipo==='todas'?'':(tipo==='pessoal'?'Contas pessoais • ':'Contas da empresa • '))+(until?'Vencimentos até '+fmt(until):'Todas as contas em aberto');$('#printTotal').textContent='Total: '+money(filtered.reduce((s,x)=>s+Number(x.amount),0));
  $('#reportBody').innerHTML=filtered.map(x=>{
    const due=String(x.due_date||'').slice(0,10),ov=x.status!=='paid'&&due<t,st=x.status==='paid'?'Pago':ov?'Vencido':'Pendente',cl=x.status==='paid'?'ok':ov?'late':'wait';
    const p=pixText(x);
@@ -129,7 +149,7 @@ function render(){
   </tr>
   <tr class="accountDetailRow">
     <td></td>
-    <td colspan="4"><div class="detailLine"><span class="detailItem"><b>${esc(tc(x.area||'Geral'))}</b> • ${esc(tc(x.category||'-'))}</span>${pix}${rec}${docs?'<span class="detailItem docLinks">'+docs+'</span>':''}</div></td>
+    <td colspan="4"><div class="detailLine"><span class="detailItem"><span class="tipoTag ${tipoDa(x)}">${tipoDa(x)==='pessoal'?'Pessoal':'Empresa'}</span> <b>${esc(tc(x.area||'Geral'))}</b> • ${esc(tc(x.category||'-'))} <button class="linkBtn" onclick="moverConta('${x.id}')">Mover para ${tipoDa(x)==='pessoal'?'Empresa':'Pessoal'}</button></span>${pix}${rec}${docs?'<span class="detailItem docLinks">'+docs+'</span>':''}</div></td>
   </tr>`
  }).join('')||(until?'<tr><td colspan="5" class="empty">Nenhuma conta em aberto até '+fmt(until)+'.</td></tr>':'<tr><td colspan="5" class="empty">Nenhuma Conta Cadastrada.</td></tr>');
 }
@@ -144,7 +164,7 @@ $('#billForm').addEventListener('submit',async e=>{
   const saved=await api('/api/bills',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
   const firstId=saved.ids?.[0];
   if(firstId){if(boleto)await sendDocument(firstId,'boleto',boleto);if(comprovante)await sendDocument(firstId,'comprovante',comprovante)}
-  form.reset();$('#dueDate').value=today();document.querySelectorAll('.recDate').forEach(x=>x.value='');$('#recSummary').textContent='Nenhuma data adicional';
+  form.reset();areaPadrao();$('#dueDate').value=today();document.querySelectorAll('.recDate').forEach(x=>x.value='');$('#recSummary').textContent='Nenhuma data adicional';
   $('#saveMsg').textContent=saved.count>1&&(boleto||comprovante)?'Contas salvas. Documento(s) anexado(s) à 1ª parcela.':'Conta(s) salva(s).';
   await load();setTimeout(()=>$('#saveMsg').textContent='',4000);
  }catch(err){alert(err.message)}
@@ -203,5 +223,9 @@ async function payBill(id){if(!confirm('Marcar esta conta como paga?'))return;aw
 async function deleteBill(id){if(!confirm('Excluir esta conta?'))return;await api('/api/bills/'+id,{method:'DELETE'});await load();}
 function openPostpone(id){const x=bills.find(v=>v.id===id);if(!x)return;$('#postponeId').value=id;$('#postponeDesc').textContent=tc(x.description)+' — vencimento atual: '+fmt(x.due_date);$('#postponeDate').value=String(x.due_date).slice(0,10);$('#postponeModal').showModal();}
 $('#cancelPostpone').onclick=()=>$('#postponeModal').close();$('#confirmPostpone').onclick=async()=>{const id=$('#postponeId').value,newDueDate=$('#postponeDate').value;if(!newDueDate)return alert('Informe a nova data.');await api('/api/bills/'+id+'/postpone',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({newDueDate})});$('#postponeModal').close();await load();};
-window.payBill=payBill;window.deleteBill=deleteBill;window.openPostpone=openPostpone;window.openDocument=openDocument;window.chooseDocument=chooseDocument;window.copyPix=copyPix;window.editPix=editPix;window.openEditBill=openEditBill;
+// conta nova entra no lado que está aberto (o campo Área continua editável)
+function areaPadrao(){const i=document.querySelector('#billForm [name=area]');if(i&&['','Pessoal','Empresa'].includes(i.value)&&tipo!=='todas')i.value=tipo==='pessoal'?'Pessoal':'Empresa'}
+document.querySelectorAll('.tipoBtn').forEach(b=>b.onclick=()=>{tipo=b.dataset.tipo;try{localStorage.setItem('contas_tipo',tipo)}catch{}areaPadrao();render()});
+areaPadrao();
+window.moverConta=moverConta;window.payBill=payBill;window.deleteBill=deleteBill;window.openPostpone=openPostpone;window.openDocument=openDocument;window.chooseDocument=chooseDocument;window.copyPix=copyPix;window.editPix=editPix;window.openEditBill=openEditBill;
 load().catch(e=>{console.error(e);$('#billsBody').innerHTML='<tr><td colspan="5" class="empty">Erro ao carregar. Verifique o banco de dados.</td></tr>';});
