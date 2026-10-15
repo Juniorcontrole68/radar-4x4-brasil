@@ -103,6 +103,12 @@ const GOIANIA={latitude:-16.6869,longitude:-49.2648},ANAPOLIS={latitude:-16.3281
   r=await call('GET','/api/painel/lotacao-rastreios',{cookie});
   const sug=r.json?.coletas?.find(c=>String(c.id)===String(coletaId));
   check('a coleta aparece para escolher, com o destino já reconhecido no endereço',sug?.destino_sugerido?.cidade==='Sorocaba'&&sug?.destino_sugerido?.uf==='SP',JSON.stringify(sug||{}).slice(0,240));
+  r=await call('PATCH','/api/painel/coletas-complementos/'+coletaId,{cookie,body:{entrega_principal:{cidade:'Sorocaba',uf:'sp',localizacao:'-23.5015, -47.4526'},
+    entregas_extras:[{destinatario:'Loja Jandira',endereco_entrega:'Jose Albino Pereira 54',cidade:'Jandira',uf:'SP',localizacao:'https://maps.google.com/?q=-23.5281,-46.9025'}]}});
+  check('coleta grava cidade, UF e localização de cada entrega',r.status===200&&r.json?.entrega_principal?.uf==='SP'&&r.json?.entregas_extras?.[0]?.cidade==='Jandira',r.text.slice(0,200));
+  r=await call('GET','/api/painel/lotacao-rastreios',{cookie});
+  const sug2=r.json?.coletas?.find(c=>String(c.id)===String(coletaId));
+  check('  ...e o rastreio usa os campos da coleta (cidade, UF e localização)',sug2?.destino_sugerido?.cidade==='Sorocaba'&&sug2?.destino_localizacao==='-23.5015, -47.4526'&&sug2?.entregas_extras?.[0]?.sugerido?.cidade==='Jandira'&&/-23\.5281/.test(sug2?.entregas_extras?.[0]?.localizacao||''),JSON.stringify(sug2||{}).slice(0,300));
   check('  ...e com o 2º destinatário e a cidade dele',sug?.entregas_extras?.[0]?.destinatario==='Loja Jandira'&&sug?.entregas_extras?.[0]?.sugerido?.cidade==='Jandira',JSON.stringify(sug?.entregas_extras||[]));
   r=await call('POST','/api/painel/lotacao-rastreios',{cookie,body:{cliente:'Cliente Goiano Ltda',driver_name:'João Lotação Teste',vehicle_plate:'LOT1A23',origem:{cidade:'Goiânia',uf:'GO'},destino:{cidade:'Sorocaba',uf:'SP'},destinos_extras:[{nome:'Sem lugar',cidade:'Cidade Que Nao Existe',uf:'SP'}]}});
   check('entrega 2 sem cidade válida: 400 dizendo qual',r.status===400&&/entrega 2/.test(r.json?.error||''),r.text.slice(0,160));

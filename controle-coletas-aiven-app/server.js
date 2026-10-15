@@ -1399,6 +1399,8 @@ async function start() {
   // Lotação: destinatários além do primeiro e dados bancários / Pix do motorista.
   await pool.query("ALTER TABLE coletas ADD COLUMN IF NOT EXISTS entregas_extras JSONB NOT NULL DEFAULT '[]'::jsonb");
   await pool.query("ALTER TABLE coletas ADD COLUMN IF NOT EXISTS motorista_banco JSONB NOT NULL DEFAULT '{}'::jsonb");
+  // Cidade, UF e localização da entrega principal: o rastreio de lotação precisa delas para achar o destino.
+  await pool.query("ALTER TABLE coletas ADD COLUMN IF NOT EXISTS entrega_principal JSONB NOT NULL DEFAULT '{}'::jsonb");
   await pool.query(`
     CREATE TABLE IF NOT EXISTS coleta_documentos (
       id BIGSERIAL PRIMARY KEY,
@@ -5100,8 +5102,9 @@ async function start() {
         const body = await readJsonBodyLimited(req, 64 * 1024);
         const txt = (v, max) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
         const entregas = (Array.isArray(body.entregas_extras) ? body.entregas_extras : [])
-          .map(e => ({ destinatario: txt(e?.destinatario, 160), endereco_entrega: txt(e?.endereco_entrega, 300), observacao: txt(e?.observacao, 200) }))
-          .filter(e => e.destinatario || e.endereco_entrega)
+          .map(e => ({ destinatario: txt(e?.destinatario, 160), endereco_entrega: txt(e?.endereco_entrega, 300),
+            cidade: txt(e?.cidade, 80), uf: txt(e?.uf, 2).toUpperCase(), localizacao: txt(e?.localizacao, 300), observacao: txt(e?.observacao, 200) }))
+          .filter(e => e.destinatario || e.endereco_entrega || e.cidade)
           .slice(0, 20);
         const b = body.motorista_banco && typeof body.motorista_banco === 'object' ? body.motorista_banco : {};
         const banco = {
@@ -5110,12 +5113,17 @@ async function start() {
           pix_tipo: txt(b.pix_tipo, 20), pix_chave: txt(b.pix_chave, 140)
         };
         Object.keys(banco).forEach(k => { if (!banco[k]) delete banco[k]; });
-        const params = [JSON.stringify(entregas), JSON.stringify(banco), id];
+        // Sem entrega_principal no corpo (tela antiga ainda aberta), mantém o que já estava gravado.
+        const ep = body.entrega_principal && typeof body.entrega_principal === 'object'
+          ? JSON.stringify({ cidade: txt(body.entrega_principal.cidade, 80), uf: txt(body.entrega_principal.uf, 2).toUpperCase(), localizacao: txt(body.entrega_principal.localizacao, 300) })
+          : null;
+        const params = [JSON.stringify(entregas), JSON.stringify(banco), id, ep];
+        const sets = 'entregas_extras=$1::jsonb, motorista_banco=$2::jsonb, entrega_principal=COALESCE($4::jsonb, entrega_principal), updated_at=NOW()';
         const result = user.client_id ? await pool.query(
-          'UPDATE coletas SET entregas_extras=$1::jsonb, motorista_banco=$2::jsonb, updated_at=NOW() WHERE id::text=$3 AND client_id=$4 RETURNING id::text AS id, entregas_extras, motorista_banco',
+          'UPDATE coletas SET ' + sets + ' WHERE id::text=$3 AND client_id=$5 RETURNING id::text AS id, entregas_extras, motorista_banco, entrega_principal',
           [...params, user.client_id]
         ) : await pool.query(
-          'UPDATE coletas SET entregas_extras=$1::jsonb, motorista_banco=$2::jsonb, updated_at=NOW() WHERE id::text=$3 RETURNING id::text AS id, entregas_extras, motorista_banco',
+          'UPDATE coletas SET ' + sets + ' WHERE id::text=$3 RETURNING id::text AS id, entregas_extras, motorista_banco, entrega_principal',
           params
         );
         if (!result.rowCount) return sendJson(res, 404, { error: 'Coleta não encontrada.' });

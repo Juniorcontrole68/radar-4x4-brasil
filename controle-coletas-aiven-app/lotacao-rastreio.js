@@ -68,6 +68,12 @@ function cidadeUfDoTexto(txt){
   return null
 }
 
+// Cidade/UF digitadas na coleta (campos próprios), quando a cidade existe naquela UF.
+function cidadeUfInformada(e){
+  const cidade=limpo(e?.cidade,80),uf=geo.norm(e?.uf).slice(0,2);
+  return cidade&&UFS.includes(uf)&&geo.cityCentroid(cidade,uf)?{cidade,uf}:null
+}
+
 // Monta um ponto (origem ou destino) a partir do que a central digitou. Prioridade: coordenada
 // colada (exata) > cidade/UF informadas > cidade/UF achadas no endereço. Nunca consulta a internet.
 function montarPonto(entrada){
@@ -329,12 +335,15 @@ async function handle(req,res,u,deps){
           COALESCE(to_jsonb(c)->>'placa','') AS placa,
           COALESCE(to_jsonb(c)->>'status','') AS status,
           COALESCE(to_jsonb(c)->'entregas_extras','[]'::jsonb) AS entregas_extras,
+          COALESCE(to_jsonb(c)->'entrega_principal','{}'::jsonb) AS entrega_principal,
           COALESCE(to_jsonb(c)->>'data_carregamento',LEFT(COALESCE(to_jsonb(c)->>'created_at',''),10)) AS data
         FROM coletas c
         WHERE ${user.client_id?'(c.client_id=$1 OR c.client_id IS NULL)':'TRUE'} AND COALESCE(to_jsonb(c)->>'status','') NOT IN ('Entregue','Cancelada')
         ORDER BY c.id DESC LIMIT 80`,cp).catch(()=>({rows:[]}));
-      sendJson(res,200,{ok:true,viagens:viagens.rows.map(v=>linhaCentral(v,publicBase)),bases:bases.rows,motoristas:motoristas.rows,coletas:coletas.rows.map(c=>({...c,origem_sugerida:cidadeUfDoTexto(c.origem),destino_sugerido:cidadeUfDoTexto(c.destino),
-        entregas_extras:(Array.isArray(c.entregas_extras)?c.entregas_extras:[]).map(e=>({destinatario:limpo(e?.destinatario,160),endereco:limpo(e?.endereco_entrega,300),sugerido:cidadeUfDoTexto(e?.endereco_entrega)}))}))})
+      sendJson(res,200,{ok:true,viagens:viagens.rows.map(v=>linhaCentral(v,publicBase)),bases:bases.rows,motoristas:motoristas.rows,coletas:coletas.rows.map(c=>{const ep=c.entrega_principal||{};return{...c,entrega_principal:undefined,origem_sugerida:cidadeUfDoTexto(c.origem),
+        destino_sugerido:cidadeUfInformada(ep)||cidadeUfDoTexto(c.destino),destino_localizacao:limpo(ep.localizacao,300),
+        entregas_extras:(Array.isArray(c.entregas_extras)?c.entregas_extras:[]).map(e=>({destinatario:limpo(e?.destinatario,160),endereco:limpo(e?.endereco_entrega,300),
+          sugerido:cidadeUfInformada(e)||cidadeUfDoTexto(e?.endereco_entrega),localizacao:limpo(e?.localizacao,300)}))}})})
     }catch(e){sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar o rastreio de lotação.'})}
     return true
   }
