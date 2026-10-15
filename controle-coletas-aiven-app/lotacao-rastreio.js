@@ -302,7 +302,7 @@ async function handle(req,res,u,deps){
           COALESCE(to_jsonb(c)->>'status','') AS status,
           COALESCE(to_jsonb(c)->>'data_carregamento',LEFT(COALESCE(to_jsonb(c)->>'created_at',''),10)) AS data
         FROM coletas c
-        WHERE ${user.client_id?'c.client_id=$1':'TRUE'} AND COALESCE(to_jsonb(c)->>'status','') NOT IN ('Entregue','Cancelada')
+        WHERE ${user.client_id?'(c.client_id=$1 OR c.client_id IS NULL)':'TRUE'} AND COALESCE(to_jsonb(c)->>'status','') NOT IN ('Entregue','Cancelada')
         ORDER BY c.id DESC LIMIT 80`,cp).catch(()=>({rows:[]}));
       sendJson(res,200,{ok:true,viagens:viagens.rows.map(v=>linhaCentral(v,publicBase)),bases:bases.rows,motoristas:motoristas.rows,coletas:coletas.rows.map(c=>({...c,origem_sugerida:cidadeUfDoTexto(c.origem),destino_sugerido:cidadeUfDoTexto(c.destino)}))})
     }catch(e){sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar o rastreio de lotação.'})}
