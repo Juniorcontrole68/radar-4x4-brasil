@@ -6013,6 +6013,13 @@ if(u.pathname==='/api/tracking/live'&&req.method==='GET'){try{
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+if(u.pathname==='/api/tracking/device-off'&&req.method==='POST'){try{
+  if(!dashboardHas(authUser,'tracking'))return dashboardDeny(res);
+  const body=await readJsonLimited(req,8*1024);
+  const x=await portalAuth('/api/painel/tracking/device-off',{method:'POST',body,token:authUser.token});
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(x))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/tracking/history-drivers'&&req.method==='GET'){try{
   if(!dashboardHas(authUser,'tracking'))return dashboardDeny(res);
   const date=String(u.searchParams.get('date')||'').trim();

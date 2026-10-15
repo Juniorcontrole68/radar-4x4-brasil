@@ -118,6 +118,31 @@ async function call(method,path,{body,cookie,bearer,headers}={}){
   check('reenvio do mesmo lote não duplica (grava só a posição nova)',r.status===200&&r.json?.saved===1&&r.json?.ignored===3,r.status+' '+r.text.slice(0,160));
   r=await call('POST','/api/tracking/points',{body:{points:[pt(7)]}}); check('lote sem credencial -> 401',r.status===401,'veio '+r.status);
 
+  // Botão do painel: desativar o rastreio de um motorista descarta as posições até reativar.
+  {
+    let lv=await call('GET','/api/tracking/live?light=1',{cookie});
+    const row=(lv.json?.rows||[]).find(x=>x.device_name==='Aparelho de Teste 2');
+    check('painel lista o aparelho com rastreio ligado',!!row&&row.tracking_off===false,lv.status+' '+lv.text.slice(0,160));
+    r=await call('POST','/api/tracking/device-off',{body:{device_id:row&&row.device_id,off:true}});
+    check('desativar rastreio sem login -> recusado',r.status===401||r.status===403,'veio '+r.status);
+    r=await call('POST','/api/tracking/device-off',{cookie,body:{device_id:row&&row.device_id,off:true}});
+    check('desativa o rastreio pelo painel',r.status===200&&r.json?.device?.tracking_off===true&&!!r.json.device.tracking_off_by,r.status+' '+r.text.slice(0,160));
+    r=await call('POST','/api/tracking/points',{bearer:dev2,body:{points:[pt(8),pt(9)]}});
+    check('  ...posições do celular são descartadas (200 para o app esvaziar a fila)',r.status===200&&r.json?.saved===0&&r.json?.tracking_off===true,r.status+' '+r.text.slice(0,160));
+    r=await call('POST','/api/tracking/point',{bearer:dev2,body:pt(10)});
+    check('  ...também a posição avulsa',r.status===200&&r.json?.ignored===true&&r.json?.tracking_off===true,r.status+' '+r.text.slice(0,160));
+    r=await hb(dev2,{app_version:'1.1.0'});
+    check('  ...o aviso de vida continua aceito e informa o rastreio desativado',r.status===200&&r.json?.tracking_off===true,r.status+' '+r.text.slice(0,160));
+    lv=await call('GET','/api/tracking/live?light=1',{cookie});
+    check('  ...e o painel mostra o rastreio desativado',(lv.json?.rows||[]).some(x=>x.device_name==='Aparelho de Teste 2'&&x.tracking_off===true),lv.text.slice(0,160));
+    r=await call('POST','/api/tracking/device-off',{cookie,body:{device_id:row&&row.device_id,off:false}});
+    check('reativa o rastreio',r.status===200&&r.json?.device?.tracking_off===false,r.status+' '+r.text.slice(0,160));
+    r=await call('POST','/api/tracking/points',{bearer:dev2,body:{points:[pt(11)]}});
+    check('  ...e as posições voltam a ser gravadas',r.status===200&&r.json?.saved===1,r.status+' '+r.text.slice(0,160));
+    r=await call('POST','/api/tracking/device-off',{cookie,body:{device_id:'abc',off:true}});
+    check('aparelho inválido -> 400',r.status===400,'veio '+r.status);
+  }
+
   // Aprovado que nunca conectou não aparece mais como "Em rota".
   r=await call('POST','/api/tracking/register-request',{body:{driver_name:'Motorista Fantasma',vehicle_plate:'XYZ9Z99',device_name:'Aparelho Fantasma'}});
   r=await call('GET','/api/painel/tracking/requests',{cookie}); const ghost=r.json?.rows?.find(x=>x.status==='pending'&&x.vehicle_plate==='XYZ9Z99');
