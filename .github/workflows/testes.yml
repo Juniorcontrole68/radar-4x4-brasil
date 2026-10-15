@@ -63,6 +63,7 @@ jobs:
           node --check controle-coletas-aiven-app/movit-guia.js
           node --check controle-coletas-aiven-app/dre.js
           node --check controle-coletas-aiven-app/dashboard/public/dre.js
+          node --check controle-coletas-aiven-app/dashboard/ssw-despesas.js
       - name: Subir o servidor em modo teste
         run: |
           cd controle-coletas-aiven-app
@@ -106,6 +107,7 @@ jobs:
           SSW_INTERNAL_SENHA: senha
           TRACKING_SYNC_SECONDS: '3600'
           LANC_ESTAVEL_SEGUNDOS: '3'
+          DRE_SSW_AUTO: '0'
         run: |
           pkill -f "node server.js" || true
           pkill -f "dashboard/server.js" || true
@@ -125,6 +127,7 @@ jobs:
           node tests/ssw-sessao.js
           node tests/carga.js
           node tests/lancamentos.js
+          node tests/ssw-despesas.js
       - name: Versão de demonstração (cada empresa entra com o próprio SSW; SSW de mentira, sem rede externa)
         env:
           TEST_MODE: '1'

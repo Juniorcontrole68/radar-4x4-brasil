@@ -32,3 +32,9 @@
 .dre-lista .acoes a,.dre-lista .acoes button{font-size:11px;margin-left:4px}
 .dre-hol-head{display:flex;gap:10px;align-items:center;justify-content:space-between}
 @media(max-width:900px){.dre-baixo{grid-template-columns:minmax(0,1fr)}.dre-form{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.dre-tabela th:first-child,.dre-tabela td:first-child{min-width:190px}}
+.dre-ssw-desp{margin-top:14px;min-width:0}
+.dre-ssw-desp select{border:1px solid var(--line);border-radius:7px;padding:5px 6px;font-size:12px;max-width:100%}
+.dre-ssw-desp tr.ign td{color:#94a3b8}
+.dre-ssw-desp .dre-orig{font-size:10px;font-weight:700;color:#b45309}
+.dre-ssw-desp tfoot td{border-top:2px solid #cbd5e1}
+#dreSswDiag{margin-top:10px;font-size:12px}#dreSswDiag textarea{width:100%;font:11px monospace;margin-top:6px}

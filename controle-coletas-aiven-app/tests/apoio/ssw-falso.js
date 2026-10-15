@@ -99,13 +99,37 @@ const PEND={
   CPS:[['CPS000077-3','40201','INDUSTRIA BETA','DEPOSITO NORTE','PAULINIA','10','800,000',HOJE,'0','DISPONIVEL'],['MTZ000502-2','30102','FABRICA ALFA','MERCADO BOM','SUMARE','2','45,000',HOJE,'1','DISPONIVEL']]
 };
 const pendXml=linhas=>'<xml><rs>'+linhas.map(l=>'<r>'+l.map((c,i)=>'<f'+(i>=5?i+1:i)+'>'+c+'</f'+(i>=5?i+1:i)+'>').join('')+'</r>').join('')+'</rs></xml>';
+// ---------------------------------------------------------------- opção 475: programação de despesas (ssw0094)
+// Tela como a do SSW real: inclusão (P1), consulta de um lançamento (P2), listagem por período (P3) e alteração
+// de data de pagamento (P4). Só a listagem pode ser usada; qualquer outra ação conta em despesasProibidas.
+const ent=(n,v='',m=6)=>'<input type="text" name="'+n+'" id="'+n+'" value="'+v+'" maxlength='+m+'>';
+const btn=a=>'<a href="#" onclick="ajaxEnvia(\''+a+'\', 1);return false;">&#9658;</a><a href="#" onclick="btnClose();return false;">&times;</a>';
+const D6=new Date().toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit',year:'2-digit'}).replace(/\//g,'');
+const FORM475='<html><head><title>475 - Programa&ccedil;&atilde;o de Despesas</title></head><body><form><input type="hidden" name="act" value=""><input type="hidden" name="web_sess" value="abc">'+
+  '<div class=texto>Unidade:</div>'+ent('f1','AMR',3)+'<div class=texto>Chave NF-e/CT-e, CNPJ/CPF:</div>'+ent('f2','',44)+'<div class=texto>Evento:</div>'+ent('f3','',4)+btn('P1')+
+  '<a href="#" onclick="ajaxEnvia(\'DIS\', 1);return false;">Dispon&iacute;veis para programa&ccedil;&atilde;o</a>'+
+  '<div class=texto>Unidade:</div>'+ent('f4','AMR',3)+'<div class=texto>N&deg; do lan&ccedil;amento C. Pagar:</div>'+ent('f5','',8)+btn('P2')+
+  '<div class=texto>Unidade:</div>'+ent('f6','AMR',3)+'<div class=texto>Per&iacute;odo de pagamento (opc):</div>'+ent('f7',D6)+ent('f8',D6)+'<div class=texto>Per&iacute;odo de inclus&atilde;o (opc):</div>'+ent('f9')+ent('f10')+
+  '<div class=texto>CNPJ do fornecedor (opc):</div>'+ent('f11','',14)+'<div class=texto>Situa&ccedil;&atilde;o:</div>'+ent('f12','T',1)+'<div class=texto>Listar em:</div>'+ent('f13','V',1)+btn('P3')+
+  '<div class=texto>Unidade:</div>'+ent('f14','AMR',3)+'<div class=texto>Per&iacute;odo de pagamento:</div>'+ent('f15',D6)+ent('f16',D6)+'<div class=texto>CNPJ do fornecedor (opc):</div>'+ent('f17','',14)+btn('P4')+
+  '</form></body></html>';
+const DESPESAS475=[
+  ['104512','AMR','0420 - COMBUSTIVEL','POSTO ESTRELA LTDA','01/10/26','05/10/26','1.250,40','LIQUIDADA'],
+  ['104513','AMR','0420 - COMBUSTIVEL','POSTO ESTRELA LTDA','02/10/26','12/10/26','980,00','A VENCER'],
+  ['104520','AMR','0310 - PEDAGIO','SEM PARAR INSTITUICAO DE PAGAMENTO','03/10/26','10/10/26','412,75','LIQUIDADA'],
+  ['104530','AMR','0101 - SALARIOS','FOLHA DE PAGAMENTO','05/10/26','05/10/26','25.000,00','LIQUIDADA'],
+  ['104541','AMR','0777 - MATERIAL DE ESCRITORIO','PAPELARIA CENTRAL','06/10/26','20/10/26','89,90','A VENCER']
+];
+const lista475=()=>'<html><body><table><tr><th>Lan&ccedil;amento</th><th>Unid</th><th>Evento</th><th>Fornecedor</th><th>Inclus&atilde;o</th><th>Pagamento</th><th>Valor</th><th>Situa&ccedil;&atilde;o</th></tr>'+
+  DESPESAS475.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'<tr><td colspan=6>Total geral</td><td>27.733,05</td><td></td></tr></table></body></html>';
+let despesasProibidas=0,ultimaListagem=null;
 const semCte='<html><body><form><input type="hidden" name="act" value=""></form><div class=texto>CTRC n&atilde;o encontrado.</div></body></html>';
 http.createServer(async(req,res)=>{
   const u=new URL(req.url,'http://x');paths[req.method+' '+u.pathname]=(paths[req.method+' '+u.pathname]||0)+1;
   let body='';for await(const c of req)body+=c;
   const tok=(String(req.headers.cookie||'').match(/(?:^|;\s*)token=([^;]+)/)||[])[1]||'';
   const send=(code,txt,h={})=>{res.writeHead(code,{'Content-Type':'text/html; charset=utf-8',...h});res.end(txt)};
-  if(u.pathname==='/__mock/stats')return send(200,JSON.stringify({logins,recusados,activeTokens:tokens.size,paths,ultimoLogin,porDominio}),{'Content-Type':'application/json'});
+  if(u.pathname==='/__mock/stats')return send(200,JSON.stringify({logins,recusados,activeTokens:tokens.size,paths,ultimoLogin,porDominio,despesasProibidas,ultimaListagem}),{'Content-Type':'application/json'});
   if(u.pathname==='/__mock/expire'){tokens.clear();return send(200,'{}')}
   // /__mock/cte?nro=15326&sit=09/10/26 15:20 01-MERCADORIA ENTREGUE  muda a situação atual do CT-e (sit vazio volta ao normal)
   if(u.pathname==='/__mock/cte'){
@@ -113,6 +137,12 @@ http.createServer(async(req,res)=>{
     if(!c)return send(404,'{}');
     c.sit=u.searchParams.get('sit')||'';
     return send(200,JSON.stringify({sit:c.sit}),{'Content-Type':'application/json'})
+  }
+  // /__mock/despesa?lanc=104513&sit=LIQUIDADA  muda a situação de uma despesa da 475 (como depois de liquidar na 476)
+  if(u.pathname==='/__mock/despesa'){
+    const l=DESPESAS475.find(r=>r[0]===u.searchParams.get('lanc'));
+    if(!l)return send(404,'{}');
+    l[7]=u.searchParams.get('sit')||'';return send(200,JSON.stringify({lanc:l[0],sit:l[7]}),{'Content-Type':'application/json'})
   }
   if(u.pathname==='/__mock/romaneio'){
     const linha=[...DATA.AMR,...DATA.TBT].find(r=>r[0]===u.searchParams.get('rom'));
@@ -159,6 +189,13 @@ http.createServer(async(req,res)=>{
     const nro=Number((String(u.searchParams.get('filename')||'').match(/66480000(\d+)\.zip$/)||[])[1]),c=CTES[nro];
     if(!c)return send(404,'');
     res.writeHead(200,{'Content-Type':'application/ssw'});return res.end(zipDe(chaveDe(c)+'-cte.xml',xmlDe(c)))
+  }
+  if(u.pathname==='/bin/menu01'&&u.searchParams.get('f3')==='475')return send(200,'<script>location="ssw0094"</script>');
+  if(u.pathname==='/bin/ssw0094'&&req.method==='GET')return send(200,FORM475);
+  if(u.pathname==='/bin/ssw0094'&&req.method==='POST'){
+    const p=new URLSearchParams(body);
+    if(p.get('act')!=='P3'){despesasProibidas++;return send(200,'<html><body>A&ccedil;&atilde;o n&atilde;o permitida no teste</body></html>')}
+    ultimaListagem=Object.fromEntries(p);return send(200,lista475())
   }
   if(u.pathname==='/bin/menu01'){st.unit=u.searchParams.get('f2');await sleep(150);return send(200,'<script>location="ssw0198"</script>')}
   if(u.pathname==='/bin/ssw0198'&&u.searchParams.get('act')==='ENV_ROM_COMPROV')return send(200,telaComprov(Number(u.searchParams.get('seq_romaneio'))));

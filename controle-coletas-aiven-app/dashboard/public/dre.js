@@ -1,4 +1,5 @@
-// Despesas (DRE) do Financeiro: demonstrativo do ano, lançamentos do mês e holerites em PDF da conta Salários.
+// Despesas (DRE) do Financeiro: demonstrativo do ano, lançamentos do mês, holerites em PDF da conta Salários
+// e despesas lidas da opção 475 do SSW.
 // Servidor: dre.js (rotas /api/dre*).
 (()=>{
 const q=(s,r=document)=>r.querySelector(s);
@@ -59,6 +60,7 @@ async function carregarMes(){
   q('#dreLanc').innerHTML=j.lancamentos.length?'<table><thead><tr><th>Conta</th><th>Descrição</th><th class="n">Valor</th><th></th></tr></thead><tbody>'+j.lancamentos.map(l=>'<tr><td>'+esc(nomeConta(l.conta))+'</td><td>'+esc(l.descricao||'—')+' <span class="muted">'+esc(ORIGEM[l.origem]||l.origem)+(l.criado_por?' • '+esc(l.criado_por):'')+'</span></td><td class="n">'+reais(l.valor)+'</td><td class="acoes"><button class="dre-mini" type="button" data-dre-apagar="'+esc(l.id)+'">Apagar</button></td></tr>').join('')+'</tbody></table>':'<div class="muted">Nenhum lançamento neste mês.</div>';
   const H=j.holerites;
   const tot=k=>H.reduce((a,h)=>a+Number(h[k]||0),0);
+  renderSswDespesas(j.sswDespesas||[]);
   q('#dreHol').innerHTML=H.length?'<table><thead><tr><th>Funcionário</th><th class="n">Vencimentos</th><th class="n">Descontos</th><th class="n">Líquido</th><th class="n">FGTS</th><th></th></tr></thead><tbody>'+H.map(h=>'<tr data-dre-holerite="'+esc(h.id)+'"><td><input class="nome" data-no-titlecase="true" data-campo="funcionario" value="'+esc(h.funcionario)+'" placeholder="Nome"><div class="muted">'+esc(h.cargo||'')+(h.competencia_pdf&&h.competencia_pdf!==h.competencia?' • <b style="color:#b45309">PDF de '+esc(h.competencia_pdf.split('-').reverse().join('/'))+'</b>':'')+'</div></td>'+['vencimentos','descontos','liquido','fgts'].map(k=>'<td class="n"><input data-no-titlecase="true" data-campo="'+k+'" inputmode="decimal" value="'+esc(num(h[k]))+'"></td>').join('')+'<td class="acoes"><a href="/api/dre/holerites/'+encodeURIComponent(h.id)+'/pdf" target="_blank" rel="noopener">PDF</a><button class="dre-mini" type="button" data-dre-hol-apagar="'+esc(h.id)+'">Apagar</button></td></tr>').join('')+'</tbody><tfoot><tr><th>'+H.length+' holerite(s)</th><th class="n">'+reais(tot('vencimentos'))+'</th><th class="n">'+reais(tot('descontos'))+'</th><th class="n">'+reais(tot('liquido'))+'</th><th class="n">'+reais(tot('fgts'))+'</th><th></th></tr></tfoot></table>':'<div class="muted">Nenhum holerite enviado neste mês.</div>'
 }
 async function recarregar(){await Promise.all([carregarAno(),carregarMes()])}
@@ -83,6 +85,33 @@ async function puxarSsw(){
     await api('/api/dre/ssw',{method:'POST',body:JSON.stringify({competencia:c,valor:v,descricao:'CT-es emitidos no SSW ('+(j.totalRegistros||0)+')'})});
     msg('Receita de fretes de '+MESES_LONGOS[m-1]+' lida do SSW: '+reais(v)+'.','ok');await recarregar()
   }catch(e){msg(e.message,'err')}finally{b.disabled=false}
+}
+// despesas da opção 475: o painel lê do SSW (só consulta) e a DRE guarda por mês e evento
+function opcoesConta(sel){
+  return'<option value="ignorar"'+(sel==='ignorar'?' selected':'')+'>Não entra na DRE</option>'+(dre?.plano||[]).filter(g=>g.contas).map(g=>'<optgroup label="'+esc(g.nome)+'">'+g.contas.map(c=>'<option value="'+esc(c.id)+'"'+(c.id===sel?' selected':'')+'>'+esc(c.nome)+'</option>').join('')+'</optgroup>').join('')
+}
+function renderSswDespesas(ev){
+  const el=q('#dreSswLista');
+  if(!ev.length){el.innerHTML='<div class="muted">Nenhuma despesa do SSW neste mês. Use "Puxar despesas do SSW (475)".</div>';return}
+  const tot=ev.reduce((a,x)=>a+(x.conta==='ignorar'?0:x.valor),0);
+  el.innerHTML='<table><thead><tr><th>Evento no SSW</th><th class="n">Lançamentos</th><th class="n">Valor</th><th>Conta na DRE</th></tr></thead><tbody>'+ev.map(x=>'<tr class="'+(x.conta==='ignorar'?'ign':'')+'"><td>'+esc(x.evento||'(sem evento)')+'</td><td class="n">'+x.n+'</td><td class="n">'+reais(x.valor)+'</td><td><select data-dre-evento="'+esc(x.evento_chave)+'">'+opcoesConta(x.conta)+'</select>'+(x.escolhida?'':' <span class="dre-orig" title="Conta sugerida pelo nome do evento">sugerida</span>')+'</td></tr>').join('')+'</tbody><tfoot><tr><td><b>Entra na DRE</b></td><td></td><td class="n"><b>'+reais(tot)+'</b></td><td></td></tr></tfoot></table>'
+}
+function mostrarDiag(d){const det=q('#dreSswDiag');if(!d){det.hidden=true;return}det.hidden=false;det.querySelector('textarea').value=JSON.stringify(d,null,1)}
+async function puxarDespesasSsw(){
+  const b=q('#dreSswDesp'),c=competencia(),[y,m]=c.split('-').map(Number);
+  const fim=new Date(Date.UTC(y,m,0)).toISOString().slice(0,10);
+  b.disabled=true;mostrarDiag(null);msg('Lendo as despesas de '+MESES_LONGOS[m-1]+' na opção 475 do SSW… (pode levar alguns segundos)');
+  try{
+    const r=await fetch('/api/ssw/despesas475?from='+c+'-01&to='+fim,{cache:'no-store'}),j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok){mostrarDiag(j.diag||null);throw new Error(j.error||'O SSW não devolveu as despesas do mês.')}
+    if(!j.despesas.length){mostrarDiag(j.diag);throw new Error('A opção 475 não trouxe despesas com pagamento em '+MESES_LONGOS[m-1]+'. Se no SSW tem, abra "Detalhes da leitura do SSW" abaixo e mande para o suporte.')}
+    const s=await api('/api/dre/ssw-despesas',{method:'POST',body:JSON.stringify({competencia:c,despesas:j.despesas})});
+    msg(s.despesas+' despesa(s) de '+MESES_LONGOS[m-1]+' lidas do SSW: '+reais(s.total)+'. Confira a conta de cada evento abaixo.','ok');await recarregar()
+  }catch(e){msg(e.message,'err')}finally{b.disabled=false}
+}
+async function mudarContaEvento(sel){
+  try{await api('/api/dre/ssw-eventos',{method:'PUT',body:JSON.stringify({evento_chave:sel.dataset.dreEvento,conta:sel.value})});msg('Conta do evento salva. Vale também para os próximos meses.','ok');await recarregar()}
+  catch(e){msg(e.message,'err')}
 }
 const lerArquivo=f=>new Promise((ok,erro)=>{const r=new FileReader();r.onload=()=>ok(String(r.result));r.onerror=()=>erro(new Error('Não consegui abrir '+f.name));r.readAsDataURL(f)});
 async function enviarHolerites(files){
@@ -117,6 +146,8 @@ function setup(){
   q('#dreMes').onchange=()=>{renderTabela();carregarMes()};
   q('#dreForm').onsubmit=lancar;
   q('#dreSsw').onclick=puxarSsw;
+  q('#dreSswDesp').onclick=puxarDespesasSsw;
+  q('#dreSswLista').onchange=e=>{if(e.target.dataset.dreEvento)mudarContaEvento(e.target)};
   q('#dreHolBtn').onclick=()=>q('#dreHolFile').click();
   q('#dreHolFile').onchange=e=>enviarHolerites(e.target.files);
   q('#dreTabela').onclick=e=>{
