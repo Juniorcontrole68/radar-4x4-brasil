@@ -232,6 +232,10 @@ try{
         let dadosCache=[];
 
         async function carregarDados(){
+          // A tela já tem a lista em memória (variável coletas, recarregada após cada gravação):
+          // reaproveitar evita baixar a lista inteira de novo a cada atualização da tabela.
+          const memoria=(typeof coletas!=='undefined'&&Array.isArray(coletas)&&coletas.length)?coletas:null;
+          if(memoria){dadosCache=memoria;return dadosCache}
           try{
             const r=await originalFetch('/coletas/api/coletas',{cache:'no-store'});
             if(r.ok) dadosCache=await r.json();
@@ -760,8 +764,8 @@ try{
         }
         async function refreshHistorySelectors(){
           ensureFields();
-          let rows=[];
-          try{
+          let rows=(typeof coletas!=='undefined'&&Array.isArray(coletas)&&coletas.length)?coletas:null||[];
+          if(!rows.length)try{
             const r=await docBaseFetch('/coletas/api/coletas',{cache:'no-store'});
             if(r.ok)rows=await r.json()
           }catch{}
@@ -1420,7 +1424,7 @@ try{
             return
           }
           try{
-            const r=await docBaseFetch('/coletas/api/coletas',{cache:'no-store'}),rows=await r.json();
+            const rows=(typeof coletas!=='undefined'&&Array.isArray(coletas)&&coletas.length)?coletas:null||await (await docBaseFetch('/coletas/api/coletas',{cache:'no-store'})).json();
             const co=(Array.isArray(rows)?rows:[]).find(x=>String(x.id)===id);
             if(co){
               if(byId('placa_carreta'))byId('placa_carreta').value=String(co.placa_carreta||'').toUpperCase();
@@ -1463,6 +1467,14 @@ try{
       if(bodyClose>=0){
         html=html.slice(0,bodyClose)+recebimentoAddon+documentoAddon+html.slice(bodyClose);
       }
+    }
+
+    // Lotação: vários destinatários, dados bancários / Pix do motorista, formulário compacto,
+    // caminhão puxado pelo motorista e exportação da ordem de coleta completa.
+    if(!html.includes('lotacao-complementos-addon')){
+      const complementos=require('fs').readFileSync(require('path').join(__dirname,'coletas-complementos.html'),'utf8');
+      const fim=html.lastIndexOf('</body>');
+      if(fim>=0)html=html.slice(0,fim)+complementos+html.slice(fim);
     }
 
     const newFront=zlib.gzipSync(Buffer.from(html,'utf8')).toString('base64');
