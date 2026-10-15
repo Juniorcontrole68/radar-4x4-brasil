@@ -59,6 +59,7 @@ jobs:
           node --check controle-coletas-aiven-app/roteirizador-cargas.js
           node --check controle-coletas-aiven-app/lotacao-rastreio.js
           node --check controle-coletas-aiven-app/compressao.js
+          node --check controle-coletas-aiven-app/movit-demo.js
       - name: Subir o servidor em modo teste
         run: |
           cd controle-coletas-aiven-app
@@ -116,6 +117,30 @@ jobs:
           node tests/ssw-sessao.js
           node tests/carga.js
           node tests/lancamentos.js
+      - name: Versão de demonstração (cada empresa entra com o próprio SSW; SSW de mentira, sem rede externa)
+        env:
+          TEST_MODE: '1'
+          DATABASE_URL: postgresql://teste:teste@127.0.0.1:5432/movit_demo_teste
+          MOVIT_DEMO: '1'
+          MOVIT_CHAVE_SSW: chave-de-teste-com-mais-de-32-caracteres
+        run: |
+          pkill -f "node server.js" || true
+          pkill -f "dashboard/server.js" || true
+          for i in $(seq 1 20); do
+            if ! curl -s -o /dev/null http://127.0.0.1:10000/ && ! curl -s -o /dev/null http://127.0.0.1:10001/health; then break; fi
+            sleep 1
+          done
+          cd controle-coletas-aiven-app
+          node -e "const {Client}=require('pg');const c=new Client({connectionString:'postgresql://teste:teste@127.0.0.1:5432/construlog_teste'});c.connect().then(()=>c.query('CREATE DATABASE movit_demo_teste')).then(()=>c.end())"
+          curl -fs -o /dev/null http://127.0.0.1:10555/__mock/stats || (nohup node tests/apoio/ssw-falso.js > ../ssw-falso-demo.log 2>&1 &)
+          export NODE_OPTIONS="--require $PWD/tests/apoio/sem-rede.js --require $PWD/tests/apoio/ssw-desvio.js"
+          nohup node server.js > ../servidor-demo.log 2>&1 &
+          unset NODE_OPTIONS
+          for i in $(seq 1 60); do
+            sleep 1
+            if curl -fs -o /dev/null http://127.0.0.1:10001/health && curl -fs -o /dev/null http://127.0.0.1:10000/demo; then echo "no ar em ${i}s"; break; fi
+          done
+          node tests/movit-demo.js
       - name: Log do servidor
         if: always()
-        run: cat servidor.log || true; echo ----; cat servidor-ssw.log || true
+        run: cat servidor.log || true; echo ----; cat servidor-ssw.log || true; echo ----; cat servidor-demo.log || true

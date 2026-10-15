@@ -168,6 +168,8 @@ function licensed(key){
 }
 function moduleAllowed(mod){
   if(!AUTH)return false;
+  // cliente da versão de demonstração (entrou com o SSW): só as telas que o servidor liberou
+  if(AUTH.demo)return (AUTH.demo_telas||[]).includes(mod)&&(mod!=='usuarios'||!!AUTH.is_admin);
   // empresas fora da CONSTRULOG (demonstração e teste grátis) só enxergam o que já separa dados por empresa
   if(AUTH.sandbox){if(mod==='roteirizador-cargas')return licensed('roteirizador');if(mod==='usuarios')return licensed('usuarios')&&!!AUTH.is_admin&&String(AUTH.client?.slug||'')!=='demo';return false}
   if(mod==='movit-central')return !!AUTH.is_platform_admin;
@@ -197,9 +199,15 @@ function applyModulePermissions(){
   const lotacaoOk=moduleAllowed('coletas')||moduleAllowed('financeiro-lotacao');
   const operacaoMods=['dashboard','agendamento-teste','programacao','lancamentos','carga','roteirizador-cargas','tracking'];
   document.querySelector('.group-card[data-group="lotacao"]')?.style.setProperty('display',lotacaoOk?'flex':'none');
-  document.querySelector('.group-card[data-group="operacao"]')?.style.setProperty('display',(licensed('operacao')||AUTH?.sandbox)&&operacaoMods.some(moduleAllowed)?'flex':'none');
+  document.querySelector('.group-card[data-group="operacao"]')?.style.setProperty('display',(licensed('operacao')||AUTH?.sandbox||AUTH?.demo)&&operacaoMods.some(moduleAllowed)?'flex':'none');
   document.querySelector('.group-card[data-group="financeiro"]')?.style.setProperty('display',['fin-op','receita-ssw','remetentes','faturas'].some(moduleAllowed)?'flex':'none');
   const company=AUTH?.client?.name?(' • '+AUTH.client.name):'';
+  if(AUTH?.demo){
+    // Versão de demonstração: marca MOVIT no lugar da CONSTRULOG
+    const bs=document.querySelector('.brand strong'),bi=document.querySelector('.brand img');
+    if(bs)bs.textContent='MOVIT';if(bi)bi.style.display='none';
+    document.title='Torre de Controle MOVIT';
+  }
   document.getElementById('sessionUser').textContent=AUTH?(AUTH.username+company+(AUTH.is_admin?' • Administrador':'')):'';
   const alert=document.getElementById('licenseAlert');
   if(alert){
@@ -704,8 +712,9 @@ async function bootstrapAuth(){
   document.getElementById('authGate').classList.remove('hide')
 }
 document.getElementById('logoutBtn').addEventListener('click',async()=>{
+  const demo=!!AUTH?.demo;
   try{await fetch('/api/auth/logout',{method:'POST'})}catch{}
-  location.reload()
+  if(demo)location.href='/demo';else location.reload()
 });
 window.addEventListener('hashchange',()=>{
   if(!AUTH)return;

@@ -4,7 +4,11 @@ const PORT=process.env.PORT||3000;
 // Modo teste: TEST_MODE=1 desliga sondas, rotinas e a planilha real.
 const TEST_MODE=/^(1|true|sim|yes)$/i.test(String(process.env.TEST_MODE||'').trim());
 // No modo teste a planilha só é lida se SPREADSHEET_ID for informado (cópia com dados fictícios).
-const ID=String(process.env.SPREADSHEET_ID||'').trim()||(TEST_MODE?'':'1miU5AW514LbRk5UsXYsVgXL1JTj_ZJgafRmBDF-tzWU');
+// Versão de demonstração (MOVIT_DEMO=1) e processo de uma empresa da demo (MOVIT_CLIENTE_ID): nunca
+// leem a planilha da CONSTRULOG e não rodam as rotinas de fundo (cada empresa só lê o SSW quando usa).
+const DEMO_MODE=/^(1|true|sim|yes)$/i.test(String(process.env.MOVIT_DEMO||'').trim())||/^\d+$/.test(String(process.env.MOVIT_CLIENTE_ID||''));
+const SEM_ROTINAS=TEST_MODE||DEMO_MODE;
+const ID=String(process.env.SPREADSHEET_ID||'').trim()||(SEM_ROTINAS?'':'1miU5AW514LbRk5UsXYsVgXL1JTj_ZJgafRmBDF-tzWU');
 // Chave das chamadas servidor-a-servidor, entregue pelo server.js ao iniciar este processo.
 const INTERNAL_KEY=String(process.env.DASH_INTERNAL_KEY||'');
 function internalHeaders(extra={}){
@@ -5537,9 +5541,9 @@ async function lancManutencao(force=false){
     }
   }
 }
-if(!TEST_MODE)setInterval(()=>{lancManutencao().catch(e=>console.log('LANCAMENTOS manutenção ERRO: '+String(e?.message||e)))},10*60*1000).unref();
+if(!SEM_ROTINAS)setInterval(()=>{lancManutencao().catch(e=>console.log('LANCAMENTOS manutenção ERRO: '+String(e?.message||e)))},10*60*1000).unref();
 // Romaneios novos e baixas: a cada 5 minutos, das 5h às 21h (fora disso, só quando alguém abre a tela).
-if(!TEST_MODE)setInterval(()=>{const h=Number(new Date().toLocaleString('en-GB',{timeZone:'America/Sao_Paulo',hour:'2-digit',hour12:false}));if(h>=5&&h<21)lancSincronizarRomaneios()},5*60*1000).unref();
+if(!SEM_ROTINAS)setInterval(()=>{const h=Number(new Date().toLocaleString('en-GB',{timeZone:'America/Sao_Paulo',hour:'2-digit',hour12:false}));if(h>=5&&h<21)lancSincronizarRomaneios()},5*60*1000).unref();
 
 async function buildRoteirizadorLista(date){
   let romRows=[],operation=null;
@@ -5678,7 +5682,7 @@ function syncTrackingAssignments(clean,date){
 const TRACKING_SYNC_SECONDS=Math.max(60,Number(process.env.TRACKING_SYNC_SECONDS||180)||180);
 let TRACKING_SYNC_LAST={at:null,ok:null,error:'',rows:0};
 async function trackingSyncTick(){
-  if(TEST_MODE||!INTERNAL_KEY||!internalSswConfigured())return;
+  if(SEM_ROTINAS||!INTERNAL_KEY||!internalSswConfigured())return;
   const hour=Number(new Intl.DateTimeFormat('en-GB',{timeZone:'America/Sao_Paulo',hour:'2-digit',hourCycle:'h23'}).format(new Date()));
   if(hour<5||hour>=22)return; // fora do horário de operação não consulta o SSW
   const date=spDateISO();
@@ -6410,6 +6414,15 @@ if(u.pathname==='/api/ssw/diagnostico-cte'&&req.method==='GET'){
     return res.end(page('Erro ao consultar o SSW','<div class="muted">'+esc(String(e?.message||e))+'</div>'))
   }
 }
+if(u.pathname==='/api/ssw/conexao'&&req.method==='GET'){
+  // Confere se o login interno do SSW deste processo funciona (na demo: o login da própria empresa).
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  if(!internalSswConfigured())return res.end(JSON.stringify({ok:true,conectado:false,error:'Login do SSW não configurado.'}));
+  try{
+    await withSswSession('conexao',async()=>true);
+    return res.end(JSON.stringify({ok:true,conectado:true,dominio:process.env.SSW_INTERNAL_DOMINIO||'',usuario:process.env.SSW_INTERNAL_USUARIO||''}))
+  }catch(e){return res.end(JSON.stringify({ok:true,conectado:false,error:String(e.message||e)}))}
+}
 if(u.pathname==='/api/ssw/sessoes'&&req.method==='GET'){
   // Contador de logins no SSW desde a última inicialização (só administrador).
   if(!authUser.is_admin)return dashboardDeny(res);
@@ -6719,6 +6732,7 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
 let p=u.pathname==='/'?'index.html':u.pathname.slice(1);p=path.normalize(path.join(PUB,p));if(!p.startsWith(PUB)){res.writeHead(403);return res.end()}fs.readFile(p,(e,d)=>{if(e){res.writeHead(404);return res.end('Not found')}const ext=path.extname(p).toLowerCase();res.writeHead(200,{'Content-Type':STATIC_TYPES[ext]||'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate','Pragma':'no-cache','Expires':'0'});res.end(d)})}catch(e){res.writeHead(500);res.end(e.message)}}).listen(PORT,'0.0.0.0',()=>{
   console.log('CONSTRULOG em '+PORT+(TEST_MODE?' *** AMBIENTE DE TESTE ***':''));
   if(TEST_MODE){console.log('TEST_MODE: sondas de inicialização, monitores BI2 e rotina de GPS desativados.');return}
+  if(DEMO_MODE){console.log('MOVIT_DEMO: sondas de inicialização, monitores BI2 e rotina de GPS desativados.');return}
   setInterval(()=>{trackingSyncTick()},TRACKING_SYNC_SECONDS*1000);
   setInterval(()=>{if(SSW_LOGIN_STATS.logins||SSW_LOGIN_STATS.reused)console.log('SSW SESSOES: '+JSON.stringify(SSW_LOGIN_STATS))},30*60*1000);
   probeSswAbrirScripts().then(x=>console.log('SSW abrir probe isolado: '+JSON.stringify(x))).catch(()=>{});

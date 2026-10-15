@@ -30,6 +30,7 @@ const lancamentos = require('./lancamentos');
 const roteirizadorCargas = require('./roteirizador-cargas');
 const { economizarBanda } = require('./compressao');
 const lotacaoRastreio = require('./lotacao-rastreio');
+const movitDemo = require('./movit-demo');
 const { handler } = require('../contas-a-pagar-v3/src/handler');
 
 const PORT = process.env.PORT || 10000;
@@ -61,6 +62,13 @@ if (TEST_MODE) {
     process.exit(1);
   }
   console.log('*** AMBIENTE DE TESTE (TEST_MODE) *** banco: ' + dbName);
+}
+// Versão de demonstração para outras transportadoras (serviço separado, MOVIT_DEMO=1): ver movit-demo.js.
+const DEMO_PAGE = path.join(__dirname, 'demo-entrar.html');
+if (movitDemo.ATIVA) {
+  try { movitDemo.decifrar(movitDemo.cifrar('teste')); }
+  catch (e) { console.error('MOVIT_DEMO ativo, mas a chave da senha do SSW falhou: ' + e.message + ' Inicialização recusada.'); process.exit(1); }
+  console.log('*** VERSÃO DE DEMONSTRAÇÃO (MOVIT_DEMO) *** clientes entram com o login do SSW deles');
 }
 
 // Chave interna, nova a cada inicialização, conhecida só por este processo e pelo
@@ -859,7 +867,7 @@ const FROTA_SEM_ACESSO='Seu usuário não tem acesso ao módulo Frota. Peça a l
 const SANDBOX_PERMS=new Set(['roteirizador']);
 const DEMO_RATE=new Map();
 const SANDBOX_API=[/^\/api\/rc\//,/^\/api\/rc$/,/^\/api\/auth\//,/^\/api\/painel\/auth\//];
-function tenantSandbox(user){return !!(user&&!user.internal&&!user.is_platform_admin&&user.client&&String(user.client.slug||'').toLowerCase()!=='construlog')}
+function tenantSandbox(user){return !!(user&&!user.internal&&!user.is_platform_admin&&user.client&&String(user.client.slug||'').toLowerCase()!=='construlog'&&!movitDemo.clienteDemo(user))}
 function clienteBloqueado(user){
   if(!user||user.is_platform_admin||!user.client)return '';
   const c=user.client;
@@ -906,6 +914,7 @@ function zipCriar(files){
   return Buffer.concat([...locais,cd,e]);
 }
 function dashboardHas(user,perm){
+  if(movitDemo.clienteDemo(user))return movitDemo.permsLiberadas(user).has(perm);
   if(tenantSandbox(user)&&!SANDBOX_PERMS.has(perm))return false;
   return !!(user&&(user.is_admin||user.permissions?.includes('*')||user.permissions?.includes(perm)))
 }
@@ -917,6 +926,7 @@ async function dashboardUserContext(row){
       client=cq.rows[0];
       const mq=await pool.query("SELECT module_key FROM movit_client_modules WHERE client_id=$1 AND enabled=TRUE ORDER BY module_key",[row.client_id]);
       clientModules=mq.rows.map(x=>String(x.module_key));
+      if(movitDemo.ATIVA)client.ssw=!!(await pool.query('SELECT 1 FROM movit_client_ssw WHERE client_id=$1',[row.client_id])).rowCount;
     }
   }
   const ctx={
@@ -927,6 +937,8 @@ async function dashboardUserContext(row){
     client,
     client_modules:clientModules
   };
+  // Cliente da demo: o painel só mostra os módulos contratados que já funcionam separados por empresa.
+  if(movitDemo.clienteDemo(ctx)){ctx.client_modules=movitDemo.modulosLiberados(ctx);ctx.demo=true;ctx.demo_telas=movitDemo.telasLiberadas(ctx)}
   ctx.sandbox=tenantSandbox(ctx);
   return ctx;
 }
@@ -937,7 +949,7 @@ async function grupoDoCliente(admin,v){
   const r=await pool.query('SELECT id FROM dashboard_groups WHERE id=$1 AND client_id IS NOT DISTINCT FROM $2',[String(v),admin.client_id||null]);
   return r.rowCount?String(v):false;
 }
-async function dashboardSession(req, adminOnly=false) {
+async function dashboardSession(req, adminOnly=false, {checarRota=true}={}) {
   const token=dashboardBearer(req);
   if(!token){const e=new Error('Sessão não informada.');e.status=401;throw e}
   const r=await pool.query("SELECT u.id::text AS id,u.username,u.is_admin,u.active,(COALESCE(u.permissions,'[]'::jsonb) || COALESCE((SELECT g.permissions FROM dashboard_groups g WHERE g.id=u.group_id),'[]'::jsonb)) AS permissions,u.client_id,u.is_platform_admin FROM dashboard_sessions s JOIN dashboard_users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>NOW() AND u.active=TRUE LIMIT 1",[dashboardTokenHash(token)]);
@@ -947,7 +959,8 @@ async function dashboardSession(req, adminOnly=false) {
   const ctx=await dashboardUserContext(row);
   const bloq=clienteBloqueado(ctx);if(bloq){const e=new Error(bloq);e.status=402;throw e}
   const pth=String(req.url||'').split('?')[0];
-  if(tenantSandbox(ctx)&&pth.startsWith('/api/')&&!SANDBOX_API.some(re=>re.test(pth))){const e=new Error('Este módulo fica disponível na versão contratada.');e.status=403;throw e}
+  if(checarRota&&tenantSandbox(ctx)&&pth.startsWith('/api/')&&!SANDBOX_API.some(re=>re.test(pth))){const e=new Error('Este módulo fica disponível na versão contratada.');e.status=403;throw e}
+  if(checarRota&&movitDemo.clienteDemo(ctx)&&/^\/(coletas\/)?api\//.test(pth)&&!movitDemo.rotaLiberada(ctx,pth,'painel')){const e=new Error('Este módulo ainda não está liberado na demonstração.');e.status=403;throw e}
   ctx.sandbox=tenantSandbox(ctx);
   return ctx;
 }
@@ -962,6 +975,93 @@ function isInternalCall(req){
 async function sessionOrInternal(req){
   if(isInternalCall(req))return {id:null,username:'(dashboard interno)',is_admin:true,active:true,permissions:['*'],client_id:null,is_platform_admin:false,client:null,client_modules:[],internal:true};
   return dashboardSession(req,false);
+}
+// ---------------------------------------------------------------- versão de demonstração (MOVIT_DEMO=1)
+// APIs do dashboard pedidas por um cliente da demo vão para o processo de leitura do SSW da
+// empresa dele, que entra no SSW com o login da própria empresa. Devolve true quando respondeu.
+async function demoRepassarApi(req,res,u){
+  if(!dashboardBearer(req))return false;
+  let user;
+  try{user=await dashboardSession(req,false,{checarRota:false})}catch{return false}
+  if(!movitDemo.clienteDemo(user))return false;
+  if(!movitDemo.rotaLiberada(user,u.pathname,'ssw')){sendJson(res,403,{ok:false,error:'Este módulo ainda não está liberado na demonstração.'});return true}
+  try{
+    const p=await movitDemo.processoDaEmpresa(pool,user.client_id,'http://127.0.0.1:'+PORT);
+    movitDemo.repassar(req,res,p.porta,u.pathname+(u.search||''));
+  }catch(e){sendJson(res,e.status||502,{ok:false,error:e.message||'Leitura do SSW da empresa indisponível.'})}
+  return true;
+}
+const DEMO_ENTRADAS=new Map();
+async function demoRotas(req,res,u){
+  // Sem sessão, a página inicial da demo é a entrada com o SSW. "/?login=1" continua abrindo o
+  // login normal (administração MOVIT).
+  if(req.method==='GET'&&(u.pathname==='/'||u.pathname==='/painel')&&!u.searchParams.has('login')){
+    let logado=false;
+    if(dashboardBearer(req))try{await dashboardSession(req,false,{checarRota:false});logado=true}catch{}
+    if(!logado){res.writeHead(302,{Location:'/demo','Cache-Control':'no-store'});res.end();return true}
+  }
+  if(req.method==='GET'&&(u.pathname==='/demo'||u.pathname==='/demo/')){sendHtml(res,DEMO_PAGE);return true}
+  if(req.method==='GET'&&u.pathname==='/api/demo/info'){
+    const mq=await pool.query('SELECT key,name FROM movit_modules WHERE active=TRUE AND key=ANY($1::text[]) ORDER BY name',[movitDemo.modulosProntos()]);
+    sendJson(res,200,{ok:true,demo:true,modulos:mq.rows});return true;
+  }
+  if(req.method==='POST'&&u.pathname==='/api/demo/entrar'){
+    try{
+      const ip=String(req.headers['x-forwarded-for']||req.socket?.remoteAddress||'').split(',')[0].trim();
+      const lim=DEMO_ENTRADAS.get(ip)||{n:0,at:Date.now()};if(Date.now()-lim.at>15*60*1000){lim.n=0;lim.at=Date.now()}
+      if(++lim.n>10){DEMO_ENTRADAS.set(ip,lim);sendJson(res,429,{ok:false,error:'Muitas tentativas. Aguarde alguns minutos e tente de novo.'});return true}
+      DEMO_ENTRADAS.set(ip,lim);
+      const d=movitDemo.normalizarEntrada(await readJsonBodyLimited(req,32*1024));
+      if(d.erros.length){sendJson(res,400,{ok:false,error:d.erros[0],erros:d.erros});return true}
+      const t=await movitDemo.testarLoginSsw(d);
+      if(!t.ok){sendJson(res,t.indisponivel?503:401,{ok:false,error:t.erro});return true}
+      const senhaCifrada=movitDemo.cifrar(d.senha);
+      let clientId=(await pool.query('SELECT client_id FROM movit_client_ssw WHERE dominio=$1',[d.dominio])).rows[0]?.client_id;
+      if(clientId){
+        // Empresa que já entrou antes: o login conferido agora passa a ser o usado na leitura do SSW.
+        await pool.query('UPDATE movit_client_ssw SET cpf=$2,usuario=$3,senha_cifrada=$4,unidades=CASE WHEN $5<>\'\' THEN $5 ELSE unidades END,contato=COALESCE(NULLIF($6,\'\'),contato),validado_em=NOW(),updated_at=NOW() WHERE client_id=$1',
+          [clientId,d.cpf,d.usuario,senhaCifrada,d.unidades.join(','),d.contato]);
+        movitDemo.encerrar(clientId);
+      }else{
+        const precos=(await pool.query("SELECT valor FROM movit_config WHERE chave='precos'")).rows[0]?.valor||{};
+        const dias=Math.min(60,Math.max(1,Number(precos.teste_dias)||7));
+        const base=d.empresa.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,50)||'empresa';
+        const slug=(['construlog','demo'].includes(base)?base+'-ssw':base)+'-'+d.dominio.toLowerCase();
+        const c=await pool.query(`INSERT INTO movit_clients(name,slug,phone,plan,monthly_fee,due_day,status,notes,trial_ends_at)
+          VALUES($1,$2,$3,'Demonstração SSW',0,10,'trial',$4,NOW()+($5 * INTERVAL '1 day')) RETURNING id`,
+          [d.empresa,slug,d.contato||null,'Entrou pela demonstração com o SSW (domínio '+d.dominio+') em '+new Date().toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'}),dias]);
+        clientId=c.rows[0].id;
+        await pool.query('INSERT INTO movit_client_ssw(client_id,dominio,cpf,usuario,senha_cifrada,unidades,contato) VALUES($1,$2,$3,$4,$5,$6,$7)',
+          [clientId,d.dominio,d.cpf,d.usuario,senhaCifrada,d.unidades.join(','),d.contato||null]);
+        // Módulos da demo: a lista escolhida na MOVIT Central (chave demo_modulos) ou, sem escolha, todos.
+        const escolhidos=(await pool.query("SELECT valor FROM movit_config WHERE chave='demo_modulos'")).rows[0]?.valor;
+        const mods=Array.isArray(escolhidos)?escolhidos.map(String):(await pool.query('SELECT key FROM movit_modules WHERE active=TRUE')).rows.map(x=>x.key);
+        for(const k of mods)await pool.query('INSERT INTO movit_client_modules(client_id,module_key,enabled) SELECT $1,key,TRUE FROM movit_modules WHERE key=$2 ON CONFLICT(client_id,module_key) DO UPDATE SET enabled=TRUE,updated_at=NOW()',[clientId,k]);
+        for(let i=1;i<=4;i++)await pool.query("INSERT INTO dashboard_groups(client_id,nome,ordem) VALUES($1,$2,$3)",[clientId,'Grupo '+i,i]);
+      }
+      // Cada login do SSW vira um usuário da empresa (administrador dela). A senha deste usuário é
+      // sorteada e nunca usada: ele sempre entra pelo SSW.
+      const username=d.dominio.toLowerCase()+'.'+d.usuario;
+      let ur=await pool.query('SELECT id::text AS id,username,is_admin,active,permissions,client_id,is_platform_admin FROM dashboard_users WHERE lower(username)=lower($1) LIMIT 1',[username]);
+      if(ur.rowCount&&String(ur.rows[0].client_id)!==String(clientId)){sendJson(res,409,{ok:false,error:'Este usuário já pertence a outra empresa da demonstração.'});return true}
+      if(!ur.rowCount){
+        const ph=dashboardHashPassword(crypto.randomBytes(18).toString('hex'));
+        ur=await pool.query("INSERT INTO dashboard_users(username,password_salt,password_hash,is_admin,active,permissions,client_id,is_platform_admin) VALUES($1,$2,$3,TRUE,TRUE,'[]'::jsonb,$4,FALSE) RETURNING id::text AS id,username,is_admin,active,permissions,client_id,is_platform_admin",[username,ph.salt,ph.hash,clientId]);
+      }
+      const row=ur.rows[0];
+      if(!row.active){sendJson(res,403,{ok:false,error:'Este usuário foi desativado pelo administrador da empresa.'});return true}
+      const user=await dashboardUserContext(row);
+      const bq=clienteBloqueado(user);if(bq){sendJson(res,402,{ok:false,error:bq});return true}
+      const token=await dashboardCreateSession(row.id,14);
+      res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Set-Cookie':dashboardSetCookie(token,14*24*60*60)});
+      res.end(JSON.stringify({ok:true,user}));
+    }catch(e){
+      console.error('DEMO entrada:',e.message);
+      if(!res.headersSent)sendJson(res,e.status||500,{ok:false,error:e.code==='23505'?'Já existe uma empresa com esse nome. Use outro nome.':'Não foi possível entrar agora. Tente de novo.'});
+    }
+    return true;
+  }
+  return false;
 }
 async function dashboardPlatformSession(req){
   const user=await dashboardSession(req,true);
@@ -1764,11 +1864,15 @@ async function start() {
     if(!existing.rowCount){
       const ph=dashboardHashPassword(adminPass);
       await pool.query("INSERT INTO dashboard_users(username,password_salt,password_hash,is_admin,active,permissions) VALUES($1,$2,$3,TRUE,TRUE,'[]'::jsonb)",[adminUser,ph.salt,ph.hash]);
+      // Banco novo (ex.: serviço de demonstração): o administrador inicial já nasce administrador MOVIT,
+      // sem esperar o próximo reinício para a migração acima marcá-lo.
+      await pool.query("UPDATE dashboard_users SET is_platform_admin=TRUE,client_id=COALESCE(client_id,(SELECT id FROM movit_clients WHERE lower(slug)='construlog' LIMIT 1)) WHERE lower(username)=lower($1)",[adminUser]);
       console.log('Administrador inicial do dashboard criado: '+adminUser);
     }
   }
   // No modo teste não importa nada do sistema antigo (traria contas reais para o banco de teste).
-  if (!TEST_MODE) await migrateLegacyBillsIfNeeded();
+  if (movitDemo.ATIVA) await movitDemo.initDb(pool);
+  if (!TEST_MODE && !movitDemo.ATIVA) await migrateLegacyBillsIfNeeded();
   else console.log('TEST_MODE: importação do sistema antigo de contas desativada.');
   startUnifiedDashboardChild();
   
@@ -1784,8 +1888,10 @@ async function start() {
         return proxyDashboard(req,res,sub+(u.search||''))
       }
       if(isDashboardApiPath(u.pathname)){
+        if(movitDemo.ATIVA&&await demoRepassarApi(req,res,u))return;
         return proxyDashboard(req,res,u.pathname+(u.search||''))
       }
+      if(movitDemo.ATIVA&&await demoRotas(req,res,u))return;
 
       // Aplicativo CONSTRULOG Motorista pede um código de uso único para abrir o MOVIT já
       // identificado como este motorista/placa (o aparelho já foi liberado pela central).
