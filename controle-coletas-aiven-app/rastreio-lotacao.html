@@ -59,7 +59,7 @@ th{font-size:11px;color:#475569;text-transform:uppercase}
           <label style="grid-column:1/-1">Localização exata (opcional): cole o link do Google Maps ou "lat, lon"<input id="oCoord" placeholder="-25.4284, -49.2733"></label>
         </div>
       </fieldset>
-      <fieldset class="wide"><legend>Destino</legend>
+      <fieldset class="wide"><legend>Entrega 1</legend>
         <div class="grid" style="grid-template-columns:1fr 80px;margin-top:0">
           <label style="grid-column:1/-1">Recebedor (aparece no link)<input id="dNome" placeholder="Nome de quem recebe"></label>
           <label>Cidade<input id="dCidade"></label>
@@ -68,6 +68,8 @@ th{font-size:11px;color:#475569;text-transform:uppercase}
           <label style="grid-column:1/-1">Localização exata (opcional)<input id="dCoord" placeholder="cole o link do Google Maps"></label>
         </div>
       </fieldset>
+      <div id="extras" class="wide" style="display:contents"></div>
+      <div class="wide"><button id="btnMaisEntrega" class="btn" type="button">+ Adicionar entrega</button></div>
     </div>
     <div style="margin-top:12px"><button id="btnCriar" class="btn primary" type="button">Criar viagem e gerar link</button></div>
     <div id="msg" class="msg"></div>
@@ -108,7 +110,7 @@ function render(){
     const wa='https://wa.me/?text='+encodeURIComponent('Acompanhe sua carga ('+v.cliente+') até a entrega: '+v.link);
     return'<tr><td><b>'+esc(v.cliente)+'</b>'+(v.coleta_id?'<div class="muted">coleta #'+esc(v.coleta_id)+'</div>':'')+'</td>'+
       '<td>'+esc(v.driver_name)+'<div class="muted">'+esc(v.vehicle_plate||'')+'</div></td>'+
-      '<td>'+esc(v.origem.cidade)+'/'+esc(v.origem.uf)+' → '+esc(v.destino.cidade)+'/'+esc(v.destino.uf)+(v.destino.nome?'<div class="muted">'+esc(v.destino.nome)+'</div>':'')+'</td>'+
+      '<td>'+esc(v.origem.cidade)+'/'+esc(v.origem.uf)+' → '+(v.destinos||[v.destino]).map((d,i,a)=>(a.length>1?(i+1)+'. ':'')+esc(d.cidade)+'/'+esc(d.uf)+(d.nome?' <span class="muted">('+esc(d.nome)+')</span>':'')).join('<br>')+'</td>'+
       '<td>'+situacao(v)+'</td>'+
       '<td>'+(ativo?'<div class="link">'+esc(v.link)+'</div><div class="acts" style="margin-top:6px">'+
         '<button class="btn" data-copiar="'+esc(v.link)+'">Copiar link</button>'+
@@ -139,14 +141,35 @@ $('fMotorista').addEventListener('change',()=>{
   const m=DADOS.motoristas.find(x=>x.driver_name.toLowerCase()===$('fMotorista').value.trim().toLowerCase());
   if(m&&!$('fPlaca').value)$('fPlaca').value=m.vehicle_plate||''
 });
+// Entregas 2, 3...: mesmo formato da entrega 1, montadas na tela.
+function addEntrega(e={}){
+  const box=$('extras'),n=box.children.length+2,f=document.createElement('fieldset');
+  f.className='wide extra';
+  f.innerHTML='<legend>Entrega '+n+' <button type="button" class="btn" data-tirar style="padding:2px 8px;margin-left:6px">remover</button></legend>'+
+    '<div class="grid" style="grid-template-columns:1fr 80px;margin-top:0">'+
+    '<label style="grid-column:1/-1">Recebedor (aparece no link)<input data-k="nome" placeholder="Nome de quem recebe"></label>'+
+    '<label>Cidade<input data-k="cidade"></label><label>UF<input data-k="uf" maxlength="2"></label>'+
+    '<label style="grid-column:1/-1">Endereço (opcional)<input data-k="endereco"></label>'+
+    '<label style="grid-column:1/-1">Localização exata (opcional)<input data-k="coordenadas" placeholder="cole o link do Google Maps"></label></div>';
+  ['nome','cidade','uf','endereco','coordenadas'].forEach(k=>{if(e[k])f.querySelector('[data-k="'+k+'"]').value=e[k]});
+  f.querySelector('[data-tirar]').onclick=()=>{f.remove();renumerar()};
+  box.appendChild(f)
+}
+function renumerar(){[...$('extras').children].forEach((f,i)=>{f.querySelector('legend').firstChild.textContent='Entrega '+(i+2)+' '})}
+function lerEntregas(){return[...$('extras').children].map(f=>{const o={};f.querySelectorAll('[data-k]').forEach(i=>o[i.dataset.k]=i.value);return o})}
+$('btnMaisEntrega').addEventListener('click',()=>addEntrega());
 $('fColeta').addEventListener('change',()=>{
+  $('extras').innerHTML='';
   const c=DADOS.coletas.find(x=>x.id===$('fColeta').value);if(!c)return;
   $('fCliente').value=c.cliente||'';$('fCliente').dispatchEvent(new Event('change'));
   if(c.motorista)$('fMotorista').value=c.motorista;
   if(c.placa)$('fPlaca').value=c.placa;
   if(c.origem){$('oEnd').value=c.origem;if(c.origem_sugerida){$('oCidade').value=c.origem_sugerida.cidade;$('oUf').value=c.origem_sugerida.uf}}
   $('dNome').value=c.destinatario||'';
-  if(c.destino){$('dEnd').value=c.destino;if(c.destino_sugerido){$('dCidade').value=c.destino_sugerido.cidade;$('dUf').value=c.destino_sugerido.uf}}
+  $('dEnd').value=c.destino||'';$('dCidade').value=c.destino_sugerido?.cidade||'';$('dUf').value=c.destino_sugerido?.uf||'';
+  (c.entregas_extras||[]).forEach(e=>addEntrega({nome:e.destinatario,endereco:e.endereco,cidade:e.sugerido?.cidade,uf:e.sugerido?.uf}));
+  const falta=[$('dCidade').value?'':1,...[...$('extras').children].map(f=>f.querySelector('[data-k="cidade"]').value?'':1)].filter(Boolean).length;
+  if(falta)msg('Confira a cidade/UF das entregas: não consegui tirar do endereço de '+falta+' delas.',false);else msg('')
 });
 $('btnCriar').addEventListener('click',async()=>{
   const btn=$('btnCriar');btn.disabled=true;msg('');
@@ -154,11 +177,12 @@ $('btnCriar').addEventListener('click',async()=>{
     const j=await api('/api/painel/lotacao-rastreios',{method:'POST',body:JSON.stringify({
       coleta_id:$('fColeta').value,cliente:$('fCliente').value,driver_name:$('fMotorista').value,vehicle_plate:$('fPlaca').value,
       origem:{cidade:$('oCidade').value,uf:$('oUf').value,endereco:$('oEnd').value,coordenadas:$('oCoord').value},
-      destino:{nome:$('dNome').value,cidade:$('dCidade').value,uf:$('dUf').value,endereco:$('dEnd').value,coordenadas:$('dCoord').value}
+      destino:{nome:$('dNome').value,cidade:$('dCidade').value,uf:$('dUf').value,endereco:$('dEnd').value,coordenadas:$('dCoord').value},
+      destinos_extras:lerEntregas()
     })});
     msg('Viagem criada. Link: '+j.viagem.link,true);
     try{await navigator.clipboard.writeText(j.viagem.link);msg('Viagem criada e link copiado: '+j.viagem.link,true)}catch{}
-    ['fColeta','fCliente','fMotorista','fPlaca','oCidade','oUf','oEnd','oCoord','dNome','dCidade','dUf','dEnd','dCoord'].forEach(id=>$(id).value='');
+    ['fColeta','fCliente','fMotorista','fPlaca','oCidade','oUf','oEnd','oCoord','dNome','dCidade','dUf','dEnd','dCoord'].forEach(id=>$(id).value='');$('extras').innerHTML='';
     await carregar()
   }catch(e){msg(e.message,false)}finally{btn.disabled=false}
 });

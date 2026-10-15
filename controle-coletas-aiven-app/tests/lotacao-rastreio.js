@@ -23,6 +23,10 @@ const GOIANIA={latitude:-16.6869,longitude:-49.2648},ANAPOLIS={latitude:-16.3281
   check('coordenada fora do Brasil é recusada (lat/lon trocados)',lr.lerCoordenadas('-49.27, -25.43')===null);
   check('cidade e UF tiradas do endereço da coleta',JSON.stringify(lr.cidadeUfDoTexto('Rua de Teste, 100 - Campinas - SP'))==='{"cidade":"Campinas","uf":"SP"}');
   check('  ...também no formato Cidade/UF',lr.cidadeUfDoTexto('Goiânia/GO')?.uf==='GO');
+  check('endereço sem UF ("Rua 54 Jandira"): cidade reconhecida pelo nome',JSON.stringify(lr.cidadeUfDoTexto('Jose Albino Pereira 54 Jandira'))==='{"cidade":"Jandira","uf":"SP"}',lr.cidadeUfDoTexto('Jose Albino Pereira 54 Jandira'));
+  check('  ...número no fim não vira cidade',lr.cidadeUfDoTexto('Rua Campinas 100')===null);
+  const vx={origem_lat:-16.6869,origem_lon:-49.2648,destino_lat:-22.7394,destino_lon:-47.3314,destinos_extras:[{lat:-30.0346,lon:-51.2177}]};
+  check('com 2ª entrega em Porto Alegre, o trecho até lá também vale',lr.noCorredor(vx,-27.5954,-48.548)&&!lr.noCorredor({...vx,destinos_extras:[]},-27.5954,-48.548));
   const p=lr.montarPonto({cidade:'Goiânia',uf:'go'});
   check('base do cliente pela sede do município',p&&p.precisao==='cidade'&&Math.abs(p.lat-GOIANIA.latitude)<0.2,p);
   check('cidade inexistente: sem ponto',lr.montarPonto({cidade:'Cidade Que Nao Existe',uf:'GO'})===null);
@@ -94,13 +98,22 @@ const GOIANIA={latitude:-16.6869,longitude:-49.2648},ANAPOLIS={latitude:-16.3281
   console.log('Viagem ligada à coleta da Lotação');
   r=await call('POST','/coletas/api/coletas',{cookie,body:{cliente:'Cliente Goiano Ltda',endereco_coleta:'Rod. BR-153 - Goiânia - GO',endereco_entrega:'Av. Brasil, 50 - Sorocaba - SP',destinatario:'Depósito Sorocaba',frete_cobrado:9000,frete_pago:6000,motorista:'João Lotação Teste',placa:'LOT1A23',data_carregamento:'2026-10-14',tipo_caminhao:'Carreta',implemento:'Sider'}});
   const coletaId=r.json?.id;check('coleta de lotação criada',r.status===201&&!!coletaId,r.text.slice(0,120));
+  r=await call('PATCH','/api/painel/coletas-complementos/'+coletaId,{cookie,body:{entregas_extras:[{destinatario:'Loja Jandira',endereco_entrega:'Jose Albino Pereira 54 Jandira'}]}});
+  check('2º destinatário gravado na coleta',r.status===200,r.text.slice(0,120));
   r=await call('GET','/api/painel/lotacao-rastreios',{cookie});
   const sug=r.json?.coletas?.find(c=>String(c.id)===String(coletaId));
   check('a coleta aparece para escolher, com o destino já reconhecido no endereço',sug?.destino_sugerido?.cidade==='Sorocaba'&&sug?.destino_sugerido?.uf==='SP',JSON.stringify(sug||{}).slice(0,240));
+  check('  ...e com o 2º destinatário e a cidade dele',sug?.entregas_extras?.[0]?.destinatario==='Loja Jandira'&&sug?.entregas_extras?.[0]?.sugerido?.cidade==='Jandira',JSON.stringify(sug?.entregas_extras||[]));
+  r=await call('POST','/api/painel/lotacao-rastreios',{cookie,body:{cliente:'Cliente Goiano Ltda',driver_name:'João Lotação Teste',vehicle_plate:'LOT1A23',origem:{cidade:'Goiânia',uf:'GO'},destino:{cidade:'Sorocaba',uf:'SP'},destinos_extras:[{nome:'Sem lugar',cidade:'Cidade Que Nao Existe',uf:'SP'}]}});
+  check('entrega 2 sem cidade válida: 400 dizendo qual',r.status===400&&/entrega 2/.test(r.json?.error||''),r.text.slice(0,160));
   r=await call('POST','/api/painel/lotacao-rastreios',{cookie,body:{coleta_id:coletaId,cliente:'Cliente Goiano Ltda',driver_name:'João Lotação Teste',vehicle_plate:'LOT1A23',
-    origem:{endereco:'Rod. BR-153 - Goiânia - GO',coordenadas:'https://www.google.com/maps/@-16.70,-49.25,14z'},destino:{nome:'Depósito Sorocaba',endereco:'Av. Brasil, 50 - Sorocaba - SP'}}});
+    origem:{endereco:'Rod. BR-153 - Goiânia - GO',coordenadas:'https://www.google.com/maps/@-16.70,-49.25,14z'},destino:{nome:'Depósito Sorocaba',endereco:'Av. Brasil, 50 - Sorocaba - SP'},
+    destinos_extras:[{nome:'Loja Jandira',endereco:'Jose Albino Pereira 54 Jandira'}]}});
   const v2=r.json?.viagem||{},token2=(v2.link||'').split('/rastreio/')[1]||'';
   check('viagem com localização exata da base colada do Google Maps',r.status===201&&v2.origem?.precisao==='exata'&&v2.origem?.lat===-16.7,r.text.slice(0,200));
+  check('viagem com as duas entregas, na ordem',v2.destinos?.length===2&&v2.destinos[0].nome==='Depósito Sorocaba'&&v2.destinos[1].nome==='Loja Jandira'&&v2.destinos[1].uf==='SP',JSON.stringify(v2.destinos||[]));
+  r=await call('GET','/api/rastreio-publico/'+token2);
+  check('link público mostra as duas entregas',r.json?.destinos?.length===2&&r.json.destinos[1].cidade==='Jandira'&&!('endereco' in r.json.destinos[1]),JSON.stringify(r.json?.destinos||[]));
   r=await ponto(GOIANIA);check('GPS volta a valer com a nova viagem',r.status===200&&!r.json?.ignored,r.text.slice(0,120));
   r=await call('PATCH','/api/painel/coletas-status/'+coletaId,{cookie,body:{status:'Entregue'}});check('coleta marcada como Entregue na Lotação',r.status===200,r.text.slice(0,120));
   r=await call('GET','/api/rastreio-publico/'+token2);
