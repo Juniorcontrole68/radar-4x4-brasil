@@ -21,6 +21,21 @@ const configurado=()=>{const c=credenciais();return !!(c.usuario&&c.senha)};
 
 const num=v=>{if(v===null||v===undefined||v==='')return 0;if(typeof v==='number')return Number.isFinite(v)?v:0;const s=String(v).trim();const n=Number(/,\d{1,3}$/.test(s)?s.replace(/\./g,'').replace(',','.'):s);return Number.isFinite(n)?n:0};
 const placa=v=>String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+const PLACA_RE=/^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/;
+// O Veic não diz em um campo fixo onde vem a placa: tenta os nomes conhecidos e, senão, procura na
+// transação qualquer texto no formato de placa (ABC1234 / ABC1D23), olhando primeiro o equipamento.
+function placaDaTransacao(t){
+  const eq=t.equipamento||t.veiculo||{};
+  for(const v of [eq.placa,eq.identificacao,t.placa,t.placaVeiculo,t.identificacaoEquipamento,t.equipamentoIdentificacao]){const p=placa(v);if(PLACA_RE.test(p))return p}
+  const vistos=new Set();
+  const busca=(o,n)=>{if(!o||typeof o!=='object'||n>4||vistos.has(o))return '';vistos.add(o);
+    for(const [k,v] of Object.entries(o)){if(typeof v==='string'&&v.length<=10&&/placa|identifica|equipamento|veiculo/i.test(k)){const p=placa(v);if(PLACA_RE.test(p))return p}}
+    for(const v of Object.values(o)){const r=busca(v,n+1);if(r)return r}return ''};
+  return busca(eq,0)||busca(t,0)||placa(eq.identificacao)
+}
+// Nomes dos campos (sem valores) de uma transação, para conferir no log do Render.
+function camposDe(o,pre='',n=0,out=[]){if(!o||typeof o!=='object'||n>2)return out;for(const [k,v] of Object.entries(o)){if(v&&typeof v==='object'&&!Array.isArray(v))camposDe(v,pre+k+'.',n+1,out);else out.push(pre+k)}return out}
+let camposLogados=false;
 const isoDia=d=>/^\d{4}-\d{2}-\d{2}$/.test(String(d||''));
 const hojeSP=()=>new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
 const diasAntes=(iso,n)=>{const d=new Date(iso+'T12:00:00Z');d.setUTCDate(d.getUTCDate()-n);return d.toISOString().slice(0,10)};
@@ -57,7 +72,7 @@ function abastecimentoDaTransacao(t){
     veicId:String(t.id??''),
     source:'veic',
     date,time,
-    plate:placa(t.equipamento&&t.equipamento.identificacao),
+    plate:placaDaTransacao(t),
     driver:String((t.condutor&&t.condutor.nome)||(t.portador&&t.portador.nomeImpresso)||'').trim(),
     km,kmPrev,kmDriven,
     liters,price,total,
@@ -81,8 +96,16 @@ function mesclar(atuais,novos){
     if(pos.has(n.id)){const i=pos.get(n.id);lista[i]=Object.assign({},lista[i],n,{importedAt:agora});atualizados++}
     else{lista.push(Object.assign({createdAt:agora},n,{importedAt:agora}));pos.set(n.id,lista.length-1);criados++}
   }
-  lista.sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||String(b.time||'').localeCompare(String(a.time||'')));
-  return{fuel:lista,criados,atualizados}
+  // O Veic às vezes devolve o mesmo abastecimento duas vezes (ids diferentes, mesmo dia, KM e litros).
+  // Fica um só, de preferência o que não está cancelado/negado.
+  const ruim=x=>/cancel|estorn|negad|recus|anulad/i.test(String(x.status||''));
+  const chave=x=>[x.date,x.plate||x.driver,Number(x.km||0),Number(x.liters||0)].join('|');
+  const escolhido=new Map();
+  lista.forEach((x,i)=>{if(!x||x.source!=='veic'||!(Number(x.liters)>0))return;const k=chave(x),j=escolhido.get(k);if(j===undefined||(ruim(lista[j])&&!ruim(x)))escolhido.set(k,i)});
+  const antes=lista.length;
+  const final=lista.filter((x,i)=>!x||x.source!=='veic'||!(Number(x.liters)>0)||escolhido.get(chave(x))===i);
+  final.sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||String(b.time||'').localeCompare(String(a.time||'')));
+  return{fuel:final,criados,atualizados,duplicados:antes-final.length}
 }
 
 function erro(msg,status=502){return Object.assign(new Error(msg),{status})}
@@ -112,6 +135,7 @@ async function listarTransacoes(token,from,to){
     const j=await r.json().catch(()=>null);
     const lista=Array.isArray(j)?j:(j&&(j.list||j.content||j.items||j.data))||[];
     if(!Array.isArray(lista))throw erro('Resposta do Veic em formato inesperado.');
+    if(!camposLogados&&lista[0]){camposLogados=true;console.log('VEIC campos da transação: '+camposDe(lista[0]).join(', ').slice(0,1500))}
     todas.push(...lista);
     const total=j&&!Array.isArray(j)?num(j.total??j.totalElements??j.totalCount):0;
     if(lista.length<POR_PAGINA||(total&&todas.length>=total))break;
@@ -148,7 +172,7 @@ async function importar(pool,from,to,origem='manual'){
       }catch(e){await c.query('ROLLBACK').catch(()=>{});throw e}
       finally{c.release()}
       const placas=new Set(abastecimentos.map(x=>x.plate).filter(Boolean));
-      ultima={ok:true,em:new Date().toISOString(),origem,from,to,transacoes,abastecimentos:abastecimentos.length,criados:res.criados,atualizados:res.atualizados,veiculos:placas.size};
+      ultima={ok:true,em:new Date().toISOString(),origem,from,to,transacoes,abastecimentos:abastecimentos.length,criados:res.criados,atualizados:res.atualizados,duplicados:res.duplicados,veiculos:placas.size};
       return ultima
     }catch(e){
       ultima={ok:false,em:new Date().toISOString(),origem,from,to,error:String(e.message||e)};
