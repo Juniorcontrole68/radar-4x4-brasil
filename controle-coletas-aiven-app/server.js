@@ -27,6 +27,7 @@ Module.Module._initPaths();
 const { initDb, pool } = require('../contas-a-pagar-v3/src/db');
 const { initColetasDb } = require('../contas-a-pagar-v3/src/coletas');
 const lancamentos = require('./lancamentos');
+const dre = require('./dre');
 const roteirizadorCargas = require('./roteirizador-cargas');
 const { economizarBanda } = require('./compressao');
 const lotacaoRastreio = require('./lotacao-rastreio');
@@ -1715,6 +1716,7 @@ async function start() {
   )`);
   await pool.query(`INSERT INTO fleet_state(id,data) VALUES(1,'{"vehicles":[],"fuel":[],"maintenance":[],"tires":[],"people":[],"documents":[],"checklists":[]}'::jsonb) ON CONFLICT (id) DO NOTHING`);
   await lancamentos.ensureSchema(pool);
+  await dre.ensureSchema(pool);
   await roteirizadorCargas.ensureSchema(pool);
   await lotacaoRastreio.ensureSchema(pool);
   await pool.query(`CREATE TABLE IF NOT EXISTS fleet_maintenance_files (
@@ -2843,6 +2845,8 @@ async function start() {
 
       // Lançamentos da operação (substitui a aba de lançamentos da planilha): ver lancamentos.js
       if (await lancamentos.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,sessionOrInternal,dashboardSession,dashboardHas,spToday})) return;
+      // Despesas (DRE) do Financeiro, com os holerites da conta Salários: ver dre.js
+      if (await dre.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
       // Roteirizador de Cargas (substitui o Roteirizador Teste e o Roteirizador V02): ver roteirizador-cargas.js
       if (await roteirizadorCargas.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
       // Rastreio de carga lotação (viagem a partir da base do cliente + link público): ver lotacao-rastreio.js
