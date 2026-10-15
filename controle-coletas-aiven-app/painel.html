@@ -277,7 +277,7 @@ async function abrirModulo(btn){
   try{
     let src=btn.dataset.src;
     const sep=src.includes('?')?'&':'?';
-    if(mod==='dashboard'||mod==='dashboards'||mod==='programacao'||mod==='carga'||mod==='lancamentos'||mod==='tracking'||mod==='agendamento-teste'||mod==='fin-op'||mod==='receita-ssw'||mod==='remetentes'||mod==='faturas'){
+    if(mod==='dashboard'||mod==='dashboards'||mod==='programacao'||mod==='carga'||mod==='lancamentos'||mod==='tracking'||mod==='agendamento-teste'||mod==='usuarios'||mod==='fin-op'||mod==='receita-ssw'||mod==='remetentes'||mod==='faturas'){
       DASH_FRAME_TOKEN='';
       const ticket=await dashboardTicket();
       src += sep+'ticket='+encodeURIComponent(ticket)+'&refresh='+Date.now();

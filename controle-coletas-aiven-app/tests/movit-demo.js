@@ -34,7 +34,7 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   r=await call('POST','/api/demo/entrar',{body:EMPRESA_A});
   const cookieA=r.cookie;
   check('login aceito, sessão criada',r.status===200&&!!cookieA,r.status+' '+r.text.slice(0,200));
-  check('usuário marcado como cliente da demo, só com os módulos prontos',r.json?.user?.demo===true&&JSON.stringify(r.json?.user?.client_modules)==='["roteirizador","usuarios"]',JSON.stringify(r.json?.user||{}).slice(0,300));
+  check('usuário marcado como cliente da demo, só com os módulos prontos',r.json?.user?.demo===true&&JSON.stringify(r.json?.user?.client_modules)==='["roteirizador","agendamento","usuarios"]',JSON.stringify(r.json?.user||{}).slice(0,300));
   const row=(await db.query("SELECT s.*,c.name,c.status FROM movit_client_ssw s JOIN movit_clients c ON c.id=s.client_id WHERE dominio='TST'")).rows[0];
   check('empresa criada em teste grátis com domínio e unidades normalizados',row&&row.name==='Transportes Teste A'&&row.status==='trial'&&row.unidades==='MTZ,CPS'&&row.cpf==='12345678901'&&row.usuario==='joao',JSON.stringify(row||{}).slice(0,300));
   check('senha do SSW guardada criptografada (nunca em texto)',row&&/^v1:/.test(row.senha_cifrada)&&!row.senha_cifrada.includes('segredo')&&!JSON.stringify(row).includes('segredo-a-1'));
@@ -50,6 +50,12 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   const ctrcsA=(r.json?.rows||[]).map(x=>x.ctrc).sort();
   check('Roteirizador busca no SSW os CTRCs disponíveis das unidades da empresa (MTZ e CPS, sem repetir)',r.status===200&&JSON.stringify(ctrcsA)===JSON.stringify(['CPS000077-3','MTZ000501-1','MTZ000502-2']),r.status+' '+r.text.slice(0,240));
   check('...com cidade, peso e volumes de cada CTRC',(r.json?.rows||[]).some(x=>x.ctrc==='MTZ000501-1'&&x.cidade==='CAMPINAS'&&x.peso===120.5&&x.volumes===4),JSON.stringify((r.json?.rows||[])[0]||{}));
+  r=await call('GET','/api/agendamento-teste/nf?nf=30101',{cookie:cookieA});
+  check('Agendamento acha a NF no SSW da empresa (CTRC e cidade)',r.status===200&&r.json?.row?.ctrc==='MTZ000501-1'&&r.json?.row?.cidade==='CAMPINAS',r.status+' '+r.text.slice(0,240));
+  r=await call('POST','/api/agendamento-teste',{cookie:cookieA,body:{nf:'30101',ctrc:'MTZ000501-1',cliente:'LOJA CENTRO',cidade:'CAMPINAS',uf:'SP',agendado:true,data_agendamento:'2026-10-20'}});
+  check('Agendamento grava o agendamento da empresa',r.status===201&&r.json?.row?.nf==='30101',r.status+' '+r.text.slice(0,200));
+  r=await call('GET','/api/agendamento-teste',{cookie:cookieA});
+  check('Agendamento lista o agendamento gravado',r.status===200&&(r.json?.rows||[]).length===1&&r.json.rows[0].nf==='30101',r.status+' '+r.text.slice(0,200));
 
   console.log('C. O que ainda não está pronto fica fechado para o cliente da demo');
   for(const p of ['/api/roteirizador/lista','/api/ssw/sessoes','/api/lancamentos','/api/tracking/live','/api/sheet/base','/api/bi2/receita'])
@@ -72,6 +78,8 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   check('...e a empresa A continua no SSW dela',r.json?.dominio==='TST',r.text.slice(0,200));
   r=await call('GET','/api/programacao-entregas/disponiveis',{cookie:cookieB});
   check('Roteirizador da empresa B não recebe os CTRCs da empresa A',!(r.json?.rows||[]).some(x=>/^(MTZ|CPS)/.test(x.ctrc)),r.status+' '+r.text.slice(0,200));
+  r=await call('GET','/api/agendamento-teste',{cookie:cookieB});
+  check('Agendamento da empresa B não mostra os agendamentos da empresa A',r.status===200&&!(r.json?.rows||[]).length,r.status+' '+r.text.slice(0,200));
   r=await call('GET','/api/rc/doc?path='+encodeURIComponent('cad/main/ajustes'),{cookie:cookieB});
   check('Roteirizador da empresa B responde',r.status===200||r.status===404,'veio '+r.status);
 
