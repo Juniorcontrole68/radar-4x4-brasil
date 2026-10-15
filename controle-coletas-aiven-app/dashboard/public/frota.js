@@ -38,6 +38,10 @@ async function save(){
 const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const money=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+// Uso do veículo: frota (da empresa) ou particular. Veículo antigo, sem a marcação, conta como frota.
+const usoDe=v=>v&&v.uso==='particular'?'particular':'frota';
+const tagUso=(v,id)=>'<button type="button" class="fleet-uso '+usoDe(v)+'"'+(id?' data-fleet-uso="'+esc(id)+'" title="Clique para trocar entre Frota e Particular"':' disabled')+'>'+(usoDe(v)==='particular'?'Particular':'Frota')+'</button>';
+function bindUso(){qa('[data-fleet-uso]').forEach(b=>b.onclick=async()=>{const v=db.vehicles.find(x=>x.id===b.dataset.fleetUso);if(!v)return;v.uso=usoDe(v)==='particular'?'frota':'particular';await save()})}
 const opts=(arr,key,label)=>'<option value="">Selecione...</option>'+arr.map(x=>'<option value="'+esc(x[key])+'">'+esc(label(x))+'</option>').join('');
 function val(f,n){return (new FormData(f).get(n)||'').toString().trim()}
 async function add(kind,obj){const item=Object.assign({id:uid(),createdAt:new Date().toISOString()},obj);db[kind].unshift(item);await save();return item}
@@ -74,11 +78,12 @@ function setSub(name){qa('.fleet-sub').forEach(b=>b.classList.toggle('active',b.
 function render(){
  const fuelTotal=db.fuel.reduce((s,x)=>s+Number(x.total||0),0), maintTotal=db.maintenance.reduce((s,x)=>s+Number(x.total||0),0);
  q('#fleetKpiVehicles').textContent=db.vehicles.length;
+ {const np=db.vehicles.filter(v=>usoDe(v)==='particular').length;if(q('#fleetKpiUso'))q('#fleetKpiUso').textContent=db.vehicles.length?(db.vehicles.length-np)+' frota • '+np+' particular':''}
  q('#fleetKpiActive').textContent=db.vehicles.filter(x=>x.status==='Ativo').length;
  q('#fleetKpiFuel').textContent=money(fuelTotal);
  q('#fleetKpiMaint').textContent=money(maintTotal);
  q('#fleetKpiDocs').textContent=db.documents.filter(x=>x.expiry&&x.expiry<new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'})).length;
- q('#fleetVehicleBody').innerHTML=db.vehicles.map(x=>'<tr><td>'+esc(x.plate)+'</td><td>'+esc(x.brand)+'</td><td>'+esc(x.model)+'</td><td>'+esc(x.type)+'</td><td>'+esc(x.km)+'</td><td>'+esc(x.driver)+'</td><td>'+esc(x.status)+'</td><td>'+rowDel('vehicles',x.id)+'</td></tr>').join('')||'<tr><td colspan="8" class="muted">Nenhum veículo cadastrado.</td></tr>';
+ q('#fleetVehicleBody').innerHTML=db.vehicles.map(x=>'<tr><td>'+esc(x.plate)+'</td><td>'+esc(x.brand)+'</td><td>'+esc(x.model)+'</td><td>'+esc(x.type)+'</td><td>'+esc(x.km)+'</td><td>'+esc(x.driver)+'</td><td>'+esc(x.status)+'</td><td>'+tagUso(x,x.id)+'</td><td>'+rowDel('vehicles',x.id)+'</td></tr>').join('')||'<tr><td colspan="9" class="muted">Nenhum veículo cadastrado.</td></tr>';
  const vopt=opts(db.vehicles,'plate',x=>x.plate+' • '+x.model), popt=opts(db.people,'name',x=>x.name+' • '+x.role);
  ['#fleetFuelVehicle','#fleetMaintVehicle','#fleetTireVehicle','#fleetDocVehicle','#fleetCheckVehicle'].forEach(s=>{if(q(s))q(s).innerHTML=vopt});
  ['#fleetFuelDriver','#fleetCheckDriver'].forEach(s=>{if(q(s))q(s).innerHTML=popt});
@@ -88,13 +93,17 @@ function render(){
  q('#fleetTireBody').innerHTML=db.tires.map(x=>'<tr><td>'+esc(x.code)+'</td><td>'+esc(x.brand)+'</td><td>'+esc(x.size)+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.position)+'</td><td>'+esc(x.kmInstall)+'</td><td>'+money(x.cost)+'</td><td>'+rowDel('tires',x.id)+'</td></tr>').join('')||'<tr><td colspan="8" class="muted">Nenhum pneu cadastrado.</td></tr>';
  q('#fleetDocBody').innerHTML=db.documents.map(x=>'<tr><td>'+esc(x.plate)+'</td><td>'+esc(x.type)+'</td><td>'+esc(x.expiry)+'</td><td>'+esc(x.note)+'</td><td>'+rowDel('documents',x.id)+'</td></tr>').join('')||'<tr><td colspan="5" class="muted">Nenhum documento.</td></tr>';
  q('#fleetCheckBody').innerHTML=db.checklists.map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.driver)+'</td><td>'+esc(x.status)+'</td><td>'+esc(x.note)+'</td><td>'+rowDel('checklists',x.id)+'</td></tr>').join('')||'<tr><td colspan="6" class="muted">Nenhum checklist.</td></tr>';
- q('#fleetCostBody').innerHTML=db.vehicles.map(v=>{const f=db.fuel.filter(x=>x.plate===v.plate).reduce((s,x)=>s+Number(x.total||0),0),m=db.maintenance.filter(x=>x.plate===v.plate).reduce((s,x)=>s+Number(x.total||0),0);return '<tr><td>'+esc(v.plate)+'</td><td>'+esc(v.model)+'</td><td>'+money(f)+'</td><td>'+money(m)+'</td><td><b>'+money(f+m)+'</b></td></tr>'}).join('')||'<tr><td colspan="5" class="muted">Sem dados.</td></tr>'; if(q('#fleetCostBody2'))q('#fleetCostBody2').innerHTML=q('#fleetCostBody').innerHTML;
- bindDelete();bindFileButtons()
+ {const custo=v=>{const f=db.fuel.filter(x=>x.plate===v.plate).reduce((s,x)=>s+Number(x.total||0),0),m=db.maintenance.filter(x=>x.plate===v.plate).reduce((s,x)=>s+Number(x.total||0),0);return{f,m}};
+  const tot={frota:{f:0,m:0},particular:{f:0,m:0}};
+  const linhas=db.vehicles.map(v=>{const c=custo(v),t=tot[usoDe(v)];t.f+=c.f;t.m+=c.m;return '<tr><td>'+esc(v.plate)+'</td><td>'+esc(v.model)+'</td><td>'+tagUso(v)+'</td><td>'+money(c.f)+'</td><td>'+money(c.m)+'</td><td><b>'+money(c.f+c.m)+'</b></td></tr>'}).join('');
+  const rodape=linhas?['frota','particular'].map(k=>'<tr class="fleet-uso-total"><td colspan="3"><b>Total '+(k==='frota'?'da frota':'particular')+'</b></td><td>'+money(tot[k].f)+'</td><td>'+money(tot[k].m)+'</td><td><b>'+money(tot[k].f+tot[k].m)+'</b></td></tr>').join(''):'';
+  q('#fleetCostBody').innerHTML=(linhas+rodape)||'<tr><td colspan="6" class="muted">Sem dados.</td></tr>'; if(q('#fleetCostBody2'))q('#fleetCostBody2').innerHTML=q('#fleetCostBody').innerHTML}
+ bindDelete();bindFileButtons();bindUso()
 }
 async function setup(){
  qa('.fleet-sub').forEach(b=>b.onclick=()=>setSub(b.dataset.fleet));
  ['#fleetMaintFile','#fleetMaintCamera'].forEach(sel=>{const el=q(sel);if(el)el.onchange=()=>{if(sel==='#fleetMaintFile'&&q('#fleetMaintCamera'))q('#fleetMaintCamera').value='';if(sel==='#fleetMaintCamera'&&q('#fleetMaintFile'))q('#fleetMaintFile').value='';updateMaintFileLabel()}});
- q('#fleetVehicleForm').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('vehicles',{plate:val(f,'plate').toUpperCase(),brand:val(f,'brand'),model:val(f,'model'),type:val(f,'type'),km:Number(val(f,'km')||0),driver:val(f,'driver'),status:val(f,'status')||'Ativo'});f.reset()};
+ q('#fleetVehicleForm').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('vehicles',{plate:val(f,'plate').toUpperCase(),brand:val(f,'brand'),model:val(f,'model'),type:val(f,'type'),km:Number(val(f,'km')||0),driver:val(f,'driver'),status:val(f,'status')||'Ativo',uso:val(f,'uso')==='particular'?'particular':'frota'});f.reset()};
  q('#fleetPeopleForm').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget;await add('people',{name:val(f,'name'),role:val(f,'role'),cnh:val(f,'cnh'),cnhExpiry:val(f,'cnhExpiry'),phone:val(f,'phone'),status:val(f,'status')||'Ativo'});f.reset()};
  q('#fleetFuelForm').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,lit=Number(val(f,'liters')||0),price=Number(val(f,'price')||0);await add('fuel',{date:val(f,'date'),plate:val(f,'plate'),driver:val(f,'driver'),km:Number(val(f,'km')||0),liters:lit,price:price,total:Number(val(f,'total')||0)||lit*price});f.reset()};
  q('#fleetMaintForm').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,parts=Number(val(f,'parts')||0),labor=Number(val(f,'labor')||0),cam=q('#fleetMaintCamera')?.files?.[0],file=q('#fleetMaintFile')?.files?.[0],attachment=cam||file;try{const item=await add('maintenance',{date:val(f,'date'),plate:val(f,'plate'),service:val(f,'service'),km:Number(val(f,'km')||0),workshop:val(f,'workshop'),parts:parts,labor:labor,total:parts+labor,nextKm:val(f,'nextKm'),nextDate:val(f,'nextDate'),note:val(f,'note')});if(attachment){const up=await uploadMaintenanceFile(item.id,attachment);item.attachmentName=up.name||attachment.name;item.attachmentMime=up.mime||attachment.type;await save()}f.reset();updateMaintFileLabel()}catch(err){alert(err.message||'Não foi possível salvar a manutenção.')}};
