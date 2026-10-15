@@ -25,7 +25,7 @@ function veicFalso(){
         return json(200,{access_token:'tk-123',refresh_token:'rf'})
       }
       if(req.method==='GET'&&u.pathname==='/transacao-query/transacao'){
-        if(req.headers.authorization!=='Bearer tk-123')return json(401,{});
+        if(req.headers.authorization!=='Bearer tk-123'||req.headers['x-issuer-id']!=='4b0fe997782a4502a447b752dfac4fdb')return json(401,{});
         stats.listas++;stats.params=Object.fromEntries(u.searchParams);
         const size=Number(u.searchParams.get('pageSize')),idx=Number(u.searchParams.get('pageIndex'));
         return json(200,{list:TRANS.slice((idx-1)*size,idx*size),total:TRANS.length})
@@ -66,6 +66,7 @@ function veicFalso(){
   check('login com usuário e senha em Basic, como o site',stats.basic==='frota@construlog:segredo');
   check('lê as transações do período e devolve só os 2 abastecimentos',x.transacoes===3&&x.abastecimentos.length===2,x);
   check('  ...com o período nos filtros da consulta',stats.params&&stats.params.dataInicioTransacao==='2026-10-01'&&stats.params.dataFimTransacao==='2026-10-31',stats.params);
+  check('  ...mandando o x-issuer-id do site (sem ele o Veic devolve 401)',stats.listas>0);
   check('  ...e nunca chamou nada além do login e da consulta',stats.proibidas===0,stats);
 
   console.log('Gravação na Frota (banco de teste)');
