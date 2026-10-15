@@ -166,8 +166,8 @@ $('fColeta').addEventListener('change',()=>{
   if(c.placa)$('fPlaca').value=c.placa;
   if(c.origem){$('oEnd').value=c.origem;if(c.origem_sugerida){$('oCidade').value=c.origem_sugerida.cidade;$('oUf').value=c.origem_sugerida.uf}}
   $('dNome').value=c.destinatario||'';
-  $('dEnd').value=c.destino||'';$('dCidade').value=c.destino_sugerido?.cidade||'';$('dUf').value=c.destino_sugerido?.uf||'';
-  (c.entregas_extras||[]).forEach(e=>addEntrega({nome:e.destinatario,endereco:e.endereco,cidade:e.sugerido?.cidade,uf:e.sugerido?.uf}));
+  $('dEnd').value=c.destino||'';$('dCidade').value=c.destino_sugerido?.cidade||'';$('dUf').value=c.destino_sugerido?.uf||'';$('dCoord').value=c.destino_localizacao||'';
+  (c.entregas_extras||[]).forEach(e=>addEntrega({nome:e.destinatario,endereco:e.endereco,cidade:e.sugerido?.cidade,uf:e.sugerido?.uf,coordenadas:e.localizacao}));
   const falta=[$('dCidade').value?'':1,...[...$('extras').children].map(f=>f.querySelector('[data-k="cidade"]').value?'':1)].filter(Boolean).length;
   if(falta)msg('Confira a cidade/UF das entregas: não consegui tirar do endereço de '+falta+' delas.',false);else msg('')
 });

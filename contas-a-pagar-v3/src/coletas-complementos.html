@@ -37,12 +37,15 @@
 .lc-sub small{font-weight:400;color:#64748b}
 .lc-add{border:1px solid #93c5fd;background:#eff6ff;color:#1d4ed8;border-radius:7px;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer}
 .lc-dest-list{grid-column:1/-1;display:grid;gap:6px}
-.lc-dest{display:grid;grid-template-columns:28px minmax(150px,1fr) minmax(220px,2fr) minmax(120px,1fr) 30px;gap:7px;align-items:end;background:#fff;border:1px solid #e2e8f0;border-radius:9px;padding:6px 8px}
+.lc-dest{display:grid;grid-template-columns:28px 1fr 30px;gap:7px;align-items:end;background:#fff;border:1px solid #e2e8f0;border-radius:9px;padding:6px 8px}
+.lc-campos{display:grid;grid-template-columns:minmax(150px,1.2fr) minmax(200px,2fr) minmax(120px,1fr) 56px;gap:6px 7px}
+.lc-campos .lc-w2{grid-column:span 2}
+@media(max-width:720px){.lc-campos{grid-template-columns:1fr 1fr}.lc-campos label{grid-column:span 1}.lc-campos .lc-w2{grid-column:1/-1}}
 .lc-dest .lc-num{align-self:center;width:24px;height:24px;border-radius:50%;background:#0057a8;color:#fff;font-size:12px;font-weight:700;display:grid;place-items:center}
 .lc-dest label{display:flex;flex-direction:column;gap:2px;font-size:11.5px;font-weight:600;color:#475569}
 .lc-dest input{padding:5px 8px!important;font-size:13px!important;min-height:30px;border-radius:7px!important}
 .lc-del{border:0;background:#fee2e2;color:#b91c1c;border-radius:7px;height:30px;font-size:16px;cursor:pointer}
-@media(max-width:720px){.lc-dest{grid-template-columns:24px 1fr 30px}.lc-dest label{grid-column:2/3}.lc-dest .lc-del{grid-column:3;grid-row:1}}
+@media(max-width:720px){.lc-dest{grid-template-columns:24px 1fr 30px}}
 .lc-auto-note{grid-column:1/-1;font-size:11.5px;color:#0f766e;background:#f0fdfa;border:1px solid #99f6e4;border-radius:7px;padding:5px 8px;display:none}
 .lc-auto-note.show{display:block}
 
@@ -103,14 +106,21 @@
   function addDestRow(e = {}) {
     const list = byId('lcDestList'); if (!list) return;
     const row = document.createElement('div'); row.className = 'lc-dest';
-    row.innerHTML = '<span class="lc-num"></span>' +
+    row.innerHTML = '<span class="lc-num"></span><div class="lc-campos">' +
       '<label>Destinatário<input class="lc-d-nome" placeholder="Nome do destinatário"></label>' +
-      '<label>Endereço de entrega<input class="lc-d-end" placeholder="Rua, número, cidade - UF" data-no-titlecase="true"></label>' +
-      '<label>Observação / NF<input class="lc-d-obs" placeholder="Opcional" data-no-titlecase="true"></label>' +
-      '<button type="button" class="lc-del" title="Remover destinatário">×</button>';
+      '<label>Endereço de entrega<input class="lc-d-end" placeholder="Rua, número, bairro" data-no-titlecase="true"></label>' +
+      '<label>Cidade<input class="lc-d-cid" placeholder="Cidade"></label>' +
+      '<label>UF<input class="lc-d-uf" maxlength="2" placeholder="SP" data-no-titlecase="true"></label>' +
+      '<label class="lc-w2">Localização no Google Maps <small>(opcional)</small><input class="lc-d-loc" placeholder="cole o link do Google Maps" data-no-titlecase="true"></label>' +
+      '<label class="lc-w2">Observação / NF<input class="lc-d-obs" placeholder="Opcional" data-no-titlecase="true"></label>' +
+      '</div><button type="button" class="lc-del" title="Remover destinatário">×</button>';
     row.querySelector('.lc-d-nome').value = e.destinatario || '';
     row.querySelector('.lc-d-end').value = e.endereco_entrega || '';
+    row.querySelector('.lc-d-cid').value = e.cidade || '';
+    row.querySelector('.lc-d-uf').value = e.uf || '';
+    row.querySelector('.lc-d-loc').value = e.localizacao || '';
     row.querySelector('.lc-d-obs').value = e.observacao || '';
+    row.querySelector('.lc-d-uf').addEventListener('input', ev => { ev.target.value = ev.target.value.toUpperCase() });
     row.querySelector('.lc-del').onclick = () => { row.remove(); renumerar() };
     list.appendChild(row); renumerar();
     return row;
@@ -119,9 +129,18 @@
     return [...document.querySelectorAll('#lcDestList .lc-dest')].map(d => ({
       destinatario: d.querySelector('.lc-d-nome').value.trim(),
       endereco_entrega: d.querySelector('.lc-d-end').value.trim(),
+      cidade: d.querySelector('.lc-d-cid').value.trim(),
+      uf: d.querySelector('.lc-d-uf').value.trim().toUpperCase(),
+      localizacao: d.querySelector('.lc-d-loc').value.trim(),
       observacao: d.querySelector('.lc-d-obs').value.trim()
-    })).filter(e => e.destinatario || e.endereco_entrega);
+    })).filter(e => e.destinatario || e.endereco_entrega || e.cidade);
   }
+  /* ---------- Cidade, UF e localização da entrega 1 (destinatário principal) ---------- */
+  const ENTREGA1 = [['lc_ent_cidade', 'cidade', 'Cidade da entrega', 'Cidade'], ['lc_ent_uf', 'uf', 'UF', 'SP'], ['lc_ent_loc', 'localizacao', 'Localização no Google Maps (opcional)', 'cole o link do Google Maps']];
+  function lerEntrega1() {
+    const o = {}; ENTREGA1.forEach(([id, k]) => { o[k] = String(byId(id)?.value || '').trim() }); o.uf = o.uf.toUpperCase(); return o;
+  }
+  function preencherEntrega1(e) { e = obj(e); ENTREGA1.forEach(([id, k]) => { const el = byId(id); if (el) el.value = e[k] || '' }) }
 
   /* ---------- Dados bancários e Pix ---------- */
   function lerBanco() {
@@ -147,6 +166,18 @@
       const after = byId('endereco_entrega')?.closest('label');
       if (after && after.parentElement === entGrid) { after.after(sub); sub.after(list) } else { entGrid.append(sub, list) }
       sub.querySelector('.lc-add').onclick = () => { const r = addDestRow(); r?.querySelector('input')?.focus() };
+      // Cidade/UF/localização da entrega 1, logo depois do endereço de entrega.
+      let ref = byId('endereco_entrega')?.closest('label');
+      ENTREGA1.forEach(([id, , label, ph]) => {
+        const lbl = document.createElement('label');
+        if (id === 'lc_ent_loc') lbl.className = 'col-2';
+        const sp = document.createElement('span'); sp.textContent = label;
+        const el = document.createElement('input'); el.type = 'text'; el.id = id; el.placeholder = ph;
+        if (id !== 'lc_ent_cidade') el.dataset.noTitlecase = 'true';
+        if (id === 'lc_ent_uf') { el.maxLength = 2; el.addEventListener('input', () => { el.value = el.value.toUpperCase() }) }
+        lbl.append(sp, el);
+        if (ref && ref.parentElement === entGrid) { ref.after(lbl); ref = lbl } else entGrid.insertBefore(lbl, sub);
+      });
     }
     const motGrid = gridOf('motorista', 'Dados do Motorista');
     if (motGrid && !byId('mb_banco')) {
@@ -188,6 +219,7 @@
     const note = byId('lcAutoNote'); if (note) { note.classList.remove('show'); note.textContent = '' }
     const r = currentId() ? rowById(currentId()) : null;
     lista(r?.entregas_extras).forEach(e => addDestRow(e));
+    preencherEntrega1(r?.entrega_principal);
     preencherBanco(r?.motorista_banco || {}, false);
   }
 
@@ -250,7 +282,7 @@
         if (data?.id) {
           const r = await baseFetch('/api/painel/coletas-complementos/' + encodeURIComponent(data.id), {
             method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ entregas_extras: lerDestinos(), motorista_banco: lerBanco() })
+            body: JSON.stringify({ entregas_extras: lerDestinos(), motorista_banco: lerBanco(), entrega_principal: lerEntrega1() })
           });
           if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'HTTP ' + r.status) }
         }
@@ -267,6 +299,7 @@
       'motorista', 'telefone_motorista', 'transportadora_agregado', ...CAMINHAO_CAMPOS, 'quantidade_paletes', 'peso_total', 'observacoes', 'frete_pago', 'percentual_adiantamento'
     ].forEach(k => { if (byId(k)) base[k] = val(k) });
     base.entregas_extras = lerDestinos();
+    base.entrega_principal = lerEntrega1();
     base.motorista_banco = lerBanco();
     return base;
   }
@@ -281,7 +314,8 @@
   function ordemHtml(c) {
     const os = c.os_numero || c.id || '';
     const banco = obj(c.motorista_banco);
-    const entregas = [{ destinatario: c.destinatario, endereco_entrega: c.endereco_entrega, observacao: '' }, ...lista(c.entregas_extras)]
+    const ep = obj(c.entrega_principal);
+    const entregas = [{ destinatario: c.destinatario, endereco_entrega: c.endereco_entrega, cidade: ep.cidade, uf: ep.uf, observacao: '' }, ...lista(c.entregas_extras)]
       .filter(e => String(e.destinatario || '').trim() || String(e.endereco_entrega || '').trim());
     const frete = n(c.frete_pago), pct = n(c.percentual_adiantamento), adiant = frete * pct / 100;
     const temCarreta = String(c.placa_carreta || '').trim() || String(c.capacidade_carga_carreta || '').trim() || String(c.eixos_carreta ?? '').trim();
@@ -318,7 +352,7 @@
       '<div class="bd">' +
       '<div class="sec"><h2>Coleta</h2><div class="g">' + campo('Remetente', c.cliente, 'w2') + campo('Data / hora', (dt(c.data_carregamento) || '') + (hr(c.hora_carregamento) ? ' ' + hr(c.hora_carregamento) : '')) + campo('Endereço da coleta', c.endereco_coleta, 'w3') + '</div></div>' +
       '<div class="sec"><h2>Entrega' + (entregas.length > 1 ? 's (' + entregas.length + ' destinatários)' : '') + '</h2>' +
-      (entregas.length ? entregas.map((e, i) => '<div class="ent"><span class="nn">' + (i + 1) + '</span><div><b>' + esc(e.destinatario || '—') + '</b><div>' + esc(e.endereco_entrega || '—') + '</div>' + (e.observacao ? '<small>' + esc(e.observacao) + '</small>' : '') + '</div></div>').join('') : '<div class="obs">—</div>') +
+      (entregas.length ? entregas.map((e, i) => '<div class="ent"><span class="nn">' + (i + 1) + '</span><div><b>' + esc(e.destinatario || '—') + '</b><div>' + esc(e.endereco_entrega || '—') + (e.cidade ? ' • ' + esc(e.cidade) + (e.uf ? '/' + esc(e.uf) : '') : '') + '</div>' + (e.observacao ? '<small>' + esc(e.observacao) + '</small>' : '') + '</div></div>').join('') : '<div class="obs">—</div>') +
       '</div>' +
       '<div class="two">' +
       '<div class="sec"><h2>Motorista</h2><div class="g" style="grid-template-columns:1fr 1fr">' + campo('Nome', c.motorista, 'w3') + campo('Telefone / WhatsApp', c.telefone_motorista) + campo('Transportadora / Agregado', c.transportadora_agregado) + campo('CPF', c.motorista_cpf) + campo('RG', c.motorista_rg) + '</div></div>' +
