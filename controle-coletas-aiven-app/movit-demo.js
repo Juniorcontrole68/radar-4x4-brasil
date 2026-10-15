@@ -37,13 +37,20 @@ const MODULOS = {
     ssw: [/^\/api\/programacao-entregas\/(disponiveis|status-nfs)$/, /^\/api\/roteirizador\/(enderecos-ctrc|localizar-enderecos)$/],
     telas: ['roteirizador-cargas']
   },
+  agendamento: {
+    // agendamentos gravados por empresa (client_id) no servidor principal
+    painel: [/^\/api\/painel\/agendamento-teste$/],
+    // busca da NF no SSW da própria empresa (opções 38 e 101) e lista/gravação repassadas ao servidor principal
+    ssw: [/^\/api\/agendamento-teste(\/nf)?$/],
+    telas: ['agendamento-teste']
+  },
   usuarios: { painel: [], ssw: [], telas: ['usuarios'] }
 };
 // Rotas que todo cliente da demo usa (login, sessão, usuários da própria empresa, guia e vídeos,
 // e a conferência da conexão com o SSW da empresa).
 const ROTAS_BASE = { painel: [/^\/api\/auth\//, /^\/api\/painel\/auth\//, /^\/api\/demo\//, /^\/api\/guia(\/|$)/], ssw: [/^\/api\/ssw\/conexao$/] };
 // Permissões internas que cada módulo libera (as mesmas usadas pelo painel).
-const PERMS_POR_MODULO = { roteirizador: ['roteirizador'], usuarios: [] };
+const PERMS_POR_MODULO = { roteirizador: ['roteirizador'], agendamento: ['agendamentos'], usuarios: [] };
 
 function modulosProntos() { return Object.keys(MODULOS); }
 
