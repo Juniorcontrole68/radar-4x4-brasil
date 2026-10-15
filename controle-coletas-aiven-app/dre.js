@@ -149,7 +149,7 @@ const semAcento=s=>String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'');
 // Lê os números de um holerite (texto de uma página). Os campos não encontrados ficam null.
 function lerHolerite(texto){
   const linhas=String(texto||'').split(/\r?\n/).map(l=>l.replace(/\s+/g,' ').trim()).filter(Boolean);
-  const out={funcionario:'',cargo:'',competencia:'',vencimentos:null,descontos:null,liquido:null,salario_base:null,base_inss:null,base_fgts:null,fgts:null,base_irrf:null,inss:null,irrf:null};
+  const out={funcionario:'',cargo:'',competencia:'',vencimentos:null,descontos:null,liquido:null,salario_base:null,base_inss:null,base_fgts:null,fgts:null,base_irrf:null,inss:null,irrf:null,hora_extra:null,horas_extras:null};
   for(let i=0;i<linhas.length;i++){
     const l=linhas[i];
     // rótulos desta linha, na ordem em que aparecem
@@ -177,6 +177,18 @@ function lerHolerite(texto){
   for(const l of linhas){
     if(out.inss===null&&/\bi\.?n\.?s\.?s\b/i.test(l)&&!/base|contr|sal\.|faixa/i.test(l)){const v=valoresDa(l);if(v.length)out.inss=v[v.length-1]}
     if(out.irrf===null&&/\bi\.?r\.?r\.?f\b|imposto\s+de\s+renda/i.test(l)&&!/base|faixa/i.test(l)){const v=valoresDa(l);if(v.length)out.irrf=v[v.length-1]}
+  }
+  // horas extras: soma das linhas de evento de hora extra (50%, 100%, noturna...). A mesma linha repetida
+  // (as duas vias do recibo na página) conta uma vez. Valor = último número; horas = o primeiro, quando há dois.
+  const vistasHe=new Set();
+  for(const l of linhas){
+    if(!/hora?s?\s*extra|\bh\.?\s?e(xtra)?\.?\s*\d{2,3}\s*%|\bextras?\s+\d{2,3}\s*%/i.test(l)||/dsr|d\.s\.r|reflexo|repouso|base|total/i.test(l)||vistasHe.has(l))continue;
+    vistasHe.add(l);
+    const v=valoresDa(l);if(!v.length)continue;
+    out.hora_extra=r2((out.hora_extra||0)+v[v.length-1]);
+    const hh=l.match(/\b(\d{1,3}):(\d{2})\b/);
+    const horas=hh?Number(hh[1])+Number(hh[2])/60:(v.length>=2?v[0]:null);
+    if(horas!==null)out.horas_extras=r2((out.horas_extras||0)+horas)
   }
   // nome do funcionário: na linha do rótulo ou na de baixo (sem códigos, CBO e números)
   const nomeDe=s=>{
@@ -257,6 +269,8 @@ async function ensureSchema(pool){
     vencimentos NUMERIC(14,2), descontos NUMERIC(14,2), liquido NUMERIC(14,2), salario_base NUMERIC(14,2),
     inss NUMERIC(14,2), irrf NUMERIC(14,2), fgts NUMERIC(14,2), competencia_pdf TEXT NOT NULL DEFAULT '',
     criado_por TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+  // hora extra só é mostrada no card (não muda a DRE: já está dentro dos vencimentos)
+  await pool.query('ALTER TABLE dre_holerites ADD COLUMN IF NOT EXISTS hora_extra NUMERIC(14,2), ADD COLUMN IF NOT EXISTS horas_extras NUMERIC(10,2)');
   await pool.query('CREATE INDEX IF NOT EXISTS idx_dre_hol_cliente ON dre_holerites(client_id,competencia)');
   await pool.query(`CREATE TABLE IF NOT EXISTS dre_ssw_despesas (
     id BIGSERIAL PRIMARY KEY, client_id BIGINT, competencia DATE NOT NULL, lancamento TEXT NOT NULL DEFAULT '', data_pgto DATE,
@@ -346,8 +360,8 @@ async function despesasSsw(pool,cli,de,ate){
 }
 
 const LIMITE_ARQUIVOS=30,LIMITE_PDF=8*1024*1024;
-const CAMPOS_HOL=['vencimentos','descontos','liquido','salario_base','inss','irrf','fgts'];
-const holSel="SELECT id::text,to_char(competencia,'YYYY-MM') AS competencia,arquivo_id::text,pagina,funcionario,cargo,vencimentos::float8,descontos::float8,liquido::float8,salario_base::float8,inss::float8,irrf::float8,fgts::float8,competencia_pdf,created_at FROM dre_holerites";
+const CAMPOS_HOL=['vencimentos','descontos','liquido','salario_base','inss','irrf','fgts','hora_extra','horas_extras'];
+const holSel="SELECT id::text,to_char(competencia,'YYYY-MM') AS competencia,arquivo_id::text,pagina,funcionario,cargo,vencimentos::float8,descontos::float8,liquido::float8,salario_base::float8,inss::float8,irrf::float8,fgts::float8,hora_extra::float8,horas_extras::float8,competencia_pdf,created_at FROM dre_holerites";
 
 // Atende as rotas /api/dre*. Devolve true quando a rota era daqui (a resposta já foi enviada).
 async function handle(req,res,u,ctx){
@@ -455,8 +469,8 @@ async function atender(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSes
         const aq=await pool.query('INSERT INTO dre_holerite_arquivos(client_id,nome,sha,pdf) VALUES($1,$2,$3,$4) RETURNING id',[cli,nome,sha,buf]);
         const ids=[];
         for(const h of lido.holerites){
-          const q=await pool.query('INSERT INTO dre_holerites(client_id,competencia,arquivo_id,pagina,funcionario,cargo,vencimentos,descontos,liquido,salario_base,inss,irrf,fgts,competencia_pdf,criado_por) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id::text',
-            [cli,c+'-01',aq.rows[0].id,h.pagina,h.funcionario,h.cargo,h.vencimentos,h.descontos,h.liquido,h.salario_base,h.inss,h.irrf,h.fgts,h.competencia,quem]);
+          const q=await pool.query('INSERT INTO dre_holerites(client_id,competencia,arquivo_id,pagina,funcionario,cargo,vencimentos,descontos,liquido,salario_base,inss,irrf,fgts,hora_extra,horas_extras,competencia_pdf,criado_por) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id::text',
+            [cli,c+'-01',aq.rows[0].id,h.pagina,h.funcionario,h.cargo,h.vencimentos,h.descontos,h.liquido,h.salario_base,h.inss,h.irrf,h.fgts,h.hora_extra,h.horas_extras,h.competencia,quem]);
           ids.push(q.rows[0].id)
         }
         resultado.push({nome,holerites:ids.length,outroMes:lido.holerites.some(h=>h.competencia&&h.competencia!==c)})
