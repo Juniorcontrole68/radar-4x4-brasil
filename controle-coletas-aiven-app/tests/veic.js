@@ -55,6 +55,15 @@ function veicFalso(){
    r=veic.mesclar(r.fuel,n);
    check('importar de novo não duplica (atualiza)',r.fuel.length===3&&r.criados===0&&r.atualizados===2,r)}
 
+  {const base={abastecimento:{hodometro:734697,quantidade:42.72,valorUnitario:6.79},condutor:{nome:'GILMAR'},data:'2026-10-14T10:00:00'};
+   const p1=veic.abastecimentoDaTransacao(Object.assign({id:1,valor:290.08,equipamento:{id:5,veiculo:{placaVeiculo:'RTA-2B34'}}},base));
+   check('placa achada pelo formato mesmo fora de equipamento.identificacao',p1.plate==='RTA2B34',p1.plate);
+   const p2=veic.abastecimentoDaTransacao(Object.assign({id:2,valor:290.06,status:'CANCELADA',equipamento:{placa:'RTA2B34'}},base));
+   let r=veic.mesclar([],[p2,p1]);
+   check('mesmo abastecimento em duas transações do Veic: fica um só, o não cancelado',r.fuel.length===1&&r.fuel[0].id==='veic-1'&&r.duplicados===1,r);
+   r=veic.mesclar([p1,p2].map(x=>Object.assign({},x)),[]);
+   check('duplicado que já estava gravado some na próxima importação',r.fuel.length===1,r.fuel.length)}
+
   console.log('Veic de mentira');
   let erro=null;try{await veic.lerAbastecimentos('2026-10-01','2026-10-31')}catch(e){erro=e}
   check('sem VEIC_USUARIO/VEIC_SENHA recusa sem chamar o Veic',erro&&/VEIC_USUARIO/.test(erro.message)&&stats.logins===0,String(erro));
