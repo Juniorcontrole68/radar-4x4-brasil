@@ -15,6 +15,8 @@ const HOL_JOAO=[
   'Cargo: MOTORISTA DE CAMINHAO',
   'Cód.  Descrição            Referência   Vencimentos   Descontos',
   '8781  DIAS NORMAIS         30,00        3.500,00',
+  '150   HORAS EXTRAS 50%     10,00        227,27',
+  '151   DSR S/ HORAS EXTRAS  4,00         45,45',
   '998   I.N.S.S.             9,00                       315,00',
   '999   IMPOSTO DE RENDA RETIDO  7,50                   105,00',
   'Total de Vencimentos    Total de Descontos',
@@ -57,6 +59,12 @@ async function pdfHolerites(paginas){
   {const h=lib.lerHolerite(HOL_JOAO.join('\n'));
    check('holerite (valores na linha de baixo): funcionário, cargo, mês, vencimentos, descontos e líquido',h.funcionario==='JOAO DA SILVA'&&h.cargo==='MOTORISTA DE CAMINHAO'&&h.competencia==='2026-10'&&h.vencimentos===3500&&h.descontos===420&&h.liquido===3080,h);
    check('  ...salário base, FGTS do mês, INSS e IRRF descontados',h.salario_base===3500&&h.fgts===280&&h.inss===315&&h.irrf===105,h)}
+  {const h=lib.lerHolerite(['Cód. Descrição Ref. Vencimentos Descontos','001 SALARIO 220:00 2.000,00','150 HORA EXTRA 50% 08:30 115,91','160 H.EXTRA 100% 2,00 36,36','170 REFLEXO HORA EXTRA DSR 30,45','Total de Vencimentos Total de Descontos','2.182,72 0,00'].join('\n'));
+   check('hora extra: soma 50% e 100% (horas em 08:30 ou 2,00); reflexo/DSR fica fora; vencimentos não mudam',h.hora_extra===152.27&&h.horas_extras===10.5&&h.vencimentos===2182.72,h)}
+  {const h=lib.lerHolerite(HOL_MARIA.join('\n'));
+   check('hora extra só com o valor (sem horas na linha)',h.hora_extra===250&&h.horas_extras===null,h)}
+  {const h=lib.lerHolerite(HOL_MARIA.filter(l=>!/EXTRA/.test(l)).join('\n'));
+   check('holerite sem hora extra: campo vazio',h.hora_extra===null,h)}
   {const h=lib.lerHolerite(HOL_MARIA.join('\n'));
    check('holerite (rótulo e valor na mesma linha)',h.funcionario==='MARIA APARECIDA SOUZA'&&h.cargo==='AUXILIAR ADMINISTRATIVO'&&h.competencia==='2026-10'&&h.vencimentos===2450&&h.descontos===190&&h.liquido===2260&&h.fgts===196&&h.inss===165,h)}
   const pdf=await pdfHolerites([[HOL_JOAO,HOL_JOAO],[HOL_MARIA]]);
@@ -103,6 +111,7 @@ async function pdfHolerites(paginas){
   let m=await api('GET','/api/dre/mes?competencia='+mes);
   check('lista do mês: lançamentos (manual e SSW) e holerites',m.status===200&&m.j.lancamentos.length===3&&m.j.lancamentos.some(l=>l.origem==='ssw'&&l.valor===160000.25)&&m.j.holerites.length===2,m.j);
   const joao=m.j.holerites.find(h=>h.funcionario==='JOAO DA SILVA');
+  check('hora extra separada no holerite (as duas vias contam uma vez; DSR fica fora)',joao&&joao.hora_extra===227.27&&joao.horas_extras===10,joao);
   let d=await api('GET','/api/dre?ano='+ano);
   const L=id=>d.j.linhas.find(l=>l.id===id),i=9;
   check('Salários do mês = soma dos vencimentos dos holerites; FGTS entra em Encargos',L('salarios').meses[i]===5950&&L('encargos').meses[i]===476&&d.j.holerites[mes]===2,[L('salarios').meses[i],L('encargos').meses[i]]);
