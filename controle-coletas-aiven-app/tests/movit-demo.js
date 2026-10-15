@@ -46,6 +46,10 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   check('leitura do SSW da empresa A entra com o login DELA',r.status===200&&r.json?.conectado===true&&r.json?.dominio==='TST'&&s1.ultimoLogin?.usuario==='joao'&&s1.logins===s0.logins+1,r.status+' '+r.text.slice(0,200)+' '+JSON.stringify(s1.ultimoLogin));
   r=await call('GET','/api/ssw/conexao',{cookie:cookieA});const s2=await stats();
   check('segunda consulta reaproveita o processo e a sessão do SSW (sem login novo)',r.json?.conectado===true&&s2.logins===s1.logins,JSON.stringify({antes:s1.logins,depois:s2.logins}));
+  r=await call('GET','/api/programacao-entregas/disponiveis',{cookie:cookieA});
+  const ctrcsA=(r.json?.rows||[]).map(x=>x.ctrc).sort();
+  check('Roteirizador busca no SSW os CTRCs disponíveis das unidades da empresa (MTZ e CPS, sem repetir)',r.status===200&&JSON.stringify(ctrcsA)===JSON.stringify(['CPS000077-3','MTZ000501-1','MTZ000502-2']),r.status+' '+r.text.slice(0,240));
+  check('...com cidade, peso e volumes de cada CTRC',(r.json?.rows||[]).some(x=>x.ctrc==='MTZ000501-1'&&x.cidade==='CAMPINAS'&&x.peso===120.5&&x.volumes===4),JSON.stringify((r.json?.rows||[])[0]||{}));
 
   console.log('C. O que ainda não está pronto fica fechado para o cliente da demo');
   for(const p of ['/api/roteirizador/lista','/api/ssw/sessoes','/api/lancamentos','/api/tracking/live','/api/sheet/base','/api/bi2/receita'])
@@ -66,6 +70,8 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   check('leitura do SSW da empresa B usa o login de B',r.json?.dominio==='XYZ'&&s3.ultimoLogin?.dominio==='XYZ'&&s3.ultimoLogin?.usuario==='maria',r.text.slice(0,200));
   r=await call('GET','/api/ssw/conexao',{cookie:cookieA});
   check('...e a empresa A continua no SSW dela',r.json?.dominio==='TST',r.text.slice(0,200));
+  r=await call('GET','/api/programacao-entregas/disponiveis',{cookie:cookieB});
+  check('Roteirizador da empresa B não recebe os CTRCs da empresa A',!(r.json?.rows||[]).some(x=>/^(MTZ|CPS)/.test(x.ctrc)),r.status+' '+r.text.slice(0,200));
   r=await call('GET','/api/rc/doc?path='+encodeURIComponent('cad/main/ajustes'),{cookie:cookieB});
   check('Roteirizador da empresa B responde',r.status===200||r.status===404,'veio '+r.status);
 

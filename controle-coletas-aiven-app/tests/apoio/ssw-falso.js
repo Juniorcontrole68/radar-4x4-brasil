@@ -92,6 +92,13 @@ const telaComprov=seq=>{
   return'<html><head><title>038 - Baixa de Entregas &gt; Comprovantes</title></head><body><div>Ve&iacute;culo: FAB1A23 Motorista: MOTORISTA DE TESTE Data: '+HOJE+'</div><xml id="xmlsr"><rs>'+
     nros.map(n=>{const c=CTES[n];return'<r><f0>&lt;a href=# class=sra onclick=ajaxEnvia(\'\',1,\'ssw0053\');return(false);&gt;&lt;u&gt;'+(c.ser||'AMR')+String(n).padStart(6,'0')+'-'+c.dv+'&lt;/u&gt;&lt;/a&gt;</f0><f1>NAVAS E CIA LTDA</f1><f2>NAVAS E CIA LTDA</f2><f3>'+c.nome+'</f3><f4>'+c.lgr+','+c.nro+'</f4><f5>'+c.uf+' '+c.cid+'</f5><f6>'+oc(c)+'</f6><f7></f7><f8></f8></r>'}).join('')+'</rs></xml></body></html>'
 };
+// Entregas em aberto (opção 38, act=PEN) das unidades de uma transportadora da demonstração.
+// Colunas: f0 CTRC, f1 NF, f2 remetente, f3 destinatário, f4 cidade, f6 volumes, f7 peso, f8 previsão, f9 dias de atraso, f10 situação.
+const PEND={
+  MTZ:[['MTZ000501-1','30101','FABRICA ALFA','LOJA CENTRO','CAMPINAS','4','120,500',HOJE,'0','DISPONIVEL'],['MTZ000502-2','30102','FABRICA ALFA','MERCADO BOM','SUMARE','2','45,000',HOJE,'1','DISPONIVEL']],
+  CPS:[['CPS000077-3','40201','INDUSTRIA BETA','DEPOSITO NORTE','PAULINIA','10','800,000',HOJE,'0','DISPONIVEL'],['MTZ000502-2','30102','FABRICA ALFA','MERCADO BOM','SUMARE','2','45,000',HOJE,'1','DISPONIVEL']]
+};
+const pendXml=linhas=>'<xml><rs>'+linhas.map(l=>'<r>'+l.map((c,i)=>'<f'+(i>=5?i+1:i)+'>'+c+'</f'+(i>=5?i+1:i)+'>').join('')+'</r>').join('')+'</rs></xml>';
 const semCte='<html><body><form><input type="hidden" name="act" value=""></form><div class=texto>CTRC n&atilde;o encontrado.</div></body></html>';
 http.createServer(async(req,res)=>{
   const u=new URL(req.url,'http://x');paths[req.method+' '+u.pathname]=(paths[req.method+' '+u.pathname]||0)+1;
@@ -156,6 +163,6 @@ http.createServer(async(req,res)=>{
   if(u.pathname==='/bin/menu01'){st.unit=u.searchParams.get('f2');await sleep(150);return send(200,'<script>location="ssw0198"</script>')}
   if(u.pathname==='/bin/ssw0198'&&u.searchParams.get('act')==='ENV_ROM_COMPROV')return send(200,telaComprov(Number(u.searchParams.get('seq_romaneio'))));
   if(u.pathname==='/bin/ssw0198'&&req.method==='GET'){await sleep(150);return send(200,page(DATA[st.unit]||[]))}
-  if(u.pathname==='/bin/ssw0198'&&req.method==='POST')return send(200,'<xml></xml>');
+  if(u.pathname==='/bin/ssw0198'&&req.method==='POST'){const p=new URLSearchParams(body);return send(200,p.get('act')==='PEN'&&PEND[st.unit]?pendXml(PEND[st.unit]):'<xml></xml>')}
   return send(404,'');
 }).listen(PORT,'127.0.0.1',()=>console.log('SSW de teste em '+PORT));

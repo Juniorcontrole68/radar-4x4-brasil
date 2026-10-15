@@ -8,6 +8,10 @@ const TEST_MODE=/^(1|true|sim|yes)$/i.test(String(process.env.TEST_MODE||'').tri
 // leem a planilha da CONSTRULOG e não rodam as rotinas de fundo (cada empresa só lê o SSW quando usa).
 const DEMO_MODE=/^(1|true|sim|yes)$/i.test(String(process.env.MOVIT_DEMO||'').trim())||/^\d+$/.test(String(process.env.MOVIT_CLIENTE_ID||''));
 const SEM_ROTINAS=TEST_MODE||DEMO_MODE;
+// Unidades do SSW (siglas de 3 letras). Na demonstração cada empresa informa as suas no login;
+// sem a variável valem as da CONSTRULOG (AMR). A primeira é a usada para consultar CT-es (opção 101).
+const SSW_UNIDADES_CFG=String(process.env.SSW_UNIDADES||'').toUpperCase().split(/[\s,;]+/).filter(x=>/^[A-Z0-9]{3}$/.test(x));
+const SSW_UNIDADE=SSW_UNIDADES_CFG[0]||'AMR';
 const ID=String(process.env.SPREADSHEET_ID||'').trim()||(SEM_ROTINAS?'':'1miU5AW514LbRk5UsXYsVgXL1JTj_ZJgafRmBDF-tzWU');
 // Chave das chamadas servidor-a-servidor, entregue pelo server.js ao iniciar este processo.
 const INTERNAL_KEY=String(process.env.DASH_INTERNAL_KEY||'');
@@ -609,15 +613,17 @@ async function fetchSswPendingDeliveries(){
   if(SSW_PENDING_INFLIGHT)return SSW_PENDING_INFLIGHT;
   SSW_PENDING_INFLIGHT=(async()=>{
     if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
-    const rows=await withSswSession('op38pend',async({apply,cookie})=>{
+    const unidades=SSW_UNIDADES_CFG.length?SSW_UNIDADES_CFG:['AMR'],rows=[],vistos=new Set();
+    for(const unidade of unidades){
+    const linhas=await withSswSession('op38pend',async({apply,cookie})=>{
     let r;
-    r=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2=AMR&f3=38',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
+    r=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2='+unidade+'&f3=38',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
     const nav=await r.text(),prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0198';
     sswAssertLoggedIn(nav,prog);
     r=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
     const html=await r.text(),params=deliveryProgramFormParams(html);
     let manifest=(parseSsw38Table(html).rows||[])[0]||null;
-    if(!manifest){try{manifest=((await fetchSsw38Quick()).rows||[])[0]||null}catch{}}
+    if(!manifest){try{manifest=((await fetchSsw38QuickPrefix(unidade)).rows||[])[0]||null}catch{}}
     if(manifest){
       const mm=String(manifest.romaneio||'').match(/^[A-Z]{3}0*(\d+)-(\d+)$/i);
       if(mm){params.set('nro_romaneio',mm[1]);params.set('seq_romaneio',mm[2]);params.set('qtde_ctrc',String(manifest.qtdeCtrcs||''))}
@@ -630,19 +636,21 @@ async function fetchSswPendingDeliveries(){
       for(const fm of rm[1].matchAll(/<f(\d+)\b[^>]*>([\s\S]*?)<\/f\1>/gi))f[fm[1]]=htmlText38(fm[2]);
       const ctrc=String(f['0']||'').trim(),nf=String(f['1']||'').trim(),cidade=String(f['4']||'').trim();
       if(!ctrc&&!nf&&!cidade)continue;
-      if(/^AMS/i.test(ctrc))continue;
+      if(!SSW_UNIDADES_CFG.length&&/^AMS/i.test(ctrc))continue;
       const detalhes=String(f['11']||'');
       rows.push({
         ctrc,nf,remetente:String(f['2']||'').trim(),cliente:String(f['3']||'').trim(),
-        cidade,uf:'SP',volumes:bi2Number(f['6']),peso:bi2Number(f['7']),
+        cidade,uf:SSW_UNIDADES_CFG.length?'':'SP',volumes:bi2Number(f['6']),peso:bi2Number(f['7']),
         previsao:String(f['8']||'').trim(),diasAtraso:bi2Number(f['9']),
         status:String(f['10']||'').trim(),detalhes,m3:deliveryProgramParseM3Text(detalhes),
         seq:String(f['12']||'').trim()
       })
     }
-    if(!rows.length)throw new Error('O SSW não retornou entregas em aberto na opção 38.');
     return rows
     });
+    for(const x of linhas){const k=x.ctrc||x.nf;if(k&&vistos.has(k))continue;if(k)vistos.add(k);rows.push(x)}
+    }
+    if(!rows.length)throw new Error('O SSW não retornou entregas em aberto na opção 38'+(SSW_UNIDADES_CFG.length?' (unidades '+unidades.join(', ')+').':'.'));
     const value={ok:true,source:'SSW opção 38 • Pendências',rows,total:rows.length,at:new Date().toISOString()};
     SSW_PENDING_CACHE={at:Date.now(),value};
     console.log('SSW38 PENDENCIAS PROGRAMAÇÃO: '+JSON.stringify({total:rows.length,cidades:new Set(rows.map(x=>x.cidade).filter(Boolean)).size,comPeso:rows.filter(x=>x.peso>0).length,comM3Direto:rows.filter(x=>x.m3>0).length}));
@@ -1339,7 +1347,7 @@ async function deliveryProgramCreateSsw101Session(){
   const {jar,apply,cookie}=await sswLoginFresh('op101prog');
   const hdr=ref=>({'User-Agent':SSW_UA,'Cookie':cookie(),'Referer':ref||'https://sistema.ssw.inf.br/bin/menu01'});
   let rr;
-  rr=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2=AMR&f3=101',{headers:hdr(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
+  rr=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2='+SSW_UNIDADE+'&f3=101',{headers:hdr(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
   const nav=await rr.text(),prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0053';
   rr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:hdr('https://sistema.ssw.inf.br/bin/menu01'),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
   const formHtml=await rr.text();
@@ -1970,7 +1978,7 @@ async function probeSsw101Cte(ctrc){
   const login=new URLSearchParams({act:'L',f1:process.env.SSW_INTERNAL_DOMINIO||'',f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),f3:process.env.SSW_INTERNAL_USUARIO||'',f4:process.env.SSW_INTERNAL_SENHA||''});
   rr=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/ssw0422','Cookie':cookie()},body:login.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);await rr.text();
   if(!jar.has('token'))return{ok:false,error:'Login interno SSW não aceito'};
-  rr=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2=AMR&f3=101',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
+  rr=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2='+SSW_UNIDADE+'&f3=101',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
   const nav=await rr.text(),prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0053';
   rr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
   const formHtml=await rr.text(),params=deliveryProgramFormParams(formHtml);
@@ -2027,7 +2035,7 @@ async function probeSsw101Program(){
   const login=new URLSearchParams({act:'L',f1:process.env.SSW_INTERNAL_DOMINIO||'',f2:String(process.env.SSW_INTERNAL_CPF||'').replace(/\D/g,''),f3:process.env.SSW_INTERNAL_USUARIO||'',f4:process.env.SSW_INTERNAL_SENHA||''});
   rr=await fetch('https://sistema.ssw.inf.br/bin/ssw0422',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Referer':'https://sistema.ssw.inf.br/bin/ssw0422','Cookie':cookie()},body:login.toString(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);await rr.text();
   if(!jar.has('token'))return{ok:false,error:'Login interno SSW não aceito'};
-  rr=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2=AMR&f3=101',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
+  rr=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2='+SSW_UNIDADE+'&f3=101',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
   const nav=await rr.text(),prog=(nav.match(/ssw\d+/i)||[])[0]||'';
   if(!prog)return{ok:false,error:'Programa da opção 101 não identificado',navText:htmlText38(nav).slice(0,800)};
   rr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
@@ -2089,7 +2097,7 @@ async function ssw101Session(){
   if(!internalSswConfigured())throw new Error('Credenciais internas SSW não configuradas');
   const {jar,apply,cookie}=await sswLoginFresh('op101');
   let rr;
-  rr=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2=AMR&f3=101',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
+  rr=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2='+SSW_UNIDADE+'&f3=101',{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
   const nav=await rr.text(),prog=(nav.match(/ssw\d+/i)||[])[0]||'ssw0053';
   rr=await fetch('https://sistema.ssw.inf.br/bin/'+prog,{headers:{'User-Agent':'Mozilla/5.0 Chrome/120 Safari/537.36','Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
   const html=await rr.text();
