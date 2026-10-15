@@ -18,7 +18,7 @@ input,select,textarea{width:100%;padding:10px 11px;border:1px solid #cbd5e1;bord
 .client-head{display:flex;justify-content:space-between;gap:10px}.client h3{margin:0;font-size:15px}.meta{font-size:12px;color:var(--muted);margin-top:5px;line-height:1.45}.tag{display:inline-block;padding:3px 7px;border-radius:999px;font-size:10px;font-weight:800}.tag.active{background:#dcfce7;color:#166534}.tag.pilot{background:#dbeafe;color:#1d4ed8}.tag.overdue,.tag.blocked{background:#fee2e2;color:#991b1b}.tag.trial{background:#fef3c7;color:#92400e}.tag.demo{background:#ede9fe;color:#5b21b6}
 .trialbox{border:1px dashed #0f766e;border-radius:11px;padding:12px;margin-bottom:12px;background:#f0fdfa}.cred{background:#0f172a;color:#fff;border-radius:9px;padding:10px 12px;font-family:monospace;font-size:13px;margin-top:8px;line-height:1.6}
 .prices{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}.fee-hint{font-size:11px;color:var(--muted);font-weight:600}.fee-hint a{color:var(--brand);cursor:pointer;text-decoration:underline}
-.modules{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.mod{border:1px solid var(--line);border-radius:10px;padding:10px;background:#fafafa;display:flex;gap:9px;align-items:flex-start}.mod input{width:auto;margin-top:3px}.mod b{font-size:13px}.mod small{display:block;color:var(--muted);margin-top:2px}
+.modules{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.mod{border:1px solid var(--line);border-radius:10px;padding:10px;background:#fafafa;display:flex;gap:9px;align-items:flex-start}.mod input{width:auto;margin-top:3px}.mod b{font-size:13px}.mod small{display:block;color:var(--muted);margin-top:2px}.modw{display:flex;flex-direction:column;gap:3px}.modw label.vid{font-size:11.5px;color:var(--muted);padding-left:12px;cursor:pointer}.modw label.vid input{width:auto;margin:0 4px 0 0;vertical-align:-2px}
 .msg{min-height:20px;font-size:13px;font-weight:700;margin-top:10px}.empty{padding:20px;text-align:center;color:var(--muted)}
 @media(max-width:900px){.kpis{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}.form,.modules{grid-template-columns:1fr}}
 </style>
@@ -102,11 +102,12 @@ function num(v){return Number(String(v||'0').replace(/\./g,'').replace(',','.'))
 function brDate(v){const d=String(v||'').slice(0,10);return d?d.split('-').reverse().join('/'):''}
 let PRICES={instalacao:0,teste_dias:7,modulos:[]};
 function priceOf(k){const m=PRICES.modulos.find(x=>x.key===k)||MODULES.find(x=>x.key===k);return Number(m&&m.price_monthly||0)}
-function feeCalc(){const sel=[...document.querySelectorAll('#modules input:checked')].map(x=>x.value);const t=sel.reduce((s,k)=>s+priceOf(k),0);$('feeCalc').innerHTML=sel.length?'Pelos módulos: '+money(t)+' • <a id="useFee">usar</a>':'';const a=$('useFee');if(a)a.onclick=()=>{$('monthlyFee').value=t.toFixed(2).replace('.',',')}}
-function renderModules(selected=[]){
-  const set=new Set(selected||[]);
-  $('modules').innerHTML=MODULES.map(m=>'<label class="mod"><input type="checkbox" value="'+m.key+'" '+(set.has(m.key)?'checked':'')+'><span><b>'+m.name+'</b><small>'+m.category+(priceOf(m.key)?' • '+money(priceOf(m.key))+'/mês':'')+'</small></span></label>').join('');
-  document.querySelectorAll('#modules input').forEach(i=>i.onchange=feeCalc);feeCalc();
+function feeCalc(){const sel=[...document.querySelectorAll('#modules input.modck:checked')].map(x=>x.value);const t=sel.reduce((s,k)=>s+priceOf(k),0);$('feeCalc').innerHTML=sel.length?'Pelos módulos: '+money(t)+' • <a id="useFee">usar</a>':'';const a=$('useFee');if(a)a.onclick=()=>{$('monthlyFee').value=t.toFixed(2).replace('.',',')}}
+// videos: módulos com o vídeo do passo a passo ligado (null = todos ligados, padrão de cliente novo)
+function renderModules(selected=[],videos=null){
+  const set=new Set(selected||[]),vid=videos?new Set(videos):null;
+  $('modules').innerHTML=MODULES.map(m=>'<div class="modw"><label class="mod"><input type="checkbox" class="modck" value="'+m.key+'" '+(set.has(m.key)?'checked':'')+'><span><b>'+m.name+'</b><small>'+m.category+(priceOf(m.key)?' • '+money(priceOf(m.key))+'/mês':'')+'</small></span></label><label class="vid"><input type="checkbox" class="vidck" value="'+m.key+'" '+(!vid||vid.has(m.key)?'checked':'')+'> enviar vídeo no passo a passo</label></div>').join('');
+  document.querySelectorAll('#modules input.modck').forEach(i=>i.onchange=feeCalc);feeCalc();
 }
 async function loadPrices(){
   const r=await fetch('/api/movit-central/precos',{cache:'no-store'});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar preços.');
@@ -157,7 +158,7 @@ function resetForm(){
 }
 function editClient(id){
   const c=CLIENTS.find(x=>String(x.id)===String(id));if(!c)return;
-  $('clientId').value=c.id;$('name').value=c.name||'';$('slug').value=c.slug||'';$('document').value=c.document||'';$('email').value=c.email||'';$('phone').value=c.phone||'';$('plan').value=c.plan||'Personalizado';$('monthlyFee').value=Number(c.monthly_fee||0).toFixed(2).replace('.',',');$('dueDay').value=c.due_day||10;$('status').value=c.status||'active';$('notes').value=c.notes||'';$('installFee').value=Number(c.installation_fee||0).toFixed(2).replace('.',',');$('trialEnds').value=c.trial_ends_at?new Date(c.trial_ends_at).toLocaleDateString('sv-SE',{timeZone:'America/Sao_Paulo'}):'';$('formTitle').textContent='Editar • '+c.name;renderModules(c.modules||[]);
+  $('clientId').value=c.id;$('name').value=c.name||'';$('slug').value=c.slug||'';$('document').value=c.document||'';$('email').value=c.email||'';$('phone').value=c.phone||'';$('plan').value=c.plan||'Personalizado';$('monthlyFee').value=Number(c.monthly_fee||0).toFixed(2).replace('.',',');$('dueDay').value=c.due_day||10;$('status').value=c.status||'active';$('notes').value=c.notes||'';$('installFee').value=Number(c.installation_fee||0).toFixed(2).replace('.',',');$('trialEnds').value=c.trial_ends_at?new Date(c.trial_ends_at).toLocaleDateString('sv-SE',{timeZone:'America/Sao_Paulo'}):'';$('formTitle').textContent='Editar • '+c.name;renderModules(c.modules||[],c.videos||[]);
   document.querySelectorAll('.client').forEach(x=>x.classList.toggle('active',x.dataset.id===String(id)));
 }
 async function load(){
@@ -189,7 +190,7 @@ $('recalcBilling').onclick=async()=>{
 $('clientForm').onsubmit=async e=>{
   e.preventDefault();$('msg').textContent='Salvando…';$('msg').style.color='#475569';
   const id=$('clientId').value;
-  const body={name:$('name').value.trim(),slug:$('slug').value.trim(),document:$('document').value.trim(),email:$('email').value.trim(),phone:$('phone').value.trim(),plan:$('plan').value,monthly_fee:Number(String($('monthlyFee').value||'0').replace('.','').replace(',','.'))||0,due_day:Number($('dueDay').value)||10,status:$('status').value,installation_fee:num($('installFee').value),trial_ends_at:$('trialEnds').value||null,notes:$('notes').value.trim(),modules:[...document.querySelectorAll('#modules input:checked')].map(x=>x.value)};
+  const body={name:$('name').value.trim(),slug:$('slug').value.trim(),document:$('document').value.trim(),email:$('email').value.trim(),phone:$('phone').value.trim(),plan:$('plan').value,monthly_fee:Number(String($('monthlyFee').value||'0').replace('.','').replace(',','.'))||0,due_day:Number($('dueDay').value)||10,status:$('status').value,installation_fee:num($('installFee').value),trial_ends_at:$('trialEnds').value||null,notes:$('notes').value.trim(),modules:[...document.querySelectorAll('#modules input.modck:checked')].map(x=>x.value),videos:[...document.querySelectorAll('#modules input.vidck:checked')].map(x=>x.value)};
   try{
     const r=await fetch(id?'/api/movit-central/clients/'+id:'/api/movit-central/clients',{method:id?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao salvar.');
@@ -220,7 +221,7 @@ $('savePrices').onclick=async()=>{
   try{
     const r=await fetch('/api/movit-central/precos',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({instalacao:num($('pInst').value),teste_dias:Number($('pDias').value)||7,modulos})});
     const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao salvar preços.');
-    $('pMsg').style.color='#15803d';$('pMsg').textContent='✓ Preços salvos.';await loadPrices();renderModules([...document.querySelectorAll('#modules input:checked')].map(x=>x.value));
+    $('pMsg').style.color='#15803d';$('pMsg').textContent='✓ Preços salvos.';await loadPrices();renderModules([...document.querySelectorAll('#modules input.modck:checked')].map(x=>x.value),[...document.querySelectorAll('#modules input.vidck:checked')].map(x=>x.value));
   }catch(e){$('pMsg').style.color='#b91c1c';$('pMsg').textContent=e.message}
 };
 load().catch(e=>{$('clients').innerHTML='<div class="empty">'+e.message+'</div>'});

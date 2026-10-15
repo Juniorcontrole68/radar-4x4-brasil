@@ -74,6 +74,25 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
 }
 @media(max-width:340px){.brand strong{display:none}}
 }
+/* Passo a passo (clientes MOVIT) */
+.guia-btn{padding:6px 11px;border-radius:8px;border:1px solid #fdba74;background:#fff7ed;color:#9a3412;font:700 12px "Segoe UI",Arial,sans-serif;cursor:pointer;margin-right:6px}
+.guia-drawer{position:fixed;top:0;right:0;bottom:0;width:min(400px,100vw);background:#fff;box-shadow:-10px 0 30px #0f172a2e;z-index:9000;display:flex;flex-direction:column;transform:translateX(105%);transition:transform .22s ease}
+.guia-drawer.show{transform:none}
+.guia-head{display:flex;align-items:center;justify-content:space-between;padding:16px 16px 10px}.guia-head b{display:block;font-size:17px}.guia-head span{font-size:12px;color:#64748b}
+.guia-x{border:0;background:transparent;font-size:26px;line-height:1;cursor:pointer;color:#475569;padding:0 4px}
+.guia-bar{height:6px;background:#f1f5f9;margin:0 16px 10px;border-radius:99px;overflow:hidden}.guia-bar i{display:block;height:100%;width:0;background:#f97316;transition:width .3s}
+.guia-lista{flex:1;overflow:auto;padding:0 12px 20px}
+.guia-passo{border:1px solid #e2e8f0;border-radius:11px;margin-bottom:8px;background:#fff}.guia-passo.aberto{border-color:#fdba74;box-shadow:0 4px 14px #f9731618}
+.guia-tit{all:unset;box-sizing:border-box;width:100%;display:flex;gap:10px;align-items:center;padding:11px 12px;cursor:pointer;font:650 14px "Segoe UI",Arial,sans-serif;color:#0f172a}
+.guia-n{flex:0 0 26px;height:26px;border-radius:50%;display:grid;place-items:center;background:#f1f5f9;color:#334155;font-size:12px;font-weight:800}
+.guia-passo.feito .guia-n{background:#dcfce7;color:#166534}.guia-passo.aberto .guia-n{background:#f97316;color:#fff}
+.guia-corpo{padding:0 14px 14px 48px;font-size:13px;color:#334155;line-height:1.5}.guia-corpo p{margin:0 0 8px}.guia-corpo ol{margin:0 0 10px;padding-left:18px}
+.guia-ssw{padding:7px 10px;border-radius:8px;background:#f1f5f9}.guia-ssw.ok{background:#f0fdf4;color:#166534}.guia-ssw.erro{background:#fef2f2;color:#991b1b}
+.guia-acoes{display:flex;flex-wrap:wrap;gap:6px}.guia-b{padding:7px 11px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font:650 12.5px "Segoe UI",Arial,sans-serif;cursor:pointer;color:#0f172a}.guia-b.pri{background:#f97316;border-color:#f97316;color:#fff}
+.guia-vazio{color:#64748b;font-size:13px;padding:10px}
+.guia-video{position:fixed;inset:0;background:#0f172acc;z-index:9500;display:none;align-items:center;justify-content:center;padding:16px}.guia-video.show{display:flex}
+.guia-video-box{background:#fff;border-radius:12px;width:min(960px,100%);overflow:hidden}.guia-video-top{display:flex;justify-content:space-between;align-items:center;padding:10px 14px}.guia-video video{display:block;width:100%;max-height:75vh;background:#000}
+@media(max-width:700px){.guia-btn{padding:6px 8px;font-size:11px}}
 </style>
 </head>
 <body class="auth-pending">
@@ -116,7 +135,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
       <button class="tab" data-group="financeiro" data-module="remetentes" data-src="/dashboard/?embed=1&view=ssw-remetentes" data-name="Entregas por Cliente Remetente">📦 Entregas por Cliente Remetente</button>
     </div>
   </div>
-  <div class="bar"><span class="dot"></span><span id="module">Lotação</span><span>• Sistema conectado</span><span id="sessionUser" class="bar-user"></span><span class="bar-spacer"></span><button id="pdfQuickBtn" class="pdf-quick-btn" type="button">PDF</button><button id="logoutBtn" class="bar-logout-btn" type="button">Sair</button><button id="duplicateColeta" class="duplicate-btn" type="button">Duplicar coleta</button><button id="deleteColeta" class="delete-btn" type="button">Excluir coleta</button></div>
+  <div class="bar"><span class="dot"></span><span id="module">Lotação</span><span>• Sistema conectado</span><span id="sessionUser" class="bar-user"></span><span class="bar-spacer"></span><button id="pdfQuickBtn" class="pdf-quick-btn" type="button">PDF</button><button id="guiaBtn" class="guia-btn" type="button" style="display:none">📘 Passo a passo</button><button id="logoutBtn" class="bar-logout-btn" type="button">Sair</button><button id="duplicateColeta" class="duplicate-btn" type="button">Duplicar coleta</button><button id="deleteColeta" class="delete-btn" type="button">Excluir coleta</button></div>
   <div id="licenseAlert" class="license-alert"></div>
   <div class="body"><div id="moduleLoading" class="module-loading">Abrindo módulo…</div><iframe id="frame" src="/lotacao?embed=1" data-module="lotacao" title="CONSTRULOG - Torre de Controle"></iframe></div>
 </div>
@@ -202,6 +221,7 @@ function applyModulePermissions(){
   document.querySelector('.group-card[data-group="operacao"]')?.style.setProperty('display',(licensed('operacao')||AUTH?.sandbox||AUTH?.demo)&&operacaoMods.some(moduleAllowed)?'flex':'none');
   document.querySelector('.group-card[data-group="financeiro"]')?.style.setProperty('display',['fin-op','receita-ssw','remetentes','faturas'].some(moduleAllowed)?'flex':'none');
   const company=AUTH?.client?.name?(' • '+AUTH.client.name):'';
+  if(typeof window.guiaAplicar==='function')window.guiaAplicar();
   if(AUTH?.demo){
     // Versão de demonstração: marca MOVIT no lugar da CONSTRULOG
     const bs=document.querySelector('.brand strong'),bi=document.querySelector('.brand img');
@@ -727,5 +747,93 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshUse
 setInterval(()=>{if(!document.hidden)refreshUserPermissions()},30000);
 bootstrapAuth();
 </script>
-<script>(function(){var v=null;function c(){fetch('/api/rc/sistema',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(!j||!j.versao)return;if(v===null){v=j.versao;return}if(j.versao!==v){var b=document.getElementById('sysUpdate');if(b){b.textContent='🔄 Nova versão — atualizar';b.classList.add('nova')}}}).catch(function(){})}c();setInterval(function(){if(document.visibilityState!=='hidden')c()},180000);document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')c()})})();</script></body>
+<script>(function(){var v=null;function c(){fetch('/api/rc/sistema',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(!j||!j.versao)return;if(v===null){v=j.versao;return}if(j.versao!==v){var b=document.getElementById('sysUpdate');if(b){b.textContent='🔄 Nova versão — atualizar';b.classList.add('nova')}}}).catch(function(){})}c();setInterval(function(){if(document.visibilityState!=='hidden')c()},180000);document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')c()})})();</script>
+<div id="guiaDrawer" class="guia-drawer" aria-hidden="true">
+  <div class="guia-head"><div><b>Passo a passo</b><span id="guiaProg">—</span></div><button type="button" id="guiaFechar" class="guia-x" aria-label="Fechar">×</button></div>
+  <div class="guia-bar"><i id="guiaBarra"></i></div>
+  <div id="guiaLista" class="guia-lista"></div>
+</div>
+<div id="guiaVideo" class="guia-video"><div class="guia-video-box"><div class="guia-video-top"><b id="guiaVideoTitulo"></b><button type="button" class="guia-x" id="guiaVideoFechar" aria-label="Fechar">×</button></div><video id="guiaVideoEl" controls playsinline preload="metadata"></video></div></div>
+<script>
+// Passo a passo da Torre de Controle (servidor: movit-guia.js). Mostra os passos dos módulos da
+// empresa na ordem da operação, com o botão para abrir o módulo, o vídeo (quando liberado) e a
+// marcação de concluído, guardada por usuário.
+(function(){
+  const $g=id=>document.getElementById(id);
+  let PASSOS=[],ABERTO=null,CARREGOU=false;
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  // Só para as transportadoras clientes da MOVIT (demonstração, teste e contratadas); a CONSTRULOG não vê.
+  function visivel(){return !!(AUTH&&(AUTH.demo||(AUTH.client&&String(AUTH.client.slug||'').toLowerCase()!=='construlog')))}
+  window.guiaAplicar=function(){
+    const b=$g('guiaBtn');if(!b)return;
+    b.style.display=visivel()?'':'none';
+    if(visivel()&&!CARREGOU){CARREGOU=true;carregar(true).catch(()=>{})}
+  };
+  async function carregar(primeira){
+    const r=await fetch('/api/guia',{cache:'no-store'}),j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar o passo a passo.');
+    PASSOS=(j.passos||[]).filter(p=>!p.tela||moduleAllowed(p.tela));
+    if(ABERTO===null||!PASSOS.some(p=>p.id===ABERTO))ABERTO=(PASSOS.find(p=>!p.feito)||PASSOS[0]||{}).id||null;
+    render();
+    // Cliente da demonstração que ainda não concluiu nada: o passo a passo abre sozinho na entrada.
+    let jaAbriu=false;try{jaAbriu=sessionStorage.getItem('guiaAberto')==='1'}catch{}
+    if(primeira&&AUTH?.demo&&!PASSOS.some(p=>p.feito)&&!jaAbriu)abrir();
+  }
+  function render(){
+    const feitos=PASSOS.filter(p=>p.feito).length,total=PASSOS.length;
+    $g('guiaProg').textContent=total?feitos+' de '+total+' concluídos':'Nenhum passo';
+    $g('guiaBarra').style.width=(total?Math.round(feitos*100/total):0)+'%';
+    $g('guiaLista').innerHTML=PASSOS.map((p,i)=>{
+      const aberto=p.id===ABERTO;
+      return '<div class="guia-passo'+(p.feito?' feito':'')+(aberto?' aberto':'')+'" data-id="'+esc(p.id)+'">'
+        +'<button type="button" class="guia-tit" data-acao="abrir-passo"><span class="guia-n">'+(p.feito?'✓':(i+1))+'</span><span>'+esc(p.titulo)+'</span></button>'
+        +(aberto?'<div class="guia-corpo"><p>'+esc(p.para_que)+'</p>'
+          +(p.id==='ssw'?'<p class="guia-ssw" id="guiaSsw">Conferindo a conexão com o SSW…</p>':'')
+          +'<ol>'+p.passos.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ol>'
+          +'<div class="guia-acoes">'
+          +(p.tela?'<button type="button" class="guia-b pri" data-acao="tela">Abrir '+esc((document.querySelector('.tab[data-module="'+p.tela+'"]')?.dataset.name)||'módulo')+'</button>':'')
+          +(p.video?'<button type="button" class="guia-b" data-acao="video">▶ Ver vídeo</button>':'')
+          +'<button type="button" class="guia-b" data-acao="feito">'+(p.feito?'Desmarcar':'Concluí este passo')+'</button>'
+          +'</div></div>':'')
+        +'</div>'
+    }).join('')||'<p class="guia-vazio">Nenhum módulo com passo a passo nesta conta.</p>';
+    if(ABERTO==='ssw')conferirSsw();
+  }
+  async function conferirSsw(){
+    const el=$g('guiaSsw');if(!el)return;
+    try{
+      const r=await fetch('/api/ssw/conexao',{cache:'no-store'}),j=await r.json().catch(()=>({}));
+      if(!$g('guiaSsw'))return;
+      el.className='guia-ssw '+(j.conectado?'ok':'erro');
+      el.textContent=j.conectado?'✓ Conectado ao SSW'+(j.dominio?' (domínio '+j.dominio+', usuário '+j.usuario+')':''):'Não foi possível entrar no SSW: '+(j.error||'erro desconhecido');
+    }catch(e){el.className='guia-ssw erro';el.textContent='Não foi possível conferir o SSW agora.'}
+  }
+  function abrir(){$g('guiaDrawer').classList.add('show');$g('guiaDrawer').setAttribute('aria-hidden','false');try{sessionStorage.setItem('guiaAberto','1')}catch{}}
+  function fechar(){$g('guiaDrawer').classList.remove('show');$g('guiaDrawer').setAttribute('aria-hidden','true')}
+  $g('guiaBtn').addEventListener('click',()=>{if($g('guiaDrawer').classList.contains('show'))return fechar();abrir();carregar(false).catch(()=>{})});
+  $g('guiaFechar').addEventListener('click',fechar);
+  $g('guiaVideoFechar').addEventListener('click',()=>{const v=$g('guiaVideoEl');v.pause();v.removeAttribute('src');v.load();$g('guiaVideo').classList.remove('show')});
+  $g('guiaLista').addEventListener('click',async e=>{
+    const b=e.target.closest('[data-acao]');if(!b)return;
+    const p=PASSOS.find(x=>x.id===b.closest('.guia-passo')?.dataset.id);if(!p)return;
+    const acao=b.dataset.acao;
+    if(acao==='abrir-passo'){ABERTO=ABERTO===p.id?null:p.id;return render()}
+    if(acao==='tela'){
+      const tab=document.querySelector('.tab[data-module="'+p.tela+'"]');
+      if(tab){if(tab.dataset.group&&typeof selectModuleGroup==='function')selectModuleGroup(tab.dataset.group);await abrirModulo(tab)}
+      if(window.matchMedia('(max-width:900px)').matches)fechar();
+      return;
+    }
+    if(acao==='video'){$g('guiaVideoTitulo').textContent=p.titulo;$g('guiaVideoEl').src=p.video;$g('guiaVideo').classList.add('show');$g('guiaVideoEl').play().catch(()=>{});return}
+    if(acao==='feito'){
+      b.disabled=true;
+      try{
+        const r=await fetch('/api/guia/feito',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:p.id,feito:!p.feito})});
+        if(r.ok){p.feito=!p.feito;if(p.feito)ABERTO=(PASSOS.find(x=>!x.feito)||{}).id||null}
+      }finally{render()}
+    }
+  });
+})();
+</script>
+</body>
 </html>

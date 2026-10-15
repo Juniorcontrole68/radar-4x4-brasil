@@ -60,6 +60,7 @@ jobs:
           node --check controle-coletas-aiven-app/lotacao-rastreio.js
           node --check controle-coletas-aiven-app/compressao.js
           node --check controle-coletas-aiven-app/movit-demo.js
+          node --check controle-coletas-aiven-app/movit-guia.js
       - name: Subir o servidor em modo teste
         run: |
           cd controle-coletas-aiven-app

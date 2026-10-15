@@ -87,6 +87,37 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   r=await call('GET','/api/ssw/conexao',{cookie:cookieAdm});
   check('administrador não usa o SSW de nenhuma empresa da demo',r.json?.dominio!=='TST'&&r.json?.dominio!=='XYZ',r.text.slice(0,200));
 
+  console.log('G. Passo a passo e vídeos');
+  r=await call('POST','/api/demo/entrar',{body:EMPRESA_A});const cookieG=r.cookie;
+  r=await call('GET','/api/guia',{cookie:cookieG});
+  const passosIds=(r.json?.passos||[]).map(p=>p.id);
+  check('passo a passo da demo: conexão SSW primeiro, depois só os módulos liberados',r.status===200&&passosIds[0]==="ssw"&&passosIds.includes("usuarios")&&passosIds.includes("roteirizador")&&!passosIds.includes("coletas")&&!passosIds.includes("frota"),JSON.stringify(passosIds));
+  check('sem arquivo de vídeo, nenhum passo mostra vídeo',(r.json?.passos||[]).every(p=>!p.video));
+  r=await call('POST','/api/guia/feito',{cookie:cookieG,body:{id:'usuarios'}});
+  check('marca passo concluído',r.status===200,r.text.slice(0,120));
+  r=await call('GET','/api/guia',{cookie:cookieG});
+  check('passo concluído fica guardado',(r.json?.passos||[]).find(p=>p.id==='usuarios')?.feito===true);
+  r=await call('POST','/api/guia/feito',{cookie:cookieG,body:{id:'usuarios',feito:false}});r=await call('GET','/api/guia',{cookie:cookieG});
+  check('desmarcar volta o passo',(r.json?.passos||[]).find(p=>p.id==='usuarios')?.feito===false);
+  r=await call('POST','/api/guia/feito',{cookie:cookieG,body:{id:'qualquer'}});check('passo inexistente -> 400',r.status===400);
+  r=await call('GET','/api/guia');check('passo a passo exige login',r.status===401,'veio '+r.status);
+  const fs=require('fs'),vdir=path.join(__dirname,'..','videos'),vfile=path.join(vdir,'roteirizador.mp4'),criouDir=!fs.existsSync(vdir),existia=fs.existsSync(vfile);
+  if(!existia){fs.mkdirSync(vdir,{recursive:true});fs.writeFileSync(vfile,Buffer.alloc(5000,7))}
+  try{
+    r=await call('GET','/api/guia',{cookie:cookieG});
+    check('com o arquivo, o passo do Roteirizador mostra o vídeo',(r.json?.passos||[]).find(p=>p.id==='roteirizador')?.video==='/videos/roteirizador.mp4',r.text.slice(0,300));
+    let v=await fetch(B+'/videos/roteirizador.mp4',{headers:{Range:'bytes=100-199'}});const vb=Buffer.from(await v.arrayBuffer());
+    check('vídeo responde por partes (Range) para o player avançar e voltar',v.status===206&&vb.length===100&&v.headers.get('content-range')==='bytes 100-199/'+(existia?fs.statSync(vfile).size:5000),v.status+' '+vb.length);
+    v=await fetch(B+'/videos/..%2Fserver.js');check('nome de vídeo inválido -> 404',v.status===404,'veio '+v.status);
+    const cid=(await db.query("SELECT client_id::text id FROM movit_client_ssw WHERE dominio='TST'")).rows[0].id;
+    const cli=(await call('GET','/api/movit-central/clients',{cookie:cookieAdm})).json.clients.find(c=>c.id===cid);
+    check('MOVIT Central mostra os vídeos ligados do cliente (todos, por padrão)',Array.isArray(cli?.videos)&&cli.videos.includes('roteirizador'),JSON.stringify(cli||{}).slice(0,300));
+    r=await call('PATCH','/api/movit-central/clients/'+cid,{cookie:cookieAdm,body:{...cli,modules:cli.modules,videos:cli.modules.filter(m=>m!=='roteirizador')}});
+    check('MOVIT Central desliga o vídeo do Roteirizador para este cliente',r.status===200,r.text.slice(0,200));
+    r=await call('GET','/api/guia',{cookie:cookieG});
+    check('...e o passo do Roteirizador deixa de mostrar o vídeo',(r.json?.passos||[]).find(p=>p.id==='roteirizador')?.video==='',r.text.slice(0,300));
+  }finally{if(!existia){fs.unlinkSync(vfile);if(criouDir)fs.rmdirSync(vdir)}}
+
   await db.end();
   console.log('\nResultado demo: '+pass+' OK, '+fail+' falha(s)');process.exit(fail?1:0);
 })().catch(e=>{console.error('ERRO NO TESTE',e);process.exit(2)});
