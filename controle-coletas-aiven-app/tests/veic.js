@@ -64,6 +64,10 @@ function veicFalso(){
    r=veic.mesclar([p1,p2].map(x=>Object.assign({},x)),[]);
    check('duplicado que já estava gravado some na próxima importação',r.fuel.length===1,r.fuel.length)}
 
+  {const f=[{id:'veic-a',source:'veic',driver:'GILMAR DUARTE SANTANA',plate:''},{id:'veic-b',source:'veic',driver:'Samuel Alves do Vale',plate:''},{id:'m',driver:'GILMAR DUARTE SANTANA'}];
+   const n=veic.placaPeloMotorista(f,[{plate:'rta-2b34',driver:'Gilmar Duarte'},{plate:'XYZ9A88',driver:'Samuel'},{plate:'QQQ1A11',driver:'Samuel Alves'}]);
+   check('sem placa no Veic: usa a do veículo cujo motorista é o mesmo (e só se um veículo bater)',n===1&&f[0].plate==='RTA2B34'&&f[1].plate===''&&!f[2].plate,f)}
+
   console.log('Veic de mentira');
   let erro=null;try{await veic.lerAbastecimentos('2026-10-01','2026-10-31')}catch(e){erro=e}
   check('sem VEIC_USUARIO/VEIC_SENHA recusa sem chamar o Veic',erro&&/VEIC_USUARIO/.test(erro.message)&&stats.logins===0,String(erro));

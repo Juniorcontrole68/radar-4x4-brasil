@@ -104,13 +104,17 @@ function render(){
 // KM rodado e média km/L de cada abastecimento: usa o KM anterior que veio do Veic ou, se não veio,
 // o abastecimento anterior do mesmo veículo.
 function mediasCombustivel(lista){
- const out=new Map(),porPlaca=new Map();
+ const out=new Map(),porPlaca=new Map(),pend=new Map();
  lista.slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||String(a.time||'').localeCompare(String(b.time||''))||Number(a.km||0)-Number(b.km||0)).forEach(x=>{
-  const km=Number(x.km||0),lit=Number(x.liters||0),ant=porPlaca.get(x.plate);
+  const k=x.plate||x.driver,km=Number(x.km||0),lit=Number(x.liters||0),ant=porPlaca.get(k);
   let rod=Number(x.kmDriven||0);
   if(!rod&&km>0){const prev=Number(x.kmPrev||0)||(ant||0);if(prev>0&&km>prev)rod=km-prev}
-  out.set(x.id,{kmDriven:rod,kmPerLiter:rod&&lit?Math.round(rod/lit*100)/100:0});
-  if(km>0&&x.plate)porPlaca.set(x.plate,Math.max(km,ant||0))
+  if(rod>3000)rod=0; // KM digitado errado na bomba
+  // litros de abastecimentos sem KM válido entram na média do próximo que tiver
+  const usa=lit+(rod?pend.get(k)||0:0);
+  out.set(x.id,{kmDriven:rod,kmPerLiter:rod&&usa?Math.round(rod/usa*100)/100:0});
+  if(rod)pend.delete(k);else if(ant&&k)pend.set(k,(pend.get(k)||0)+lit);
+  if(km>0&&k&&(!ant||(km>ant&&km-ant<=3000)))porPlaca.set(k,km)
  });
  return out
 }
