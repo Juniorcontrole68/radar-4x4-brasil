@@ -31,7 +31,12 @@ const SSW_UA = 'Mozilla/5.0 Chrome/120 Safari/537.36';
 //   ssw:    rotas atendidas pelo processo de leitura do SSW da própria empresa
 //   telas:  abas do painel (data-module em painel.html) que o módulo mostra
 const MODULOS = {
-  roteirizador: { painel: [/^\/api\/rc(\/|$)/], ssw: [], telas: ['roteirizador-cargas'] },
+  roteirizador: {
+    painel: [/^\/api\/rc(\/|$)/],
+    // "Buscar no SSW" do Roteirizador: CTRCs disponíveis nas unidades da empresa, situação das notas e endereços dos CT-es
+    ssw: [/^\/api\/programacao-entregas\/(disponiveis|status-nfs)$/, /^\/api\/roteirizador\/(enderecos-ctrc|localizar-enderecos)$/],
+    telas: ['roteirizador-cargas']
+  },
   usuarios: { painel: [], ssw: [], telas: ['usuarios'] }
 };
 // Rotas que todo cliente da demo usa (login, sessão, usuários da própria empresa, guia e vídeos,
