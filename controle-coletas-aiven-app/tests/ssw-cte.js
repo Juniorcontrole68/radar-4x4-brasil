@@ -208,5 +208,16 @@ console.log('Tela de comprovantes do romaneio (opção 38)');
   check('tela sem entregas: lista vazia',cte.parseComprovantes('<html><body>Nenhum comprovante.</body></html>').itens.length===0)
 }
 
+{
+  console.log('\nRelação de produtos do CT-e (opção 101, RELPROD)');
+  const rel=cte.parseRelacaoProdutos('SSW - RELACAO DE PRODUTOS   Pag. 1\nCTRC: AMR015589-6  Emissao 10/10/26\nITEM  CODIGO  DESCRICAO   QTDE  UN\n-------------------------\n1  10020  TUBO PVC 100MM ESGOTO  10  PC\n2  20030  CAIXA D AGUA 1000L  1  UN\nTOTAL  11');
+  check('relatório em texto: só as linhas dos itens',rel.length===2&&/TUBO PVC/.test(rel[0])&&/CAIXA D AGUA/.test(rel[1]),rel);
+  const csv=cte.parseRelacaoProdutos('Item;Código;Descrição;Qtde\n1;100;CIMENTO CP II 50KG;20\n2;200;ARGAMASSA AC1;5');
+  check('CSV: a descrição de cada item',csv.join('|')==='CIMENTO CP II 50KG|ARGAMASSA AC1',csv);
+  const html=cte.parseRelacaoProdutos('<table><tr><th>Descrição</th><th>Qtde</th></tr><tr><td>PISO CERAMICO 60X60</td><td>30</td></tr></table>');
+  check('HTML: a descrição de cada item',html.join('|')==='PISO CERAMICO 60X60',html);
+  check('arquivo vazio: lista vazia',cte.parseRelacaoProdutos('').length===0)
+}
+
 console.log('\n'+ok+' ok, '+bad+' falha(s)');
 process.exit(bad?1:0);
