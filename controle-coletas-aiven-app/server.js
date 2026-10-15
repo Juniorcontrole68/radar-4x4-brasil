@@ -1396,6 +1396,9 @@ async function start() {
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS eixos_cavalo INTEGER');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS capacidade_carga_carreta TEXT');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS eixos_carreta INTEGER');
+  // Lotação: destinatários além do primeiro e dados bancários / Pix do motorista.
+  await pool.query("ALTER TABLE coletas ADD COLUMN IF NOT EXISTS entregas_extras JSONB NOT NULL DEFAULT '[]'::jsonb");
+  await pool.query("ALTER TABLE coletas ADD COLUMN IF NOT EXISTS motorista_banco JSONB NOT NULL DEFAULT '{}'::jsonb");
   await pool.query(`
     CREATE TABLE IF NOT EXISTS coleta_documentos (
       id BIGSERIAL PRIMARY KEY,
@@ -5083,6 +5086,36 @@ async function start() {
         } catch (e) {
           return sendJson(res, e.status || 500, { error: e.message || 'Não foi possível duplicar a coleta.' });
         }
+      }
+
+      const complementosMatch = u.pathname.match(/^\/api\/painel\/coletas-complementos\/([^/]+)$/);
+      if (req.method === 'PATCH' && complementosMatch) {
+        const user=await dashboardSession(req,false);
+        if(!dashboardHas(user,'coletas'))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+        const id = decodeURIComponent(complementosMatch[1]);
+        const body = await readJsonBodyLimited(req, 64 * 1024);
+        const txt = (v, max) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+        const entregas = (Array.isArray(body.entregas_extras) ? body.entregas_extras : [])
+          .map(e => ({ destinatario: txt(e?.destinatario, 160), endereco_entrega: txt(e?.endereco_entrega, 300), observacao: txt(e?.observacao, 200) }))
+          .filter(e => e.destinatario || e.endereco_entrega)
+          .slice(0, 20);
+        const b = body.motorista_banco && typeof body.motorista_banco === 'object' ? body.motorista_banco : {};
+        const banco = {
+          banco: txt(b.banco, 80), agencia: txt(b.agencia, 20), conta: txt(b.conta, 30), tipo_conta: txt(b.tipo_conta, 20),
+          titular: txt(b.titular, 120), documento_titular: txt(b.documento_titular, 30),
+          pix_tipo: txt(b.pix_tipo, 20), pix_chave: txt(b.pix_chave, 140)
+        };
+        Object.keys(banco).forEach(k => { if (!banco[k]) delete banco[k]; });
+        const params = [JSON.stringify(entregas), JSON.stringify(banco), id];
+        const result = user.client_id ? await pool.query(
+          'UPDATE coletas SET entregas_extras=$1::jsonb, motorista_banco=$2::jsonb, updated_at=NOW() WHERE id::text=$3 AND client_id=$4 RETURNING id::text AS id, entregas_extras, motorista_banco',
+          [...params, user.client_id]
+        ) : await pool.query(
+          'UPDATE coletas SET entregas_extras=$1::jsonb, motorista_banco=$2::jsonb, updated_at=NOW() WHERE id::text=$3 RETURNING id::text AS id, entregas_extras, motorista_banco',
+          params
+        );
+        if (!result.rowCount) return sendJson(res, 404, { error: 'Coleta não encontrada.' });
+        return sendJson(res, 200, { ok: true, ...result.rows[0] });
       }
 
       const destinatarioMatch = u.pathname.match(/^\/api\/painel\/coletas-destinatario\/([^/]+)$/);

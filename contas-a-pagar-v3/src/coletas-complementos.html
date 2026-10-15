@@ -1,0 +1,398 @@
+<style id="lotacao-complementos-addon">
+/* Formulário mais compacto: menos espaço vazio em todos os campos. */
+#modal{width:min(1080px,97vw)!important}
+#formColeta{padding:14px 16px!important}
+#formColeta .modalhead{padding:10px 0 8px!important}
+#formColeta .modalhead h2{font-size:19px}
+.coleta-form-groups{gap:10px!important;margin:10px 0!important}
+.coleta-form-card{padding:10px 12px!important;border-radius:11px!important}
+.coleta-form-card h3{margin:0 0 8px!important;font-size:13.5px!important}
+.coleta-form-grid{grid-template-columns:repeat(auto-fill,minmax(185px,1fr))!important;gap:7px 10px!important}
+.coleta-form-grid label{display:flex;flex-direction:column;gap:3px;font-size:12px!important;font-weight:600!important;color:#475569;min-width:0}
+.coleta-form-grid label>span{font-size:12px;font-weight:600;color:#475569}
+.coleta-form-grid input,.coleta-form-grid select,.coleta-form-grid textarea{padding:5px 8px!important;font-size:13.5px!important;min-height:32px;border-radius:7px!important;color:#0f172a}
+.coleta-form-grid textarea{min-height:52px}
+.coleta-form-grid input[type=checkbox]{min-height:0}
+.coleta-form-grid small{font-size:11px}
+.coleta-form-grid .recebido-inline{min-height:32px!important}
+.coleta-form-grid label.form-wide{grid-column:1/-1}
+.coleta-form-grid label.col-2{grid-column:span 2}
+.doc-field{padding:7px 9px!important;border-radius:9px!important}
+.doc-field .doc-title{margin-bottom:3px!important;font-size:12px}
+.doc-field input[type=file]{padding:4px 6px!important;min-height:0!important;font-size:12.5px!important}
+.doc-status{margin-top:3px!important}
+.doc-refresh-field{padding:8px 10px!important}
+#doc_refresh_data{padding:7px 12px!important}
+.history-select-wrap{padding:7px 9px!important;border-radius:9px!important}
+.history-select-wrap>span{margin-bottom:3px!important;font-size:12px}
+.history-select{min-height:32px!important;padding:4px 8px!important}
+.history-hint{margin-top:2px!important}
+#formColeta .actions{margin-top:10px!important}
+#formColeta .hint{margin-top:8px!important;padding:7px 10px!important}
+@media(max-width:850px){.coleta-form-grid{grid-template-columns:1fr 1fr!important}.coleta-form-grid label.col-2{grid-column:1/-1}}
+@media(max-width:520px){.coleta-form-grid{grid-template-columns:1fr!important}}
+
+/* Destinatários adicionais */
+.lc-sub{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:4px;padding-top:7px;border-top:1px dashed #cbd5e1;font-size:12.5px;font-weight:700;color:#334155}
+.lc-sub small{font-weight:400;color:#64748b}
+.lc-add{border:1px solid #93c5fd;background:#eff6ff;color:#1d4ed8;border-radius:7px;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer}
+.lc-dest-list{grid-column:1/-1;display:grid;gap:6px}
+.lc-dest{display:grid;grid-template-columns:28px minmax(150px,1fr) minmax(220px,2fr) minmax(120px,1fr) 30px;gap:7px;align-items:end;background:#fff;border:1px solid #e2e8f0;border-radius:9px;padding:6px 8px}
+.lc-dest .lc-num{align-self:center;width:24px;height:24px;border-radius:50%;background:#0057a8;color:#fff;font-size:12px;font-weight:700;display:grid;place-items:center}
+.lc-dest label{display:flex;flex-direction:column;gap:2px;font-size:11.5px;font-weight:600;color:#475569}
+.lc-dest input{padding:5px 8px!important;font-size:13px!important;min-height:30px;border-radius:7px!important}
+.lc-del{border:0;background:#fee2e2;color:#b91c1c;border-radius:7px;height:30px;font-size:16px;cursor:pointer}
+@media(max-width:720px){.lc-dest{grid-template-columns:24px 1fr 30px}.lc-dest label{grid-column:2/3}.lc-dest .lc-del{grid-column:3;grid-row:1}}
+.lc-auto-note{grid-column:1/-1;font-size:11.5px;color:#0f766e;background:#f0fdfa;border:1px solid #99f6e4;border-radius:7px;padding:5px 8px;display:none}
+.lc-auto-note.show{display:block}
+
+/* Ordem de coleta (pré-visualização) */
+.lc-btn-ordem{border-color:#0057a8!important;color:#0057a8!important}
+#lcOrdemDlg{border:0;border-radius:12px;padding:0;width:min(960px,97vw);height:94vh;max-height:94vh;box-shadow:0 28px 80px #0006;overflow:hidden}
+#lcOrdemDlg::backdrop{background:#0b171cb0}
+#lcOrdemDlg .lc-bar{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:9px 12px;background:#0f172a;color:#fff}
+#lcOrdemDlg .lc-bar strong{font-size:14px}
+#lcOrdemDlg .lc-bar div{display:flex;gap:6px;flex-wrap:wrap}
+#lcOrdemDlg .lc-bar button{border:0;border-radius:7px;padding:7px 12px;font-weight:700;font-size:12.5px;cursor:pointer;background:#e2e8f0;color:#0f172a}
+#lcOrdemDlg .lc-bar button.pri{background:#f28c00;color:#fff}
+#lcOrdemDlg iframe{width:100%;height:calc(94vh - 50px);border:0;background:#e5e7eb}
+.lc-extra-dest{margin-top:4px;font-size:12px;color:#475569}
+.lc-extra-dest b{color:#0f172a}
+</style>
+<script id="lotacao-complementos-script">
+(() => {
+  const baseFetch = window.fetch.bind(window);
+  const byId = id => document.getElementById(id);
+  const esc = v => String(v ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+  const norm = v => String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
+  const rows = () => (typeof coletas !== 'undefined' && Array.isArray(coletas)) ? coletas : [];
+  const rowById = id => rows().find(r => String(r.id) === String(id));
+  const currentId = () => String(byId('id')?.value || '').trim();
+  const BANCO_CAMPOS = [
+    ['banco', 'Banco', 'text', 'Ex.: Itaú, Nubank'],
+    ['agencia', 'Agência', 'text', '0000'],
+    ['conta', 'Conta', 'text', '00000-0'],
+    ['tipo_conta', 'Tipo de conta', 'select', ['', 'Corrente', 'Poupança', 'Pagamento']],
+    ['titular', 'Titular da conta', 'text', 'Nome do titular'],
+    ['documento_titular', 'CPF / CNPJ do titular', 'text', '000.000.000-00'],
+    ['pix_tipo', 'Tipo da chave Pix', 'select', ['', 'CPF', 'CNPJ', 'Celular', 'E-mail', 'Aleatória']],
+    ['pix_chave', 'Chave Pix', 'text', 'Chave Pix do motorista']
+  ];
+  const CAMINHAO_CAMPOS = ['placa', 'tipo_caminhao', 'implemento', 'eixos', 'placa_carreta', 'capacidade_carga_cavalo', 'eixos_cavalo', 'capacidade_carga_carreta', 'eixos_carreta'];
+
+  function obj(v) {
+    if (!v) return {};
+    if (typeof v === 'string') { try { v = JSON.parse(v) } catch { return {} } }
+    return v && typeof v === 'object' ? v : {};
+  }
+  function lista(v) {
+    if (typeof v === 'string') { try { v = JSON.parse(v) } catch { return [] } }
+    return Array.isArray(v) ? v : [];
+  }
+  function card(title) {
+    return [...document.querySelectorAll('.coleta-form-card')].find(x => norm(x.querySelector('h3')?.textContent) === norm(title));
+  }
+  function gridOf(id, title) {
+    return byId(id)?.closest('.coleta-form-grid') || card(title)?.querySelector('.coleta-form-grid') || null;
+  }
+
+  /* ---------- Destinatários adicionais ---------- */
+  function renumerar() {
+    [...document.querySelectorAll('#lcDestList .lc-dest')].forEach((d, i) => { d.querySelector('.lc-num').textContent = String(i + 2) });
+  }
+  function addDestRow(e = {}) {
+    const list = byId('lcDestList'); if (!list) return;
+    const row = document.createElement('div'); row.className = 'lc-dest';
+    row.innerHTML = '<span class="lc-num"></span>' +
+      '<label>Destinatário<input class="lc-d-nome" placeholder="Nome do destinatário"></label>' +
+      '<label>Endereço de entrega<input class="lc-d-end" placeholder="Rua, número, cidade - UF" data-no-titlecase="true"></label>' +
+      '<label>Observação / NF<input class="lc-d-obs" placeholder="Opcional" data-no-titlecase="true"></label>' +
+      '<button type="button" class="lc-del" title="Remover destinatário">×</button>';
+    row.querySelector('.lc-d-nome').value = e.destinatario || '';
+    row.querySelector('.lc-d-end').value = e.endereco_entrega || '';
+    row.querySelector('.lc-d-obs').value = e.observacao || '';
+    row.querySelector('.lc-del').onclick = () => { row.remove(); renumerar() };
+    list.appendChild(row); renumerar();
+    return row;
+  }
+  function lerDestinos() {
+    return [...document.querySelectorAll('#lcDestList .lc-dest')].map(d => ({
+      destinatario: d.querySelector('.lc-d-nome').value.trim(),
+      endereco_entrega: d.querySelector('.lc-d-end').value.trim(),
+      observacao: d.querySelector('.lc-d-obs').value.trim()
+    })).filter(e => e.destinatario || e.endereco_entrega);
+  }
+
+  /* ---------- Dados bancários e Pix ---------- */
+  function lerBanco() {
+    const b = {};
+    BANCO_CAMPOS.forEach(([k]) => { const v = String(byId('mb_' + k)?.value || '').trim(); if (v) b[k] = v });
+    return b;
+  }
+  function preencherBanco(b, soVazios) {
+    b = obj(b);
+    BANCO_CAMPOS.forEach(([k]) => {
+      const el = byId('mb_' + k); if (!el) return;
+      if (soVazios && String(el.value || '').trim()) return;
+      if (b[k] !== undefined || !soVazios) el.value = b[k] || '';
+    });
+  }
+
+  function ensureUI() {
+    const entGrid = gridOf('endereco_entrega', 'Entrega');
+    if (entGrid && !byId('lcDestBox')) {
+      const sub = document.createElement('div'); sub.className = 'lc-sub'; sub.id = 'lcDestBox';
+      sub.innerHTML = '<span>Outros destinatários desta coleta <small>(entrega 1 é o destinatário acima)</small></span><button type="button" class="lc-add">+ Adicionar destinatário</button>';
+      const list = document.createElement('div'); list.className = 'lc-dest-list'; list.id = 'lcDestList';
+      const after = byId('endereco_entrega')?.closest('label');
+      if (after && after.parentElement === entGrid) { after.after(sub); sub.after(list) } else { entGrid.append(sub, list) }
+      sub.querySelector('.lc-add').onclick = () => { const r = addDestRow(); r?.querySelector('input')?.focus() };
+    }
+    const motGrid = gridOf('motorista', 'Dados do Motorista');
+    if (motGrid && !byId('mb_banco')) {
+      const sub = document.createElement('div'); sub.className = 'lc-sub'; sub.id = 'lcBancoBox';
+      sub.innerHTML = '<span>Dados bancários e Pix <small>(para pagamento do frete)</small></span>';
+      const doc = byId('doc_motorista_file')?.closest('label');
+      if (doc && doc.parentElement === motGrid) motGrid.insertBefore(sub, doc); else motGrid.appendChild(sub);
+      let ref = sub;
+      BANCO_CAMPOS.forEach(([k, label, type, extra]) => {
+        const lbl = document.createElement('label');
+        if (k === 'pix_chave' || k === 'titular') lbl.className = 'col-2';
+        const sp = document.createElement('span'); sp.textContent = label;
+        let el;
+        if (type === 'select') {
+          el = document.createElement('select');
+          extra.forEach(o => { const op = document.createElement('option'); op.value = o; op.textContent = o || 'Selecione…'; el.appendChild(op) });
+        } else {
+          el = document.createElement('input'); el.type = 'text'; el.placeholder = extra;
+        }
+        el.id = 'mb_' + k;
+        if (k !== 'titular' && k !== 'banco') el.dataset.noTitlecase = 'true';
+        lbl.append(sp, el); ref.after(lbl); ref = lbl;
+      });
+      const note = document.createElement('div'); note.className = 'lc-auto-note'; note.id = 'lcAutoNote';
+      ref.after(note);
+    }
+    const actions = document.querySelector('#formColeta .actions');
+    if (actions && !byId('lcOrdemForm')) {
+      const b = document.createElement('button'); b.type = 'button'; b.id = 'lcOrdemForm'; b.className = 'btn lc-btn-ordem';
+      b.textContent = '📄 Exportar ordem de coleta';
+      b.onclick = () => abrirOrdem(dadosDoFormulario());
+      actions.insertBefore(b, actions.firstChild);
+    }
+  }
+
+  function carregarNoFormulario() {
+    ensureUI();
+    const list = byId('lcDestList'); if (list) list.innerHTML = '';
+    const note = byId('lcAutoNote'); if (note) { note.classList.remove('show'); note.textContent = '' }
+    const r = currentId() ? rowById(currentId()) : null;
+    lista(r?.entregas_extras).forEach(e => addDestRow(e));
+    preencherBanco(r?.motorista_banco || {}, false);
+  }
+
+  /* ---------- Puxar dados do caminhão (e do banco) pelo motorista ---------- */
+  function ultimaDoMotorista(nome) {
+    const k = norm(nome); if (!k) return null;
+    const doMot = rows().filter(r => norm(r.motorista) === k && String(r.id) !== currentId())
+      .sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
+    return { comPlaca: doMot.find(r => String(r.placa || '').trim()) || null, comBanco: doMot.find(r => Object.keys(obj(r.motorista_banco)).length) || null, ultima: doMot[0] || null };
+  }
+  function setVal(id, v, soVazio) {
+    const el = byId(id); if (!el || v === undefined || v === null || String(v).trim() === '') return false;
+    if (soVazio && String(el.value || '').trim()) return false;
+    if (el.tagName === 'SELECT' && ![...el.options].some(o => o.value === String(v) || o.textContent === String(v))) {
+      const o = document.createElement('option'); o.textContent = String(v); el.appendChild(o);
+    }
+    el.value = String(v);
+    return true;
+  }
+  function puxarDadosMotorista(nome, forcar) {
+    const h = ultimaDoMotorista(nome); if (!h || !h.ultima) return;
+    const v = h.comPlaca;
+    let caminhao = false;
+    if (v) {
+      const placaAtual = String(byId('placa')?.value || '').trim();
+      if (forcar || !placaAtual) {
+        CAMINHAO_CAMPOS.forEach(k => { if (setVal(k, k === 'placa' || k === 'placa_carreta' ? String(v[k] || '').toUpperCase() : v[k], false)) caminhao = true });
+        if (caminhao && typeof calc === 'function') { try { calc(!!Number(byId('tarifa_rota_por_eixo')?.value)) } catch { } }
+      }
+    }
+    setVal('telefone_motorista', h.ultima.telefone_motorista, !forcar);
+    setVal('transportadora_agregado', h.ultima.transportadora_agregado, !forcar);
+    if (h.comBanco) preencherBanco(h.comBanco.motorista_banco, !forcar);
+    const note = byId('lcAutoNote');
+    if (note && (caminhao || h.comBanco)) {
+      const partes = [];
+      if (caminhao) partes.push('caminhão ' + (v.placa ? String(v.placa).toUpperCase() : '') + (v.placa_carreta ? ' / carreta ' + String(v.placa_carreta).toUpperCase() : ''));
+      if (h.comBanco) partes.push('dados bancários');
+      note.textContent = '✓ Preenchido com a última coleta deste motorista (' + partes.join(' e ') + '). Confira e ajuste se mudou.';
+      note.classList.add('show');
+    }
+  }
+  document.addEventListener('change', e => {
+    const t = e.target; if (!t || !byId('modal')?.open) return;
+    if (t.id === 'historico_motorista') {
+      setTimeout(() => puxarDadosMotorista(byId('motorista')?.value, true), 0);
+    } else if (t.id === 'motorista' && e.isTrusted && !currentId()) {
+      puxarDadosMotorista(t.value, false);
+    }
+  });
+
+  /* ---------- Gravar junto com a coleta ---------- */
+  window.fetch = async function (input, init = {}) {
+    const res = await baseFetch(input, init);
+    try {
+      const url = typeof input === 'string' ? input : (input?.url || '');
+      const method = String(init?.method || 'GET').toUpperCase();
+      if (res.ok && /^\/coletas\/api\/coletas(?:\/\d+)?$/.test(url) && (method === 'POST' || method === 'PUT') && byId('lcDestList')) {
+        const data = await res.clone().json();
+        if (data?.id) {
+          const r = await baseFetch('/api/painel/coletas-complementos/' + encodeURIComponent(data.id), {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entregas_extras: lerDestinos(), motorista_banco: lerBanco() })
+          });
+          if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'HTTP ' + r.status) }
+        }
+      }
+    } catch (e) { console.warn('Complementos da coleta:', e); alert('A coleta foi salva, mas os destinatários extras / dados bancários não foram gravados: ' + e.message) }
+    return res;
+  };
+
+  /* ---------- Ordem de coleta completa ---------- */
+  const val = id => { const el = byId(id); return el ? String(el.value ?? '').trim() : '' };
+  function dadosDoFormulario() {
+    const base = currentId() ? { ...(rowById(currentId()) || {}) } : {};
+    ['os_numero', 'cliente', 'endereco_coleta', 'data_carregamento', 'hora_carregamento', 'destinatario', 'endereco_entrega', 'previsao_entrega', 'data_descarga', 'status',
+      'motorista', 'telefone_motorista', 'transportadora_agregado', ...CAMINHAO_CAMPOS, 'quantidade_paletes', 'peso_total', 'observacoes', 'frete_pago', 'percentual_adiantamento'
+    ].forEach(k => { if (byId(k)) base[k] = val(k) });
+    base.entregas_extras = lerDestinos();
+    base.motorista_banco = lerBanco();
+    return base;
+  }
+  const n = v => { const x = Number(String(v ?? '').replace(',', '.')); return Number.isFinite(x) ? x : 0 };
+  const brl = v => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n(v));
+  const dt = v => { const s = String(v || '').slice(0, 10); const p = s.split('-'); return p.length === 3 && p[0].length === 4 ? p[2] + '/' + p[1] + '/' + p[0] : (s || '') };
+  const hr = v => String(v || '').slice(0, 5);
+  function campo(rotulo, valor, cls) {
+    const v = String(valor ?? '').trim();
+    return '<div class="f' + (cls ? ' ' + cls : '') + '"><span>' + esc(rotulo) + '</span><b>' + (v ? esc(v) : '<i>—</i>') + '</b></div>';
+  }
+  function ordemHtml(c) {
+    const os = c.os_numero || c.id || '';
+    const banco = obj(c.motorista_banco);
+    const entregas = [{ destinatario: c.destinatario, endereco_entrega: c.endereco_entrega, observacao: '' }, ...lista(c.entregas_extras)]
+      .filter(e => String(e.destinatario || '').trim() || String(e.endereco_entrega || '').trim());
+    const frete = n(c.frete_pago), pct = n(c.percentual_adiantamento), adiant = frete * pct / 100;
+    const temCarreta = String(c.placa_carreta || '').trim() || String(c.capacidade_carga_carreta || '').trim() || String(c.eixos_carreta ?? '').trim();
+    const emitido = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' });
+    const pix = banco.pix_chave ? '<div class="pix"><span>Chave Pix' + (banco.pix_tipo ? ' (' + esc(banco.pix_tipo) + ')' : '') + '</span><b>' + esc(banco.pix_chave) + '</b></div>' : '';
+    const temBanco = banco.banco || banco.agencia || banco.conta;
+    return '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+      '<title>Ordem de Coleta ' + esc(os) + '</title><style>' +
+      '@page{size:A4;margin:12mm}*{box-sizing:border-box}body{margin:0;background:#e5e7eb;font-family:"Segoe UI",Roboto,Arial,sans-serif;color:#0f172a;font-size:12.5px}' +
+      '.pg{max-width:800px;margin:16px auto;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 6px 24px #0002}' +
+      '.hd{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 22px;background:linear-gradient(120deg,#0f172a,#0057a8);color:#fff}' +
+      '.hd .t{font-size:21px;font-weight:800;letter-spacing:.02em}.hd .s{font-size:11.5px;opacity:.85;margin-top:2px}' +
+      '.hd .os{text-align:right}.hd .os b{display:block;font-size:24px;color:#ffb347}.hd .os span{font-size:11px;opacity:.85}' +
+      '.chips{display:flex;gap:8px;flex-wrap:wrap;padding:10px 22px;background:#f8fafc;border-bottom:1px solid #e2e8f0}' +
+      '.chip{background:#fff;border:1px solid #cbd5e1;border-radius:999px;padding:4px 11px;font-size:11.5px}.chip b{color:#0057a8}' +
+      '.bd{padding:14px 22px 6px}.sec{border:1px solid #e2e8f0;border-radius:9px;margin-bottom:11px;break-inside:avoid;overflow:hidden}' +
+      '.sec h2{margin:0;padding:6px 11px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;background:#f1f5f9;color:#0057a8;border-bottom:1px solid #e2e8f0}' +
+      '.g{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 14px;padding:9px 11px}.g .w2{grid-column:span 2}.g .w3{grid-column:1/-1}' +
+      '.f span{display:block;font-size:10.5px;color:#64748b;text-transform:uppercase;letter-spacing:.03em}.f b{font-size:13px;font-weight:600}.f i{color:#94a3b8;font-weight:400}' +
+      '.two{display:grid;grid-template-columns:1fr 1fr;gap:11px}' +
+      '.ent{display:flex;gap:10px;padding:8px 11px;border-top:1px solid #f1f5f9}.ent:first-of-type{border-top:0}' +
+      '.ent .nn{flex:0 0 24px;height:24px;border-radius:50%;background:#0057a8;color:#fff;display:grid;place-items:center;font-weight:700;font-size:12px}' +
+      '.ent b{display:block;font-size:13px}.ent div div{color:#334155}.ent small{color:#64748b}' +
+      '.pix{margin:0 11px 10px;padding:8px 11px;border-radius:8px;background:#ecfdf5;border:1px solid #6ee7b7}.pix span{display:block;font-size:10.5px;color:#047857;text-transform:uppercase}.pix b{font-size:15px;color:#065f46;word-break:break-all}' +
+      '.tot{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:9px 11px}.tot div{background:#f8fafc;border-radius:8px;padding:7px 9px}.tot span{display:block;font-size:10.5px;color:#64748b;text-transform:uppercase}.tot b{font-size:15px}.tot .hl{background:#fff7ed}.tot .hl b{color:#c2410c}' +
+      '.obs{padding:9px 11px;white-space:pre-wrap;color:#334155}' +
+      '.ass{display:grid;grid-template-columns:1fr 1fr;gap:40px;padding:30px 22px 12px}.ass div{border-top:1px solid #475569;padding-top:5px;text-align:center;font-size:11.5px;color:#475569}' +
+      '.ft{padding:8px 22px 14px;font-size:10.5px;color:#94a3b8;text-align:center}' +
+      '@media(max-width:640px){.g,.tot{grid-template-columns:1fr 1fr}.two{grid-template-columns:1fr}.hd{flex-direction:column;align-items:flex-start}.hd .os{text-align:left}}' +
+      '@media print{body{background:#fff}.pg{margin:0;max-width:none;box-shadow:none;border-radius:0}.hd,.sec h2,.chips,.pix,.tot div,.ent .nn{-webkit-print-color-adjust:exact;print-color-adjust:exact}}' +
+      '</style></head><bo' + 'dy><div class="pg">' +
+      '<div class="hd"><div><div class="t">ORDEM DE COLETA</div><div class="s">CONSTRULOG • Lotação</div></div><div class="os"><span>Nº da coleta</span><b>' + esc(os) + '</b><span>Emitida em ' + esc(emitido) + '</span></div></div>' +
+      '<div class="chips"><span class="chip">Status: <b>' + esc(c.status || 'Programada') + '</b></span><span class="chip">Coleta: <b>' + esc(dt(c.data_carregamento) || '—') + (hr(c.hora_carregamento) ? ' às ' + esc(hr(c.hora_carregamento)) : '') + '</b></span><span class="chip">Previsão de entrega: <b>' + esc(dt(c.previsao_entrega) || '—') + '</b></span><span class="chip">Entregas: <b>' + entregas.length + '</b></span></div>' +
+      '<div class="bd">' +
+      '<div class="sec"><h2>Coleta</h2><div class="g">' + campo('Remetente', c.cliente, 'w2') + campo('Data / hora', (dt(c.data_carregamento) || '') + (hr(c.hora_carregamento) ? ' ' + hr(c.hora_carregamento) : '')) + campo('Endereço da coleta', c.endereco_coleta, 'w3') + '</div></div>' +
+      '<div class="sec"><h2>Entrega' + (entregas.length > 1 ? 's (' + entregas.length + ' destinatários)' : '') + '</h2>' +
+      (entregas.length ? entregas.map((e, i) => '<div class="ent"><span class="nn">' + (i + 1) + '</span><div><b>' + esc(e.destinatario || '—') + '</b><div>' + esc(e.endereco_entrega || '—') + '</div>' + (e.observacao ? '<small>' + esc(e.observacao) + '</small>' : '') + '</div></div>').join('') : '<div class="obs">—</div>') +
+      '</div>' +
+      '<div class="two">' +
+      '<div class="sec"><h2>Motorista</h2><div class="g" style="grid-template-columns:1fr 1fr">' + campo('Nome', c.motorista, 'w3') + campo('Telefone / WhatsApp', c.telefone_motorista) + campo('Transportadora / Agregado', c.transportadora_agregado) + campo('CPF', c.motorista_cpf) + campo('RG', c.motorista_rg) + '</div></div>' +
+      '<div class="sec"><h2>Dados bancários / Pix</h2><div class="g" style="grid-template-columns:1fr 1fr">' +
+      (temBanco || banco.titular ? campo('Banco', banco.banco) + campo('Tipo de conta', banco.tipo_conta) + campo('Agência', banco.agencia) + campo('Conta', banco.conta) + campo('Titular', banco.titular) + campo('CPF / CNPJ do titular', banco.documento_titular) : (pix ? '' : campo('Dados bancários', '', 'w3'))) +
+      '</div>' + pix + '</div>' +
+      '</div>' +
+      '<div class="sec"><h2>Veículo</h2><div class="g">' + campo('Placa do cavalo / caminhão', String(c.placa || '').toUpperCase()) + campo('Tipo de caminhão', c.tipo_caminhao) + campo('Implemento', c.implemento) +
+      campo('Capacidade do caminhão / cavalo', c.capacidade_carga_cavalo) + campo('Eixos do caminhão / cavalo', c.eixos_cavalo) + campo('Total de eixos', c.eixos) +
+      (temCarreta ? campo('Placa da carreta', String(c.placa_carreta || '').toUpperCase()) + campo('Capacidade da carreta', c.capacidade_carga_carreta) + campo('Eixos da carreta', c.eixos_carreta) : '') + '</div></div>' +
+      '<div class="sec"><h2>Carga</h2><div class="g">' + campo('Quantidade de paletes', c.quantidade_paletes) + campo('Peso total', n(c.peso_total) ? new Intl.NumberFormat('pt-BR').format(n(c.peso_total)) + ' kg' : '') + campo('Data da descarga', dt(c.data_descarga)) + '</div>' +
+      (String(c.observacoes || '').trim() ? '<div class="obs"><b>Observações:</b> ' + esc(c.observacoes) + '</div>' : '') + '</div>' +
+      '<div class="sec"><h2>Frete do motorista</h2><div class="tot"><div><span>Valor do frete</span><b>' + brl(frete) + '</b></div><div><span>Adiantamento (' + esc(new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(pct)) + '%)</span><b>' + brl(adiant) + '</b></div><div class="hl"><span>Saldo na entrega</span><b>' + brl(frete - adiant) + '</b></div></div></div>' +
+      '</div>' +
+      '<div class="ass"><div>Motorista<br>' + esc(c.motorista || '') + '</div><div>Responsável pela expedição</div></div>' +
+      '<div class="ft">Documento gerado pela Torre de Controle MOVIT • Confira os dados antes do carregamento.</div>' +
+      '</div></bo' + 'dy></html>';
+  }
+  function nomeArquivo(c) { return 'ordem-coleta-' + String(c.os_numero || c.id || 'nova').replace(/[^a-zA-Z0-9_-]/g, '-') + '.html' }
+  function abrirOrdem(c) {
+    if (!c) return;
+    const html = ordemHtml(c);
+    let dlg = byId('lcOrdemDlg');
+    if (!dlg) {
+      dlg = document.createElement('dialog'); dlg.id = 'lcOrdemDlg';
+      dlg.innerHTML = '<div class="lc-bar"><strong id="lcOrdemTit"></strong><div>' +
+        '<button type="button" class="pri" data-a="print">🖨️ Imprimir / Salvar PDF</button>' +
+        '<button type="button" data-a="down">⬇️ Baixar arquivo</button>' +
+        '<button type="button" data-a="share" hidden>📤 Compartilhar</button>' +
+        '<button type="button" data-a="close">Fechar</button></div></div><iframe title="Ordem de coleta"></iframe>';
+      document.body.appendChild(dlg);
+      dlg.addEventListener('click', ev => {
+        const a = ev.target?.closest?.('button')?.dataset?.a; if (!a) return;
+        const cur = dlg._ordem; if (!cur) return;
+        if (a === 'close') dlg.close();
+        else if (a === 'print') { try { dlg.querySelector('iframe').contentWindow.focus(); dlg.querySelector('iframe').contentWindow.print() } catch { alert('Não foi possível abrir a impressão.') } }
+        else if (a === 'down') { const u = URL.createObjectURL(new Blob([cur.html], { type: 'text/html;charset=utf-8' })); const l = document.createElement('a'); l.href = u; l.download = cur.nome; document.body.appendChild(l); l.click(); l.remove(); setTimeout(() => URL.revokeObjectURL(u), 2000) }
+        else if (a === 'share') { const f = new File([cur.html], cur.nome, { type: 'text/html' }); navigator.share({ title: 'Ordem de coleta', files: [f] }).catch(() => { }) }
+      });
+    }
+    dlg._ordem = { html, nome: nomeArquivo(c) };
+    byId('lcOrdemTit').textContent = 'Ordem de coleta ' + (c.os_numero || c.id || '(nova)');
+    try { const f = new File([html], 'x.html', { type: 'text/html' }); dlg.querySelector('[data-a="share"]').hidden = !(navigator.canShare && navigator.canShare({ files: [f] })) } catch { }
+    dlg.querySelector('iframe').srcdoc = html;
+    if (!dlg.open) dlg.showModal();
+  }
+  window.exportarOrdemColeta = id => abrirOrdem(rowById(id));
+
+  /* ---------- Lista: botão da ordem e destinatários extras ---------- */
+  function decorarLista() {
+    const tbody = byId('tbodyOperacional'); if (!tbody) return;
+    [...tbody.querySelectorAll('tr')].forEach(tr => {
+      const ed = tr.querySelector('button[onclick^="edit("]'); if (!ed) return;
+      const id = (ed.getAttribute('onclick').match(/\d+/) || [])[0]; const r = id && rowById(id); if (!r) return;
+      if (!tr.querySelector('.lc-btn-ordem')) {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'btn small lc-btn-ordem'; b.textContent = 'Ordem';
+        b.title = 'Exportar a ordem de coleta completa'; b.onclick = () => abrirOrdem(r);
+        ed.after(b);
+      }
+      const extras = lista(r.entregas_extras);
+      if (extras.length && tr.cells[1] && !tr.cells[1].querySelector('.lc-extra-dest')) {
+        const d = document.createElement('div'); d.className = 'lc-extra-dest';
+        d.innerHTML = extras.map((e, i) => '<div><b>' + (i + 2) + '. ' + esc(e.destinatario || '—') + '</b> • ' + esc(e.endereco_entrega || '') + '</div>').join('');
+        tr.cells[1].appendChild(d);
+      }
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    [120, 450, 1000].forEach(ms => setTimeout(ensureUI, ms));
+    const modal = byId('modal');
+    if (modal) new MutationObserver(() => { if (modal.open) setTimeout(carregarNoFormulario, 60) }).observe(modal, { attributes: true, attributeFilter: ['open'] });
+    const tbody = byId('tbodyOperacional');
+    if (tbody) { let t = 0; new MutationObserver(() => { clearTimeout(t); t = setTimeout(decorarLista, 80) }).observe(tbody, { childList: true, subtree: true }) }
+  });
+})();
+</script>
