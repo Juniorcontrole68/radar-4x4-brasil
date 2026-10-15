@@ -31,6 +31,7 @@ const roteirizadorCargas = require('./roteirizador-cargas');
 const { economizarBanda } = require('./compressao');
 const lotacaoRastreio = require('./lotacao-rastreio');
 const movitDemo = require('./movit-demo');
+const movitGuia = require('./movit-guia');
 const { handler } = require('../contas-a-pagar-v3/src/handler');
 
 const PORT = process.env.PORT || 10000;
@@ -866,7 +867,7 @@ const FROTA_SEM_ACESSO='Seu usuário não tem acesso ao módulo Frota. Peça a l
 // dados separados por empresa. O resto do sistema lê o SSW e as planilhas da CONSTRULOG e fica fechado.
 const SANDBOX_PERMS=new Set(['roteirizador']);
 const DEMO_RATE=new Map();
-const SANDBOX_API=[/^\/api\/rc\//,/^\/api\/rc$/,/^\/api\/auth\//,/^\/api\/painel\/auth\//];
+const SANDBOX_API=[/^\/api\/rc\//,/^\/api\/rc$/,/^\/api\/auth\//,/^\/api\/painel\/auth\//,/^\/api\/guia(\/|$)/];
 function tenantSandbox(user){return !!(user&&!user.internal&&!user.is_platform_admin&&user.client&&String(user.client.slug||'').toLowerCase()!=='construlog'&&!movitDemo.clienteDemo(user))}
 function clienteBloqueado(user){
   if(!user||user.is_platform_admin||!user.client)return '';
@@ -1813,6 +1814,9 @@ async function start() {
   await pool.query('UPDATE dashboard_users SET is_platform_admin=TRUE WHERE is_admin=TRUE AND is_platform_admin=FALSE');
   // Venda: preço mensal por módulo, taxa de implantação, fim do teste grátis e cliente de demonstração.
   await pool.query('ALTER TABLE movit_modules ADD COLUMN IF NOT EXISTS price_monthly NUMERIC(12,2) NOT NULL DEFAULT 0');
+  // Passo a passo: vídeo de cada módulo ligado ou não por cliente (MOVIT Central) e passos concluídos por usuário.
+  await pool.query('ALTER TABLE movit_client_modules ADD COLUMN IF NOT EXISTS video BOOLEAN NOT NULL DEFAULT TRUE');
+  await pool.query('CREATE TABLE IF NOT EXISTS movit_guia_feitos (user_id BIGINT NOT NULL REFERENCES dashboard_users(id) ON DELETE CASCADE, passo TEXT NOT NULL, feito_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(user_id,passo))');
   await pool.query('ALTER TABLE movit_clients ADD COLUMN IF NOT EXISTS installation_fee NUMERIC(12,2) NOT NULL DEFAULT 0');
   await pool.query('ALTER TABLE movit_clients ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ');
   await pool.query("CREATE TABLE IF NOT EXISTS movit_config (chave TEXT PRIMARY KEY, valor JSONB NOT NULL DEFAULT '{}'::jsonb, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())");
@@ -3199,6 +3203,45 @@ async function start() {
           return sendJson(res,200,{ok:true,token,user});
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao autorizar módulo.'});}
       }
+      // Passo a passo da Torre de Controle (movit-guia.js): passos dos módulos da empresa e progresso do usuário.
+      if (req.method === 'GET' && u.pathname === '/api/guia') {
+        try{
+          const user=await dashboardSession(req,false);
+          let modulos=user.client_modules||[],videos=[];
+          if(user.client_id){
+            const vq=await pool.query('SELECT module_key FROM movit_client_modules WHERE client_id=$1 AND enabled=TRUE AND video=TRUE',[user.client_id]);
+            videos=vq.rows.map(x=>String(x.module_key));
+          }
+          if(!user.client_id||user.is_platform_admin){modulos=movitGuia.PASSOS.map(p=>p.modulo);videos=modulos}
+          const fq=await pool.query('SELECT passo FROM movit_guia_feitos WHERE user_id=$1',[user.id]);
+          return sendJson(res,200,{ok:true,passos:movitGuia.montar({modulos,feitos:fq.rows.map(x=>x.passo),videosLigados:videos,demo:!!user.demo})});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar o passo a passo.'})}
+      }
+      if (req.method === 'POST' && u.pathname === '/api/guia/feito') {
+        try{
+          const user=await dashboardSession(req,false);
+          const body=await readJsonBodyLimited(req,8*1024);
+          const id=String(body.id||'');
+          if(!movitGuia.IDS.has(id))return sendJson(res,400,{ok:false,error:'Passo inválido.'});
+          if(body.feito===false)await pool.query('DELETE FROM movit_guia_feitos WHERE user_id=$1 AND passo=$2',[user.id,id]);
+          else await pool.query('INSERT INTO movit_guia_feitos(user_id,passo) VALUES($1,$2) ON CONFLICT DO NOTHING',[user.id,id]);
+          return sendJson(res,200,{ok:true});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao salvar o passo.'})}
+      }
+      if (req.method === 'GET' && u.pathname.startsWith('/videos/')) {
+        const file=movitGuia.arquivoVideo(u.pathname.slice('/videos/'.length));
+        if(!file)return sendJson(res,404,{ok:false,error:'Vídeo não encontrado.'});
+        const size=fs.statSync(file).size,m=/^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range||''));
+        if(m&&(m[1]||m[2])){
+          const start=m[1]?Number(m[1]):Math.max(0,size-Number(m[2])),end=m[1]&&m[2]?Math.min(size-1,Number(m[2])):size-1;
+          if(start>=size||start>end){res.writeHead(416,{'Content-Range':'bytes */'+size});return res.end()}
+          res.writeHead(206,{'Content-Type':'video/mp4','Content-Length':end-start+1,'Content-Range':'bytes '+start+'-'+end+'/'+size,'Accept-Ranges':'bytes','Cache-Control':'public, max-age=86400'});
+          return fs.createReadStream(file,{start,end}).pipe(res);
+        }
+        res.writeHead(200,{'Content-Type':'video/mp4','Content-Length':size,'Accept-Ranges':'bytes','Cache-Control':'public, max-age=86400'});
+        return fs.createReadStream(file).pipe(res);
+      }
+
       if (req.method === 'GET' && (u.pathname === '/movit-central' || u.pathname === '/movit-central/')) {
         try{
           await dashboardPlatformSession(req);
@@ -3214,7 +3257,8 @@ async function start() {
           await dashboardPlatformSession(req);
           const mq=await pool.query("SELECT key,name,category,price_monthly FROM movit_modules WHERE active=TRUE ORDER BY category,name");
           const cq=await pool.query(`SELECT c.id::text,c.name,c.slug,c.document,c.email,c.phone,c.plan,c.monthly_fee,c.due_day,c.status,c.notes,c.created_at,c.updated_at,c.installation_fee,c.trial_ends_at,
-            COALESCE((SELECT json_agg(cm.module_key ORDER BY cm.module_key) FROM movit_client_modules cm WHERE cm.client_id=c.id AND cm.enabled=TRUE),'[]'::json) AS modules
+            COALESCE((SELECT json_agg(cm.module_key ORDER BY cm.module_key) FROM movit_client_modules cm WHERE cm.client_id=c.id AND cm.enabled=TRUE),'[]'::json) AS modules,
+            COALESCE((SELECT json_agg(cm.module_key ORDER BY cm.module_key) FROM movit_client_modules cm WHERE cm.client_id=c.id AND cm.enabled=TRUE AND cm.video=TRUE),'[]'::json) AS videos
             FROM movit_clients c ORDER BY lower(c.name)`);
           return sendJson(res,200,{ok:true,modules:mq.rows,clients:cq.rows});
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar MOVIT Central.'})}
@@ -3239,6 +3283,7 @@ async function start() {
             await pool.query('INSERT INTO movit_client_modules(client_id,module_key,enabled) SELECT $1,key,TRUE FROM movit_modules WHERE key=$2 ON CONFLICT(client_id,module_key) DO UPDATE SET enabled=TRUE,updated_at=NOW()',[client.id,moduleKey]);
           }
           client.modules=modules;
+          if(Array.isArray(body.videos))await pool.query('UPDATE movit_client_modules SET video=(module_key=ANY($2::text[])) WHERE client_id=$1',[client.id,body.videos.map(String)]);
           return sendJson(res,201,{ok:true,client});
         }catch(e){
           const msg=e.code==='23505'?'Já existe um cliente com esse identificador.':(e.message||'Falha ao criar cliente.');
@@ -3371,6 +3416,8 @@ async function start() {
           for(const moduleKey of modules){
             await pool.query('INSERT INTO movit_client_modules(client_id,module_key,enabled) SELECT $1,key,TRUE FROM movit_modules WHERE key=$2 ON CONFLICT(client_id,module_key) DO UPDATE SET enabled=TRUE,updated_at=NOW()',[id,moduleKey]);
           }
+          // Vídeo de cada módulo no passo a passo do cliente: a MOVIT escolhe se envia ou não.
+          if(Array.isArray(body.videos))await pool.query('UPDATE movit_client_modules SET video=(module_key=ANY($2::text[])) WHERE client_id=$1',[id,body.videos.map(String)]);
           const client=q.rows[0];client.modules=modules;
           return sendJson(res,200,{ok:true,client});
         }catch(e){
