@@ -61,6 +61,17 @@ async function handler(req,res){
     await pool.query('UPDATE bills SET pix_type=$2,pix_key=$3,updated_at=NOW() WHERE id=$1',[m[1],pixType,pixKey]);
     return json(res,200,{ok:true,scope:'single'});
   }
+  // muda a área (Pessoal / Empresa) de uma conta já lançada, ou de todas as parcelas da recorrência
+  m=u.pathname.match(/^\/api\/bills\/([0-9a-f-]+)\/area$/i);
+  if(req.method==='POST'&&m){
+    const b=await readJson(req),area=titleCase(String(b.area||'').trim().slice(0,60));
+    if(!area)return json(res,400,{error:'Informe a area'});
+    const current=await pool.query('SELECT recurrence_group FROM bills WHERE id=$1 LIMIT 1',[m[1]]);
+    if(!current.rowCount)return json(res,404,{error:'Conta nao encontrada'});
+    if(b.applyToRecurrence===true&&current.rows[0].recurrence_group){await pool.query('UPDATE bills SET area=$2,updated_at=NOW() WHERE recurrence_group=$1',[current.rows[0].recurrence_group,area]);return json(res,200,{ok:true,scope:'recurrence'})}
+    await pool.query('UPDATE bills SET area=$2,updated_at=NOW() WHERE id=$1',[m[1],area]);
+    return json(res,200,{ok:true,scope:'single'});
+  }
   m=u.pathname.match(/^\/api\/bills\/([0-9a-f-]+)\/pay$/i);if(req.method==='POST'&&m){await pool.query(`UPDATE bills SET status='paid',payment_date=$2,updated_at=NOW() WHERE id=$1`,[m[1],today()]);return json(res,200,{ok:true});}
   m=u.pathname.match(/^\/api\/bills\/([0-9a-f-]+)\/postpone$/i);if(req.method==='POST'&&m){const b=await readJson(req);if(!/^\d{4}-\d{2}-\d{2}$/.test(String(b.newDueDate||'')))return json(res,400,{error:'Nova data invalida'});await pool.query(`UPDATE bills SET original_due_date=COALESCE(original_due_date,due_date),due_date=$2,postponed_count=postponed_count+1,updated_at=NOW() WHERE id=$1 AND status='pending'`,[m[1],b.newDueDate]);return json(res,200,{ok:true});}
   m=u.pathname.match(/^\/api\/bills\/([0-9a-f-]+)$/i);if(req.method==='DELETE'&&m){await pool.query('DELETE FROM bills WHERE id=$1',[m[1]]);return json(res,200,{ok:true});}
