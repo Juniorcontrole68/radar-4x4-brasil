@@ -2847,6 +2847,7 @@ function trackingFindRoute(driver,plate){
   return null
 }
 function trackingStatus(row){
+  if(row.tracking_off)return{key:'off',label:'Rastreio desativado'+(row.tracking_off_by?' por '+row.tracking_off_by:''),distance:null};
   if(row.test_only&&!trackingHasPosition(row))return{key:'warn',label:'TESTE • aguardando GPS',distance:null};
   if(row.operation_active&&!row.session_id&&!row.map_active&&!trackingHasPosition(row)){
     return row.device_approved
@@ -3774,6 +3775,7 @@ function trackingDiagnose(row){
   const bat=h&&h.battery_pct!==null&&h.battery_pct!==undefined&&Number.isFinite(Number(h.battery_pct))?Math.round(Number(h.battery_pct)):null;
   const hasPos=trackingHasPosition(row);
   if(row.test_only)return{level:hasPos?'ok':'warn',group:hasPos?'ok':'warn',title:st.label,detail:'Celular de teste (não é um motorista da operação).',action:hasPos?'map':''};
+  if(row.device_id&&row.tracking_off)return{level:'off',group:'off',title:'Rastreio desativado',detail:'Desativado'+(row.tracking_off_by?' por '+row.tracking_off_by:'')+(row.tracking_off_at?' '+trackingWhen(row.tracking_off_at):'')+'. As posições deste celular não são registradas até reativar.',action:''};
   if(!row.device_id)return{level:'bad',group:'noapp',title:'Sem aplicativo',detail:'Nenhum celular cadastrado para este motorista/placa. Envie o link: ele instala, informa nome e placa uma única vez e o pedido aparece aqui para você aprovar.',action:'invite'};
   if(row.never_connected)return{level:'bad',group:'stopped',title:'Aprovado, mas o celular ainda não conectou',detail:'O aparelho'+(row.device_name?' ('+row.device_name+')':'')+' foi liberado '+(trackingWhen(row.enrolled_at)||'')+' e não enviou nenhum sinal. O motorista só precisa abrir o aplicativo uma vez.',action:'notify',kind:'abrir'};
   if(String(row.session_status||'').toLowerCase()==='ended')return{level:'off',group:'off',title:'Rota finalizada',detail:'Entregas do romaneio concluídas'+(row.ended_at?' '+trackingWhen(row.ended_at):'')+'. O rastreio volta sozinho quando sair um novo romaneio.',action:hasPos?'map':''};
@@ -4106,6 +4108,7 @@ function renderTrackingBoard(rows,extraRows){
     if(d.action==='notify')actions.push('<button type="button" class="tb-btn wa" data-tb-act="notify" data-tb-i="'+i+'">💬 Avisar no WhatsApp</button>');
     if(d.action==='invite')actions.push('<button type="button" class="tb-btn wa" data-tb-act="invite" data-tb-i="'+i+'">💬 Enviar link do aplicativo</button>');
     if(d.action==='map'||(trackingHasPosition(r)&&d.action!=='map'))actions.push('<button type="button" class="tb-btn" data-tb-act="map" data-tb-i="'+i+'">🗺️ Ver no mapa</button>');
+    if(!r.test_only&&r.device_id)actions.push('<button type="button" class="tb-btn" data-tracking-off="'+safe(r.device_id)+'" data-off="'+(r.tracking_off?'0':'1')+'" data-name="'+safe(r.driver_name||'')+'">'+(r.tracking_off?'▶️ Reativar rastreio':'⏸️ Desativar rastreio')+'</button>');
     if(!r.test_only&&romList.length)actions.push('<button type="button" class="tb-btn" title="Ver a rota de hoje deste motorista: mapa, paradas e km total" data-tb-act="simular" data-tb-i="'+i+'">🗺️ Simular rota</button>');
     const told=notified[it.key]?'<div class="tb-sub">Avisado às '+safe(notified[it.key])+'</div>':'';
     const tv=trackingTestVersion();
@@ -4138,6 +4141,8 @@ async function trackingBoardSavePhone(item,value){
   trackingBoardRerender()
 }
 async function trackingBoardClick(e){
+  const tog=e.target?.closest?.('[data-tracking-off]');
+  if(tog){await trackingToggleOff(tog);return}
   const dec=e.target?.closest?.('[data-tb-decide]');
   if(dec){trackingDecideRequest(String(dec.dataset.tbReq||''),String(dec.dataset.tbDecide||''),dec);return}
   const b=e.target?.closest?.('[data-tb-act]');if(!b)return;
@@ -4170,6 +4175,19 @@ async function trackingBoardClick(e){
     trackingMarkNotified(item.key);trackingBoardRerender()
   }
 }
+async function trackingToggleOff(btn){
+  const off=btn.dataset.off==='1',nome=btn.dataset.name||'este motorista';
+  if(!confirm(off?'Desativar o rastreamento de '+nome+'? As posições do celular deixam de ser registradas até você reativar.':'Reativar o rastreamento de '+nome+'?'))return;
+  btn.disabled=true;
+  try{
+    const r=await fetch('/api/tracking/device-off',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:btn.dataset.trackingOff,off})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao alterar o rastreio.');
+    (TRACKING_DATA||[]).forEach(x=>{if(String(x.device_id)===String(btn.dataset.trackingOff)){x.tracking_off=j.device.tracking_off;x.tracking_off_by=j.device.tracking_off_by}});
+    renderTracking(TRACKING_DATA);
+    refreshTracking()
+  }catch(e){alert(e.message||e);btn.disabled=false}
+}
 function renderTracking(rows){
   TRACKING_DATA=rows||[];
   const statuses=TRACKING_DATA.map(r=>({r,s:trackingStatus(r)}));
@@ -4181,10 +4199,11 @@ function renderTracking(rows){
     const body=statuses.map(({r,s})=>{
       const speed=Number(r.speed_mps);const kmh=Number.isFinite(speed)?speed*3.6:null;
       const key=trackingDriverKey(r.driver_name,r.vehicle_plate);
-      return '<tr><td><button type="button" class="tracking-driver-link" data-tracking-key="'+safe(key)+'"><b>'+safe(r.driver_name||'—')+'</b></button></td><td>'+safe(r.vehicle_plate||'—')+'</td><td><span class="tracking-status '+safe(s.key)+'">'+safe(s.label)+'</span></td><td>'+safe(r.session_id?(String(r.session_status||'').toLowerCase()==='ended'?'Finalizada':'Em rota'):'—')+'</td><td>'+safe(trackingAgeLabel(r.age_seconds))+'</td><td>'+(kmh!==null?kmh.toFixed(0)+' km/h':'—')+'</td><td>'+(r.battery_pct!==null&&r.battery_pct!==undefined?Math.round(Number(r.battery_pct))+'%':'—')+'</td><td>'+safe(r.device_name||'—')+'</td></tr>'
+      return '<tr><td><button type="button" class="tracking-driver-link" data-tracking-key="'+safe(key)+'"><b>'+safe(r.driver_name||'—')+'</b></button></td><td>'+safe(r.vehicle_plate||'—')+'</td><td><span class="tracking-status '+safe(s.key)+'">'+safe(s.label)+'</span></td><td>'+safe(r.session_id?(String(r.session_status||'').toLowerCase()==='ended'?'Finalizada':'Em rota'):'—')+'</td><td>'+safe(trackingAgeLabel(r.age_seconds))+'</td><td>'+(kmh!==null?kmh.toFixed(0)+' km/h':'—')+'</td><td>'+(r.battery_pct!==null&&r.battery_pct!==undefined?Math.round(Number(r.battery_pct))+'%':'—')+'</td><td>'+safe(r.device_name||'—')+'</td><td>'+(r.device_id&&!r.test_only?'<button type="button" class="tracking-off-btn'+(r.tracking_off?' on':'')+'" data-tracking-off="'+safe(r.device_id)+'" data-off="'+(r.tracking_off?'0':'1')+'" data-name="'+safe(r.driver_name||'')+'">'+(r.tracking_off?'▶️ Reativar rastreio':'⏸️ Desativar rastreio')+'</button>':'')+'</td></tr>'
     }).join('');
-    tableEl.innerHTML='<thead><tr><th>Motorista</th><th>Placa</th><th>Status</th><th>Sessão</th><th>Última posição</th><th>Velocidade</th><th>Bateria</th><th>Celular</th></tr></thead><tbody>'+body+'</tbody>';
-    tableEl.querySelectorAll('[data-tracking-key]').forEach(btn=>btn.onclick=()=>trackingFocusDriver(btn.dataset.trackingKey))
+    tableEl.innerHTML='<thead><tr><th>Motorista</th><th>Placa</th><th>Status</th><th>Sessão</th><th>Última posição</th><th>Velocidade</th><th>Bateria</th><th>Celular</th><th>Rastreio</th></tr></thead><tbody>'+body+'</tbody>';
+    tableEl.querySelectorAll('[data-tracking-key]').forEach(btn=>btn.onclick=()=>trackingFocusDriver(btn.dataset.trackingKey));
+    tableEl.querySelectorAll('[data-tracking-off]').forEach(btn=>btn.onclick=()=>trackingToggleOff(btn))
   }
   const info=$('#trackingInfo');if(info)info.textContent='Atualizado às '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})+' • atualização automática a cada '+TRACKING_AUTO_SECONDS+' s • desvio configurado em '+String(TRACKING_DEVIATION_KM).replace('.',',')+' km.';
   trackingMapPopulateControls(TRACKING_DATA);

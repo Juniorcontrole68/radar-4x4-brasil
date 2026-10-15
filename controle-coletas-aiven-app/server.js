@@ -1104,7 +1104,7 @@ async function trackingDeviceFromReq(req){
   const token=trackingBearer(req);
   if(!token){const e=new Error('Dispositivo não autenticado.');e.status=401;throw e}
   const q=await pool.query(
-    "SELECT id::text AS id, driver_name, vehicle_plate, active, enrolled_at FROM driver_tracking_devices WHERE token_hash=$1 LIMIT 1",
+    "SELECT id::text AS id, driver_name, vehicle_plate, active, enrolled_at, tracking_off FROM driver_tracking_devices WHERE token_hash=$1 LIMIT 1",
     [dashboardTokenHash(token)]
   );
   if(!q.rowCount){const e=new Error('Dispositivo não autorizado.');e.status=401;throw e}
@@ -1605,6 +1605,10 @@ async function start() {
   await pool.query("ALTER TABLE driver_tracking_devices ADD COLUMN IF NOT EXISTS health JSONB");
   await pool.query("ALTER TABLE driver_tracking_devices ADD COLUMN IF NOT EXISTS health_at TIMESTAMPTZ");
   await pool.query("ALTER TABLE driver_tracking_devices ADD COLUMN IF NOT EXISTS reactivated_at TIMESTAMPTZ");
+  // Rastreio desativado pelo painel: o aparelho continua aprovado, mas as posições dele são descartadas.
+  await pool.query("ALTER TABLE driver_tracking_devices ADD COLUMN IF NOT EXISTS tracking_off BOOLEAN NOT NULL DEFAULT FALSE");
+  await pool.query("ALTER TABLE driver_tracking_devices ADD COLUMN IF NOT EXISTS tracking_off_at TIMESTAMPTZ");
+  await pool.query("ALTER TABLE driver_tracking_devices ADD COLUMN IF NOT EXISTS tracking_off_by TEXT");
   // Vínculo do MOVIT com um motorista da empresa. Nasce de um código de uso único pedido pelo
   // aplicativo CONSTRULOG Motorista (que já foi liberado pela central), então o MOVIT não
   // precisa de cadastro nem de aprovação própria para receber a rota do dia.
@@ -4404,7 +4408,7 @@ async function start() {
              WHERE id=$1`,
             [device.id,appVersion,health?JSON.stringify(health):null]
           );
-          return sendJson(res,200,{ok:true,session_id:effectiveSessionId||null,server_time:new Date().toISOString(),...trackingLatestApp()})
+          return sendJson(res,200,{ok:true,session_id:effectiveSessionId||null,server_time:new Date().toISOString(),tracking_off:!!device.tracking_off,...trackingLatestApp()})
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao confirmar comunicação do dispositivo.'})}
       }
 
@@ -4412,6 +4416,10 @@ async function start() {
         try {
           const device=await trackingDeviceFromReq(req);
           const body=await readJsonBodyLimited(req,48*1024);
+          if(device.tracking_off){
+            await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
+            return sendJson(res,200,{ok:true,ignored:true,reason:'tracking_off',tracking_off:true});
+          }
           const sessionId=String(body.session_id||'').trim(),lat=Number(body.latitude),lon=Number(body.longitude);
           const captured=new Date(body.captured_at||Date.now());
           if(!Number.isFinite(lat)||lat<-90||lat>90||!Number.isFinite(lon)||lon<-180||lon>180)return sendJson(res,400,{ok:false,error:'Coordenadas inválidas.'});
@@ -4449,6 +4457,11 @@ async function start() {
           const body=await readJsonBodyLimited(req,512*1024);
           const list=(Array.isArray(body.points)?body.points:[]).slice(0,300);
           if(!list.length)return sendJson(res,400,{ok:false,error:'Nenhuma posição enviada.'});
+          if(device.tracking_off){
+            // 200 para o aplicativo esvaziar a fila: posições de quem está com o rastreio desativado não são guardadas.
+            await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
+            return sendJson(res,200,{ok:true,saved:0,ignored:list.length,tracking_off:true});
+          }
           const sessionId=await trackingEnsureTodaySession(device.id);
           if(!sessionId){
             await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
@@ -4474,6 +4487,25 @@ async function start() {
           await pool.query('UPDATE driver_tracking_devices SET last_seen_at=NOW() WHERE id=$1',[device.id]);
           return sendJson(res,200,{ok:true,session_id:sessionId,saved,ignored})
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao registrar posições.'})}
+      }
+
+      // Botão do painel: desativa ou reativa o rastreio de um aparelho (motorista).
+      if (req.method === 'POST' && u.pathname === '/api/painel/tracking/device-off') {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'tracking')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const body=await readJsonBodyLimited(req,8*1024);
+          const id=String(body.device_id||'').trim(),off=body.off===true;
+          if(!/^\d+$/.test(id))return sendJson(res,400,{ok:false,error:'Aparelho inválido.'});
+          const q=await pool.query(
+            `UPDATE driver_tracking_devices SET tracking_off=$2,tracking_off_at=CASE WHEN $2 THEN NOW() ELSE NULL END,tracking_off_by=CASE WHEN $2 THEN $3 ELSE NULL END
+             WHERE id=$1::bigint RETURNING id::text AS device_id,driver_name,vehicle_plate,tracking_off,tracking_off_at,tracking_off_by`,
+            [id,off,String(user.username||'')]
+          );
+          if(!q.rowCount)return sendJson(res,404,{ok:false,error:'Aparelho não encontrado.'});
+          console.log('TRACKING '+(off?'DESATIVADO':'REATIVADO')+': '+JSON.stringify({deviceId:id,driver:q.rows[0].driver_name,por:user.username}));
+          return sendJson(res,200,{ok:true,device:q.rows[0]});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao alterar o rastreio.'})}
       }
 
       if (req.method === 'GET' && u.pathname === '/api/painel/tracking/contacts') {
@@ -4790,7 +4822,7 @@ async function start() {
           const light=String(u.searchParams.get('light')||'')==='1';
           const q=await pool.query(light?`
             SELECT d.id::text AS device_id,d.driver_name,d.vehicle_plate,d.device_name,d.last_seen_at,
-                   d.enrolled_at,d.app_version,d.health,d.health_at,
+                   d.enrolled_at,d.app_version,d.health,d.health_at,d.tracking_off,d.tracking_off_at,d.tracking_off_by,
                    (d.last_seen_at IS NULL OR d.last_seen_at<=d.enrolled_at) AS never_connected,
                    s.id::text AS session_id,s.started_at,s.ended_at,s.status AS session_status,
                    p.latitude,p.longitude,p.accuracy_m,p.speed_mps,p.bearing_deg,p.battery_pct,p.captured_at,
@@ -4820,7 +4852,7 @@ async function start() {
             LIMIT 300
           `:`
             SELECT d.id::text AS device_id,d.driver_name,d.vehicle_plate,d.device_name,d.last_seen_at,
-                   d.enrolled_at,d.app_version,d.health,d.health_at,
+                   d.enrolled_at,d.app_version,d.health,d.health_at,d.tracking_off,d.tracking_off_at,d.tracking_off_by,
                    (d.last_seen_at IS NULL OR d.last_seen_at<=d.enrolled_at) AS never_connected,
                    s.id::text AS session_id,s.started_at,s.ended_at,s.status AS session_status,
                    p.latitude,p.longitude,p.accuracy_m,p.speed_mps,p.bearing_deg,p.battery_pct,p.captured_at,
