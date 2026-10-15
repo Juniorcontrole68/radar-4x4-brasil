@@ -61,6 +61,8 @@ jobs:
           node --check controle-coletas-aiven-app/compressao.js
           node --check controle-coletas-aiven-app/movit-demo.js
           node --check controle-coletas-aiven-app/movit-guia.js
+          node --check controle-coletas-aiven-app/dre.js
+          node --check controle-coletas-aiven-app/dashboard/public/dre.js
       - name: Subir o servidor em modo teste
         run: |
           cd controle-coletas-aiven-app
@@ -76,6 +78,11 @@ jobs:
         run: |
           node controle-coletas-aiven-app/roteirizador-cargas-fonte/test.js
           node controle-coletas-aiven-app/tests/roteirizador-cargas.js
+      - name: Despesas (DRE) e holerites em PDF
+        run: |
+          sudo apt-get update -q >/dev/null
+          sudo apt-get install -y -q poppler-utils
+          node controle-coletas-aiven-app/tests/dre.js
       - name: Grupos de acesso em Usuários
         run: node controle-coletas-aiven-app/tests/grupos-acesso.js
       - name: Rastreio de lotação (base do cliente e link de rastreio)
