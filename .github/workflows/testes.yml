@@ -64,6 +64,8 @@ jobs:
           node --check controle-coletas-aiven-app/dre.js
           node --check controle-coletas-aiven-app/dashboard/public/dre.js
           node --check controle-coletas-aiven-app/dashboard/ssw-despesas.js
+          node --check controle-coletas-aiven-app/veic.js
+          node --check controle-coletas-aiven-app/dashboard/public/frota.js
       - name: Subir o servidor em modo teste
         run: |
           cd controle-coletas-aiven-app
@@ -84,6 +86,8 @@ jobs:
           sudo apt-get update -q >/dev/null
           sudo apt-get install -y -q poppler-utils
           node controle-coletas-aiven-app/tests/dre.js
+      - name: Abastecimentos do Veic na Frota (Veic de mentira, sem rede externa)
+        run: node controle-coletas-aiven-app/tests/veic.js
       - name: Grupos de acesso em Usuários
         run: node controle-coletas-aiven-app/tests/grupos-acesso.js
       - name: Rastreio de lotação (base do cliente e link de rastreio)
