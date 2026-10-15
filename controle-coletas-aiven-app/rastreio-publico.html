@@ -44,7 +44,9 @@ function desenhar(j){
   if(LAYER)LAYER.remove();LAYER=L.layerGroup().addTo(MAP);
   const b=[],o=j.origem,d=j.destino;
   if(o&&Number.isFinite(o.lat)){L.marker([o.lat,o.lon],{icon:pin('ORIGEM','#0f172a')}).addTo(LAYER).bindPopup('<b>Origem</b><br>'+esc(o.cidade)+'/'+esc(o.uf));b.push([o.lat,o.lon])}
-  if(d&&Number.isFinite(d.lat)){L.marker([d.lat,d.lon],{icon:pin('DESTINO','#b91c1c')}).addTo(LAYER).bindPopup('<b>Destino</b><br>'+esc(d.nome||'')+'<br>'+esc(d.cidade)+'/'+esc(d.uf));b.push([d.lat,d.lon])}
+  const ds=(Array.isArray(j.destinos)&&j.destinos.length)?j.destinos:(d?[d]:[]);
+  ds.forEach((x,i)=>{if(!Number.isFinite(x.lat))return;
+    L.marker([x.lat,x.lon],{icon:pin(ds.length>1?'ENTREGA '+(i+1):'DESTINO','#b91c1c')}).addTo(LAYER).bindPopup('<b>'+(ds.length>1?'Entrega '+(i+1):'Destino')+'</b><br>'+esc(x.nome||'')+'<br>'+esc(x.cidade)+'/'+esc(x.uf));b.push([x.lat,x.lon])});
   if(Array.isArray(j.trilha)&&j.trilha.length>1){
     L.polyline(j.trilha,{color:'#fff',weight:8,opacity:.9}).addTo(LAYER);
     L.polyline(j.trilha,{color:'#0f766e',weight:5}).addTo(LAYER);
@@ -63,8 +65,10 @@ async function carregar(){
     const r=await fetch('/api/rastreio-publico/'+encodeURIComponent(token)+'?t='+Date.now(),{cache:'no-store'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Link de rastreio inválido.');
-    const destino=(j.destino.nome?j.destino.nome+' • ':'')+j.destino.cidade+'/'+j.destino.uf;
-    $('sub').textContent=j.cliente+' • '+j.origem.cidade+'/'+j.origem.uf+' → '+j.destino.cidade+'/'+j.destino.uf;
+    const ds=(Array.isArray(j.destinos)&&j.destinos.length)?j.destinos:[j.destino];
+    const nomeD=x=>(x.nome?x.nome+' • ':'')+x.cidade+'/'+x.uf;
+    const destino=ds.map(nomeD).join(' e ');
+    $('sub').textContent=j.cliente+' • '+j.origem.cidade+'/'+j.origem.uf+' → '+ds.map(x=>x.cidade+'/'+x.uf).join(' → ');
     if(j.status!=='ativo'){
       clearInterval(TIMER);
       $('info').style.display='none';
@@ -75,8 +79,10 @@ async function carregar(){
     }
     $('info').style.display='grid';
     $('info').innerHTML='<div>Motorista<b>'+esc(j.motorista||'—')+'</b></div><div>Veículo<b>'+esc(j.placa||'—')+'</b></div>'+
-      '<div>Destino<b>'+esc(destino)+'</b></div>'+
-      '<div>Distância até o destino<b>'+(j.distancia_destino_km!=null?esc(String(j.distancia_destino_km).replace('.',','))+' km (linha reta)':'—')+'</b></div>'+
+      (ds.length>1
+        ?ds.map((x,i)=>'<div>Entrega '+(i+1)+'<b>'+esc(nomeD(x))+'</b>'+(x.distancia_km!=null?esc(String(x.distancia_km).replace('.',','))+' km (linha reta)':'')+'</div>').join('')
+        :'<div>Destino<b>'+esc(destino)+'</b></div>'+
+         '<div>Distância até o destino<b>'+(j.distancia_destino_km!=null?esc(String(j.distancia_destino_km).replace('.',','))+' km (linha reta)':'—')+'</b></div>')+
       '<div>Última posição<b>'+(j.posicao?esc(idade(j.posicao.idade_segundos)):'aguardando GPS')+'</b></div>';
     if(!j.posicao)aviso('Aguardando a primeira posição do motorista. A viagem começa na origem ('+j.origem.cidade+'/'+j.origem.uf+').','warn');
     else if(j.posicao.idade_segundos>1800)aviso('Sem posição nova '+idade(j.posicao.idade_segundos)+'. O celular do motorista pode estar sem sinal.','warn');

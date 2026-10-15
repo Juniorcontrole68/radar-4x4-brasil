@@ -3621,15 +3621,19 @@ function renderTrackingMap(rows){
     // Carga lotação de cliente de outra região: a viagem começa na base DO CLIENTE, não na de Americana.
     const lot=row.lotacao;
     if(!TRACKING_MAP_ONLY_DRIVERS&&lot&&Number.isFinite(Number(lot.origem?.lat))&&Number.isFinite(Number(lot.destino?.lat))){
-      const o=[Number(lot.origem.lat),Number(lot.origem.lon)],d=[Number(lot.destino.lat),Number(lot.destino.lon)];
-      L.polyline([o,d],{pane:'tracking-planned',color:actualColor,weight:4,opacity:.85,dashArray:'4 10'}).addTo(TRACKING_LAYER)
-        .bindTooltip('Lotação • '+safe(lot.cliente)+' • '+safe(lot.origem.cidade)+'/'+safe(lot.origem.uf)+' → '+safe(lot.destino.cidade)+'/'+safe(lot.destino.uf));
+      const o=[Number(lot.origem.lat),Number(lot.origem.lon)];
+      const ds=(Array.isArray(lot.destinos)&&lot.destinos.length?lot.destinos:[lot.destino]).filter(x=>Number.isFinite(Number(x?.lat)));
+      const pts=[o,...ds.map(x=>[Number(x.lat),Number(x.lon)])];
+      L.polyline(pts,{pane:'tracking-planned',color:actualColor,weight:4,opacity:.85,dashArray:'4 10'}).addTo(TRACKING_LAYER)
+        .bindTooltip('Lotação • '+safe(lot.cliente)+' • '+safe(lot.origem.cidade)+'/'+safe(lot.origem.uf)+' → '+ds.map(x=>safe(x.cidade)+'/'+safe(x.uf)).join(' → '));
       const tag=(txt,bg)=>L.divIcon({className:'',html:'<div style="padding:4px 8px;border-radius:8px;background:'+bg+';color:#fff;border:2px solid #fff;box-shadow:0 2px 7px #0005;font-size:10px;font-weight:900;white-space:nowrap">'+txt+'</div>',iconSize:null,iconAnchor:[20,14]});
       L.marker(o,{icon:tag('BASE '+safe(String(lot.cliente||'CLIENTE').split(' ')[0].toUpperCase()),'#334155')}).addTo(TRACKING_LAYER)
         .bindPopup('<b>Base do cliente '+safe(lot.cliente)+'</b><br>'+safe(lot.origem.endereco||'')+'<br>'+safe(lot.origem.cidade)+'/'+safe(lot.origem.uf)+'<br>Motorista: '+safe(trackingDisplayName(row.driver_name)));
-      L.marker(d,{icon:tag('DESTINO','#b91c1c')}).addTo(TRACKING_LAYER)
-        .bindPopup('<b>Destino da lotação</b><br>'+safe(lot.destino.nome||'')+'<br>'+safe(lot.destino.cidade)+'/'+safe(lot.destino.uf)+(lot.link?'<br><a href="'+safe(lot.link)+'" target="_blank" rel="noopener">Link de rastreio do cliente</a>':''));
-      bounds.push(o,d)
+      ds.forEach((x,i)=>{
+        L.marker([Number(x.lat),Number(x.lon)],{icon:tag(ds.length>1?'ENTREGA '+(i+1):'DESTINO','#b91c1c')}).addTo(TRACKING_LAYER)
+          .bindPopup('<b>'+(ds.length>1?'Entrega '+(i+1)+' da lotação':'Destino da lotação')+'</b><br>'+safe(x.nome||'')+'<br>'+safe(x.cidade)+'/'+safe(x.uf)+(lot.link?'<br><a href="'+safe(lot.link)+'" target="_blank" rel="noopener">Link de rastreio do cliente</a>':''))
+      });
+      bounds.push(...pts)
     }
 
     let liveTrail=row.trail;
