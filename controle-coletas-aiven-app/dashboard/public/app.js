@@ -5214,7 +5214,7 @@ async function agtBuscar(){
     agtVal('#agtF_Volumes',Number(j.row.volumes||0).toLocaleString('pt-BR',{maximumFractionDigits:0}));agtVal('#agtF_Previsao',j.row.previsao_ssw);
     const prods=Array.isArray(j.row.produtos)?j.row.produtos:[];
     agtVal('#agtF_Produtos',prods.join('\n'));agtVal('#agtF_Contato','');agtVal('#agtF_Obs','');
-    if($('#agtF_ProdutosInfo'))$('#agtF_ProdutosInfo').textContent=prods.length?prods.length+' produto(s) '+(j.row.produtos_fonte==='ssw'?'da relação de produtos do SSW':'do XML da NF-e'):'O SSW não trouxe os produtos desta nota: digite, se precisar.';
+    if($('#agtF_ProdutosInfo'))$('#agtF_ProdutosInfo').textContent=prods.length?prods.length+' produto(s) '+(j.row.produtos_fonte==='ssw'?'da relação de produtos do SSW':'do XML da NF-e'):'Sem produtos'+(j.row.produtos_diag?' ('+j.row.produtos_diag+')':'')+'. Digite, se precisar.';
     if($('#agtF_Agendado'))$('#agtF_Agendado').value='nao';if($('#agtF_Data')){$('#agtF_Data').value='';$('#agtF_Data').disabled=true}
     if($('#agtForm'))$('#agtForm').style.display='block';
     if(msg)msg.textContent='✓ Dados preenchidos pelo SSW. O operador precisa informar apenas se houve agendamento e a data.';

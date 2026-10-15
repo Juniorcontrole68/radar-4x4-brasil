@@ -1392,7 +1392,7 @@ async function deliveryProgramFetchSsw101Detail(session,row,force=false){
     const volumesText=sswField('Volumes',['Peso','Previsão','Valor','Tipo'])||sswField('Quantidade de volumes',['Peso','Previsão','Valor','Tipo']);
     const previsao=sswField('Previsão de entrega',['Status','Situação','Ocorrência','Filial','Rota']).match(/\d{2}\/\d{2}\/\d{4}/)?.[0]||'';
     const status=sswField('Status',['Data','Previsão','Ocorrência','Entrega','Filial','Rota'])||sswField('Situação',['Data','Previsão','Ocorrência','Entrega','Filial','Rota']);
-    let productText='',products=[],productLines=[];
+    let productText='',products=[],productLines=[],productDiag='';
     try{
       const prodParams=deliveryProgramFormParams(html);
       prodParams.set('act','RELPROD');
@@ -1404,9 +1404,16 @@ async function deliveryProgramFetchSsw101Detail(session,row,force=false){
       session.apply(prodRes.headers);
       const prodHtml=await prodRes.text();
       const webBody=(prodHtml.match(/name=web_body[^>]*value=["']([^"']+)["']/i)||[])[1]||'';
-      if(webBody){
-        const decoded=decodeURIComponent(webBody.replace(/&amp;/g,'&'));
-        const am=decoded.match(/abrir\(['"]([^'"]+)['"],\s*['"]([^'"]+)['"],\s*(\d+),\s*(\d+),\s*['"]([^'"]*)['"]/i);
+      const am=webBody?decodeURIComponent(webBody.replace(/&amp;/g,'&')).match(/abrir\(['"]([^'"]+)['"],\s*['"]([^'"]+)['"],\s*(\d+),\s*(\d+),\s*['"]([^'"]*)['"]/i):null;
+      if(!am){
+        // Sem arquivo para baixar: o SSW pode mostrar a relação na própria tela (grade <r><f..>).
+        const grade=[...prodHtml.matchAll(/<r\b[^>]*>([\s\S]*?)<\/r>/gi)].map(m=>m[1].replace(/<\/f\d+>/gi,';').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/<[^>]+>/g,' ')).join('\n');
+        productLines=grade?sswCte.parseRelacaoProdutos(grade):[];
+        const tela=htmlText38(prodHtml).replace(/\s+/g,' ').trim();
+        productDiag=productLines.length?'':'SSW sem relação de produtos para baixar ('+Buffer.byteLength(prodHtml)+' bytes): '+tela.slice(0,160);
+        if(productDiag)console.log('PROGRAMAÇÃO SSW101 PRODUTO '+ctrc+': '+productDiag+' | '+prodHtml.slice(0,600).replace(/\s+/g,' '))
+      }
+      {
         if(am){
           const pu=new URL('/bin/ssw0424','https://sistema.ssw.inf.br');
           pu.searchParams.set('act',am[1]);pu.searchParams.set('filename',am[2]);pu.searchParams.set('path',am[5]||'');pu.searchParams.set('down',am[3]);pu.searchParams.set('nw',am[4]);
@@ -1416,10 +1423,13 @@ async function deliveryProgramFetchSsw101Detail(session,row,force=false){
           productText=fileBuf.toString('latin1');
           products=deliveryProgramSpecialLines(productText);
           productLines=sswCte.parseRelacaoProdutos(productText);
-          if(!productLines.length)console.log('PROGRAMAÇÃO SSW101 PRODUTO '+ctrc+': relação sem itens lidos ('+fileBuf.length+' bytes): '+productText.slice(0,400).replace(/\s+/g,' '))
+          if(!productLines.length){
+            productDiag='relação do SSW sem itens legíveis ('+fileBuf.length+' bytes): '+productText.replace(/\s+/g,' ').trim().slice(0,160);
+            console.log('PROGRAMAÇÃO SSW101 PRODUTO '+ctrc+': '+productDiag+' | '+productText.slice(0,600).replace(/\s+/g,' '))
+          }
         }
       }
-    }catch(e){console.log('PROGRAMAÇÃO SSW101 PRODUTO '+ctrc+': '+String(e.message||e))}
+    }catch(e){productDiag='erro ao ler a relação de produtos do SSW: '+String(e.message||e);console.log('PROGRAMAÇÃO SSW101 PRODUTO '+ctrc+': '+String(e.message||e))}
     const combined=(tm?.[1]||'')+' '+(em?.[1]||'')+' '+productText;
     const value={
       frete:fm?bi2Number(fm[1]):Number(row.frete||0),
@@ -1429,7 +1439,7 @@ async function deliveryProgramFetchSsw101Detail(session,row,force=false){
       peso:bi2Number(pesoText),volumes:bi2Number(volumesText),previsao,status,
       specialClass:deliveryProgramSpecialClass(combined),
       specialProducts:products,
-      productLines
+      productLines,productDiag
     };
     SSW101_DETAIL_CACHE.set(key,{at:Date.now(),value});
     return value
@@ -6184,6 +6194,7 @@ if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
         row.previsao=row.previsao||det.previsao||'';
         row.status=row.status||det.status||'';
         row.produtosSsw=Array.isArray(det.productLines)?det.productLines:[];
+        row.produtosDiag=det.productDiag||'';
       }
     }catch(e){console.log('AGENDAMENTO NF detalhe 101: '+String(e.message||e))}
   }
@@ -6208,11 +6219,12 @@ if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
   // Sem XML importado: usa a relação de produtos que o SSW guarda do CT-e (opção 101).
   let produtosFonte=produtos.length?'xml':'';
   if(!produtos.length&&row.produtosSsw?.length){produtos=row.produtosSsw.slice(0,60);produtosFonte='ssw'}
+  const produtosDiag=produtos.length?'':(!row.ctrc?'NF sem CT-e (CTRC) no SSW, não há relação de produtos':(row.produtosDiag||'relação de produtos do SSW não consultada'));
 
   const out={
     ok:true,
     row:{
-      produtos,produtos_fonte:produtosFonte,
+      produtos,produtos_fonte:produtosFonte,produtos_diag:produtosDiag,
       nf:row.nf||nf,ctrc:row.ctrc||'',cliente:row.cliente||'',cidade:row.cidade||'',uf:row.uf||'SP',
       status_ssw:row.status||'',mercadoria:row.tipoMercadoria||row.mercadoria||row.especieMercadoria||'',
       peso:Number(row.peso||0),volumes:Number(row.volumes||0),previsao_ssw:row.previsao||'',
