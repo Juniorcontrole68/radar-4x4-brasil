@@ -4900,7 +4900,87 @@ async function buildFaturasSsw(de,ate,diag=false){
   console.log('FATURAS SSW: '+JSON.stringify({de,ate,lidas:todas.length,abertas:abertas.length,emAberto:value.emAberto,paginacao:info.paginacao}));
   return value
 }
-async function buildBi2Remetentes(from='',to=''){let rows=[],meta={},period=null;if(from&&to){const snaps=await fetchBi2RangeParsed(13,from,to);rows=mergeUniqueBi2Rows(snaps);period=bi2PeriodInfo(snaps,from,to);const latest=[...snaps].reverse().find(x=>x.ok);meta=latest?latest.meta:{}}else{const rep=await fetchBi2Report(13),p=parseBi2Csv(rep.text);rows=p.rows;meta=p.meta}const groups=new Map();for(const r of rows){const nome=pickField(r,'REMETENTE')||'Não informado';if(!groups.has(nome))groups.set(nome,{remetente:nome,ctrcs:0,frete:0,valorMercadoria:0,volumes:0,peso:0,m3:0,atrasoTotal:0,atrasoN:0,cidades:new Set(),destinatarios:new Set()});const g=groups.get(nome);g.ctrcs++;g.frete+=bi2Number(pickField(r,'FRETE'));g.valorMercadoria+=bi2Number(pickField(r,'VAL MERC'));g.volumes+=bi2Number(pickField(r,'QTD VOLUMES'));g.peso+=bi2Number(pickField(r,'PESO'));g.m3+=bi2Number(pickField(r,'M3'));const av=bi2Number(pickField(r,'ATRASO'));if(av||String(pickField(r,'ATRASO')).trim()==='0'){g.atrasoTotal+=av;g.atrasoN++}const cid=pickField(r,'CIDADE DESTINO');if(cid)g.cidades.add(cid);const dst=pickField(r,'DESTINATARIO');if(dst)g.destinatarios.add(dst)}const clientes=[...groups.values()].map(g=>({remetente:g.remetente,ctrcs:g.ctrcs,frete:g.frete,valorMercadoria:g.valorMercadoria,volumes:g.volumes,peso:g.peso,m3:g.m3,atrasoMedio:g.atrasoN?g.atrasoTotal/g.atrasoN:0,cidades:g.cidades.size,destinatarios:g.destinatarios.size})).sort((a,b)=>b.ctrcs-a.ctrcs);const hist=period?' • '+period.daysAvailable+'/'+period.daysRequested+' dia(s) com arquivo BI2':'';return{ok:true,sourceCode:13,sourceName:meta.relatorio||'CT-es atrasados',limited:true,note:'Base atual do BI2: CT-es atrasados únicos observados no período. O relatório 083 de performance por cliente emitente ainda não está disponível.'+hist,meta,period,totalClientes:clientes.length,totalCtrcs:rows.length,totalFrete:sumField(rows,['FRETE']),totalMercadoria:sumField(rows,['VAL MERC']),totalVolumes:sumField(rows,['QTD VOLUMES']),clientes}}
+// Entregas por cliente remetente: CT-es EMITIDOS no período no SSW (BI2 174, data de emissão), por
+// remetente, com a entrega pela baixa do SSW (BI2 17). Mesma base do SLA e do Faturamento por cliente.
+const REMETENTES_CACHE=new Map();
+async function buildBi2Remetentes(from='',to=''){
+  const hoje=spDateISO();
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(from||''))from=hoje.slice(0,8)+'01';
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(to||'')||to>hoje)to=hoje;
+  if(from>to)from=to;
+  const ck=from+'|'+to,hit=REMETENTES_CACHE.get(ck);
+  if(hit&&Date.now()-hit.at<10*60*1000)return hit.value;
+  // o CT-e segue nos arquivos dos dias seguintes à emissão e a baixa vem depois: lê até 10 dias além do fim
+  const ate=(()=>{const d=new Date(to+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+10);const x=d.toISOString().slice(0,10);return x>hoje?hoje:x})();
+  const dias=bi2DateRange(from,ate,75),s174=[],s17=[];
+  for(let i=0;i<dias.length;i+=4){
+    const ds=dias.slice(i,i+4);
+    const par=await Promise.all([
+      Promise.all(ds.map(bi2_174Dia)),
+      Promise.all(ds.map(d=>fetchBi2FolderDayParsed(17,bi2Auth().pasta,d).catch(e=>({ok:false,date:d,rows:[],erro:String(e.message||e)}))))
+    ]);
+    s174.push(...par[0]);s17.push(...par[1])
+  }
+  if(ate===hoje){try{s174.push({ok:true,rows:parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text).rows||[]})}catch{}try{s17.push({ok:true,rows:parseBi2Csv((await fetchBi2ReportFolder(17,'',bi2Auth().pasta)).text).rows||[]})}catch{}}
+  if(!s174.some(x=>x.ok&&(x.rows||[]).length))throw new Error('O SSW (BI2 174) não devolveu CT-es para o período');
+  const ctes=new Map();
+  for(const sn of s174)for(const r of (sn.rows||[])){
+    const raw=r.numero_ctrc||pickField(r,'CTRC'),k=normCtrcLoose(raw);if(!k)continue;
+    const em=slaIso(pickField(r,'data_emissao','DATA EMISSAO','DATA AUTORIZACAO','AUTORIZACAO'));
+    if(!em||em<from||em>to)continue;
+    if(/CANCEL/i.test(String(pickField(r,'situacao','SITUACAO','status','STATUS')||''))){ctes.delete(k);continue}
+    const cur=ctes.get(k)||{ctrc:raw,nf:normNf(r.numero_nf||pickField(r,'NF')),emissao:em,previsao:'',entrega:''};
+    // a linha mais recente do CT-e vale (os arquivos dos dias seguintes trazem a situação atualizada)
+    Object.assign(cur,{
+      remetente:String(r.remetente_nome||pickField(r,'remetente_nome','NOME REMETENTE','REMETENTE')||'Não informado').trim().toUpperCase()||'NÃO INFORMADO',
+      destinatario:String(r.destinatario_nome||pickField(r,'destinatario_nome','NOME DESTINATARIO','DESTINATARIO')||'').trim().toUpperCase(),
+      cidade:String(r.cidade_destino||r.dest_cidade||pickField(r,'CIDADE DESTINO')||'').trim().toUpperCase(),
+      frete:bi2Number(pickField(r,'valor_frete','VALOR FRETE','frete_total','FRETE TOTAL','FRETE')),
+      valorMercadoria:bi2Number(pickField(r,'valor_n_fiscal','VALOR N FISCAL','valor_mercadoria','VALOR MERCADORIA','VAL MERC','valor_nf')),
+      volumes:bi2Number(pickField(r,'qtd_volumes','QTD VOLUMES','volumes','VOLUMES')),
+      peso:bi2Number(pickField(r,'peso_real','PESO REAL','peso','PESO')),
+      m3:bi2Number(pickField(r,'m3','M3','cubagem','CUBAGEM'))
+    });
+    const pv=slaIso(r.prev_ent||pickField(r,'PREV ENTREGA','PREVISAO ENTREGA','DATA PREVISAO'));if(pv)cur.previsao=pv;
+    ctes.set(k,cur)
+  }
+  const porNf=new Map();for(const c of ctes.values())if(c.nf)porNf.set(c.nf,c);
+  for(const sn of s17)for(const r of (sn.rows||[])){
+    const c=ctes.get(normCtrcLoose(r.CTRC||pickField(r,'CTRC')))||porNf.get(normNf(r.NF||pickField(r,'NF')));if(!c)continue;
+    const en=slaIso((String(r['DATA ENTREGA']||pickField(r,'DATA ENTREGA')).match(/\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2}/)||[''])[0]);
+    if(en&&(!c.entrega||en<c.entrega))c.entrega=en;
+    const pv=slaIso(r['DATA PREVENTR']||pickField(r,'DATA PREVENTR'));if(pv&&!c.previsao)c.previsao=pv
+  }
+  const groups=new Map();
+  for(const c of ctes.values()){
+    if(!groups.has(c.remetente))groups.set(c.remetente,{remetente:c.remetente,ctrcs:0,entregues:0,noPrazo:0,atrasadas:0,vencidas:0,pendentes:0,frete:0,valorMercadoria:0,volumes:0,peso:0,m3:0,atrasoTotal:0,atrasoN:0,cidades:new Set(),destinatarios:new Set()});
+    const g=groups.get(c.remetente);
+    g.ctrcs++;g.frete+=c.frete;g.valorMercadoria+=c.valorMercadoria;g.volumes+=c.volumes;g.peso+=c.peso;g.m3+=c.m3;
+    if(c.cidade)g.cidades.add(c.cidade);if(c.destinatario)g.destinatarios.add(c.destinatario);
+    if(c.entrega){
+      g.entregues++;
+      if(c.previsao){const d=slaDias(c.previsao,c.entrega);if(d>0){g.atrasadas++;g.atrasoTotal+=d;g.atrasoN++}else g.noPrazo++}
+    }else{
+      g.pendentes++;
+      if(c.previsao&&c.previsao<hoje){g.vencidas++;g.atrasoTotal+=slaDias(c.previsao,hoje);g.atrasoN++}
+    }
+  }
+  const r2=v=>Math.round(v*100)/100;
+  const clientes=[...groups.values()].map(g=>{const base=g.noPrazo+g.atrasadas+g.vencidas;return{remetente:g.remetente,ctrcs:g.ctrcs,entregues:g.entregues,pendentes:g.pendentes,noPrazo:g.noPrazo,atrasadas:g.atrasadas,vencidas:g.vencidas,
+    sla:base?Math.round(g.noPrazo/base*1000)/10:null,frete:r2(g.frete),valorMercadoria:r2(g.valorMercadoria),volumes:g.volumes,peso:r2(g.peso),m3:g.m3,
+    atrasoMedio:g.atrasoN?g.atrasoTotal/g.atrasoN:0,cidades:g.cidades.size,destinatarios:g.destinatarios.size}}).sort((a,b)=>b.ctrcs-a.ctrcs);
+  const soma=k=>clientes.reduce((t,x)=>t+(x[k]||0),0);
+  const daysRequested=bi2DateRange(from,to,75).length,faltam=s174.filter(x=>x.missing&&x.date>=from&&x.date<=to).length;
+  const br=d=>d.split('-').reverse().join('/');
+  const value={ok:true,source:'SSW',sourceCode:174,sourceName:'CT-es emitidos no SSW (BI2 174) + baixas (BI2 17)',limited:false,
+    note:'SSW: CT-es emitidos de '+br(from)+' a '+br(to)+', entrega pela baixa no SSW'+(faltam?' • '+faltam+' dia(s) sem arquivo do SSW':''),
+    meta:{data:br(hoje),hora:new Date().toLocaleTimeString('pt-BR',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit'})},
+    period:{from:br(from),to:br(to),daysRequested,daysAvailable:daysRequested-faltam},
+    totalClientes:clientes.length,totalCtrcs:soma('ctrcs'),totalEntregues:soma('entregues'),totalPendentes:soma('pendentes'),
+    totalFrete:r2(soma('frete')),totalMercadoria:r2(soma('valorMercadoria')),totalVolumes:soma('volumes'),clientes};
+  REMETENTES_CACHE.set(ck,{at:Date.now(),value});
+  return value
+}
 async function buildBi2Atrasos(from='',to=''){let rows=[],meta={},bytes=0,headers=[],period=null;if(from&&to){const snaps=await fetchBi2RangeParsed(13,from,to);rows=mergeUniqueBi2Rows(snaps);period=bi2PeriodInfo(snaps,from,to);const latest=[...snaps].reverse().find(x=>x.ok);meta=latest?latest.meta:{};bytes=snaps.filter(x=>x.ok).reduce((a,x)=>a+(x.bytes||0),0);headers=latest?latest.headers:[]}else{const rep=await fetchBi2Report(13),p=parseBi2Csv(rep.text);rows=p.rows;meta=p.meta;bytes=rep.bytes;headers=p.headers}const clean=rows.slice(0,1000).map(r=>({filial:pickField(r,'FILIAL'),ctrc:pickField(r,'CTRC'),nf:pickField(r,'NF'),remetente:pickField(r,'REMETENTE'),pagador:pickField(r,'PAGADOR'),destinatario:pickField(r,'DESTINATARIO'),uf:pickField(r,'UF DESTINO','UF'),cidade:pickField(r,'CIDADE DESTINO','CIDADE'),entregaAgendada:pickField(r,'ENTREGA AGENDADA'),previsao:pickField(r,'PREVISAO ENTREGA','PREVISAO','DATA PREVISAO'),diasAtraso:pickField(r,'DIAS ATRASO','ATRASO'),unidadeAtual:pickField(r,'UNIDADE ATUAL'),localizacaoAtual:pickField(r,'LOCALIZACAO ATUAL'),ultimaOcorrencia:pickField(r,'COD ULTIMA OCORRENCIA'),instrucaoOcorrencia:pickField(r,'INSTRUCAO/COMPLEMENTO ULTIMA OCORRENCIA'),dataUltimaOcorrencia:pickField(r,'DATA ULTIMA OCORRENCIA'),responsabilidadeCliente:pickField(r,'RESPONSABILIDADE CLIENTE'),valorMercadoria:pickField(r,'VAL MERC'),frete:pickField(r,'FRETE'),volumes:pickField(r,'QTD VOLUMES'),peso:pickField(r,'PESO'),m3:pickField(r,'M3'),tipoDocumento:pickField(r,'TIPO DOCUMENTO')}));return{ok:true,codigo:13,bytes,meta,period,total:rows.length,filiaisCount:distinctCount(rows,['FILIAL']),cidadesCount:distinctCount(rows,['CIDADE DESTINO','CIDADE']),destinatariosCount:distinctCount(rows,['DESTINATARIO']),remetentesCount:distinctCount(rows,['REMETENTE']),valorMercadoria:sumField(rows,['VAL MERC']),freteTotal:sumField(rows,['FRETE']),volumesTotal:sumField(rows,['QTD VOLUMES']),pesoTotal:sumField(rows,['PESO']),m3Total:sumField(rows,['M3']),headers,filiais:topCounts(rows,['FILIAL'],12),cidades:topCounts(rows,['CIDADE DESTINO','CIDADE'],12),destinatarios:topCounts(rows,['DESTINATARIO'],12),remetentes:topCounts(rows,['REMETENTE'],12),localizacoes:topCounts(rows,['LOCALIZACAO ATUAL','UNIDADE ATUAL'],12),ocorrencias:topCounts(rows,['COD ULTIMA OCORRENCIA'],12),rows:clean}}
 async function refreshBi2ApiState(){const now=new Date().toISOString();const x=await testBi2WebApi();if(x.ok&&Array.isArray(x.reports)){const good=x.reports.filter(r=>r.status===200&&/text\/csv/i.test(r.type));BI2_API_STATE={connected:good.length>0,lastCheck:now,reports:x.reports.map(r=>({codigo:r.codigo,status:r.status,bytes:r.bytes,type:r.type})),message:good.length?'WebAPI BI2 conectada':'WebAPI BI2 sem relatórios disponíveis'};}else{BI2_API_STATE={connected:false,lastCheck:now,reports:[],message:'Falha na WebAPI BI2',error:x.error||''}}return BI2_API_STATE}
 async function testBi2WebApi(){if(!bi2Configured())return{ok:false,error:'BI2 não configurado'};try{const sigla=(process.env.BI2_COMPANY||process.env.BI2_USERNAME||'').toLowerCase(),pasta=process.env.BI2_FOLDER||'cliente',hash=crypto.createHash('md5').update(process.env.BI2_PASSWORD||'').digest('hex'),auth='Basic '+hash,base='https://ssw.inf.br/api/bi2/'+encodeURIComponent(sigla)+'/'+encodeURIComponent(pasta);const reports=[];for(const codigo of [13,16,83]){const r=await bi2ApiGet(base+'?codigo='+codigo,auth);reports.push({codigo,status:r.status,type:r.type,bytes:r.bytes,preview:r.preview})}return{ok:true,sigla,pasta,reports}}catch(e){return{ok:false,error:String(e.message||e)}}}
