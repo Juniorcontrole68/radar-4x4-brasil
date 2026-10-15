@@ -80,6 +80,7 @@ jobs:
           node controle-coletas-aiven-app/tests/roteirizador-cargas.js
       - name: Despesas (DRE) e holerites em PDF
         run: |
+          sudo apt-get update -q >/dev/null
           sudo apt-get install -y -q poppler-utils
           node controle-coletas-aiven-app/tests/dre.js
       - name: Grupos de acesso em Usuários
