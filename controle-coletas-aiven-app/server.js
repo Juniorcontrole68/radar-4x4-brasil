@@ -1531,6 +1531,26 @@ async function start() {
       updated_by BIGINT
     )
   `);
+  // Casa do motorista (para a carga que termina na casa dele, em vez de voltar para a base).
+  // Lida do cadastro do SSW quando dá; o operador pode corrigir na tela Montar carga.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS driver_home_addresses (
+      driver_key TEXT PRIMARY KEY,
+      driver_name TEXT NOT NULL,
+      endereco TEXT NOT NULL DEFAULT '',
+      numero TEXT NOT NULL DEFAULT '',
+      bairro TEXT NOT NULL DEFAULT '',
+      cidade TEXT NOT NULL DEFAULT '',
+      uf TEXT NOT NULL DEFAULT '',
+      cep TEXT NOT NULL DEFAULT '',
+      lat DOUBLE PRECISION,
+      lon DOUBLE PRECISION,
+      precisao TEXT NOT NULL DEFAULT '',
+      fonte TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by BIGINT
+    )
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS driver_tracking_requests (
       id BIGSERIAL PRIMARY KEY,
@@ -1849,6 +1869,36 @@ async function start() {
           return sendJson(res,200,{ok:true,rows:q.rows.map(r=>({driver_name:String(r.driver_name||'').trim(),vehicle_plate:String(r.vehicle_plate||'').trim()}))});
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao listar motoristas.'})}
       }
+      // Casa do motorista guardada (e o CPF que aparece nas coletas, para achar o cadastro no SSW).
+      if (u.pathname === '/api/painel/roteirizador/casa-motorista' && (req.method === 'GET' || req.method === 'PUT')) {
+        try{
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'montar_carga')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          const campos=r=>({driver_name:r.driver_name,endereco:r.endereco,numero:r.numero,bairro:r.bairro,cidade:r.cidade,uf:r.uf,cep:r.cep,
+            lat:r.lat===null?null:Number(r.lat),lon:r.lon===null?null:Number(r.lon),precisao:r.precisao,fonte:r.fonte,updated_at:r.updated_at});
+          if(req.method==='GET'){
+            const nome=String(u.searchParams.get('nome')||'').trim().replace(/\s+/g,' ').slice(0,120);
+            if(nome.length<2)return sendJson(res,400,{ok:false,error:'Informe o motorista.'});
+            const q=await pool.query(`SELECT * FROM driver_home_addresses WHERE ${sqlNome('driver_name')}=${sqlNome('$1')} ORDER BY updated_at DESC LIMIT 1`,[nome]);
+            const c=await pool.query(`SELECT motorista_cpf FROM coletas WHERE ${sqlNome('motorista')}=${sqlNome('$1')} AND COALESCE(motorista_cpf,'')<>'' ORDER BY id DESC LIMIT 1`,[nome]).catch(()=>({rows:[]}));
+            return sendJson(res,200,{ok:true,casa:q.rowCount?campos(q.rows[0]):null,cpf:String(c.rows[0]?.motorista_cpf||'').replace(/\D/g,'')});
+          }
+          const body=await readJsonBodyLimited(req,16*1024);
+          const driver=String(body.driver_name||'').trim().replace(/\s+/g,' ').slice(0,120),key=trackingContactKey(driver);
+          if(key.length<2)return sendJson(res,400,{ok:false,error:'Motorista inválido.'});
+          const t=(v,n)=>String(v??'').trim().replace(/\s+/g,' ').slice(0,n);
+          const lat=Number(body.lat),lon=Number(body.lon);
+          if(!Number.isFinite(lat)||!Number.isFinite(lon)||lat<-90||lat>90||lon<-180||lon>180||(lat===0&&lon===0))return sendJson(res,400,{ok:false,error:'Endereço sem ponto no mapa.'});
+          const q=await pool.query(
+            `INSERT INTO driver_home_addresses(driver_key,driver_name,endereco,numero,bairro,cidade,uf,cep,lat,lon,precisao,fonte,updated_by)
+             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+             ON CONFLICT (driver_key) DO UPDATE SET driver_name=EXCLUDED.driver_name,endereco=EXCLUDED.endereco,numero=EXCLUDED.numero,bairro=EXCLUDED.bairro,
+               cidade=EXCLUDED.cidade,uf=EXCLUDED.uf,cep=EXCLUDED.cep,lat=EXCLUDED.lat,lon=EXCLUDED.lon,precisao=EXCLUDED.precisao,fonte=EXCLUDED.fonte,updated_at=NOW(),updated_by=EXCLUDED.updated_by
+             RETURNING *`,
+            [key,driver,t(body.endereco,160),t(body.numero,20),t(body.bairro,80),t(body.cidade,80),t(body.uf,2).toUpperCase(),String(body.cep||'').replace(/\D/g,'').slice(0,8),lat,lon,t(body.precisao,30),t(body.fonte,60),user.id]);
+          return sendJson(res,200,{ok:true,casa:campos(q.rows[0])});
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha na casa do motorista.'})}
+      }
       // Carga por bipagem: a rota montada na central vira (1) um link que abre no MOVIT e
       // (2), se o motorista foi informado, a rota do dia dele no aplicativo.
       if (u.pathname === '/api/painel/roteirizador/enviar-carga' && req.method === 'POST') {
@@ -1866,8 +1916,12 @@ async function start() {
           const stops=day.stops.map((st,i)=>({...st,seq:i+1,entregue:false,baixaAt:''}));
           const [y,m,d]=date.split('-');
           const title=('Carga • '+[driver,plate,d+'/'+m,stops.length+' entrega(s)'].filter(Boolean).join(' • ')).slice(0,180);
-          const routeData={stops,start:day.start,returnToStart:true,geometry:day.geometry,distanceMeters:day.distanceMeters,durationSeconds:day.durationSeconds,
+          // Motorista que termina na casa dele: a rota não volta para a base. O km de referência
+          // (saindo e voltando para a base) segue junto, para comparar.
+          const fim=plan.fim&&movitHasCoord(plan.fim)?{lat:Number(plan.fim.lat),lon:Number(plan.fim.lon),label:String(plan.fim.label||'Casa do motorista').slice(0,220)}:null;
+          const routeData={stops,start:day.start,returnToStart:!fim,geometry:day.geometry,distanceMeters:day.distanceMeters,durationSeconds:day.durationSeconds,
             carga:true,vehicle_plate:plate,criado_por:String(user.username||'')};
+          if(fim){routeData.end=fim;routeData.voltaParaCasa=true;routeData.kmBaseMeters=Number(plan.kmBaseMeters||0)||0}
           const token=crypto.randomBytes(10).toString('hex');
           await pool.query("INSERT INTO router_shared_routes(share_token,title,driver_name,event_date,route_data) VALUES($1,$2,$3,$4::date,$5::jsonb)",
             [token,title,driver,date,JSON.stringify(routeData)]);
@@ -1885,7 +1939,7 @@ async function start() {
             const c=await pool.query(`SELECT phone FROM driver_tracking_contacts WHERE ${sqlNome('driver_name')}=${sqlNome('$1')} ORDER BY updated_at DESC LIMIT 1`,[driver]).catch(()=>({rows:[]}));
             phone=String(c.rows[0]?.phone||'').replace(/\D/g,'')
           }
-          console.log('CARGA BIPADA enviada: '+JSON.stringify({por:user.username,date,motorista:driver,placa:plate,paradas:stops.length,km:Math.round(day.distanceMeters/1000)}));
+          console.log('CARGA BIPADA enviada: '+JSON.stringify({por:user.username,date,motorista:driver,placa:plate,paradas:stops.length,km:Math.round(day.distanceMeters/1000),casa:!!fim}));
           return sendJson(res,201,{ok:true,token,title,date,stops:stops.length,driver_name:driver,vehicle_plate:plate,para_motorista:paraMotorista,phone,
             open_url:DRIVER_PUBLIC_BASE+'/movit/rota/'+token,app_url:'movit://route/'+token,download_url:DRIVER_PUBLIC_BASE+'/downloads/MOVIT.apk'});
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao enviar a carga.'})}

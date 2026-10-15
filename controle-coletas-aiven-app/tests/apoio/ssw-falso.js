@@ -16,6 +16,24 @@ const SEQ={'AMR001056-1':5056,'AMR001057-1':5057,'TBT000321-1':5321};
 const loginPage='<html><body><form action="ssw0422"><input name="f1"><input name="f2"><input name="f3"><input type="password" name="f4"></form></body></html>';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
+// ---------------------------------------------------------------- opção 028: cadastro de motoristas
+// Pesquisa por CPF ou por nome; o cadastro volta com os dados dentro de campos <input value>.
+const MOTORISTAS=[
+  {cpf:'11122233344',nome:'MOTORISTA BIPAGEM',end:'RUA CONCEICAO TRAVAGLIA BLANCO',nro:'80',bairro:'JARDIM SANTA CRUZ',cep:'13840000',cid:'MOGI GUACU',uf:'SP'},
+  {cpf:'22233344455',nome:'JOSE DA SILVA',end:'RUA A',nro:'1',bairro:'CENTRO',cep:'13465000',cid:'AMERICANA',uf:'SP'},
+  {cpf:'33344455566',nome:'JOSE DA SILVA',end:'RUA B',nro:'2',bairro:'CENTRO',cep:'13465000',cid:'AMERICANA',uf:'SP'}
+];
+const FORM028='<html><body><form name=frm><input type=hidden name=act value=""><input type=hidden name=dummy value="028">'+
+  '<table><tr><td>CPF do motorista:</td><td><input type=text name=f2 maxlength=11 value=""></td></tr>'+
+  '<tr><td>Nome:</td><td><input type=text name=f3 maxlength=45 value=""></td></tr></table>'+
+  '<a href=# onclick="ajaxEnvia(\'PES\',1);return false">Pesquisar</a></form></body></html>';
+const cad028=m=>'<html><body><form><input type=hidden name=act value=""><table>'+
+  '<tr><td>CPF:</td><td><input name=g_cpf value="'+m.cpf+'"></td><td>Nome:</td><td><input name=g_nome value="'+m.nome+'"></td></tr>'+
+  '<tr><td>Endere&ccedil;o:</td><td><input name=g_end value="'+m.end+'"></td><td>N&uacute;mero:</td><td><input name=g_nro value="'+m.nro+'"></td></tr>'+
+  '<tr><td>Bairro:</td><td><input name=g_bai value="'+m.bairro+'"></td><td>CEP:</td><td><input name=g_cep value="'+m.cep.slice(0,5)+'-'+m.cep.slice(5)+'"></td></tr>'+
+  '<tr><td>Cidade:</td><td><input name=g_cid value="'+m.cid+'"></td><td>UF:</td><td><input name=g_uf value="'+m.uf+'"></td></tr>'+
+  '<tr><td>Fone:</td><td><input name=g_fone value="19999990000"></td></tr></table></form></body></html>';
+
 // ---------------------------------------------------------------- opção 101: tela do CT-e e XML
 // CT-es de mentira, no formato que o SSW real devolve (conferido no CT-e AMR015326-5):
 // tela em duas colunas (Expedidor | Entrega), link "mapa" com o ponto do cliente e botão XML
@@ -124,6 +142,17 @@ http.createServer(async(req,res)=>{
   const st=tokens.get(tok);
   if(!st)return send(200,loginPage);                       // sessão expirada: devolve a tela de login
   if(u.pathname==='/bin/menu01'&&u.searchParams.get('f3')==='101')return send(200,'<script>location="ssw0053"</script>');
+  if(u.pathname==='/bin/menu01'&&u.searchParams.get('f3')==='28')return send(200,'<script>location="ssw0029"</script>');
+  if(u.pathname==='/bin/ssw0029'&&req.method==='GET')return send(200,FORM028);
+  if(u.pathname==='/bin/ssw0029'&&req.method==='POST'){
+    const p=new URLSearchParams(body);
+    if(p.get('act')!=='PES')return send(200,'<html><body>A&ccedil;&atilde;o inv&aacute;lida</body></html>');
+    const cpf=String(p.get('f2')||'').replace(/\D/g,''),nome=String(p.get('f3')||'').trim().toUpperCase();
+    const hits=cpf?MOTORISTAS.filter(m=>m.cpf===cpf):nome?MOTORISTAS.filter(m=>m.nome.startsWith(nome)):[];
+    if(hits.length===1)return send(200,cad028(hits[0]));
+    if(hits.length>1)return send(200,'<html><body><table>'+hits.map(m=>'<tr><td><a href=#>'+m.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/,'$1.$2.$3-$4')+'</a></td><td>'+m.nome+'</td></tr>').join('')+'</table></body></html>');
+    return send(200,'<html><body>Motorista n&atilde;o cadastrado.</body></html>')
+  }
   if(u.pathname==='/bin/ssw0053'&&req.method==='GET')return send(200,FORM101);
   if(u.pathname==='/bin/ssw0053'&&req.method==='POST'){
     const p=new URLSearchParams(body),act=p.get('act')||'';

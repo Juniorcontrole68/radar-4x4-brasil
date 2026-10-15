@@ -59,6 +59,7 @@ jobs:
           node --check controle-coletas-aiven-app/roteirizador-cargas.js
           node --check controle-coletas-aiven-app/lotacao-rastreio.js
           node --check controle-coletas-aiven-app/compressao.js
+          node --check controle-coletas-aiven-app/dashboard/ssw-motorista.js
       - name: Subir o servidor em modo teste
         run: |
           cd controle-coletas-aiven-app
@@ -86,6 +87,8 @@ jobs:
         run: node controle-coletas-aiven-app/tests/geo-endereco.js
       - name: Leitura do CT-e guardado no SSW (zip do XML e tela 101, sem rede)
         run: node controle-coletas-aiven-app/tests/ssw-cte.js
+      - name: Cadastro do motorista no SSW (opção 028, sem rede)
+        run: node controle-coletas-aiven-app/tests/ssw-motorista.js
       - name: Leitor de PDF (o mesmo pdftotext do servidor; sem ele os testes de romaneio completo são pulados)
         run: sudo apt-get install -y -q poppler-utils || true
       - name: Sessão do SSW (contra um SSW de mentira, sem rede externa)

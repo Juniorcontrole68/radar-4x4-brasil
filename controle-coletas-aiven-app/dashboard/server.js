@@ -1479,6 +1479,53 @@ function sswDiagActions(html){
 }
 // ---------------------------------------------------------------- CT-e no SSW: tela 101 + XML
 const sswCte=require('./ssw-cte.js');
+// ---------------------------------------------------------------- casa do motorista (opção 028)
+// Montar carga com "volta para casa": acha o cadastro do motorista no SSW (pelo CPF, ou pelo
+// nome quando a tela deixa) e lê o endereço. Só consulta; nunca grava nada no SSW.
+const sswMot=require('./ssw-motorista.js');
+const SSW_MOT_CACHE=new Map();   // nome normalizado -> {at,value}
+async function sswMotoristaCasa(nome,cpf='',{diag=false}={}){
+  const chave=String(nome||'').trim().toUpperCase().replace(/\s+/g,' ')+'|'+String(cpf||'');
+  const hit=SSW_MOT_CACHE.get(chave);
+  if(!diag&&hit&&Date.now()-hit.at<6*60*60*1000)return hit.value;
+  const out=await withSswSession('op28',async({apply,cookie})=>{
+    const hdr=ref=>({'User-Agent':SSW_UA,'Cookie':cookie(),'Referer':ref||'https://sistema.ssw.inf.br/bin/menu01'});
+    let rr=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2=AMR&f3=28',{headers:hdr(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
+    const nav=await rr.text(),prog=(nav.match(/ssw\d+/i)||[])[0]||'';
+    if(!prog)return{ok:false,motivo:'opção 028 não abriu no SSW',...(diag?{nav:htmlText38(nav).slice(0,800)}:{})};
+    const url='https://sistema.ssw.inf.br/bin/'+prog;
+    rr=await fetch(url,{headers:hdr(),redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rr.headers);
+    const form=await rr.text();sswAssertLoggedIn(form,prog);
+    const campos=sswMot.camposBusca(form),act=sswMot.acaoBusca(form);
+    const d=diag?{prog,campos,act,formCampos:sswMot.camposForm(form).slice(0,40),formTexto:htmlText38(form).slice(0,1500),tentativas:[]}:null;
+    const busca=async(campo,valor)=>{
+      const p=deliveryProgramFormParams(form);p.set(campo,valor);p.set('act',act);
+      const r=await fetch(url,{method:'POST',headers:{...hdr(url),'Content-Type':'application/x-www-form-urlencoded'},body:p.toString(),redirect:'manual',signal:AbortSignal.timeout(20000)});apply(r.headers);
+      const html=await r.text();sswAssertLoggedIn(html,prog);
+      if(d)d.tentativas.push({campo,valor,status:r.status,texto:sswMot.textoComValores(html).slice(0,2500)});
+      return html
+    };
+    const cpfLimpo=String(cpf||'').replace(/\D/g,'');
+    if(cpfLimpo.length===11&&campos.cpf){
+      const c=sswMot.parseCadastro(await busca(campos.cpf,cpfLimpo));
+      if(c)return{ok:true,casa:c,por:'cpf',...(d||{})}
+    }
+    if(campos.nome){
+      const html=await busca(campos.nome,String(nome||'').trim().toUpperCase());
+      const c=sswMot.parseCadastro(html);
+      if(c&&(!c.nome||sswMot.mesmoNome(c.nome,nome)))return{ok:true,casa:c,por:'nome',...(d||{})};
+      const lista=sswMot.parseLista(html).filter(x=>sswMot.mesmoNome(x.nome,nome));
+      if(lista.length===1&&campos.cpf){
+        const c2=sswMot.parseCadastro(await busca(campos.cpf,lista[0].cpf));
+        if(c2)return{ok:true,casa:c2,por:'nome',...(d||{})}
+      }
+      if(lista.length>1)return{ok:false,motivo:'mais de um motorista com esse nome no SSW',...(d||{})}
+    }
+    return{ok:false,motivo:campos.cpf||campos.nome?'motorista não encontrado no cadastro do SSW':'não reconheci a tela da opção 028',...(d||{})}
+  });
+  if(!diag&&out.ok)SSW_MOT_CACHE.set(chave,{at:Date.now(),value:out});
+  return out
+}
 // Baixa o arquivo que a tela manda abrir: abrir("nome","nome",1,1,"binary",3).
 async function sswAbrirArquivo(session,html){
   const webBody=(String(html||'').match(/name=web_body[^>]*value=["']([^"']+)["']/i)||[])[1]||'';
@@ -6551,6 +6598,46 @@ if(req.method==='POST'&&u.pathname==='/api/roteirizador/enviar-carga'){try{
   const x=await portalAuth('/api/painel/roteirizador/enviar-carga',{method:'POST',body,token:authUser.token,timeout:25000});
   res.writeHead(201,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+// Casa do motorista: a guardada no sistema; sem ela, a do cadastro do SSW (opção 028), que
+// fica guardada. PUT grava o endereço que o operador digitou (localiza no mapa antes).
+if(u.pathname==='/api/roteirizador/casa-motorista'&&(req.method==='GET'||req.method==='PUT')){try{
+  if(!dashboardHasAny(authUser,['montar_carga']))return dashboardDeny(res);
+  const sai=(st,j)=>{res.writeHead(st,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(j))};
+  const localizar=async c=>{
+    const loc=await routeLocateAddress({endereco:c.endereco||'',numero:c.numero||'',cidade:c.cidade||'',uf:c.uf||'SP',cep:c.cep||'',bairro:c.bairro||''}).catch(()=>null);
+    return loc&&Number.isFinite(Number(loc.lat))?{...c,lat:Number(loc.lat),lon:Number(loc.lon),precisao:loc.precision||''}:null
+  };
+  if(req.method==='PUT'){
+    const body=await routeReadJson(req);
+    const nome=String(body.driver_name||'').trim();
+    const t=(v,n)=>String(v??'').trim().replace(/\s+/g,' ').slice(0,n);
+    const c={endereco:t(body.endereco,160),numero:t(body.numero,20),bairro:t(body.bairro,80),cidade:t(body.cidade,80),uf:t(body.uf||'SP',2).toUpperCase(),cep:String(body.cep||'').replace(/\D/g,'').slice(0,8)};
+    if(nome.length<2)return sai(400,{ok:false,error:'Informe o motorista.'});
+    if(!c.cidade&&!c.cep)return sai(400,{ok:false,error:'Informe pelo menos a cidade.'});
+    const loc=await localizar(c);
+    if(!loc)return sai(422,{ok:false,error:'Não achei esse endereço no mapa. Confira a rua e a cidade.'});
+    const x=await portalAuth('/api/painel/roteirizador/casa-motorista',{method:'PUT',token:authUser.token,timeout:15000,body:{driver_name:nome,...loc,fonte:'digitado'}});
+    return sai(200,{ok:true,casa:x.casa})
+  }
+  const nome=String(u.searchParams.get('nome')||'').trim();
+  if(nome.length<2)return sai(400,{ok:false,error:'Informe o motorista.'});
+  const g=await portalAuth('/api/painel/roteirizador/casa-motorista?nome='+encodeURIComponent(nome),{token:authUser.token,timeout:15000});
+  if(g.casa&&u.searchParams.get('ssw')!=='1')return sai(200,{ok:true,casa:g.casa});
+  let s=null;
+  try{s=await Promise.race([sswMotoristaCasa(nome,g.cpf||''),new Promise(r=>setTimeout(()=>r({ok:false,motivo:'o SSW demorou para responder'}),45000))])}
+  catch(e){s={ok:false,motivo:String(e.message||e)}}
+  if(!s.ok)return sai(200,{ok:true,casa:g.casa||null,motivo:s.motivo});
+  const loc=await localizar(s.casa);
+  if(!loc)return sai(200,{ok:true,casa:g.casa||null,motivo:'o endereço do SSW ('+[s.casa.endereco,s.casa.numero,s.casa.cidade].filter(Boolean).join(', ')+') não foi achado no mapa',ssw:s.casa});
+  const x=await portalAuth('/api/painel/roteirizador/casa-motorista',{method:'PUT',token:authUser.token,timeout:15000,body:{driver_name:nome,...loc,fonte:'SSW (opção 028)'}});
+  return sai(200,{ok:true,casa:x.casa})
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+// Diagnóstico da opção 028 (só administrador): mostra a tela e o que foi lido, para ajustar a leitura.
+if(u.pathname==='/api/ssw/diagnostico-motorista'&&req.method==='GET'){try{
+  if(!authUser.is_admin)return dashboardDeny(res);
+  const x=await sswMotoristaCasa(u.searchParams.get('nome')||'',u.searchParams.get('cpf')||'',{diag:true});
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x,null,1))
+}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(req.method==='POST'&&u.pathname==='/api/roteirizador/geometria-order'){try{
   if(!dashboardHasAny(authUser,['dashboard','roteirizador','tracking','montar_carga']))return dashboardDeny(res);
   const body=await routeReadJson(req);
@@ -6566,6 +6653,15 @@ if(req.method==='POST'&&u.pathname==='/api/roteirizador/geometria-order'){try{
   for(const idx of order){
     if(!Number.isInteger(idx)||idx<1||idx>max||seen.has(idx))throw Object.assign(new Error('Ordem da rota inválida.'),{status:400});
     seen.add(idx)
+  }
+  // fim:true -> o último ponto é a casa do motorista: a rota termina nele em vez de voltar à base
+  const fim=body.fim===true&&validPoints.length>=2;
+  if(fim){
+    const so=order.filter(i=>i!==max);
+    if(so.length!==max-1)throw Object.assign(new Error('A ordem deve conter todas as paradas.'),{status:400});
+    const g=await routeGeometryFixedEnd(validPoints,so,max);
+    res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+    return res.end(JSON.stringify({ok:true,geometry:g.geometry,distanceMeters:g.distanceMeters,durationSeconds:g.durationSeconds}))
   }
   if(order.length!==max)throw Object.assign(new Error('A ordem deve conter todas as paradas.'),{status:400});
   const g=await routeGeometry(validPoints,order);
