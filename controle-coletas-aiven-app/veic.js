@@ -154,6 +154,21 @@ async function lerAbastecimentos(from,to){
 
 let ultima=null, rodando=null;
 
+// Quando o Veic não traz a placa, usa a do veículo da Frota cujo motorista é o mesmo do abastecimento
+// (todos os nomes cadastrados no veículo aparecem no nome do Veic, e só um veículo bate).
+const nomeTokens=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().split(/[^A-Z]+/).filter(t=>t.length>1);
+function placaPeloMotorista(fuel,vehicles){
+  const vs=(Array.isArray(vehicles)?vehicles:[]).map(v=>({plate:placa(v&&v.plate),t:nomeTokens(v&&v.driver)})).filter(v=>v.plate&&v.t.length);
+  let n=0;
+  for(const x of fuel){
+    if(!x||x.source!=='veic'||(x.plate&&!x.plateFromDriver))continue;
+    const ft=new Set(nomeTokens(x.driver));if(!ft.size)continue;
+    const bate=[...new Set(vs.filter(v=>v.t.every(t=>ft.has(t))).map(v=>v.plate))];
+    if(bate.length===1){if(x.plate!==bate[0])n++;x.plate=bate[0];x.plateFromDriver=true}
+  }
+  return n
+}
+
 async function importar(pool,from,to,origem='manual'){
   if(rodando)return rodando;
   rodando=(async()=>{
@@ -166,12 +181,13 @@ async function importar(pool,from,to,origem='manual'){
         const q=await c.query('SELECT data FROM fleet_state WHERE id=1 FOR UPDATE');
         const data=Object.assign({vehicles:[],fuel:[],maintenance:[],tires:[],people:[],documents:[],checklists:[]},q.rows[0]?.data||{});
         res=mesclar(data.fuel,abastecimentos);
+        placaPeloMotorista(res.fuel,data.vehicles);
         data.fuel=res.fuel;
         await c.query('UPDATE fleet_state SET data=$1::jsonb,updated_at=NOW() WHERE id=1',[JSON.stringify(data)]);
         await c.query('COMMIT');
       }catch(e){await c.query('ROLLBACK').catch(()=>{});throw e}
       finally{c.release()}
-      const placas=new Set(abastecimentos.map(x=>x.plate).filter(Boolean));
+      const ids=new Set(abastecimentos.map(x=>x.id)),placas=new Set(res.fuel.filter(x=>x&&ids.has(x.id)).map(x=>x.plate).filter(Boolean));
       ultima={ok:true,em:new Date().toISOString(),origem,from,to,transacoes,abastecimentos:abastecimentos.length,criados:res.criados,atualizados:res.atualizados,duplicados:res.duplicados,veiculos:placas.size};
       return ultima
     }catch(e){
@@ -212,4 +228,4 @@ function iniciarImportacaoAutomatica(pool){
   return true
 }
 
-module.exports={abastecimentoDaTransacao,mesclar,dataHora,handle,iniciarImportacaoAutomatica,importar,lerAbastecimentos,configurado};
+module.exports={abastecimentoDaTransacao,mesclar,placaPeloMotorista,dataHora,handle,iniciarImportacaoAutomatica,importar,lerAbastecimentos,configurado};
