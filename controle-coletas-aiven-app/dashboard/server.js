@@ -5631,6 +5631,38 @@ async function lancSincronizarAgora(){
   }
   if(criados){lancMudou();console.log('LANCAMENTOS romaneios do SSW: '+criados+' novo(s) na lista')}
 }
+// Valor acordado com o motorista e KM digitados na planilha: entram nos lançamentos do sistema do mesmo
+// romaneio (últimos 45 dias). No máximo a cada 2 min; só grava o que mudou na planilha.
+let LANC_PLAN_AT=0,LANC_PLAN_JOB=null;
+function lancPuxarPlanilha(force=false){
+  if(LANC_PLAN_JOB)return LANC_PLAN_JOB;
+  if(!ID||(!force&&Date.now()-LANC_PLAN_AT<2*60*1000))return Promise.resolve();
+  LANC_PLAN_AT=Date.now();
+  LANC_PLAN_JOB=lancPuxarPlanilhaAgora().catch(e=>console.log('LANCAMENTOS valor/KM da planilha ERRO: '+String(e?.message||e))).finally(()=>{LANC_PLAN_JOB=null});
+  return LANC_PLAN_JOB
+}
+async function lancPuxarPlanilhaAgora(){
+  const hoje=spDateISO(),desde=spDateISO(new Date(Date.now()-45*864e5));
+  const plan=lancLib.lerPlanilha(await rows(GIDS.lancamentos)).filter(x=>x.data>=desde&&x.data<=hoje);
+  if(!plan.length)return;
+  const j=await portalJson('/api/painel/lancamentos?soltos=1&de='+spDateISO(new Date(Date.now()-48*864e5))+'&ate='+hoje,{timeout:20000});
+  const porKey=new Map();
+  for(const r of (j.rows||[]))porKey.set(lancLib.romaneioKey(r.romaneio_ssw||r.romaneio),r);
+  const dias=(a,b)=>Math.abs(new Date(a+'T12:00:00Z')-new Date(b+'T12:00:00Z'))/864e5;
+  let gravados=0,semLancamento=0;
+  for(const x of plan){
+    // linha com vários romaneios: o valor fica no de menor número (é o que o card mostra para o grupo)
+    const alvo=x.keys.slice().sort((a,b)=>Number(a)-Number(b)).map(k=>porKey.get(k)).find(r=>r&&dias(r.data,x.data)<=3);
+    if(!alvo){semLancamento++;continue}
+    const keys=x.keys.join(',');
+    if(alvo.valor_planilha===x.valor&&alvo.km_planilha===x.km&&(alvo.planilha_keys||'')===keys)continue;
+    try{
+      await portalJson('/api/painel/lancamentos/'+encodeURIComponent(alvo.id),{method:'PATCH',timeout:20000,body:{planilha:{valor:x.valor,km:x.km,keys}}});
+      gravados++
+    }catch(e){console.log('LANCAMENTOS valor/KM da planilha '+alvo.romaneio+' ERRO: '+String(e?.message||e))}
+  }
+  if(gravados){lancMudou();console.log('LANCAMENTOS valor/KM da planilha: '+JSON.stringify({gravados,semLancamento,linhas:plan.length}))}
+}
 // Manutenção dos lançamentos dos últimos dias: o que ficou sem completar e as baixas de dias anteriores.
 let LANC_MANUT_AT=0;
 const LANC_LEGADO=new Set();
@@ -5664,6 +5696,7 @@ async function lancManutencao(force=false){
   }
 }
 if(!SEM_ROTINAS)setInterval(()=>{lancManutencao().catch(e=>console.log('LANCAMENTOS manutenção ERRO: '+String(e?.message||e)))},10*60*1000).unref();
+if(!SEM_ROTINAS)setInterval(()=>{lancPuxarPlanilha()},5*60*1000).unref();
 // Romaneios novos e baixas: a cada 5 minutos, das 5h às 21h (fora disso, só quando alguém abre a tela).
 if(!SEM_ROTINAS)setInterval(()=>{const h=Number(new Date().toLocaleString('en-GB',{timeZone:'America/Sao_Paulo',hour:'2-digit',hour12:false}));if(h>=5&&h<21)lancSincronizarRomaneios()},5*60*1000).unref();
 
@@ -6596,6 +6629,8 @@ if(u.pathname.startsWith('/api/lancamentos')){try{
     // romaneios feitos hoje no SSW entram sozinhos; espera um pouco para a primeira lista já vir com eles
     const hojeIso=spDateISO(),de=u.searchParams.get('de')||hojeIso,ate=u.searchParams.get('ate')||de;
     if(de<=hojeIso&&ate>=hojeIso)await Promise.race([lancSincronizarRomaneios(),new Promise(r=>setTimeout(r,5000))]);
+    // valor acordado e KM digitados na planilha
+    await Promise.race([lancPuxarPlanilha(),new Promise(r=>setTimeout(r,4000))]);
     u.searchParams.delete('soltos');
     const x=await portalAuth('/api/painel/lancamentos?'+u.searchParams.toString(),tk);
     lancManutencao().catch(()=>{});
