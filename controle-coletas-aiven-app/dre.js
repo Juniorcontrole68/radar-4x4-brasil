@@ -240,17 +240,57 @@ async function paginasDoPdf(buf){
   try{return await pdftotextPaginas(buf)}
   catch(e){throw new Error(e.code==='ENOENT'?'leitor de PDF indisponível no servidor':limpo(e.message,160))}
 }
-// Holerites de um PDF: um por página (as duas vias iguais da mesma página/arquivo contam uma vez só).
+// Recibos de uma página: a folha pode trazer dois recibos por página (as duas vias do mesmo funcionário,
+// ou dois funcionários diferentes). Cada recibo começa no rótulo do nome do funcionário.
+const RE_ROTULO_NOME=/nome\s+do\s+(funcion[aá]rio|empregado|colaborador)|\b(funcion[aá]rio|empregado|colaborador)\s*:/i;
+function recibosDaPagina(txt){
+  const linhas=String(txt||'').split(/\r?\n/);
+  const ini=[];linhas.forEach((l,i)=>{if(RE_ROTULO_NOME.test(l)&&!/assinatura|declaro|recebi/i.test(l))ini.push(i)});
+  if(ini.length<2)return[String(txt||'')];
+  // o cabeçalho do recibo (título, mês) vem algumas linhas antes do nome: mesma distância do primeiro recibo
+  const cab=Math.min(ini[0],4),cortes=ini.map((x,k)=>k===0?0:Math.max(ini[k-1]+1,x-cab));
+  return cortes.map((c,k)=>linhas.slice(c,k+1<cortes.length?cortes[k+1]:undefined).join('\n'))
+}
+// Vale (adiantamento do dia 20) ou folha mensal: pelo título do recibo
+function tipoHolerite(txt){
+  const topo=String(txt||'').split(/\r?\n/).filter(l=>l.trim()).slice(0,6).join(' ');
+  return/adiantamento|\bvale\b|quinzena/i.test(semAcento(topo))?'adiantamento':'mensal'
+}
+const preenchidos=h=>Object.values(h).filter(v=>v!==null&&v!=='').length;
+// Holerites de um PDF: um por recibo. O mesmo funcionário repetido no arquivo (segunda via) conta uma vez,
+// ficando com a leitura mais completa e a primeira página em que aparece.
 async function holeritesDoPdf(buf){
-  const paginas=await paginasDoPdf(buf),out=[],vistos=new Set();
+  const paginas=await paginasDoPdf(buf),out=[],porNome=new Map();
   paginas.forEach((txt,i)=>{
-    const h=lerHolerite(txt);
-    if(!h.funcionario&&h.vencimentos===null&&h.liquido===null)return;
-    const k=h.funcionario+'|'+h.liquido+'|'+h.vencimentos;
-    if(vistos.has(k))return;vistos.add(k);
-    out.push({...h,pagina:i+1})
+    const compPagina=lerHolerite(txt).competencia;
+    for(const rec of recibosDaPagina(txt)){
+      const h=lerHolerite(rec);
+      if(!h.funcionario&&h.vencimentos===null&&h.liquido===null)continue;
+      if(!h.competencia)h.competencia=compPagina;
+      const item={...h,tipo:tipoHolerite(rec),pagina:i+1},k=(h.funcionario||'?p'+i)+'|'+item.tipo;
+      const ja=porNome.get(k);
+      if(ja){if(preenchidos(h)>preenchidos(ja)){Object.assign(ja,h)}continue}
+      porNome.set(k,item);out.push(item)
+    }
   });
   return{paginas:paginas.length,holerites:out}
+}
+// Só a página do holerite, para abrir o PDF de um funcionário sem trazer o arquivo inteiro.
+async function paginaDoPdf(buf,pagina){
+  const {PDFDocument}=require('pdf-lib');
+  const src=await PDFDocument.load(buf,{ignoreEncryption:true});
+  const n=Math.min(Math.max(1,Number(pagina)||1),src.getPageCount());
+  const doc=await PDFDocument.create();
+  const [pg]=await doc.copyPages(src,[n-1]);doc.addPage(pg);
+  return Buffer.from(await doc.save())
+}
+// Data do depósito: vale no dia 20 do mês; salário no 5º dia útil do mês seguinte (sábado e domingo fora).
+function dataPagamentoPadrao(comp,tipo){
+  const [y,m]=comp.split('-').map(Number);
+  if(tipo==='adiantamento')return comp+'-20';
+  const d=new Date(Date.UTC(y,m,1));let uteis=0;
+  for(;;){const w=d.getUTCDay();if(w!==0&&w!==6&&++uteis===5)break;d.setUTCDate(d.getUTCDate()+1)}
+  return d.toISOString().slice(0,10)
 }
 
 // ---------------------------------------------------------------- banco
@@ -271,6 +311,8 @@ async function ensureSchema(pool){
     criado_por TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
   // hora extra só é mostrada no card (não muda a DRE: já está dentro dos vencimentos)
   await pool.query('ALTER TABLE dre_holerites ADD COLUMN IF NOT EXISTS hora_extra NUMERIC(14,2), ADD COLUMN IF NOT EXISTS horas_extras NUMERIC(10,2)');
+  // vale (adiantamento do dia 20) ou folha mensal, e a data em que o líquido é depositado
+  await pool.query("ALTER TABLE dre_holerites ADD COLUMN IF NOT EXISTS tipo TEXT NOT NULL DEFAULT 'mensal', ADD COLUMN IF NOT EXISTS data_pagamento DATE");
   await pool.query('CREATE INDEX IF NOT EXISTS idx_dre_hol_cliente ON dre_holerites(client_id,competencia)');
   await pool.query(`CREATE TABLE IF NOT EXISTS dre_ssw_despesas (
     id BIGSERIAL PRIMARY KEY, client_id BIGINT, competencia DATE NOT NULL, lancamento TEXT NOT NULL DEFAULT '', data_pgto DATE,
@@ -361,7 +403,12 @@ async function despesasSsw(pool,cli,de,ate){
 
 const LIMITE_ARQUIVOS=30,LIMITE_PDF=8*1024*1024;
 const CAMPOS_HOL=['vencimentos','descontos','liquido','salario_base','inss','irrf','fgts','hora_extra','horas_extras'];
-const holSel="SELECT id::text,to_char(competencia,'YYYY-MM') AS competencia,arquivo_id::text,pagina,funcionario,cargo,vencimentos::float8,descontos::float8,liquido::float8,salario_base::float8,inss::float8,irrf::float8,fgts::float8,hora_extra::float8,horas_extras::float8,competencia_pdf,created_at FROM dre_holerites";
+// Data do depósito do grupo (mês + tipo): a que já foi escolhida para o grupo, senão a padrão.
+async function dataDoGrupo(pool,cli,c,tipo){
+  const q=await pool.query("SELECT to_char(data_pagamento,'YYYY-MM-DD') AS d FROM dre_holerites WHERE client_id IS NOT DISTINCT FROM $1 AND competencia=$2 AND tipo=$3 AND data_pagamento IS NOT NULL ORDER BY id DESC LIMIT 1",[cli,c+'-01',tipo]);
+  return q.rows[0]?.d||dataPagamentoPadrao(c,tipo)
+}
+const holSel="SELECT id::text,to_char(competencia,'YYYY-MM') AS competencia,arquivo_id::text,pagina,funcionario,cargo,vencimentos::float8,descontos::float8,liquido::float8,salario_base::float8,inss::float8,irrf::float8,fgts::float8,hora_extra::float8,horas_extras::float8,tipo,to_char(data_pagamento,'YYYY-MM-DD') AS data_pagamento,competencia_pdf,created_at FROM dre_holerites";
 
 // Atende as rotas /api/dre*. Devolve true quando a rota era daqui (a resposta já foi enviada).
 async function handle(req,res,u,ctx){
@@ -382,7 +429,8 @@ async function atender(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSes
       if(ano<2000||ano>2100)return sendJson(res,400,{ok:false,error:'Ano inválido.'});
       const de=ano+'-01-01',ate=ano+'-12-31';
       const lq=await pool.query("SELECT conta,to_char(competencia,'YYYY-MM') AS mes,SUM(valor)::float8 AS valor FROM dre_lancamentos WHERE client_id IS NOT DISTINCT FROM $1 AND competencia BETWEEN $2 AND $3 GROUP BY 1,2",[cli,de,ate]);
-      const hq=await pool.query("SELECT to_char(competencia,'YYYY-MM') AS mes,SUM(COALESCE(vencimentos,liquido,0))::float8 AS salarios,SUM(COALESCE(fgts,0))::float8 AS fgts,COUNT(*)::int AS n FROM dre_holerites WHERE client_id IS NOT DISTINCT FROM $1 AND competencia BETWEEN $2 AND $3 GROUP BY 1",[cli,de,ate]);
+      // o vale do dia 20 já vem descontado no holerite mensal: quando o mês tem a folha mensal, só ela entra na DRE
+      const hq=await pool.query("SELECT mes,SUM(sal)::float8 AS salarios,SUM(fg)::float8 AS fgts,SUM(n)::int AS n FROM (SELECT to_char(competencia,'YYYY-MM') AS mes,tipo,SUM(COALESCE(vencimentos,liquido,0)) AS sal,SUM(COALESCE(fgts,0)) AS fg,COUNT(*) AS n,BOOL_OR(tipo='mensal') OVER (PARTITION BY to_char(competencia,'YYYY-MM')) AS tem_mensal FROM dre_holerites WHERE client_id IS NOT DISTINCT FROM $1 AND competencia BETWEEN $2 AND $3 GROUP BY 1,2) x WHERE tipo='mensal' OR NOT tem_mensal GROUP BY mes",[cli,de,ate]);
       const valores=lq.rows.slice();
       for(const h of hq.rows){valores.push({conta:'salarios',mes:h.mes,valor:h.salarios});if(h.fgts)valores.push({conta:'encargos',mes:h.mes,valor:h.fgts})}
       for(const d of await despesasSsw(pool,cli,de,ate))if(CONTAS.has(d.conta))valores.push({conta:d.conta,mes:d.mes,valor:d.valor});
@@ -394,9 +442,17 @@ async function atender(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSes
       const c=competencia(u.searchParams.get('competencia'));
       if(!c)return sendJson(res,400,{ok:false,error:'Informe o mês.'});
       const lq=await pool.query("SELECT id::text,conta,descricao,valor::float8,origem,criado_por,created_at FROM dre_lancamentos WHERE client_id IS NOT DISTINCT FROM $1 AND competencia=$2 ORDER BY conta,id",[cli,c+'-01']);
-      const hq=await pool.query(holSel+' WHERE client_id IS NOT DISTINCT FROM $1 AND competencia=$2 ORDER BY funcionario,id',[cli,c+'-01']);
+      const hq=await pool.query(holSel+' WHERE client_id IS NOT DISTINCT FROM $1 AND competencia=$2 ORDER BY tipo,funcionario,id',[cli,c+'-01']);
       const sswDespesas=await despesasSsw(pool,cli,c+'-01',c+'-01');
-      return sendJson(res,200,{ok:true,competencia:c,lancamentos:lq.rows,holerites:hq.rows,sswDespesas})
+      // total a depositar em cada data (líquido dos holerites de cada grupo: vale do dia 20 e salário)
+      const dep=new Map();
+      for(const h of hq.rows){
+        h.data_pagamento=h.data_pagamento||dataPagamentoPadrao(c,h.tipo);
+        const k=h.tipo+'|'+h.data_pagamento,g=dep.get(k)||{tipo:h.tipo,data:h.data_pagamento,total:0,n:0};
+        g.total=r2(g.total+Number(h.liquido||0));g.n++;dep.set(k,g)
+      }
+      const depositos=[...dep.values()].sort((a,b)=>a.data.localeCompare(b.data));
+      return sendJson(res,200,{ok:true,competencia:c,lancamentos:lq.rows,holerites:hq.rows,depositos,sswDespesas})
     }
     if(p==='/api/dre/lancamentos'&&req.method==='POST'){
       const b=await readJsonBodyLimited(req,64*1024);
@@ -468,19 +524,34 @@ async function atender(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSes
         if(!lido.holerites.length){resultado.push({nome,erro:'Não achei os valores do holerite neste PDF (pode ser um PDF escaneado, sem texto).'});continue}
         const aq=await pool.query('INSERT INTO dre_holerite_arquivos(client_id,nome,sha,pdf) VALUES($1,$2,$3,$4) RETURNING id',[cli,nome,sha,buf]);
         const ids=[];
+        let repetidos=0;
         for(const h of lido.holerites){
-          const q=await pool.query('INSERT INTO dre_holerites(client_id,competencia,arquivo_id,pagina,funcionario,cargo,vencimentos,descontos,liquido,salario_base,inss,irrf,fgts,hora_extra,horas_extras,competencia_pdf,criado_por) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id::text',
-            [cli,c+'-01',aq.rows[0].id,h.pagina,h.funcionario,h.cargo,h.vencimentos,h.descontos,h.liquido,h.salario_base,h.inss,h.irrf,h.fgts,h.hora_extra,h.horas_extras,h.competencia,quem]);
+          const tipo=b.tipo==='adiantamento'||b.tipo==='mensal'?b.tipo:h.tipo;
+          // mesmo funcionário, mesmo tipo e mesmo líquido já lançado no mês (outro PDF com a mesma folha): não duplica
+          if(h.funcionario){const d=await pool.query('SELECT 1 FROM dre_holerites WHERE client_id IS NOT DISTINCT FROM $1 AND competencia=$2 AND funcionario=$3 AND tipo=$4 AND liquido IS NOT DISTINCT FROM $5 LIMIT 1',[cli,c+'-01',h.funcionario,tipo,h.liquido]);if(d.rowCount){repetidos++;continue}}
+          const q=await pool.query('INSERT INTO dre_holerites(client_id,competencia,arquivo_id,pagina,funcionario,cargo,vencimentos,descontos,liquido,salario_base,inss,irrf,fgts,hora_extra,horas_extras,competencia_pdf,criado_por,tipo,data_pagamento) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING id::text',
+            [cli,c+'-01',aq.rows[0].id,h.pagina,h.funcionario,h.cargo,h.vencimentos,h.descontos,h.liquido,h.salario_base,h.inss,h.irrf,h.fgts,h.hora_extra,h.horas_extras,h.competencia,quem,tipo,await dataDoGrupo(pool,cli,c,tipo)]);
           ids.push(q.rows[0].id)
         }
-        resultado.push({nome,holerites:ids.length,outroMes:lido.holerites.some(h=>h.competencia&&h.competencia!==c)})
+        if(!ids.length)await pool.query('DELETE FROM dre_holerite_arquivos WHERE id=$1',[aq.rows[0].id]);
+        resultado.push({nome,holerites:ids.length,repetidos,outroMes:lido.holerites.some(h=>h.competencia&&h.competencia!==c)})
       }
       return sendJson(res,200,{ok:true,competencia:c,arquivos:resultado})
     }
+    // data do depósito de um grupo do mês (salário ou vale): vale para todos os holerites do grupo
+    if(p==='/api/dre/holerites/data'&&req.method==='PUT'){
+      const b=await readJsonBodyLimited(req,16*1024);
+      const c=competencia(b.competencia),tipo=b.tipo,data=String(b.data||'');
+      if(!c||(tipo!=='mensal'&&tipo!=='adiantamento')||!/^\d{4}-\d{2}-\d{2}$/.test(data))return sendJson(res,400,{ok:false,error:'Informe o mês, o tipo e a data.'});
+      const q=await pool.query('UPDATE dre_holerites SET data_pagamento=$4 WHERE client_id IS NOT DISTINCT FROM $1 AND competencia=$2 AND tipo=$3',[cli,c+'-01',tipo,data]);
+      return sendJson(res,200,{ok:true,alterados:q.rowCount})
+    }
     const hm=p.match(/^\/api\/dre\/holerites\/(\d+)(\/pdf)?$/);
     if(hm&&hm[2]&&req.method==='GET'){
-      const q=await pool.query('SELECT a.nome,a.pdf FROM dre_holerites h JOIN dre_holerite_arquivos a ON a.id=h.arquivo_id WHERE h.id=$1 AND h.client_id IS NOT DISTINCT FROM $2',[hm[1],cli]);
+      const q=await pool.query('SELECT a.nome,a.pdf,h.pagina,h.funcionario FROM dre_holerites h JOIN dre_holerite_arquivos a ON a.id=h.arquivo_id WHERE h.id=$1 AND h.client_id IS NOT DISTINCT FROM $2',[hm[1],cli]);
       if(!q.rowCount)return sendJson(res,404,{ok:false,error:'PDF não encontrado.'});
+      // abre só a página deste funcionário (o arquivo pode ter a folha inteira)
+      if(u.searchParams.get('inteiro')!=='1'&&q.rows[0].pagina){try{q.rows[0].pdf=await paginaDoPdf(q.rows[0].pdf,q.rows[0].pagina);q.rows[0].nome=(q.rows[0].funcionario||'holerite')+'.pdf'}catch(e){/* PDF que o pdf-lib não abre: manda o arquivo inteiro */}}
       res.writeHead(200,{'Content-Type':'application/pdf','Content-Disposition':'inline; filename="'+q.rows[0].nome.replace(/[^\w.\- ]/g,'_')+'"','Cache-Control':'private, no-store'});
       return res.end(q.rows[0].pdf)
     }
@@ -488,6 +559,13 @@ async function atender(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSes
       const b=await readJsonBodyLimited(req,64*1024),sets=[],vals=[];
       if(b.funcionario!==undefined){vals.push(limpo(b.funcionario,120).toUpperCase());sets.push('funcionario=$'+vals.length)}
       if(b.cargo!==undefined){vals.push(limpo(b.cargo,80));sets.push('cargo=$'+vals.length)}
+      if(b.tipo!==undefined){
+        if(b.tipo!=='mensal'&&b.tipo!=='adiantamento')return sendJson(res,400,{ok:false,error:'Tipo inválido.'});
+        const cq=await pool.query("SELECT to_char(competencia,'YYYY-MM') AS c FROM dre_holerites WHERE id=$1 AND client_id IS NOT DISTINCT FROM $2",[hm[1],cli]);
+        if(!cq.rowCount)return sendJson(res,404,{ok:false,error:'Holerite não encontrado.'});
+        vals.push(b.tipo);sets.push('tipo=$'+vals.length);
+        vals.push(await dataDoGrupo(pool,cli,cq.rows[0].c,b.tipo));sets.push('data_pagamento=$'+vals.length)
+      }
       for(const k of CAMPOS_HOL)if(b[k]!==undefined){
         const n=b[k]===null||b[k]===''?null:numero(b[k]);
         if(n!==null&&(!Number.isFinite(n)||n<0))return sendJson(res,400,{ok:false,error:'Valor inválido em '+k+'.'});
@@ -512,4 +590,4 @@ async function atender(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSes
   }
 }
 
-module.exports={GRUPOS,CONTAS,IGNORAR,liquidada,sincronizarContas,gravarDespesasSsw,iniciarLeituraAutomatica,contaSugerida,eventoChave,numero,competencia,montarDre,lerHolerite,paginasDoPdf,holeritesDoPdf,ensureSchema,handle};
+module.exports={GRUPOS,CONTAS,IGNORAR,liquidada,sincronizarContas,gravarDespesasSsw,iniciarLeituraAutomatica,contaSugerida,eventoChave,numero,competencia,montarDre,lerHolerite,paginasDoPdf,holeritesDoPdf,recibosDaPagina,tipoHolerite,paginaDoPdf,dataPagamentoPadrao,ensureSchema,handle};

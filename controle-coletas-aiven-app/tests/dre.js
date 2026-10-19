@@ -141,6 +141,47 @@ async function pdfHolerites(paginas){
   check('apaga os holerites (e o PDF sai junto)',m.j.holerites.length===0&&(await fetch(B+'/api/dre/holerites/'+joao.id+'/pdf',{headers:H})).status===404);
   for(const l of m.j.lancamentos)await api('DELETE','/api/dre/lancamentos/'+l.id);
 
+  console.log('Dois por página, vale do dia 20 e total a depositar');
+  {
+    const rec=(nome,venc,desc,liq,titulo='Recibo de Pagamento de Salário   Referente ao Mês: Novembro/2031')=>[titulo,'Nome do Funcionário: '+nome,'Total de Vencimentos  Total de Descontos',venc+'   '+desc,'Valor Líquido '+liq,'F.G.T.S do Mês 100,00'];
+    const ALEX=rec('ALEXANDRA LIMA','2.000,00','200,00','1.800,00'),THAIS=rec('THAIS COSTA','3.000,00','300,00','2.700,00');
+    // página 1: as duas vias da Alexandra (a segunda sem a linha do FGTS); página 2: Thais
+    const folha=await pdfHolerites([[ALEX,ALEX.slice(0,5)],[THAIS]]);
+    const x=await lib.holeritesDoPdf(folha);
+    check('vias repetidas da mesma funcionária viram um holerite só; cada um com a sua página',x.holerites.length===2&&x.holerites[0].funcionario==='ALEXANDRA LIMA'&&x.holerites[0].pagina===1&&x.holerites[0].fgts===100&&x.holerites[1].funcionario==='THAIS COSTA'&&x.holerites[1].pagina===2,x.holerites.map(h=>[h.funcionario,h.pagina,h.fgts]));
+    const duas=await lib.holeritesDoPdf(await pdfHolerites([[ALEX,THAIS]]));
+    check('dois funcionários diferentes na mesma página viram dois holerites',duas.holerites.length===2&&duas.holerites.map(h=>h.funcionario).join()==='ALEXANDRA LIMA,THAIS COSTA'&&duas.holerites[1].liquido===2700,duas.holerites.map(h=>[h.funcionario,h.liquido]));
+    check('recibo de adiantamento é reconhecido como vale',lib.tipoHolerite('RECIBO DE ADIANTAMENTO SALARIAL\nNome do Funcionário: X')==='adiantamento'&&lib.tipoHolerite(ALEX.join('\n'))==='mensal');
+    check('data padrão: vale dia 20; salário no 5º dia útil do mês seguinte',lib.dataPagamentoPadrao('2031-11','adiantamento')==='2031-11-20'&&lib.dataPagamentoPadrao('2026-10','mensal')==='2026-11-06');
+    const mes2=ano+'-11';
+    let up=await api('POST','/api/dre/holerites',{competencia:mes2,arquivos:[{nome:'folha.pdf',base64:folha.toString('base64')}]});
+    check('envia a folha: 2 holerites (Alexandra não duplica)',up.status===200&&up.j.arquivos[0].holerites===2,up.j);
+    const vale=await pdfHolerites([[rec('ALEXANDRA LIMA','800,00','0,00','800,00','RECIBO DE ADIANTAMENTO SALARIAL - Novembro/2031')],[rec('THAIS COSTA','1.200,00','0,00','1.200,00','RECIBO DE ADIANTAMENTO SALARIAL - Novembro/2031')]]);
+    up=await api('POST','/api/dre/holerites',{competencia:mes2,arquivos:[{nome:'vale.pdf',base64:vale.toString('base64')}]});
+    check('envia o vale do dia 20: 2 holerites de vale',up.status===200&&up.j.arquivos[0].holerites===2,up.j);
+    const outra=await pdfHolerites([[THAIS],[ALEX]]);
+    up=await api('POST','/api/dre/holerites',{competencia:mes2,arquivos:[{nome:'folha-de-novo.pdf',base64:outra.toString('base64')}]});
+    check('outro PDF com a mesma folha não duplica os holerites',up.status===200&&up.j.arquivos[0].holerites===0&&up.j.arquivos[0].repetidos===2,up.j);
+    let mm=await api('GET','/api/dre/mes?competencia='+mes2);
+    const dep=mm.j.depositos||[];
+    check('total a depositar por data: vale 2.000,00 no dia 20 e salário 4.500,00 no 5º dia útil',dep.length===2&&dep[0].tipo==='adiantamento'&&dep[0].data===mes2+'-20'&&dep[0].total===2000&&dep[1].tipo==='mensal'&&dep[1].total===4500&&dep[1].data===lib.dataPagamentoPadrao(mes2,'mensal'),dep);
+    let dd=await api('GET','/api/dre?ano='+ano);
+    check('DRE: Salários soma só a folha mensal (o vale já vem descontado nela)',dd.j.linhas.find(l=>l.id==='salarios').meses[10]===5000,dd.j.linhas.find(l=>l.id==='salarios').meses[10]);
+    up=await api('PUT','/api/dre/holerites/data',{competencia:mes2,tipo:'mensal',data:'2031-12-05'});
+    mm=await api('GET','/api/dre/mes?competencia='+mes2);
+    check('muda a data do depósito do salário para o grupo todo',up.status===200&&up.j.alterados===2&&mm.j.depositos.find(g=>g.tipo==='mensal').data==='2031-12-05'&&mm.j.holerites.filter(h=>h.tipo==='mensal').every(h=>h.data_pagamento==='2031-12-05'),mm.j.depositos);
+    const thais=mm.j.holerites.find(h=>h.funcionario==='THAIS COSTA'&&h.tipo==='mensal');
+    r=await fetch(B+'/api/dre/holerites/'+thais.id+'/pdf',{headers:H});
+    const pg=Buffer.from(await r.arrayBuffer());
+    const txt=(await lib.paginasDoPdf(pg)).join('\n');
+    check('PDF da Thais abre só a página dela (não o da Alexandra)',r.status===200&&(await lib.paginasDoPdf(pg)).length===1&&/THAIS COSTA/.test(txt)&&!/ALEXANDRA/.test(txt),txt.slice(0,200));
+    const vA=mm.j.holerites.find(h=>h.funcionario==='ALEXANDRA LIMA'&&h.tipo==='adiantamento');
+    up=await api('PATCH','/api/dre/holerites/'+vA.id,{tipo:'mensal'});
+    mm=await api('GET','/api/dre/mes?competencia='+mes2);
+    check('trocar o tipo de um holerite leva para a data do outro grupo',up.status===200&&mm.j.holerites.find(h=>h.id===vA.id).data_pagamento==='2031-12-05',mm.j.holerites.find(h=>h.id===vA.id));
+    for(const h of mm.j.holerites)await api('DELETE','/api/dre/holerites/'+h.id);
+  }
+
   console.log('\n'+pass+' ok, '+fail+' falha(s)');
   process.exit(fail?1:0)
 })().catch(e=>{console.error(e);process.exit(1)});

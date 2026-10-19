@@ -61,7 +61,10 @@ async function carregarMes(){
   const H=j.holerites;
   const tot=k=>H.reduce((a,h)=>a+Number(h[k]||0),0);
   renderSswDespesas(j.sswDespesas||[]);
-  q('#dreHol').innerHTML=H.length?'<table><thead><tr><th>Funcionário</th><th class="n">Vencimentos</th><th class="n" title="Já está dentro dos vencimentos; não muda a DRE">Hora extra</th><th class="n">Descontos</th><th class="n">Líquido</th><th class="n">FGTS</th><th></th></tr></thead><tbody>'+H.map(h=>'<tr data-dre-holerite="'+esc(h.id)+'"><td><input class="nome" data-no-titlecase="true" data-campo="funcionario" value="'+esc(h.funcionario)+'" placeholder="Nome"><div class="muted">'+esc(h.cargo||'')+(h.competencia_pdf&&h.competencia_pdf!==h.competencia?' • <b style="color:#b45309">PDF de '+esc(h.competencia_pdf.split('-').reverse().join('/'))+'</b>':'')+'</div></td>'+['vencimentos','hora_extra','descontos','liquido','fgts'].map(k=>'<td class="n"><input data-no-titlecase="true" data-campo="'+k+'" inputmode="decimal" value="'+esc(num(h[k]))+'"'+(k==='hora_extra'?' placeholder="0,00"':'')+'>'+(k==='hora_extra'&&h.horas_extras?'<div class="muted">'+esc(num(h.horas_extras))+' h</div>':'')+'</td>').join('')+'<td class="acoes"><a href="/api/dre/holerites/'+encodeURIComponent(h.id)+'/pdf" target="_blank" rel="noopener">PDF</a><button class="dre-mini" type="button" data-dre-hol-apagar="'+esc(h.id)+'">Apagar</button></td></tr>').join('')+'</tbody><tfoot><tr><th>'+H.length+' holerite(s)</th><th class="n">'+reais(tot('vencimentos'))+'</th><th class="n">'+reais(tot('hora_extra'))+'</th><th class="n">'+reais(tot('descontos'))+'</th><th class="n">'+reais(tot('liquido'))+'</th><th class="n">'+reais(tot('fgts'))+'</th><th></th></tr></tfoot></table>':'<div class="muted">Nenhum holerite enviado neste mês.</div>'
+  renderDepositos(j.depositos||[]);
+  const TIPO={mensal:'Salário',adiantamento:'Vale (dia 20)'};
+  const cel=(h,k)=>'<td class="n"><input data-no-titlecase="true" data-campo="'+k+'" inputmode="decimal" value="'+esc(num(h[k]))+'"'+(k==='hora_extra'?' placeholder="—" title="'+(h.horas_extras?esc(num(h.horas_extras))+' h • ':'')+'já está dentro dos vencimentos"':'')+'></td>';
+  q('#dreHol').innerHTML=H.length?'<table class="dre-hol-tab"><thead><tr><th>Funcionário</th><th>Tipo</th><th class="n">Vencim.</th><th class="n" title="Já está dentro dos vencimentos; não muda a DRE">H. extra</th><th class="n">Descontos</th><th class="n">Líquido</th><th class="n">FGTS</th><th></th></tr></thead><tbody>'+H.map(h=>'<tr data-dre-holerite="'+esc(h.id)+'"><td><input class="nome" data-no-titlecase="true" data-campo="funcionario" value="'+esc(h.funcionario)+'" placeholder="Nome" title="'+esc(h.cargo||'')+'">'+(h.competencia_pdf&&h.competencia_pdf!==h.competencia?'<div class="aviso">PDF de '+esc(h.competencia_pdf.split('-').reverse().join('/'))+'</div>':'')+'</td><td><select data-campo="tipo">'+Object.entries(TIPO).map(([v,t])=>'<option value="'+v+'"'+(h.tipo===v?' selected':'')+'>'+t+'</option>').join('')+'</select></td>'+['vencimentos','hora_extra','descontos','liquido','fgts'].map(k=>cel(h,k)).join('')+'<td class="acoes"><a href="/api/dre/holerites/'+encodeURIComponent(h.id)+'/pdf" target="_blank" rel="noopener" title="Abrir a página deste holerite">PDF</a><button class="dre-x" type="button" data-dre-hol-apagar="'+esc(h.id)+'" title="Apagar este holerite">✕</button></td></tr>').join('')+'</tbody><tfoot><tr><th colspan="2">'+H.length+' holerite(s)'+(new Set(H.map(h=>h.tipo)).size>1?' • vale + salário':'')+'</th>'+['vencimentos','hora_extra','descontos','liquido','fgts'].map(k=>'<th class="n">'+reais(tot(k))+'</th>').join('')+'<th></th></tr></tfoot></table>':'<div class="muted">Nenhum holerite enviado neste mês.</div>'
 }
 async function recarregar(){await Promise.all([carregarAno(),carregarMes()])}
 
@@ -114,6 +117,16 @@ async function mudarContaEvento(sel){
   catch(e){msg(e.message,'err')}
 }
 const lerArquivo=f=>new Promise((ok,erro)=>{const r=new FileReader();r.onload=()=>ok(String(r.result));r.onerror=()=>erro(new Error('Não consegui abrir '+f.name));r.readAsDataURL(f)});
+// total a depositar em cada data: um quadro por grupo (vale do dia 20 e salário), com a data editável
+function renderDepositos(D){
+  const el=q('#dreDepositos');if(!el)return;
+  el.innerHTML=D.map(g=>'<div class="dre-dep"><div class="t">'+(g.tipo==='adiantamento'?'Vale (dia 20)':'Salário')+' • '+g.n+' holerite(s)</div><div class="v">'+reais(g.total)+'</div><label>depositar em <input type="date" data-dre-dep-tipo="'+esc(g.tipo)+'" value="'+esc(g.data)+'"></label></div>').join('')
+}
+async function mudarDataDeposito(inp){
+  if(!inp.value)return;
+  try{await api('/api/dre/holerites/data',{method:'PUT',body:JSON.stringify({competencia:competencia(),tipo:inp.dataset.dreDepTipo,data:inp.value})});msg('Data do depósito salva.','ok');await carregarMes()}
+  catch(e){msg(e.message,'err')}
+}
 async function enviarHolerites(files){
   files=[...files].filter(Boolean);if(!files.length)return;
   const bts=document.querySelectorAll('#despesas [data-dre-hol],#dreHolBtn');bts.forEach(b=>b.disabled=true);
@@ -123,8 +136,8 @@ async function enviarHolerites(files){
       const f=files[i];msg('Lendo holerite '+(i+1)+' de '+files.length+': '+f.name+'…');
       try{
         if(f.size>8*1024*1024){res.push(f.name+': maior que 8 MB');continue}
-        const j=await api('/api/dre/holerites',{method:'POST',body:JSON.stringify({competencia:competencia(),arquivos:[{nome:f.name,base64:await lerArquivo(f)}]})});
-        for(const a of j.arquivos){if(a.erro)res.push(a.nome+': '+a.erro);else{lidos+=a.holerites;if(a.outroMes)res.push(a.nome+': o PDF parece ser de outro mês, confira')}}
+        const j=await api('/api/dre/holerites',{method:'POST',body:JSON.stringify({competencia:competencia(),tipo:q('#dreHolTipo').value||undefined,arquivos:[{nome:f.name,base64:await lerArquivo(f)}]})});
+        for(const a of j.arquivos){if(a.erro)res.push(a.nome+': '+a.erro);else{lidos+=a.holerites;if(a.repetidos)res.push(a.nome+': '+a.repetidos+' holerite(s) já lançado(s) no mês, não dupliquei');if(a.outroMes)res.push(a.nome+': o PDF parece ser de outro mês, confira')}}
       }catch(e){res.push(f.name+': '+e.message)}
     }
     msg((lidos?lidos+' holerite(s) lido(s) em '+MESES_LONGOS[Number(q('#dreMes').value)-1]+'.':'Nenhum holerite lido.')+(res.length?' '+res.join(' • '):''),res.length&&!lidos?'err':'ok');
@@ -160,6 +173,7 @@ function setup(){
   q('#dreLanc').onclick=async e=>{const b=e.target.closest('[data-dre-apagar]');if(!b||!confirm('Apagar este lançamento?'))return;try{await api('/api/dre/lancamentos/'+encodeURIComponent(b.dataset.dreApagar),{method:'DELETE'});await recarregar()}catch(err){msg(err.message,'err')}};
   q('#dreHol').onclick=async e=>{const b=e.target.closest('[data-dre-hol-apagar]');if(!b||!confirm('Apagar este holerite?'))return;try{await api('/api/dre/holerites/'+encodeURIComponent(b.dataset.dreHolApagar),{method:'DELETE'});await recarregar()}catch(err){msg(err.message,'err')}};
   q('#dreHol').onchange=e=>{if(e.target.dataset.campo)salvarHolerite(e.target)};
+  q('#dreDepositos').onchange=e=>{if(e.target.dataset.dreDepTipo)mudarDataDeposito(e.target)};
 }
 // Chamado pelo painel quando a aba "Despesas (DRE)" é aberta.
 window.dreAbrir=()=>{setup();recarregar()};
