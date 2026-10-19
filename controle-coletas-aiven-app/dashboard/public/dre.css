@@ -21,7 +21,7 @@
 .dre-tabela .dre-orig{font-size:10px;font-weight:700;color:#0f766e;margin-left:6px}
 .dre-baixo{margin-top:14px;align-items:start;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
 .dre-baixo>.card{min-width:0}
-#despesas{max-width:100%;overflow-x:hidden}
+#despesas,#holerites{max-width:100%;overflow-x:hidden}
 .dre-form label{min-width:0}.dre-form select,.dre-form input{width:100%;min-width:0}
 .dre-form{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1.4fr) minmax(0,.8fr) auto;gap:8px;align-items:end;margin:10px 0}
 .dre-lista{overflow-x:auto}

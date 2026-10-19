@@ -90,8 +90,11 @@ const login = async (u, s) => { const r = await call('POST', '/api/auth/login', 
   check('portal tem o Roteirizador novo e não tem mais o Teste nem o V02', portal.includes('data-module="roteirizador-cargas"') && !portal.includes('data-module="roteirizador-teste"') && !portal.includes('data-module="roteirizador-v02"'));
 
   check('portal tem o card Financeiro com Financeiro, Receita SSW e Clientes Remetentes', portal.includes('data-group="financeiro"') && ['fin-op', 'receita-ssw', 'remetentes'].every((m) => portal.includes('data-module="' + m + '"')));
+  const grupo = (g) => (portal.match(new RegExp('data-group-panel="' + g + '">([\\s\\S]*?)</div>')) || [])[1] || '';
+  check('em cima ficam Operação, Financeiro e R.H.; embaixo só os cards de cada um', ['operacao', 'financeiro', 'rh'].every((g) => portal.includes('group-card') && portal.includes('data-group="' + g + '">')) && !portal.includes('data-group-panel="lotacao"') && /data-module="coletas"[\s\S]*data-module="frota"/.test(grupo('operacao')) && grupo('financeiro').includes('data-module="contas"') && grupo('rh').includes('data-module="holerites"'));
   const dash = fs.readFileSync(path.join(__dirname, '..', 'dashboard', 'public', 'index.html'), 'utf8');
   check('menu do dashboard tem o botão Atualizar sistema', dash.includes('id="sysUpdate"'));
+  check('envio dos holerites saiu da DRE e fica em R.H. • Holerites', !/<section id="despesas"[\s\S]*?id="holFile"[\s\S]*?<\/section>/.test(dash.match(/<section id="despesas"[\s\S]*?<\/section>/)[0]) && /<section id="holerites"[\s\S]*?id="holFile"/.test(dash));
   check('Dashboards sem os cards Financeiro, Receita SSW e Clientes Remetentes', !/<h3>(Financeiro|Receita SSW|Entregas por Cliente Remetente)<\/h3>/.test(dash));
   check('menu do dashboard tem o Roteirizador novo e não tem o Teste nem o V02', dash.includes('data-tab="roteirizador-cargas"') && !dash.includes('data-tab="roteirizador-v02"') && !dash.includes('data-tab="roteirizador-teste"'));
 

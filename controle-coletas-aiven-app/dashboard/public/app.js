@@ -109,7 +109,7 @@ function hasAnyPerm(list){return list.some(hasPerm)}
 function tabAllowed(tab){
   const map={
     dashboard:'dashboard',operacoes:'operacional',conferencia:'final_carregamento',programacao:'programacao',carga:'montar_carga',lancamentos:'lancamentos','roteirizador-teste':'roteirizador','roteirizador-v02':'roteirizador','roteirizador-cargas':'roteirizador',rastreamento:'tracking',lotacao:'lotacao',frota:'frota','pdf-notas':'pdf_notas',
-    agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes',faturas:'financeiro',despesas:'financeiro',
+    agendamentos:'agendamentos','agendamento-teste':'agendamentos',ajudantes:'ajudantes',faturas:'financeiro',despesas:'financeiro',holerites:'financeiro',
     'ssw-motoristas':'ssw_saidas','motoristas-evolucao':'evolucao',
     'ssw-atrasos':'ssw_atrasos','ssw-remetentes':'remetentes',
     'ssw-remetentes-comparativo':'remetentes_comparativo','receita-ssw':'receita_ssw','mapa-cidades':'cidade_destino'
@@ -5162,6 +5162,8 @@ function loadHeavyForTab(tab){
     setTimeout(()=>window.lancamentosAbrir&&window.lancamentosAbrir(),50);
   }else if(tab==='despesas'&&hasPerm('financeiro')){
     setTimeout(()=>window.dreAbrir&&window.dreAbrir(),50);
+  }else if(tab==='holerites'&&hasPerm('financeiro')){
+    setTimeout(()=>window.holeritesAbrir&&window.holeritesAbrir(),50);
   }else if(tab==='roteirizador-v02'&&hasPerm('roteirizador')){
     setTimeout(()=>{rv2RenderList();rv2RenderMap()},50);
   }else if(tab==='roteirizador-teste'&&hasPerm('roteirizador')){
@@ -5315,7 +5317,7 @@ function openTab(tab){
     'rastreamento':'Rastreio de Carga',
     'lotacao':'Lotação',
     'frota':'Frota',
-    'roteirizador':'Roteirizador SSW','faturas':'Faturas em aberto','despesas':'Despesas (DRE)',
+    'roteirizador':'Roteirizador SSW','faturas':'Faturas em aberto','despesas':'Despesas (DRE)','holerites':'Holerites',
     'carga':'Montar carga',
     'lancamentos':'Lançamentos',
     'agendamentos-copia':'Consulta de Agendamentos','agendamento-teste':'Agendamento Teste',
