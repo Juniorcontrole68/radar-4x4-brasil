@@ -4744,7 +4744,8 @@ async function buildSswCityBubbles(from='',to=''){
 // (romaneio em que o CT-e saiu, gravado nos Lançamentos) e na data de entrega (baixas, BI2 17).
 // SLA = entregues até a previsão ÷ (entregues + vencidos sem entrega). Em aberto no prazo fica fora da conta.
 const SLA_CACHE=new Map();
-// SLA é por cliente PAGADOR. Pagadores que são o mesmo cliente ficam juntos (informado pela operação em 13/10/2026).
+// Grupos de pagadores que são o mesmo cliente (informado pela operação em 13/10/2026). Usados no Faturamento por
+// cliente; no SLA cada pagador fica separado e a flag de cada um diz se entra no SLA geral (pedido de 19/10/2026).
 const SLA_GRUPOS=[
   {nome:'COMERCIAL LEAL (grupo)',re:/\bLEAL\b|LEAL DUTRA|CONASID|\bNAVAS\b|LOGMEL|SOMERLOG/},
   {nome:'THB / FCB (grupo)',re:/\bTHB\b|\bFCB\b|CONSTRUDEC|SARKE/}   // Construdec e Sarke são clientes da FCB
@@ -4770,7 +4771,16 @@ async function buildSlaClientes(from,to){
   if(!/^\d{4}-\d{2}-\d{2}$/.test(to||'')||to>hoje)to=hoje;
   if(from>to)from=to;
   const ck=from+'|'+to,hit=SLA_CACHE.get(ck);
-  if(hit&&Date.now()-hit.at<10*60*1000)return hit.value;
+  let base=hit&&Date.now()-hit.at<10*60*1000?hit.value:null;
+  if(!base){base=await coletarSlaCtes(from,to,hoje);SLA_CACHE.set(ck,{at:Date.now(),value:base})}
+  return contarSla(base,await slaExcluidos(),hoje)
+}
+// Clientes pagadores marcados para ficar fora do SLA geral (Visão Geral). Fica no banco do portal.
+async function slaExcluidos(){
+  try{const j=await portalJson('/api/painel/sla-config',{timeout:10000});return new Set((j.excluidos||[]).map(x=>String(x).toUpperCase()))}
+  catch(e){const s=new Set();s.erro=String(e.message||e);return s}
+}
+async function coletarSlaCtes(from,to,hoje){
   const ate=(()=>{const d=new Date(to+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+10);const x=d.toISOString().slice(0,10);return x>hoje?hoje:x})();
   const dias=bi2DateRange(from,ate,45),avisos=[];
   // 1) CT-es emitidos no período (174), 2) baixas (17)
@@ -4790,7 +4800,7 @@ async function buildSlaClientes(from,to){
     const em=slaIso(pickField(r,'data_emissao','DATA EMISSAO','DATA AUTORIZACAO','AUTORIZACAO'));
     if(!em||em<from||em>to)continue;
     const pg=slaPagador(r);if(pg.campo)camposPagador.add(pg.campo);else semPagador++;
-    const cur=ctes.get(k)||{ctrc:raw,nf:normNf(r.numero_nf||pickField(r,'NF')),cliente:slaGrupo(pg.nome),pagador:pg.nome.toUpperCase(),cidade:r.cidade_destino||pickField(r,'CIDADE DESTINO')||'',emissao:em,previsao:'',entrega:'',rota:''};
+    const cur=ctes.get(k)||{ctrc:raw,nf:normNf(r.numero_nf||pickField(r,'NF')),cliente:pg.nome.toUpperCase(),pagador:pg.nome.toUpperCase(),cidade:r.cidade_destino||pickField(r,'CIDADE DESTINO')||'',emissao:em,previsao:'',entrega:'',rota:''};
     const pv=slaIso(r.prev_ent||pickField(r,'PREV ENTREGA','PREVISAO ENTREGA','DATA PREVISAO'));if(pv)cur.previsao=pv;
     ctes.set(k,cur)
   }
@@ -4806,11 +4816,20 @@ async function buildSlaClientes(from,to){
     const j=await portalJson('/api/painel/lancamentos?soltos=1&de='+from+'&ate='+ate,{timeout:25000});
     for(const l of (j.rows||[]))for(const x of (l.ctes||[])){const c=ctes.get(normCtrcLoose(x.c));if(c&&l.data&&(!c.rota||l.data<c.rota))c.rota=l.data}
   }catch(e){avisos.push('Data da rota indisponível: '+String(e.message||e))}
+  const faltam=s174.filter(x=>x.missing).length;
+  if(faltam)avisos.push(faltam+' dia(s) sem arquivo BI2 174');
+  if(!camposPagador.size&&semPagador)avisos.push('O BI2 174 não trouxe o pagador: agrupado pelo remetente');
+  return{from,to,ctes:[...ctes.values()],camposPagador:[...camposPagador],avisos}
+}
+// Cada cliente pagador separado; o SLA geral soma só os pagadores marcados (todos, por padrão).
+function contarSla({from,to,ctes,camposPagador,avisos:av0},excluidos,hoje){
+  const avisos=[...av0];if(excluidos.erro)avisos.push('Flags do SLA geral indisponíveis: '+excluidos.erro);
   // 4) contas
   const zero=()=>({membros:new Set(),emitidos:0,entregues:0,noPrazo:0,atrasadas:0,vencidas:0,abertas:0,semPrevisao:0,mesmoDiaRota:0,comRota:0,sEmEnt:0,nEmEnt:0,sEmRota:0,nEmRota:0,sRotaEnt:0,nRotaEnt:0,cidades:new Set()});
   const geral=zero(),porCli=new Map();
-  for(const c of ctes.values()){
-    const gs=[geral];if(!porCli.has(c.cliente))porCli.set(c.cliente,zero());gs.push(porCli.get(c.cliente));
+  for(const c of ctes){
+    if(!porCli.has(c.cliente))porCli.set(c.cliente,zero());
+    const gs=[porCli.get(c.cliente)];if(!excluidos.has(c.cliente))gs.push(geral);
     for(const g of gs){
       g.emitidos++;if(c.cidade)g.cidades.add(c.cidade);if(c.pagador)g.membros.add(c.pagador);
       if(c.rota){g.comRota++;const d=slaDias(c.emissao,c.rota);if(d!==null&&d>=0){g.sEmRota+=d;g.nEmRota++}}
@@ -4826,13 +4845,8 @@ async function buildSlaClientes(from,to){
     sla:base?Math.round(g.noPrazo/base*1000)/10:null,
     mediaEmissaoEntrega:g.nEmEnt?Math.round(g.sEmEnt/g.nEmEnt*10)/10:null,mediaEmissaoRota:g.nEmRota?Math.round(g.sEmRota/g.nEmRota*10)/10:null,mediaRotaEntrega:g.nRotaEnt?Math.round(g.sRotaEnt/g.nRotaEnt*10)/10:null,
     entregaNoDiaDaRota:g.nRotaEnt?Math.round(g.mesmoDiaRota/g.nRotaEnt*1000)/10:null,cidades:g.cidades.size,pagadores:g.membros.size>1?[...g.membros].sort():[]})};
-  const clientes=[...porCli].map(([cliente,g])=>fim(g,{cliente})).sort((a,b)=>b.emitidos-a.emitidos);
-  const faltam=s174.filter(x=>x.missing).length;
-  if(faltam)avisos.push(faltam+' dia(s) sem arquivo BI2 174');
-  if(!camposPagador.size&&semPagador)avisos.push('O BI2 174 não trouxe o pagador: agrupado pelo remetente');
-  const value={ok:true,from,to,agrupamento:camposPagador.size?'pagador ('+[...camposPagador].join(', ')+')':'remetente',geral:fim(geral,{cliente:'Geral'}),clientes,avisos,regra:'SLA = entregues até a previsão ÷ (entregues + vencidas sem entrega). CT-e em aberto ainda no prazo não entra na conta.'};
-  SLA_CACHE.set(ck,{at:Date.now(),value});
-  return value
+  const clientes=[...porCli].map(([cliente,g])=>fim(g,{cliente,noGeral:!excluidos.has(cliente)})).sort((a,b)=>b.emitidos-a.emitidos);
+  return{ok:true,from,to,agrupamento:camposPagador.length?'pagador ('+camposPagador.join(', ')+')':'remetente',geral:fim(geral,{cliente:'Geral'}),clientes,clientesNoGeral:clientes.filter(c=>c.noGeral).length,excluidos:[...excluidos].sort(),avisos,regra:'SLA = entregues até a previsão ÷ (entregues + vencidas sem entrega). CT-e em aberto ainda no prazo não entra na conta. O SLA geral soma só os clientes marcados.'}
 }
 // ---- Faturas (SSW opção 457 / tela 104 "Situação de Faturas"): lê pelo "Período de pesquisa".
 // O formulário é lido na hora (nome dos campos e ação do ▶ vêm da própria tela). Só consulta.
