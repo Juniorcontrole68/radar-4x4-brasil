@@ -38,3 +38,28 @@
 .dre-ssw-desp .dre-orig{font-size:10px;font-weight:700;color:#b45309}
 .dre-ssw-desp tfoot td{border-top:2px solid #cbd5e1}
 #dreSswDiag{margin-top:10px;font-size:12px}#dreSswDiag textarea{width:100%;font:11px monospace;margin-top:6px}
+/* holerites: card inteiro na largura, linhas compactas para caber tudo sem rolar */
+.dre-baixo{display:block}
+.dre-hol-card{margin-top:14px;min-width:0}
+.dre-hol-head{flex-wrap:wrap;justify-content:flex-start}
+.dre-hol-head b{margin-right:auto}
+.dre-hol-tipo{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:#475569}
+.dre-hol-tipo select{border:1px solid var(--line);border-radius:8px;padding:4px 6px;font-size:12px;background:#fff}
+.dre-hol-ajuda{font-size:11px;cursor:help}
+.dre-depositos{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+.dre-depositos:empty{display:none}
+.dre-dep{border:1px solid #bbf7d0;background:#f0fdf4;border-radius:10px;padding:8px 12px;min-width:200px}
+.dre-dep .t{font-size:11px;font-weight:700;color:#15803d}
+.dre-dep .v{font-size:20px;font-weight:800;color:#0f172a;margin:2px 0}
+.dre-dep label{font-size:11px;color:#475569;display:flex;gap:6px;align-items:center}
+.dre-dep input{border:1px solid var(--line);border-radius:7px;padding:2px 5px;font-size:12px}
+.dre-hol-tab{width:100%;font-size:12px}
+.dre-hol-tab th,.dre-hol-tab td{padding:3px 5px}
+.dre-hol-tab td input{width:84px;padding:3px 5px;font-size:12px}
+.dre-hol-tab td input.nome{width:100%;min-width:160px}
+.dre-hol-tab td select{border:1px solid var(--line);border-radius:7px;padding:3px 4px;font-size:12px;background:#fff}
+.dre-hol-tab .aviso{font-size:10px;font-weight:700;color:#b45309}
+.dre-hol-tab .acoes a{font-weight:700}
+.dre-x{border:0;background:none;color:#b91c1c;cursor:pointer;font-size:12px;padding:0 4px}
+.dre-hol-tab th,.dre-hol-tab td{padding:2px 5px}
+.dre-hol-tab td input,.dre-hol-tab td select{padding:2px 5px;min-height:0;height:24px}
