@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Comprovantes de entrega • CONSTRULOG</title>
+<style>
+:root{--nav:#0f172a;--teal:#0f766e;--line:#e2e8f0;--bg:#f5f7fa;--muted:#64748b}
+*{box-sizing:border-box}body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:var(--bg);color:#1f2937}
+.page{max-width:1180px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:0}.muted{color:var(--muted);font-size:12px}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:14px}
+.card h2{font-size:15px;margin:0 0 8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.bar{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-top:12px}
+label{display:grid;gap:4px;font-size:11px;font-weight:700;color:#475569}
+input{border:1px solid #cbd5e1;border-radius:9px;padding:9px;font-size:13px;background:#fff;color:#0f172a;min-height:38px}
+.btn{border:1px solid #cbd5e1;background:#fff;color:#0f172a;border-radius:9px;padding:8px 12px;font-weight:700;font-size:12px;cursor:pointer}
+.btn:hover{background:#f1f5f9}
+.resumo{display:flex;gap:8px;flex-wrap:wrap}
+.chip{display:inline-block;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:800;background:#e2e8f0;color:#334155}
+.chip.ok{background:#dcfce7;color:#166534}.chip.err{background:#fee2e2;color:#991b1b}.chip.warn{background:#fef3c7;color:#92400e}
+.itens{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.item{border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;gap:10px;background:#fbfdff}
+.thumb{width:84px;height:84px;border-radius:8px;object-fit:cover;background:#e2e8f0;cursor:zoom-in;flex:none;border:0;padding:0}
+.semfoto{width:84px;height:84px;border-radius:8px;background:#fee2e2;color:#991b1b;display:grid;place-items:center;font-size:26px;flex:none}
+.item b{font-size:13px}.item .l{font-size:12px;color:#334155;margin-top:2px}
+.msg{margin-top:10px;padding:9px 12px;border-radius:9px;font-size:13px;font-weight:700;display:none}
+.msg.err{display:block;background:#fee2e2;color:#991b1b}
+.vazio{color:var(--muted);font-size:13px;padding:16px 4px}
+#zoom{position:fixed;inset:0;background:rgba(15,23,42,.85);display:none;align-items:center;justify-content:center;z-index:50;cursor:zoom-out}
+#zoom img{max-width:94vw;max-height:90vh;border-radius:10px}
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>📸 Comprovantes de entrega</h1>
+  <div class="muted">O motorista marca cada entrega no aplicativo MOVIT, na rota do dia: com foto quando entrega, ou com o motivo quando não consegue. Os comprovantes aparecem aqui assim que chegam.</div>
+  <div class="bar">
+    <label>Data<input id="fData" type="date"></label>
+    <button class="btn" id="btnAtualizar" type="button">Atualizar</button>
+    <div class="resumo" id="resumo"></div>
+  </div>
+  <div id="msg" class="msg"></div>
+  <div id="lista"></div>
+</div>
+<div id="zoom"><img alt="Foto da entrega"></div>
+<script>
+const $=s=>document.querySelector(s);
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const hora=t=>new Date(t).toLocaleTimeString('pt-BR',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit'});
+const RAIO_ALERTA=300;
+$('#fData').value=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+
+function item(c){
+  const img=c.foto_id?'<button class="thumb" data-foto="'+esc(c.foto_id)+'" title="Ver a foto"><img class="thumb" loading="lazy" alt="Foto" src="/api/painel/entregas/arquivo/'+esc(c.mini_id||c.foto_id)+'"></button>'
+    :'<div class="semfoto" title="Sem foto">✕</div>';
+  const doc=[c.nf?'NF '+c.nf:'',c.ctrc?'CT-e '+c.ctrc:'',c.romaneio?'Rom. '+c.romaneio:''].filter(Boolean).join(' • ');
+  const longe=c.distancia_m!==null&&c.distancia_m>RAIO_ALERTA;
+  const linhas=[
+    c.resultado==='entregue'?'<span class="chip ok">Entregue '+hora(c.registrado_em)+'</span>':'<span class="chip err">Não entregue '+hora(c.registrado_em)+'</span>',
+    c.resultado==='falhou'?'<div class="l"><b>Motivo:</b> '+esc(c.motivo_texto)+'</div>':'',
+    c.recebedor_nome?'<div class="l"><b>Recebeu:</b> '+esc(c.recebedor_nome)+'</div>':'',
+    c.onde_texto?'<div class="l"><b>Onde:</b> '+esc(c.onde_texto)+'</div>':'',
+    c.observacao?'<div class="l">'+esc(c.observacao)+'</div>':'',
+    longe?'<div class="l"><span class="chip warn">Marcado a '+(c.distancia_m>=1000?(c.distancia_m/1000).toFixed(1)+' km':c.distancia_m+' m')+' do endereço</span></div>':''
+  ].join('');
+  return '<div class="item">'+img+'<div><b>'+esc(c.destinatario||'Entrega')+'</b>'+(doc?'<div class="l muted">'+esc(doc)+'</div>':'')+(c.endereco?'<div class="l muted">'+esc(c.endereco)+'</div>':'')+linhas+'</div></div>'
+}
+
+async function carregar(){
+  $('#msg').className='msg';
+  try{
+    const r=await fetch('/api/painel/entregas?data='+encodeURIComponent($('#fData').value),{credentials:'same-origin'});
+    const j=await r.json().catch(()=>({}));
+    if(r.status===401){location.href='/?login=1';return}
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar.');
+    const rows=j.rows||[],ok=rows.filter(x=>x.resultado==='entregue').length;
+    $('#resumo').innerHTML='<span class="chip ok">'+ok+' entregue(s)</span><span class="chip err">'+(rows.length-ok)+' não entregue(s)</span>';
+    if(!rows.length){$('#lista').innerHTML='<div class="card"><div class="vazio">Nenhum comprovante nesta data.</div></div>';return}
+    const por=new Map();
+    for(const c of rows){const k=c.driver_name+'|'+(c.vehicle_plate||'');if(!por.has(k))por.set(k,[]);por.get(k).push(c)}
+    $('#lista').innerHTML=[...por.values()].map(l=>'<div class="card"><h2>🚚 '+esc(l[0].driver_name)+(l[0].vehicle_plate?' <span class="chip">'+esc(l[0].vehicle_plate)+'</span>':'')+' <span class="muted">'+l.length+' registro(s)</span></h2><div class="itens">'+l.map(item).join('')+'</div></div>').join('')
+  }catch(e){$('#msg').textContent=e.message;$('#msg').className='msg err'}
+}
+$('#btnAtualizar').onclick=carregar;
+$('#fData').onchange=carregar;
+document.addEventListener('click',e=>{
+  const b=e.target.closest('[data-foto]');
+  if(b){const z=$('#zoom');z.querySelector('img').src='/api/painel/entregas/arquivo/'+b.dataset.foto;z.style.display='flex';return}
+  if(e.target.closest('#zoom'))$('#zoom').style.display='none'
+});
+carregar();
+setInterval(()=>{if(!document.hidden&&$('#fData').value===new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}))carregar()},60000);
+</script>
+</body>
+</html>

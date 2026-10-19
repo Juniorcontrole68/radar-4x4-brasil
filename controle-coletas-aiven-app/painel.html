@@ -126,6 +126,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
       <button class="tab" data-group="operacao" data-module="carga" data-src="/dashboard/?embed=1&view=carga" data-name="Montar carga">📦 Montar carga</button>
       <button class="tab" data-group="operacao" data-module="roteirizador-cargas" data-src="/roteirizador-cargas?embed=1" data-name="Roteirizador">🧭 Roteirizador</button>
       <button class="tab" data-group="operacao" data-module="tracking" data-src="/dashboard/?embed=1&view=rastreamento" data-name="Rastreio de Carga">📍 Rastreio de Carga</button>
+      <button class="tab" data-group="operacao" data-module="entregas" data-src="/entregas?embed=1" data-name="Comprovantes de entrega">📸 Comprovantes</button>
     </div>
     <div class="subtabs" data-group-panel="financeiro">
       <span class="subtab-label">Financeiro</span>
@@ -203,6 +204,7 @@ function moduleAllowed(mod){
   if(mod==='carga')return licensed('roteirizador')&&(hasPerm('montar_carga')||AUTH.is_admin);   // permissão própria: liberada usuário a usuário
   if(mod==='roteirizador-cargas')return licensed('roteirizador')&&(hasPerm('roteirizador')||AUTH.is_admin);
   if(mod==='tracking')return licensed('rastreio')&&hasPerm('tracking');
+  if(mod==='entregas')return licensed('rastreio')&&(hasPerm('tracking')||hasPerm('montar_carga')||AUTH.is_admin);
   if(mod==='fin-op')return licensed('dashboards')&&hasPerm('financeiro');
   if(mod==='receita-ssw')return licensed('dashboards')&&hasPerm('receita_ssw');
   if(mod==='remetentes')return licensed('dashboards')&&hasPerm('remetentes');
@@ -218,7 +220,7 @@ function moduleAllowed(mod){
 function applyModulePermissions(){
   document.querySelectorAll('.tab').forEach(btn=>btn.style.display=moduleAllowed(btn.dataset.module)?'':'none');
   const lotacaoOk=moduleAllowed('coletas')||moduleAllowed('financeiro-lotacao');
-  const operacaoMods=['dashboard','agendamento-teste','programacao','lancamentos','carga','roteirizador-cargas','tracking'];
+  const operacaoMods=['dashboard','agendamento-teste','programacao','lancamentos','carga','roteirizador-cargas','tracking','entregas'];
   document.querySelector('.group-card[data-group="lotacao"]')?.style.setProperty('display',lotacaoOk?'flex':'none');
   document.querySelector('.group-card[data-group="operacao"]')?.style.setProperty('display',(licensed('operacao')||AUTH?.sandbox||AUTH?.demo)&&operacaoMods.some(moduleAllowed)?'flex':'none');
   document.querySelector('.group-card[data-group="financeiro"]')?.style.setProperty('display',['fin-op','receita-ssw','remetentes','faturas','despesas'].some(moduleAllowed)?'flex':'none');
