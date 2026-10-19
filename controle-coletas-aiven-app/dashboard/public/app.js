@@ -733,7 +733,13 @@ function table(id,cols,rows){$(id).innerHTML='<thead><tr>'+cols.map(c=>'<th>'+c[
 
 function financeDateOfRow(o){return pd(gd(o))}
 function financePaid(o){return num(g(o,'Frete Mot Liq',' Frete Mot Liq','Frete Pago','FRETE PAGO'))}
-function financeReceive(o){return num(g(o,'Frete Vialog Liq',' Frete Vialog Liq','Frete a Receber','Frete A Receber','FRETE A RECEBER'))}
+// Frete a receber = valor do romaneio (Frete Vialog) menos o frete das entregas em pendência (Desc).
+// Sem o valor do romaneio na linha, fica o líquido já calculado (Frete Vialog Liq / Frete a Receber).
+function financeReceive(o){
+  const rom=String(g(o,'Frete Vialog',' Frete Vialog')??'').trim();
+  if(rom!=='')return num(rom)-num(g(o,'Desc'));
+  return num(g(o,'Frete Vialog Liq',' Frete Vialog Liq','Frete a Receber','Frete A Receber','FRETE A RECEBER'))
+}
 function financeRowsBetween(fromIso,toIso){
   const from=fromIso?new Date(fromIso+'T00:00:00'):null,to=toIso?new Date(toIso+'T23:59:59'):null;
   return (S.ops||[]).filter(o=>{
@@ -843,7 +849,7 @@ function financeRender(){
     // Linhas com algo escrito na data, mas que não foi possível ler: ficam fora de qualquer período.
     const semData=(S.ops||[]).filter(o=>{const v=gd(o);return String(v??'').trim()!==''&&!pd(v)});
     if(semData.length&&window.__opsSemDataAviso!==semData.length){window.__opsSemDataAviso=semData.length;console.warn('Lançamentos com data não reconhecida:',semData.slice(0,10).map(o=>gd(o)))}
-    info.textContent=nf(rows.length)+' lançamento(s) • '+nf(drivers.length)+' motorista(s) • período '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje')+' • fonte atualizada às '+at+' • base: ENTREGUE / Frete Mot Liq / Frete Construlog Líq'+(semData.length?' • ATENÇÃO: '+nf(semData.length)+' lançamento(s) com data não reconhecida ficaram fora (ex.: "'+String(gd(semData[0])).slice(0,20)+'")':'')};
+    info.textContent=nf(rows.length)+' lançamento(s) • '+nf(drivers.length)+' motorista(s) • período '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje')+' • fonte atualizada às '+at+' • base: ENTREGUE / Frete Mot Liq / valor do romaneio menos pendências'+(semData.length?' • ATENÇÃO: '+nf(semData.length)+' lançamento(s) com data não reconhecida ficaram fora (ex.: "'+String(gd(semData[0])).slice(0,20)+'")':'')};
   const tableRows=drivers.map(x=>({
     motorista:x.motorista,pago:brl(x.paid),receber:brl(x.receive),lucro:brl(x.profit),
     lucroPct:x.profitPct.toFixed(1).replace('.',',')+'%',custoPct:x.costPct.toFixed(1).replace('.',',')+'%'
