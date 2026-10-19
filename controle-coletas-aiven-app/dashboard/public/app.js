@@ -3763,6 +3763,11 @@ function trackingInstallMessage(item,canal){
   }
   return 'Olá, '+name+'! Aqui é da CONSTRULOG.\n\nInstale o aplicativo *CONSTRULOG Motorista* por este link:\n'+base+'\n\nDepois de instalar, abra o aplicativo e informe seu nome e a placa do veículo. É só na primeira vez. Se o aplicativo já estiver instalado, basta abri-lo.\n\nObrigado!'
 }
+// Link do MOVIT (rota do dia): o motorista instala por cima e a rota abre pelo CONSTRULOG Motorista.
+function trackingMovitMessage(item){
+  const name=trackingFirstName(item.r.driver_name);
+  return 'Olá, '+name+'! Aqui é da CONSTRULOG.\n\nSaiu uma versão nova do aplicativo *MOVIT*, o da rota do dia. Agora cada entrega tem os botões *Entregar* (com foto) e *Não entreguei* (com o motivo).\n\n1. Abra este link, baixe e instale por cima do que já está no celular:\n'+location.origin+'/downloads/MOVIT.apk\n2. Se o celular perguntar, toque em *Permitir* e depois em *Instalar*.\n3. Abra a rota pelo botão *ABRIR ROTA DE HOJE* no aplicativo CONSTRULOG Motorista.\n\nObrigado!'
+}
 function trackingWhen(v){
   const d=new Date(v);if(!v||!Number.isFinite(d.getTime()))return'';
   const day=x=>x.toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
@@ -4130,7 +4135,8 @@ function renderTrackingBoard(rows,extraRows){
     const told=notified[it.key]?'<div class="tb-sub">Avisado às '+safe(notified[it.key])+'</div>':'';
     const tv=trackingTestVersion();
     const linkBtns=r.test_only?'':'<button type="button" class="tb-btn tb-mini" title="Enviar o link de instalação do aplicativo pelo WhatsApp" data-tb-act="link" data-tb-i="'+i+'">🔗 Enviar link</button>'+
-      (tv?'<button type="button" class="tb-btn tb-mini" title="Enviar o link da versão nova, ainda em teste" data-tb-act="link-teste" data-tb-i="'+i+'">🧪 Link da versão nova'+(tv.name?' '+safe(tv.name):'')+'</button>':'');
+      (tv?'<button type="button" class="tb-btn tb-mini" title="Enviar o link da versão nova, ainda em teste" data-tb-act="link-teste" data-tb-i="'+i+'">🧪 Link da versão nova'+(tv.name?' '+safe(tv.name):'')+'</button>':'')+
+      ('<button type="button" class="tb-btn tb-mini" title="Enviar o link do MOVIT, o aplicativo da rota do dia, pelo WhatsApp" data-tb-act="link-movit" data-tb-i="'+i+'">📲 Link do MOVIT</button>');
     return '<tr class="tb-'+safe(d.level)+'"><td><div class="tb-namerow"><span class="tb-name">'+safe(r.driver_name||'—')+'</span>'+linkBtns+'</div><div class="tb-sub">'+safe(sub)+'</div>'+phoneHtml+'</td>'+
       '<td><div class="tb-title '+safe(d.level)+'">'+safe(d.title)+'</div><div class="tb-detail">'+safe(d.detail||'')+'</div></td>'+
       '<td><div class="tb-actions">'+(actions.join('')||'<span class="muted">Nada a fazer</span>')+'</div>'+told+'</td></tr>'
@@ -4177,6 +4183,11 @@ async function trackingBoardClick(e){
     const canal=act==='link-teste'?'teste':'normal';
     window.open('https://wa.me/'+phone+'?text='+encodeURIComponent(trackingInstallMessage(item,canal)),'_blank','noopener');
     trackingBoardMsg((canal==='teste'?'Link da versão nova':'Link do aplicativo')+(phone?' pronto no WhatsApp de '+item.r.driver_name+'. É só enviar.':' pronto. Escolha o contato do motorista no WhatsApp.'));
+    return
+  }
+  if(act==='link-movit'){
+    window.open('https://wa.me/'+phone+'?text='+encodeURIComponent(trackingMovitMessage(item)),'_blank','noopener');
+    trackingBoardMsg('Link do MOVIT'+(phone?' pronto no WhatsApp de '+item.r.driver_name+'. É só enviar.':' pronto. Escolha o contato do motorista no WhatsApp.'));
     return
   }
   if(act==='notify'){
