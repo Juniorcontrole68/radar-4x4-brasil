@@ -1508,6 +1508,8 @@ async function start() {
   await pool.query("ALTER TABLE coletas ADD COLUMN IF NOT EXISTS motorista_banco JSONB NOT NULL DEFAULT '{}'::jsonb");
   // Cidade, UF e localização da entrega principal: o rastreio de lotação precisa delas para achar o destino.
   await pool.query("ALTER TABLE coletas ADD COLUMN IF NOT EXISTS entrega_principal JSONB NOT NULL DEFAULT '{}'::jsonb");
+  // Lotação: outros remetentes da mesma carga, cada um com o próprio local e data/hora de coleta.
+  await pool.query("ALTER TABLE coletas ADD COLUMN IF NOT EXISTS remetentes_extras JSONB NOT NULL DEFAULT '[]'::jsonb");
   await pool.query(`
     CREATE TABLE IF NOT EXISTS coleta_documentos (
       id BIGSERIAL PRIMARY KEY,
@@ -5337,6 +5339,15 @@ async function start() {
             cidade: txt(e?.cidade, 80), uf: txt(e?.uf, 2).toUpperCase(), localizacao: txt(e?.localizacao, 300), observacao: txt(e?.observacao, 200) }))
           .filter(e => e.destinatario || e.endereco_entrega || e.cidade)
           .slice(0, 20);
+        // Sem remetentes_extras no corpo (tela antiga ainda aberta), mantém o que já estava gravado.
+        const remetentes = Array.isArray(body.remetentes_extras) ? JSON.stringify(body.remetentes_extras
+          .map(e => ({ remetente: txt(e?.remetente, 160), endereco_coleta: txt(e?.endereco_coleta, 300),
+            cidade: txt(e?.cidade, 80), uf: txt(e?.uf, 2).toUpperCase(), localizacao: txt(e?.localizacao, 300),
+            data_coleta: /^\d{4}-\d{2}-\d{2}$/.test(txt(e?.data_coleta, 10)) ? txt(e?.data_coleta, 10) : '',
+            hora_coleta: /^\d{2}:\d{2}$/.test(txt(e?.hora_coleta, 5)) ? txt(e?.hora_coleta, 5) : '',
+            observacao: txt(e?.observacao, 200) }))
+          .filter(e => e.remetente || e.endereco_coleta || e.cidade)
+          .slice(0, 20)) : null;
         const b = body.motorista_banco && typeof body.motorista_banco === 'object' ? body.motorista_banco : {};
         const banco = {
           banco: txt(b.banco, 80), agencia: txt(b.agencia, 20), conta: txt(b.conta, 30), tipo_conta: txt(b.tipo_conta, 20),
@@ -5348,13 +5359,13 @@ async function start() {
         const ep = body.entrega_principal && typeof body.entrega_principal === 'object'
           ? JSON.stringify({ cidade: txt(body.entrega_principal.cidade, 80), uf: txt(body.entrega_principal.uf, 2).toUpperCase(), localizacao: txt(body.entrega_principal.localizacao, 300) })
           : null;
-        const params = [JSON.stringify(entregas), JSON.stringify(banco), id, ep];
-        const sets = 'entregas_extras=$1::jsonb, motorista_banco=$2::jsonb, entrega_principal=COALESCE($4::jsonb, entrega_principal), updated_at=NOW()';
+        const params = [JSON.stringify(entregas), JSON.stringify(banco), id, ep, remetentes];
+        const sets = 'entregas_extras=$1::jsonb, motorista_banco=$2::jsonb, entrega_principal=COALESCE($4::jsonb, entrega_principal), remetentes_extras=COALESCE($5::jsonb, remetentes_extras), updated_at=NOW()';
         const result = user.client_id ? await pool.query(
-          'UPDATE coletas SET ' + sets + ' WHERE id::text=$3 AND client_id=$5 RETURNING id::text AS id, entregas_extras, motorista_banco, entrega_principal',
+          'UPDATE coletas SET ' + sets + ' WHERE id::text=$3 AND client_id=$6 RETURNING id::text AS id, entregas_extras, motorista_banco, entrega_principal, remetentes_extras',
           [...params, user.client_id]
         ) : await pool.query(
-          'UPDATE coletas SET ' + sets + ' WHERE id::text=$3 RETURNING id::text AS id, entregas_extras, motorista_banco, entrega_principal',
+          'UPDATE coletas SET ' + sets + ' WHERE id::text=$3 RETURNING id::text AS id, entregas_extras, motorista_banco, entrega_principal, remetentes_extras',
           params
         );
         if (!result.rowCount) return sendJson(res, 404, { error: 'Coleta não encontrada.' });

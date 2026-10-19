@@ -61,6 +61,8 @@
 #lcOrdemDlg iframe{width:100%;height:calc(94vh - 50px);border:0;background:#e5e7eb}
 .lc-extra-dest{margin-top:4px;font-size:12px;color:#475569}
 .lc-extra-dest b{color:#0f172a}
+.lc-rem .lc-num{background:#f28c00}
+.lc-rem .lc-quando{display:grid;grid-template-columns:1fr 1fr;gap:6px 7px}
 </style>
 <script id="lotacao-complementos-script">
 (() => {
@@ -102,7 +104,7 @@
 
   /* ---------- Destinatários adicionais ---------- */
   function renumerar() {
-    [...document.querySelectorAll('#lcDestList .lc-dest')].forEach((d, i) => { d.querySelector('.lc-num').textContent = String(i + 2) });
+    ['#lcDestList', '#lcRemList'].forEach(sel => [...document.querySelectorAll(sel + ' .lc-dest')].forEach((d, i) => { d.querySelector('.lc-num').textContent = String(i + 2) }));
   }
   function addDestRow(e = {}) {
     const list = byId('lcDestList'); if (!list) return;
@@ -135,6 +137,44 @@
       localizacao: d.querySelector('.lc-d-loc').value.trim(),
       observacao: d.querySelector('.lc-d-obs').value.trim()
     })).filter(e => e.destinatario || e.endereco_entrega || e.cidade);
+  }
+  /* ---------- Outros remetentes (mais de um local de coleta na mesma lotação) ---------- */
+  function addRemRow(e = {}) {
+    const list = byId('lcRemList'); if (!list) return;
+    const row = document.createElement('div'); row.className = 'lc-dest lc-rem';
+    row.innerHTML = '<span class="lc-num"></span><div class="lc-campos">' +
+      '<label>Remetente<input class="lc-r-nome" placeholder="Nome do remetente"></label>' +
+      '<label>Endereço da coleta<input class="lc-r-end" placeholder="Rua, número, bairro" data-no-titlecase="true"></label>' +
+      '<label>Cidade<input class="lc-r-cid" placeholder="Cidade"></label>' +
+      '<label>UF<input class="lc-r-uf" maxlength="2" placeholder="SP" data-no-titlecase="true"></label>' +
+      '<div class="lc-quando lc-w2"><label>Data da coleta<input class="lc-r-data" type="date"></label><label>Hora da coleta<input class="lc-r-hora" type="time"></label></div>' +
+      '<label class="lc-w2">Localização no Google Maps <small>(opcional)</small><input class="lc-r-loc" placeholder="cole o link do Google Maps" data-no-titlecase="true"></label>' +
+      '<label class="lc-w2">Observação / NF<input class="lc-r-obs" placeholder="Opcional" data-no-titlecase="true"></label>' +
+      '</div><button type="button" class="lc-del" title="Remover remetente">×</button>';
+    row.querySelector('.lc-r-nome').value = e.remetente || '';
+    row.querySelector('.lc-r-end').value = e.endereco_coleta || '';
+    row.querySelector('.lc-r-cid').value = e.cidade || '';
+    row.querySelector('.lc-r-uf').value = e.uf || '';
+    row.querySelector('.lc-r-data').value = String(e.data_coleta || '').slice(0, 10);
+    row.querySelector('.lc-r-hora').value = String(e.hora_coleta || '').slice(0, 5);
+    row.querySelector('.lc-r-loc').value = e.localizacao || '';
+    row.querySelector('.lc-r-obs').value = e.observacao || '';
+    row.querySelector('.lc-r-uf').addEventListener('input', ev => { ev.target.value = ev.target.value.toUpperCase() });
+    row.querySelector('.lc-del').onclick = () => { row.remove(); renumerar() };
+    list.appendChild(row); renumerar();
+    return row;
+  }
+  function lerRemetentes() {
+    return [...document.querySelectorAll('#lcRemList .lc-dest')].map(d => ({
+      remetente: d.querySelector('.lc-r-nome').value.trim(),
+      endereco_coleta: d.querySelector('.lc-r-end').value.trim(),
+      cidade: d.querySelector('.lc-r-cid').value.trim(),
+      uf: d.querySelector('.lc-r-uf').value.trim().toUpperCase(),
+      data_coleta: d.querySelector('.lc-r-data').value,
+      hora_coleta: d.querySelector('.lc-r-hora').value,
+      localizacao: d.querySelector('.lc-r-loc').value.trim(),
+      observacao: d.querySelector('.lc-r-obs').value.trim()
+    })).filter(e => e.remetente || e.endereco_coleta || e.cidade);
   }
   /* ---------- Cidade, UF e localização da entrega 1 (destinatário principal) ---------- */
   const ENTREGA1 = [['lc_ent_cidade', 'cidade', 'Cidade da entrega', 'Cidade'], ['lc_ent_uf', 'uf', 'UF', 'SP'], ['lc_ent_loc', 'localizacao', 'Localização no Google Maps (opcional)', 'cole o link do Google Maps']];
@@ -180,6 +220,14 @@
         if (ref && ref.parentElement === entGrid) { ref.after(lbl); ref = lbl } else entGrid.insertBefore(lbl, sub);
       });
     }
+    const colGrid = gridOf('endereco_coleta', 'Coleta');
+    if (colGrid && !byId('lcRemBox')) {
+      const sub = document.createElement('div'); sub.className = 'lc-sub'; sub.id = 'lcRemBox';
+      sub.innerHTML = '<span>Outros remetentes desta lotação <small>(coleta 1 é o remetente acima)</small></span><button type="button" class="lc-add">+ Adicionar remetente</button>';
+      const list = document.createElement('div'); list.className = 'lc-dest-list'; list.id = 'lcRemList';
+      colGrid.append(sub, list);
+      sub.querySelector('.lc-add').onclick = () => { const r = addRemRow(); r?.querySelector('input')?.focus() };
+    }
     const motGrid = gridOf('motorista', 'Dados do Motorista');
     if (motGrid && !byId('mb_banco')) {
       const sub = document.createElement('div'); sub.className = 'lc-sub'; sub.id = 'lcBancoBox';
@@ -217,9 +265,11 @@
   function carregarNoFormulario() {
     ensureUI();
     const list = byId('lcDestList'); if (list) list.innerHTML = '';
+    const remList = byId('lcRemList'); if (remList) remList.innerHTML = '';
     const note = byId('lcAutoNote'); if (note) { note.classList.remove('show'); note.textContent = '' }
     const r = currentId() ? rowById(currentId()) : null;
     lista(r?.entregas_extras).forEach(e => addDestRow(e));
+    lista(r?.remetentes_extras).forEach(e => addRemRow(e));
     preencherEntrega1(r?.entrega_principal);
     preencherBanco(r?.motorista_banco || {}, false);
   }
@@ -289,12 +339,12 @@
         if (data?.id) {
           const r = await baseFetch('/api/painel/coletas-complementos/' + encodeURIComponent(data.id), {
             method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ entregas_extras: lerDestinos(), motorista_banco: lerBanco(), entrega_principal: lerEntrega1() })
+            body: JSON.stringify({ entregas_extras: lerDestinos(), motorista_banco: lerBanco(), entrega_principal: lerEntrega1(), ...(byId('lcRemList') ? { remetentes_extras: lerRemetentes() } : {}) })
           });
           if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'HTTP ' + r.status) }
         }
       }
-    } catch (e) { console.warn('Complementos da coleta:', e); alert('A coleta foi salva, mas os destinatários extras / dados bancários não foram gravados: ' + e.message) }
+    } catch (e) { console.warn('Complementos da coleta:', e); alert('A coleta foi salva, mas os remetentes / destinatários extras e dados bancários não foram gravados: ' + e.message) }
     return res;
   };
 
@@ -306,6 +356,7 @@
       'motorista', 'telefone_motorista', 'transportadora_agregado', ...CNH_CAMPOS, ...CAMINHAO_CAMPOS, 'quantidade_paletes', 'peso_total', 'observacoes', 'frete_pago', 'percentual_adiantamento'
     ].forEach(k => { if (byId(k)) base[k] = val(k) });
     base.entregas_extras = lerDestinos();
+    if (byId('lcRemList')) base.remetentes_extras = lerRemetentes();
     base.entrega_principal = lerEntrega1();
     base.motorista_banco = lerBanco();
     return base;
@@ -324,6 +375,8 @@
     const ep = obj(c.entrega_principal);
     const entregas = [{ destinatario: c.destinatario, endereco_entrega: c.endereco_entrega, cidade: ep.cidade, uf: ep.uf, observacao: '' }, ...lista(c.entregas_extras)]
       .filter(e => String(e.destinatario || '').trim() || String(e.endereco_entrega || '').trim());
+    const coletasLista = [{ remetente: c.cliente, endereco_coleta: c.endereco_coleta, data_coleta: c.data_carregamento, hora_coleta: c.hora_carregamento, observacao: '' }, ...lista(c.remetentes_extras)]
+      .filter(e => String(e.remetente || '').trim() || String(e.endereco_coleta || '').trim());
     const frete = n(c.frete_pago), pct = n(c.percentual_adiantamento), adiant = frete * pct / 100;
     const temCarreta = String(c.placa_carreta || '').trim() || String(c.capacidade_carga_carreta || '').trim() || String(c.eixos_carreta ?? '').trim();
     const emitido = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' });
@@ -355,9 +408,15 @@
       '@media print{body{background:#fff}.pg{margin:0;max-width:none;box-shadow:none;border-radius:0}.hd,.sec h2,.chips,.pix,.tot div,.ent .nn{-webkit-print-color-adjust:exact;print-color-adjust:exact}}' +
       '</style></head><bo' + 'dy><div class="pg">' +
       '<div class="hd"><div><div class="t">ORDEM DE COLETA</div><div class="s">CONSTRULOG • Lotação</div></div><div class="os"><span>Nº da coleta</span><b>' + esc(os) + '</b><span>Emitida em ' + esc(emitido) + '</span></div></div>' +
-      '<div class="chips"><span class="chip">Status: <b>' + esc(c.status || 'Programada') + '</b></span><span class="chip">Coleta: <b>' + esc(dt(c.data_carregamento) || '—') + (hr(c.hora_carregamento) ? ' às ' + esc(hr(c.hora_carregamento)) : '') + '</b></span><span class="chip">Previsão de entrega: <b>' + esc(dt(c.previsao_entrega) || '—') + '</b></span><span class="chip">Entregas: <b>' + entregas.length + '</b></span></div>' +
+      '<div class="chips"><span class="chip">Status: <b>' + esc(c.status || 'Programada') + '</b></span><span class="chip">Coleta: <b>' + esc(dt(c.data_carregamento) || '—') + (hr(c.hora_carregamento) ? ' às ' + esc(hr(c.hora_carregamento)) : '') + '</b></span><span class="chip">Previsão de entrega: <b>' + esc(dt(c.previsao_entrega) || '—') + '</b></span>' + (coletasLista.length > 1 ? '<span class="chip">Coletas: <b>' + coletasLista.length + '</b></span>' : '') + '<span class="chip">Entregas: <b>' + entregas.length + '</b></span></div>' +
       '<div class="bd">' +
-      '<div class="sec"><h2>Coleta</h2><div class="g">' + campo('Remetente', c.cliente, 'w2') + campo('Data / hora', (dt(c.data_carregamento) || '') + (hr(c.hora_carregamento) ? ' ' + hr(c.hora_carregamento) : '')) + campo('Endereço da coleta', c.endereco_coleta, 'w3') + '</div></div>' +
+      (coletasLista.length > 1
+        ? '<div class="sec"><h2>Coletas (' + coletasLista.length + ' remetentes)</h2>' + coletasLista.map((e, i) => {
+          const quando = (dt(e.data_coleta) ? dt(e.data_coleta) : '') + (hr(e.hora_coleta) ? ' às ' + hr(e.hora_coleta) : '');
+          const nota = [quando ? 'Coleta: ' + quando : '', e.observacao || ''].filter(Boolean).join(' • ');
+          return '<div class="ent"><span class="nn" style="background:#f28c00">' + (i + 1) + '</span><div><b>' + esc(e.remetente || '—') + '</b><div>' + esc(e.endereco_coleta || '—') + (e.cidade ? ' • ' + esc(e.cidade) + (e.uf ? '/' + esc(e.uf) : '') : '') + '</div>' + (nota ? '<small>' + esc(nota) + '</small>' : '') + '</div></div>';
+        }).join('') + '</div>'
+        : '<div class="sec"><h2>Coleta</h2><div class="g">' + campo('Remetente', c.cliente, 'w2') + campo('Data / hora', (dt(c.data_carregamento) || '') + (hr(c.hora_carregamento) ? ' ' + hr(c.hora_carregamento) : '')) + campo('Endereço da coleta', c.endereco_coleta, 'w3') + '</div></div>') +
       '<div class="sec"><h2>Entrega' + (entregas.length > 1 ? 's (' + entregas.length + ' destinatários)' : '') + '</h2>' +
       (entregas.length ? entregas.map((e, i) => '<div class="ent"><span class="nn">' + (i + 1) + '</span><div><b>' + esc(e.destinatario || '—') + '</b><div>' + esc(e.endereco_entrega || '—') + (e.cidade ? ' • ' + esc(e.cidade) + (e.uf ? '/' + esc(e.uf) : '') : '') + '</div>' + (e.observacao ? '<small>' + esc(e.observacao) + '</small>' : '') + '</div></div>').join('') : '<div class="obs">—</div>') +
       '</div>' +
@@ -418,6 +477,12 @@
         const b = document.createElement('button'); b.type = 'button'; b.className = 'btn small lc-btn-ordem'; b.textContent = 'Ordem';
         b.title = 'Exportar a ordem de coleta completa'; b.onclick = () => abrirOrdem(r);
         ed.after(b);
+      }
+      const rems = lista(r.remetentes_extras);
+      if (rems.length && tr.cells[0] && !tr.cells[0].querySelector('.lc-extra-rem')) {
+        const d = document.createElement('div'); d.className = 'lc-extra-dest lc-extra-rem';
+        d.innerHTML = rems.map((e, i) => '<div><b>' + (i + 2) + '. ' + esc(e.remetente || '—') + '</b> • ' + esc(e.endereco_coleta || '') + '</div>').join('');
+        tr.cells[0].appendChild(d);
       }
       const extras = lista(r.entregas_extras);
       if (extras.length && tr.cells[1] && !tr.cells[1].querySelector('.lc-extra-dest')) {
