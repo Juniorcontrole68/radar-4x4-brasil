@@ -53,6 +53,12 @@ async function call(method,path,{body,cookie,bearer,headers}={}){
   r=await call('GET','/coletas/api/coletas',{cookie}); check('lista de coletas traz os destinatários extras e o Pix',r.status===200&&r.json?.[0]?.entregas_extras?.[0]?.destinatario==='DESTINO DOIS'&&r.json[0].motorista_banco?.banco==='Banco Teste',r.text.slice(0,160));
   r=await call('GET','/coletas?embed=1',{cookie}); check('tela de coletas tem vários destinatários, Pix e exportação da ordem',r.status===200&&r.text.includes('lotacao-complementos-script')&&r.text.includes('Exportar ordem de coleta'),'status '+r.status);
   r=await call('GET','/coletas?embed=1',{cookie}); check('tela de coletas abre com o botão de status e a função dele',r.status===200&&r.text.includes('editStatusInline(${c.id},this)')&&r.text.includes('window.editStatusInline='),'status '+r.status);
+  console.log('B2. Flags do SLA geral por cliente pagador');
+  r=await call('GET','/api/painel/sla-config'); check('flags do SLA sem login -> 401',r.status===401,'veio '+r.status);
+  r=await call('GET','/api/painel/sla-config',{cookie}); check('sem registro, nenhum cliente fica fora do SLA geral',r.status===200&&Array.isArray(r.json?.excluidos)&&r.json.excluidos.length===0,r.text.slice(0,120));
+  r=await call('PUT','/api/painel/sla-config',{cookie,body:{excluidos:['Cliente Fora',' cliente fora ','OUTRO']}}); check('desmarcar clientes salva o nome em maiúsculas, sem repetir',r.status===200&&JSON.stringify(r.json?.excluidos)==='["CLIENTE FORA","OUTRO"]',r.text.slice(0,120));
+  r=await call('GET','/api/painel/sla-config',{cookie}); check('flags ficam salvas no banco',JSON.stringify(r.json?.excluidos)==='["CLIENTE FORA","OUTRO"]',r.text.slice(0,120));
+  r=await call('PUT','/api/painel/sla-config',{cookie,body:{excluidos:[]}}); check('marcar todos de novo',r.status===200&&r.json?.excluidos?.length===0,r.text.slice(0,120));
   console.log('C. Ciclo do GPS');
   r=await call('GET','/api/tracking/app-update?channel=normal&version_code=0'); check('app consulta atualização sem login (antes: 401)',r.status===200&&r.json?.ok===true,r.status+' '+r.text.slice(0,100));
   r=await call('POST','/api/tracking/register-request',{body:{driver_name:'Motorista Teste',vehicle_plate:'ABC1D23',device_name:'Aparelho de Teste'}});

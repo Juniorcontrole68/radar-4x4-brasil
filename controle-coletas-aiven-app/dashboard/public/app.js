@@ -1763,16 +1763,27 @@ function renderSla(){
   g.innerHTML=k('SLA geral',slaPct(G.sla),G.sla===null?'':G.sla>=95?'good':G.sla>=85?'warn':'bad')+k('CT-es emitidos',nf(G.emitidos))+k('Entregues',nf(G.entregues))+k('No prazo',nf(G.noPrazo),'good')+k('Atrasadas',nf(G.atrasadas),G.atrasadas?'bad':'')+k('Vencidas sem entrega',nf(G.vencidas),G.vencidas?'bad':'')+k('Em aberto no prazo',nf(G.abertas))+k('Emissão → entrega',slaDia(G.mediaEmissaoEntrega))+k('Emissão → rota',slaDia(G.mediaEmissaoRota))+k('Entregue no dia da rota',slaPct(G.entregaNoDiaDaRota));
   const q=String($('#slaBusca')?.value||'').toUpperCase().trim();
   const rows=(d.clientes||[]).filter(c=>!q||String(c.cliente).toUpperCase().includes(q));
-  tb.innerHTML=rows.length?rows.map(c=>'<tr><td><b>'+safe(c.cliente)+'</b><div class="muted" style="font-size:11px">'+(c.pagadores&&c.pagadores.length?safe(c.pagadores.join(' • '))+' • ':'')+nf(c.cidades)+' cidade(s)</div></td><td class="n">'+nf(c.emitidos)+'</td><td class="n">'+nf(c.entregues)+'</td><td class="n">'+nf(c.noPrazo)+'</td><td class="n">'+(c.atrasadas?'<b style="color:#b91c1c">'+nf(c.atrasadas)+'</b>':'0')+'</td><td class="n">'+(c.vencidas?'<b style="color:#b91c1c">'+nf(c.vencidas)+'</b>':'0')+'</td><td class="n">'+nf(c.abertas)+'</td><td class="n"><span class="sla-pill" style="background:'+slaCor(c.sla)+'1a;color:'+slaCor(c.sla)+'">'+slaPct(c.sla)+'</span></td><td class="n">'+slaDia(c.mediaEmissaoRota)+'</td><td class="n">'+slaDia(c.mediaRotaEntrega)+'</td><td class="n">'+slaDia(c.mediaEmissaoEntrega)+'</td><td class="n">'+slaPct(c.entregaNoDiaDaRota)+'</td></tr>').join(''):'<tr><td colspan="12" class="muted">Nenhum cliente no período.</td></tr>';
-  const info=$('#slaInfo');if(info)info.textContent=nf(rows.length)+' cliente(s) • '+String(d.from).split('-').reverse().join('/')+' a '+String(d.to).split('-').reverse().join('/')+(d.avisos&&d.avisos.length?' • '+d.avisos.join(' • '):'')
+  tb.innerHTML=rows.length?rows.map(c=>'<tr'+(c.noGeral?'':' style="opacity:.55"')+'><td><input type="checkbox" class="sla-flag" data-cli="'+safe(c.cliente)+'"'+(c.noGeral?' checked':'')+' title="Entra no SLA geral"></td><td><b>'+safe(c.cliente)+'</b><div class="muted" style="font-size:11px">'+(c.pagadores&&c.pagadores.length?safe(c.pagadores.join(' • '))+' • ':'')+nf(c.cidades)+' cidade(s)</div></td><td class="n">'+nf(c.emitidos)+'</td><td class="n">'+nf(c.entregues)+'</td><td class="n">'+nf(c.noPrazo)+'</td><td class="n">'+(c.atrasadas?'<b style="color:#b91c1c">'+nf(c.atrasadas)+'</b>':'0')+'</td><td class="n">'+(c.vencidas?'<b style="color:#b91c1c">'+nf(c.vencidas)+'</b>':'0')+'</td><td class="n">'+nf(c.abertas)+'</td><td class="n"><span class="sla-pill" style="background:'+slaCor(c.sla)+'1a;color:'+slaCor(c.sla)+'">'+slaPct(c.sla)+'</span></td><td class="n">'+slaDia(c.mediaEmissaoRota)+'</td><td class="n">'+slaDia(c.mediaRotaEntrega)+'</td><td class="n">'+slaDia(c.mediaEmissaoEntrega)+'</td><td class="n">'+slaPct(c.entregaNoDiaDaRota)+'</td></tr>').join(''):'<tr><td colspan="13" class="muted">Nenhum cliente no período.</td></tr>';
+  tb.querySelectorAll('.sla-flag').forEach(x=>x.onchange=()=>salvarSlaFlags([x.dataset.cli],x.checked));
+  const todos=$('#slaTodos'),C=d.clientes||[];if(todos){todos.checked=C.length>0&&C.every(c=>c.noGeral);todos.indeterminate=C.some(c=>c.noGeral)&&!todos.checked;todos.onchange=()=>salvarSlaFlags(rows.map(c=>c.cliente),todos.checked)}
+  const info=$('#slaInfo');if(info)info.textContent=nf(rows.length)+' cliente(s) • '+nf(d.clientesNoGeral??C.length)+' no SLA geral • '+String(d.from).split('-').reverse().join('/')+' a '+String(d.to).split('-').reverse().join('/')+(d.avisos&&d.avisos.length?' • '+d.avisos.join(' • '):'')
+}
+// Flag por cliente pagador: marcado entra no SLA geral. Salva no banco e recalcula o geral.
+async function salvarSlaFlags(clientes,noGeral){
+  const ex=new Set(SLA_DATA&&SLA_DATA.excluidos||[]);
+  for(const c of clientes){const k=String(c).toUpperCase();if(noGeral)ex.delete(k);else ex.add(k)}
+  const tb=$('#slaTabela');if(tb)tb.querySelectorAll('input[type=checkbox]').forEach(x=>x.disabled=true);
+  try{const r=await fetch('/api/painel/sla-config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({excluidos:[...ex]})}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao salvar a flag')}
+  catch(e){alert(e.message)}
+  await loadSla()
 }
 async function loadSla(){
   const de=$('#slaDe'),ate=$('#slaAte'),bt=$('#slaGo');if(!de||!ate)return;
   if(!de.value){const t=iso(new Date());de.value=t.slice(0,8)+'01';ate.value=t}
-  const tb=$('#slaTabela tbody');if(tb&&!SLA_DATA)tb.innerHTML='<tr><td colspan="12" class="muted">Calculando… (lê os CT-es emitidos e as baixas de cada dia do período no SSW; pode levar alguns segundos)</td></tr>';
+  const tb=$('#slaTabela tbody');if(tb&&!SLA_DATA)tb.innerHTML='<tr><td colspan="13" class="muted">Calculando… (lê os CT-es emitidos e as baixas de cada dia do período no SSW; pode levar alguns segundos)</td></tr>';
   if(bt){bt.disabled=true;bt.textContent='Calculando…'}
   try{const r=await fetch('/api/bi2/sla-clientes?from='+encodeURIComponent(de.value)+'&to='+encodeURIComponent(ate.value),{cache:'no-cache'}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao calcular o SLA');SLA_DATA=j;renderSla()}
-  catch(e){if(tb)tb.innerHTML='<tr><td colspan="12" style="color:#b91c1c">'+safe(e.message)+'</td></tr>'}
+  catch(e){if(tb)tb.innerHTML='<tr><td colspan="13" style="color:#b91c1c">'+safe(e.message)+'</td></tr>'}
   finally{if(bt){bt.disabled=false;bt.textContent='Calcular'}}
 }
 function setupSla(){

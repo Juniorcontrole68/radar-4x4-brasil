@@ -2866,6 +2866,22 @@ async function start() {
       // Abastecimentos do Veic na Frota → Combustível (só leitura no Veic): ver veic.js
       if (await veic.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
 
+      // SLA por cliente pagador (Visão Geral): pagadores que ficam fora do SLA geral. Sem registro, todos entram.
+      if (u.pathname === '/api/painel/sla-config' && (req.method === 'GET' || req.method === 'PUT')) {
+        try {
+          const user=await sessionOrInternal(req);
+          if(!['dashboard','ssw_saidas','remetentes','operacional'].some(p=>dashboardHas(user,p)))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
+          if(req.method==='PUT'){
+            const body=await readJsonBodyLimited(req,256*1024);
+            const excluidos=[...new Set((Array.isArray(body.excluidos)?body.excluidos:[]).map(x=>String(x||'').trim().toUpperCase()).filter(Boolean))].slice(0,2000);
+            await pool.query("INSERT INTO movit_config(chave,valor,updated_at) VALUES('sla_excluidos',$1::jsonb,NOW()) ON CONFLICT(chave) DO UPDATE SET valor=EXCLUDED.valor,updated_at=NOW()",[JSON.stringify({excluidos})]);
+            return sendJson(res,200,{ok:true,excluidos});
+          }
+          const v=(await pool.query("SELECT valor FROM movit_config WHERE chave='sla_excluidos'")).rows[0]?.valor||{};
+          return sendJson(res,200,{ok:true,excluidos:Array.isArray(v.excluidos)?v.excluidos:[]});
+        } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha nas flags do SLA.'})}
+      }
+
       if (u.pathname === '/api/painel/frota-state' && req.method === 'GET') {
         try {
           if(!dashboardHas(await dashboardSession(req),'frota'))return sendJson(res,403,{ok:false,error:FROTA_SEM_ACESSO});
