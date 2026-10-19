@@ -244,6 +244,19 @@ function ficar(){return adb('emu geo fix '+lon.toFixed(5)+' '+lat.toFixed(5))}
   await until(async()=>tela().includes('3 entregas')?true:null,40000,3000);
   const tVolta=telaToda();
   check('fechar e abrir o MOVIT sozinho: a rota do dia continua lá',tVolta.includes('CLIENTE ALFA')&&tVolta.includes('Rota de hoje • '+PLATE),tVolta.slice(0,400));
+  console.log('11. MOVIT: comprovante de entrega na rota do dia');
+  check('entregas pendentes têm os botões "Entregar" e "Não entreguei"',tVolta.includes('Entregar')&&tVolta.includes('Não entreguei'),tVolta.slice(0,500));
+  // "Não entreguei" na CLIENTE BETA (a ALFA já está entregue e não tem botões). Rola até achar o botão.
+  let achou=toque('Não entreguei');
+  for(let i=0;i<3&&!achou;i++){adb('shell input swipe 540 1600 540 900 400');sh('sleep 1');achou=toque('Não entreguei')}
+  await sleep(1500);
+  const escolheu=toque('Destinatário ausente');
+  check('motorista escolhe o motivo de não ter entregue',achou&&escolheu,tela().slice(0,300));
+  const falha=await until(async()=>(await db.query("SELECT resultado,motivo_falha,nf FROM entregas_comprovantes WHERE driver_name=$1 AND work_date=$2::date",[DRIVER,hojeSp])).rows[0]||null,40000,2000);
+  check('não entregue chega na central com o motivo e a nota da parada',falha?.resultado==='falhou'&&falha?.motivo_falha==='ausente'&&falha?.nf==='1002',JSON.stringify(falha));
+  await sleep(1500);
+  const tFalha=telaToda();
+  check('a lista mostra "Não entregue: Destinatário ausente" na parada',tFalha.includes('Não entregue: Destinatário ausente'),tFalha.slice(0,500));
   const crashMovit=adb('logcat -d -b crash').split('\n').filter(l=>l.includes('movit')||/FATAL EXCEPTION/.test(l));
   check('nenhum travamento do MOVIT',crashMovit.length===0,crashMovit.slice(0,6).join(' | ').slice(0,700));
 

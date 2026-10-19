@@ -59,6 +59,7 @@ jobs:
           node --check contas-a-pagar-v3/src/cnh-leitor.js
           node --check controle-coletas-aiven-app/roteirizador-cargas.js
           node --check controle-coletas-aiven-app/lotacao-rastreio.js
+          node --check controle-coletas-aiven-app/entregas.js
           node --check controle-coletas-aiven-app/compressao.js
           node --check controle-coletas-aiven-app/movit-demo.js
           node --check controle-coletas-aiven-app/movit-guia.js
@@ -93,6 +94,8 @@ jobs:
         run: node controle-coletas-aiven-app/tests/grupos-acesso.js
       - name: Rastreio de lotação (base do cliente e link de rastreio)
         run: node controle-coletas-aiven-app/tests/lotacao-rastreio.js
+      - name: Comprovante de entrega pelo MOVIT (foto, não entregue e tela da central)
+        run: node controle-coletas-aiven-app/tests/entregas.js
       - name: Economia de banda (compressão e 304)
         run: node controle-coletas-aiven-app/tests/compressao.js
       - name: Leitor da CNH do motorista (Lotação)

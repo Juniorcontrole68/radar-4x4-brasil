@@ -26,8 +26,13 @@ public final class Api {
         }
         int code=c.getResponseCode();InputStream in=code>=200&&code<300?c.getInputStream():c.getErrorStream();
         String text=read(in);JSONObject j=text.isEmpty()?new JSONObject():new JSONObject(text);
-        if(code<200||code>=300)throw new IOException(j.optString("error","HTTP "+code));
+        if(code<200||code>=300)throw new HttpError(code,j.optString("error","HTTP "+code));
         return j;
+    }
+    /** Resposta do servidor com erro (4xx/5xx). Falta de rede continua sendo IOException comum. */
+    public static final class HttpError extends IOException{
+        public final int code;
+        HttpError(int code,String msg){super(msg);this.code=code;}
     }
     private static String read(InputStream in)throws IOException{
         if(in==null)return "";ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] b=new byte[4096];int n;

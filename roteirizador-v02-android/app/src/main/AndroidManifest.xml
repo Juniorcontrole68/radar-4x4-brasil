@@ -28,5 +28,7 @@
                 <data android:scheme="movit" android:host="empresa"/>
             </intent-filter>
         </activity>
+        <!-- Foto da entrega: o app da câmera grava num arquivo do próprio MOVIT (ver FotoProvider). -->
+        <provider android:name=".FotoProvider" android:authorities="${applicationId}.fotos" android:exported="false" android:grantUriPermissions="true"/>
     </application>
 </manifest>

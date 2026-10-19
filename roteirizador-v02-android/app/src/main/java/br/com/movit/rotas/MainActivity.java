@@ -12,17 +12,19 @@ import android.location.LocationManager;
 import android.location.LocationListener;
 import android.net.Uri;
 import android.os.*;
+import android.provider.MediaStore;
 import android.speech.RecognizerIntent;
 import android.view.*;
 import android.webkit.*;
 import android.widget.*;
 import org.json.*;
 import java.net.URLEncoder;
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.*;
 
 public class MainActivity extends Activity {
-    private static final int REQ_VOICE=10,REQ_LOC=11,REQ_TEST_LOC=12,REQ_FUEL_LOC=13;
+    private static final int REQ_VOICE=10,REQ_LOC=11,REQ_TEST_LOC=12,REQ_FUEL_LOC=13,REQ_FOTO=14;
     private final ArrayList<JSONObject> stops=new ArrayList<>();
     private final ExecutorService exec=Executors.newSingleThreadExecutor();
     private LinearLayout list;
@@ -50,10 +52,17 @@ public class MainActivity extends Activity {
     private boolean dayLoading=false,dayReloadWanted=false;
     private int dayBuildingTries=0;
     private long dayLoadedAt=0L;
+    // Comprovantes de entrega guardados no celular e ainda não enviados: chave da parada -> resultado.
+    private Map<String,String> podPendentes=new HashMap<>();
+    private boolean podEnviando=false;
+    private static final String[][] MOTIVOS={{"ausente","Destinatário ausente"},{"recusou","Recusou a mercadoria"},{"endereco_errado","Endereço não encontrado"},
+        {"fechado","Local fechado"},{"avaria","Mercadoria avariada"},{"outro","Outro motivo"}};
+    private static final String[][] ONDE={{"em_maos","Em mãos"},{"portaria","Portaria / recepção"},{"vizinho","Vizinho"},{"doca","Doca / almoxarifado"},{"outro","Outro"}};
 
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
         prefs=getSharedPreferences("rv2_account",MODE_PRIVATE);
+        podPendentes=Comprovantes.pendentes(this);
         if(!prefs.contains("current_return_start"))prefs.edit().putBoolean("current_return_start",true).apply();
         mode=companyLinked()&&MODE_DAY.equals(prefs.getString("mode",MODE_FREE))?MODE_DAY:MODE_FREE;
         buildUi();loadState();applyMode();renderList();renderMap(lastPlan);refreshAccount();refreshStartPointUi();handleSharedRouteIntent(getIntent());
@@ -63,6 +72,7 @@ public class MainActivity extends Activity {
         super.onResume();
         // Rota do dia: ao voltar para o app, confere se há entregas novas ou baixadas.
         if(MODE_DAY.equals(mode)&&companyLinked()&&System.currentTimeMillis()-dayLoadedAt>120000L)loadDay(false);
+        if(companyLinked()&&!podPendentes.isEmpty())enviarComprovantes();
     }
 
     // ---------------------------------------------------------------- modos e estado guardado
@@ -189,6 +199,8 @@ public class MainActivity extends Activity {
                     dayBuildingTries=0;
                     try{
                         stops.clear();stops.addAll(list);
+                        aplicarPendentes();
+                        if(!j.optString("date","").isEmpty())prefs.edit().putString("day_date",j.optString("date","")).apply();
                         start=j.optJSONObject("start");
                         JSONObject pl=new JSONObject();
                         if(j.optJSONObject("geometry")!=null)pl.put("geometry",j.optJSONObject("geometry"));
@@ -1219,6 +1231,7 @@ public class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int req,int res,Intent data){
         super.onActivityResult(req,res,data);
+        if(req==REQ_FOTO){fotoTirada(res==RESULT_OK);return;}
         if(req==REQ_VOICE&&res==RESULT_OK&&data!=null){
             ArrayList<String> out=data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
             if(out!=null&&!out.isEmpty()){
@@ -1435,6 +1448,8 @@ public class MainActivity extends Activity {
 
             LinearLayout top=new LinearLayout(this);top.setOrientation(LinearLayout.HORIZONTAL);top.setGravity(Gravity.CENTER_VERTICAL);
             final boolean delivered=day&&s.optBoolean("entregue",false);
+            final boolean failed=day&&!delivered&&s.optBoolean("falhou",false);
+            final boolean waiting=day&&podPendentes.containsKey(s.optString("chave",""));
             TextView num=label(delivered?"✓":String.valueOf(i+1),14,delivered?Color.WHITE:NAVY,true);num.setGravity(Gravity.CENTER);num.setBackground(bg(delivered?Color.rgb(148,163,184):GREEN,50));top.addView(num,new LinearLayout.LayoutParams(dp(36),dp(36)));
             if(delivered)row.setAlpha(.62f);
 
@@ -1452,8 +1467,12 @@ public class MainActivity extends Activity {
                 }
                 String nf=s.optString("nf",""),extra=nf.isEmpty()?"":"NF "+nf;
                 if(delivered)extra=(extra.isEmpty()?"":extra+" • ")+"Entregue"+(s.optString("baixaAt","").isEmpty()?"":" "+s.optString("baixaAt",""));
+                if(failed)extra=(extra.isEmpty()?"":extra+" • ")+"Não entregue: "+s.optString("motivoFalha","");
                 if(!extra.isEmpty()){
-                    TextView ex=label(extra,12,delivered?Color.rgb(21,128,61):MUTED,true);ex.setPadding(0,dp(3),0,0);info.addView(ex);
+                    TextView ex=label(extra,12,delivered?Color.rgb(21,128,61):failed?Color.rgb(190,24,93):MUTED,true);ex.setPadding(0,dp(3),0,0);info.addView(ex);
+                }
+                if(waiting){
+                    TextView wt=label("Comprovante guardado no celular: será enviado quando houver sinal",11,Color.rgb(185,93,0),true);wt.setPadding(0,dp(2),0,0);info.addView(wt);
                 }
             }else{
             TextView t=label(confirmed,14,TEXT,true);t.setMaxLines(3);
@@ -1490,8 +1509,142 @@ public class MainActivity extends Activity {
             LinearLayout.LayoutParams wp=new LinearLayout.LayoutParams(0,dp(44),.8f);wp.setMargins(dp(8),0,0,0);navRow.addView(waze,wp);
             row.addView(navRow);
 
+            // Rota do dia: o motorista registra a entrega (com foto) ou o motivo de não ter entregue.
+            if(day&&!delivered&&!s.optString("chave","").isEmpty()){
+                LinearLayout podRow=new LinearLayout(this);podRow.setOrientation(LinearLayout.HORIZONTAL);podRow.setPadding(dp(46),dp(8),0,0);
+                Button ok=pill("📷 Entregar",GREEN,NAVY);ok.setOnClickListener(v->abrirEntrega(stops.get(idx)));
+                Button nao=pill(failed?"Mudar motivo":"Não entreguei",Color.rgb(255,241,242),Color.rgb(190,24,93));nao.setOnClickListener(v->abrirNaoEntregue(stops.get(idx)));
+                podRow.addView(ok,new LinearLayout.LayoutParams(0,dp(44),1));
+                LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(0,dp(44),.8f);np.setMargins(dp(8),0,0,0);podRow.addView(nao,np);
+                row.addView(podRow);
+            }
+
             list.addView(row);
         }
+    }
+
+    // ---------------------------------------------------------------- comprovante de entrega
+
+    /** Depois de recarregar a rota, o que está guardado no celular continua aparecendo como feito. */
+    private void aplicarPendentes(){
+        for(JSONObject s:stops){
+            String r=podPendentes.get(s.optString("chave",""));
+            if(r==null||s.optBoolean("entregue",false))continue;
+            try{
+                if("entregue".equals(r))s.put("entregue",true);
+                else{s.put("falhou",true);s.put("motivoFalha",textoDe(MOTIVOS,r));}
+            }catch(Exception ignored){}
+        }
+    }
+    private static String textoDe(String[][] lista,String chave){for(String[] x:lista)if(x[0].equals(chave))return x[1];return "";}
+
+    private void abrirEntrega(final JSONObject s){
+        LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(20),dp(8),dp(20),0);
+        final EditText nome=new EditText(this);nome.setHint("Quem recebeu (opcional)");nome.setSingleLine(true);box.addView(nome);
+        TextView t=label("Onde ficou a mercadoria",13,Color.rgb(71,85,105),true);t.setPadding(0,dp(12),0,dp(4));box.addView(t);
+        final RadioGroup onde=new RadioGroup(this);
+        for(int i=0;i<ONDE.length;i++){RadioButton rb=new RadioButton(this);rb.setText(ONDE[i][1]);rb.setId(1000+i);onde.addView(rb);}
+        onde.check(1000);box.addView(onde);
+        TextView dica=label("Na próxima tela, fotografe a mercadoria entregue ou o canhoto assinado.",12,Color.rgb(100,116,139),false);dica.setPadding(0,dp(10),0,0);box.addView(dica);
+        new AlertDialog.Builder(this).setTitle(s.optString("label","Entrega")).setView(box)
+            .setPositiveButton("📷 Tirar a foto",(d,w)->{
+                try{
+                    JSONObject f=new JSONObject();
+                    f.put("stop",resumoParada(s));f.put("recebedor_nome",nome.getText().toString().trim());
+                    int sel=onde.getCheckedRadioButtonId()-1000;f.put("onde_deixou",sel>=0&&sel<ONDE.length?ONDE[sel][0]:"em_maos");
+                    String arq="entrega_"+System.currentTimeMillis()+".jpg";f.put("arquivo",arq);
+                    // O app da câmera pode fazer o Android fechar o MOVIT: o formulário fica guardado.
+                    prefs.edit().putString("pod_form",f.toString()).apply();
+                    Uri u=FotoProvider.uri(this,arq);
+                    Intent i=new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+                    i.putExtra(MediaStore.EXTRA_OUTPUT,u);
+                    i.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    i.setClipData(ClipData.newRawUri("foto",u));
+                    startActivityForResult(i,REQ_FOTO);
+                }catch(ActivityNotFoundException e){status.setText("Nenhum aplicativo de câmera encontrado neste celular.");}
+                catch(Exception e){status.setText("Não foi possível abrir a câmera.");}
+            })
+            .setNegativeButton("Cancelar",null).show();
+    }
+
+    private void fotoTirada(boolean ok){
+        final String raw=prefs.getString("pod_form","");
+        prefs.edit().remove("pod_form").apply();
+        if(raw.isEmpty())return;
+        if(!ok){status.setText("Foto cancelada. A entrega não foi registrada.");return;}
+        status.setText("Preparando a foto…");
+        exec.execute(()->{
+            try{
+                JSONObject f=new JSONObject(raw);
+                java.io.File arq=FotoProvider.arquivo(this,f.getString("arquivo"));
+                String[] fotos=Comprovantes.prepararFoto(arq);
+                arq.delete();
+                JSONObject c=novoComprovante(f.getJSONObject("stop"),"entregue");
+                c.put("recebedor_nome",f.optString("recebedor_nome",""));c.put("onde_deixou",f.optString("onde_deixou",""));
+                c.put("foto",fotos[0]);c.put("miniatura",fotos[1]);
+                runOnUiThread(()->registrar(c));
+            }catch(final Exception e){runOnUiThread(()->status.setText(String.valueOf(e.getMessage())));}
+        });
+    }
+
+    private void abrirNaoEntregue(final JSONObject s){
+        String[] nomes=new String[MOTIVOS.length];for(int i=0;i<MOTIVOS.length;i++)nomes[i]=MOTIVOS[i][1];
+        new AlertDialog.Builder(this).setTitle("Por que não entregou?").setItems(nomes,(d,w)->{
+            try{JSONObject c=novoComprovante(resumoParada(s),"falhou");c.put("motivo",MOTIVOS[w][0]);registrar(c);}
+            catch(Exception e){status.setText("Não foi possível registrar.");}
+        }).setNegativeButton("Cancelar",null).show();
+    }
+
+    /** O que o servidor precisa para achar a parada (a chave vem dele) e mostrar na central. */
+    private JSONObject resumoParada(JSONObject s)throws JSONException{
+        JSONObject o=new JSONObject();
+        for(String k:new String[]{"chave","seq","romaneio","ctrc","nf","destinatario","label","resolved","lat","lon"})if(s.has(k))o.put(k,s.get(k));
+        return o;
+    }
+
+    private JSONObject novoComprovante(JSONObject stop,String resultado)throws JSONException{
+        JSONObject c=new JSONObject();
+        c.put("client_uuid",UUID.randomUUID().toString());
+        SimpleDateFormat dia=new SimpleDateFormat("yyyy-MM-dd",Locale.US);dia.setTimeZone(TimeZone.getTimeZone("America/Sao_Paulo"));
+        c.put("work_date",prefs.getString("day_date",dia.format(new Date())));
+        SimpleDateFormat iso=new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'",Locale.US);iso.setTimeZone(TimeZone.getTimeZone("UTC"));
+        c.put("registrado_em",iso.format(new Date()));
+        c.put("stop",stop);c.put("resultado",resultado);
+        try{
+            if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED){
+                LocationManager lm=(LocationManager)getSystemService(LOCATION_SERVICE);
+                Location l=lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+                if(l==null)l=lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                // Posição velha (mais de 10 min) não diz onde a entrega foi feita.
+                if(l!=null&&System.currentTimeMillis()-l.getTime()<10*60*1000L){c.put("lat",l.getLatitude());c.put("lon",l.getLongitude());}
+            }
+        }catch(Exception ignored){}
+        return c;
+    }
+
+    /** Guarda no celular, marca na lista e tenta enviar. */
+    private void registrar(JSONObject c){
+        try{Comprovantes.guardar(this,c);}catch(Exception e){status.setText("Não foi possível guardar o comprovante no celular.");return;}
+        String chave=c.optJSONObject("stop").optString("chave","");
+        podPendentes.put(chave,"falhou".equals(c.optString("resultado"))?c.optString("motivo","outro"):"entregue");
+        aplicarPendentes();renderList();
+        status.setText("falhou".equals(c.optString("resultado"))?"Registrado como não entregue.":"Entrega registrada.");
+        enviarComprovantes();
+    }
+
+    private void enviarComprovantes(){
+        if(podEnviando||!companyLinked())return;
+        podEnviando=true;
+        final String token=prefs.getString("company_token","");
+        exec.execute(()->{
+            final int restam=Comprovantes.enviarPendentes(this,token);
+            final Map<String,String> agora=Comprovantes.pendentes(this);
+            runOnUiThread(()->{
+                podEnviando=false;podPendentes=agora;
+                if(dayMode())renderList();
+                if(restam>0)status.setText("Sem sinal: "+restam+" comprovante"+(restam==1?"":"s")+" guardado"+(restam==1?"":"s")+" no celular. Envio automático quando a internet voltar.");
+            });
+        });
     }
 
     private String stopCoords(JSONObject s){

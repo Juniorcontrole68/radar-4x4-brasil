@@ -31,6 +31,7 @@ const dre = require('./dre');
 const roteirizadorCargas = require('./roteirizador-cargas');
 const { economizarBanda } = require('./compressao');
 const lotacaoRastreio = require('./lotacao-rastreio');
+const entregas = require('./entregas');
 const movitDemo = require('./movit-demo');
 const movitGuia = require('./movit-guia');
 const veic = require('./veic');
@@ -1736,6 +1737,7 @@ async function start() {
   if(!TEST_MODE)veic.iniciarImportacaoAutomatica(pool);
   await roteirizadorCargas.ensureSchema(pool);
   await lotacaoRastreio.ensureSchema(pool);
+  await entregas.ensureSchema(pool);
   await pool.query(`CREATE TABLE IF NOT EXISTS fleet_maintenance_files (
     maintenance_id TEXT PRIMARY KEY,
     nome_arquivo TEXT NOT NULL,
@@ -2107,7 +2109,9 @@ async function start() {
           // A rota do SSW é cara de montar: reaproveita por 3 minutos (30 s quando o motorista pede).
           // Resposta vazia vale só 20 s, para a rota aparecer logo depois que o romaneio sai.
           const ttl=hit&&!hit.value.stops.length?20000:(fresh?30000:180000);
-          if(hit&&hit.value.date===spToday()&&Date.now()-hit.at<ttl)return sendJson(res,200,hit.value);
+          // O comprovante de entrega (entregas.js) aparece na hora, mesmo com a rota em cache.
+          const comComprovantes=v=>entregas.marcarNoDia(pool,{sqlNome},link,v).catch(e=>{console.log('ENTREGAS marcar dia: '+String(e.message||e));return v});
+          if(hit&&hit.value.date===spToday()&&Date.now()-hit.at<ttl)return sendJson(res,200,await comComprovantes(hit.value));
           // Montar a rota a partir do SSW pode levar mais de um minuto. Uma montagem por motorista
           // de cada vez; se passar de 20 s, o aplicativo recebe "montando" e consulta de novo.
           let building=MOVIT_DAY_BUILDING.get(link.id);
@@ -2126,7 +2130,7 @@ async function start() {
           clearTimeout(timer);
           if(!value)return sendJson(res,200,{ok:true,date:spToday(),driver_name:link.driver_name,vehicle_plate:link.vehicle_plate||'',company:'CONSTRULOG',
             romaneios:[],source:'',stops:[],start:null,building:true,message:'Montando a rota de hoje. Ela aparece aqui em instantes.'});
-          return sendJson(res,200,value);
+          return sendJson(res,200,await comComprovantes(value));
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar a rota do dia.'})}
       }
 
@@ -2868,6 +2872,8 @@ async function start() {
       if (await roteirizadorCargas.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
       // Rastreio de carga lotação (viagem a partir da base do cliente + link público): ver lotacao-rastreio.js
       if (await lotacaoRastreio.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,sqlNome,sqlPlaca,publicBase:DRIVER_PUBLIC_BASE,testMode:TEST_MODE})) return;
+      // Comprovante de entrega pelo MOVIT (foto / não entregue) e a tela /entregas da central: ver entregas.js
+      if (await entregas.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,movitCompanyLinkFromReq,testMode:TEST_MODE})) return;
 
       // Abastecimentos do Veic na Frota → Combustível (só leitura no Veic): ver veic.js
       if (await veic.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
