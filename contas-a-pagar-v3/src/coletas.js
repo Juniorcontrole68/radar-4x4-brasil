@@ -787,7 +787,8 @@ try{
               const r=(window.__coletaHistoryProfiles?.drivers||[]).find(x=>String(x.id||'')===sm.value);if(!r)return;
               setField('motorista',r.motorista);
               setField('telefone_motorista',r.telefone_motorista);
-              setField('transportadora_agregado',r.transportadora_agregado)
+              setField('transportadora_agregado',r.transportadora_agregado);
+              CNH_CAMPOS.forEach(([k])=>setField(k,k==='cnh_validade'?String(r[k]||'').slice(0,10):r[k]))
             })
           }
           if(sr&&!sr.dataset.historyBound){
@@ -840,7 +841,18 @@ try{
           }
           if(motorGrid){
             addHistorySelect(motorGrid,'historico_motorista','Escolher motorista já utilizado','Escolha um motorista do histórico');
-            const up=addUpload(motorGrid,'doc_motorista_file','Importar documento do motorista','doc_motorista_status');
+            let ref=byId('transportadora_agregado')?.closest('label')||byId('telefone_motorista')?.closest('label');
+            CNH_CAMPOS.forEach(([id,label,type,ph])=>{
+              const novo=!byId(id),el=addInput(motorGrid,id,label,type,{placeholder:ph,noTitlecase:true});
+              const lbl=el.closest('label');
+              if(novo&&ref&&lbl&&ref.parentElement===motorGrid){ref.after(lbl)}
+              if(lbl)ref=lbl
+            });
+            const cpfEl=byId('motorista_cpf');
+            if(cpfEl&&!cpfEl.dataset.cpfBound){cpfEl.dataset.cpfBound='1';cpfEl.maxLength=14;cpfEl.addEventListener('blur',()=>{if(digits(cpfEl.value).length===11)cpfEl.value=formatCpf(cpfEl.value)})}
+            const catEl=byId('cnh_categoria');
+            if(catEl&&!catEl.dataset.catBound){catEl.dataset.catBound='1';catEl.maxLength=3;catEl.addEventListener('input',()=>{catEl.value=catEl.value.toUpperCase().replace(/[^A-E]/g,'')})}
+            const up=addUpload(motorGrid,'doc_motorista_file','Importar documento do motorista (CNH)','doc_motorista_status');
             bindUpload(up,'motorista','doc_motorista_status')
           }
           if(truckGrid){
@@ -861,6 +873,13 @@ try{
           }
           bindRefreshDocumentButton()
         }
+        const CNH_CAMPOS=[
+          ['motorista_cpf','CPF do motorista','text','000.000.000-00'],
+          ['motorista_rg','RG do motorista','text','RG / órgão / UF'],
+          ['cnh_numero','Nº de registro da CNH','text','00000000000'],
+          ['cnh_categoria','Categoria da CNH','text','Ex.: E'],
+          ['cnh_validade','Validade da CNH','date','']
+        ];
         function sumAxes(){
           const a=Number(byId('eixos_cavalo')?.value||0),b=Number(byId('eixos_carreta')?.value||0);
           if((byId('eixos_cavalo')?.value||'')!==''||(byId('eixos_carreta')?.value||'')!==''){
@@ -1001,14 +1020,15 @@ try{
               enhanceOcrCanvas(canvas);
               text+='\n'+await ocrSource(canvas,statusId)
             }
-            return parseDriver(text)
+            return{...parseDriver(text),text}
           }
           const src=await fileDataUrl(file);
           const img=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=src});
           const max=3200,scale=Math.min(2.5,max/Math.max(img.naturalWidth,img.naturalHeight)),canvas=document.createElement('canvas');
           canvas.width=Math.max(1,Math.round(img.naturalWidth*scale));canvas.height=Math.max(1,Math.round(img.naturalHeight*scale));
           canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);enhanceOcrCanvas(canvas);
-          return parseDriver(await ocrSource(canvas,statusId))
+          const text=await ocrSource(canvas,statusId);
+          return{...parseDriver(text),text}
         }
         async function extractText(file,statusId,forceOcr=false){
           if(file.type==='application/pdf'){
@@ -1211,7 +1231,29 @@ try{
           return{placa:parsePlate(text),eixos,capacidade:parseCapacity(text),tipoVeiculo:parseVehicleType(text,eixos)}
         }
         function applyDriver(d){
-          if(d.nome&&byId('motorista'))setField('motorista',d.nome)
+          if(d.nome&&byId('motorista'))setField('motorista',d.nome);
+          if(d.cpf)setField('motorista_cpf',d.cpf);
+          if(d.rg)setField('motorista_rg',d.rg);
+          if(d.registro)setField('cnh_numero',d.registro);
+          if(d.categoria)setField('cnh_categoria',d.categoria);
+          if(d.validade)setField('cnh_validade',d.validade);
+          if(d.nome)try{document.dispatchEvent(new CustomEvent('coleta:motorista-lido',{detail:{nome:d.nome}}))}catch{}
+        }
+        function lerCnh(texto){
+          try{return window.CnhLeitor?window.CnhLeitor.ler(texto):{}}catch{return{}}
+        }
+        function juntarCnh(a,b){
+          const o={...a};Object.keys(b||{}).forEach(k=>{if(!o[k]&&b[k])o[k]=b[k]});return o
+        }
+        function resumoCnh(d){
+          const ach=[d.nome?'nome':'',d.cpf?'CPF':'',d.rg?'RG':'',d.registro?'nº da CNH':'',d.categoria?'categoria':'',d.validade?'validade':''].filter(Boolean);
+          if(!ach.length)return{ok:false,msg:'Não foi possível ler os dados da CNH com segurança. Os campos foram deixados em branco para preenchimento manual.'};
+          let msg='✓ Preenchido pela CNH: '+esc(ach.join(', '))+'. Confira antes de salvar.';
+          const falta=[!d.nome?'nome':'',!d.cpf?'CPF':'',!d.registro?'nº da CNH':'',!d.validade?'validade':''].filter(Boolean);
+          if(falta.length)msg+=' Não encontrado: '+esc(falta.join(', '))+'.';
+          const hoje=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+          if(d.validade&&d.validade<hoje){const p=d.validade.split('-');msg+=' <b style="color:#b91c1c">Atenção: CNH vencida em '+p[2]+'/'+p[1]+'/'+p[0]+'.</b>'}
+          return{ok:true,msg}
         }
         function setTruckType(value){
           const el=byId('tipo_caminhao');if(!el||!value)return;
@@ -1248,23 +1290,21 @@ try{
             pendingDocs[tipo]={tipo,nome_arquivo:file.name||('documento-'+tipo),arquivo:stored};
             let text=await extractText(file,statusId);
             if(tipo==='motorista'){
-              if(byId('motorista'))setField('motorista','');
-              let d={nome:''};
+              let d={nome:''},textos=text;
               if(file.type==='application/pdf'){
                 const layout=await extractDriverFromPdfLayout(file,statusId);
-                d={nome:layout.nome||''}
+                d={nome:layout.nome||''};textos+='\n'+(layout.text||'')
               }else d=parseDriver(text);
-              if(!d.nome){
+              d=juntarCnh(d,lerCnh(textos));
+              if(!d.nome||!d.cpf||!d.validade){
                 const od=await extractDriverByOcr(file,statusId);
-                d={nome:od.nome||''}
+                d=juntarCnh(d,juntarCnh({nome:od.nome||''},lerCnh(od.text||'')))
               }
               if(d.nome&&!plausiblePersonName(d.nome))d.nome='';
               applyDriver(d);
-              setStatus(statusId,d.nome
-                ?'✓ Nome do motorista preenchido. Confira antes de salvar.'
-                :'Não foi possível identificar o nome do motorista com segurança. O campo foi deixado em branco para preenchimento manual.',
-                d.nome?'ok':'err');
-              return !!d.nome
+              const r=resumoCnh(d);
+              setStatus(statusId,r.msg,r.ok?'ok':'err');
+              return r.ok
             }else{
               let d=parseVehicle(text);
               if(file.type==='application/pdf'&&(!d.placa||d.eixos===null||!d.capacidade||!d.tipoVeiculo)){
@@ -1385,6 +1425,7 @@ try{
             eixos_carreta:byId('eixos_carreta')?.value||'',
             eixos_total:byId('eixos')?.value||''
           };
+          CNH_CAMPOS.forEach(([k])=>{const el=byId(k);if(el)body[k]=el.value||''});
           const r=await docBaseFetch('/api/painel/coletas-documentais/'+encodeURIComponent(id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
           if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error(j.error||'Falha ao salvar dados dos documentos.')}
         }
@@ -1417,8 +1458,8 @@ try{
           lastOpenKey=key;pendingDocs={motorista:null,cavalo:null,carreta:null};
           ['doc_motorista_file','doc_cavalo_file','doc_carreta_file'].forEach(x=>{const el=byId(x);if(el)el.value=''});
           if(!id){
-            ['placa_carreta','capacidade_carga_cavalo','eixos_cavalo','capacidade_carga_carreta','eixos_carreta'].forEach(x=>{const el=byId(x);if(el)el.value=''});
-            setStatus('doc_motorista_status','PDF ou foto. O sistema tenta preencher somente o nome do motorista.');
+            ['placa_carreta','capacidade_carga_cavalo','eixos_cavalo','capacidade_carga_carreta','eixos_carreta',...CNH_CAMPOS.map(c=>c[0])].forEach(x=>{const el=byId(x);if(el)el.value=''});
+            setStatus('doc_motorista_status','PDF ou foto da CNH (inclusive a CNH digital). O sistema preenche nome, CPF, RG, nº, categoria e validade.');
             setStatus('doc_cavalo_status','PDF ou foto. O sistema tenta preencher placa, capacidade e eixos.');
             setStatus('doc_carreta_status','PDF ou foto. O sistema tenta preencher placa, capacidade e eixos.');
             return
@@ -1431,7 +1472,8 @@ try{
               if(byId('capacidade_carga_cavalo'))byId('capacidade_carga_cavalo').value=co.capacidade_carga_cavalo||'';
               if(byId('eixos_cavalo'))byId('eixos_cavalo').value=co.eixos_cavalo??'';
               if(byId('capacidade_carga_carreta'))byId('capacidade_carga_carreta').value=co.capacidade_carga_carreta||'';
-              if(byId('eixos_carreta'))byId('eixos_carreta').value=co.eixos_carreta??''
+              if(byId('eixos_carreta'))byId('eixos_carreta').value=co.eixos_carreta??'';
+              CNH_CAMPOS.forEach(([k])=>{const el=byId(k);if(el)el.value=k==='cnh_validade'?String(co[k]||'').slice(0,10):(co[k]||'')})
             }
           }catch{}
           await loadExistingDocs(id)
@@ -1465,7 +1507,8 @@ try{
 
       const bodyClose=html.lastIndexOf('</body>');
       if(bodyClose>=0){
-        html=html.slice(0,bodyClose)+recebimentoAddon+documentoAddon+html.slice(bodyClose);
+        const cnhLeitor='<script id="cnh-leitor-script">'+require('fs').readFileSync(require('path').join(__dirname,'cnh-leitor.js'),'utf8')+'</script>';
+        html=html.slice(0,bodyClose)+recebimentoAddon+cnhLeitor+documentoAddon+html.slice(bodyClose);
       }
     }
 

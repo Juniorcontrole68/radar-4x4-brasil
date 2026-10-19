@@ -1494,6 +1494,10 @@ async function start() {
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS destinatario TEXT');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS motorista_cpf TEXT');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS motorista_rg TEXT');
+  // Dados lidos da CNH do motorista na tela de Lotação.
+  await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS cnh_numero TEXT');
+  await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS cnh_categoria TEXT');
+  await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS cnh_validade DATE');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS placa_carreta TEXT');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS capacidade_carga_cavalo TEXT');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS eixos_cavalo INTEGER');
@@ -4000,7 +4004,17 @@ async function start() {
 
           const id = decodeURIComponent(dadosDocumentaisMatch[1]);
           const body = await readJsonBodyLimited(req, 256 * 1024);
-          const rg = String(body.motorista_rg || '').trim().toUpperCase().replace(/\s+/g, ' ').slice(0, 50);
+          // Campos da CNH: só mudam quando vêm no corpo (uma tela antiga aberta não apaga o que já foi gravado).
+          const cnh = {};
+          const tem = k => Object.prototype.hasOwnProperty.call(body, k);
+          if (tem('motorista_rg')) cnh.motorista_rg = String(body.motorista_rg || '').trim().toUpperCase().replace(/\s+/g, ' ').slice(0, 50) || null;
+          if (tem('motorista_cpf')) {
+            const d = String(body.motorista_cpf || '').replace(/\D/g, '').slice(0, 11);
+            cnh.motorista_cpf = d.length === 11 ? d.slice(0, 3) + '.' + d.slice(3, 6) + '.' + d.slice(6, 9) + '-' + d.slice(9) : (d || null);
+          }
+          if (tem('cnh_numero')) cnh.cnh_numero = String(body.cnh_numero || '').replace(/\D/g, '').slice(0, 15) || null;
+          if (tem('cnh_categoria')) cnh.cnh_categoria = String(body.cnh_categoria || '').toUpperCase().replace(/[^A-E]/g, '').slice(0, 3) || null;
+          if (tem('cnh_validade')) cnh.cnh_validade = /^\d{4}-\d{2}-\d{2}$/.test(String(body.cnh_validade || '')) ? String(body.cnh_validade) : null;
           const placaCarreta = String(body.placa_carreta || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7);
           const capacidadeCavalo = String(body.capacidade_carga_cavalo || '').trim().slice(0, 80);
           const capacidadeCarreta = String(body.capacidade_carga_carreta || '').trim().slice(0, 80);
@@ -4015,15 +4029,17 @@ async function start() {
           if (eixosTotal === null && (eixosCavalo !== null || eixosCarreta !== null)) {
             eixosTotal = Number(eixosCavalo || 0) + Number(eixosCarreta || 0);
           }
-          const sql = 'UPDATE coletas SET motorista_rg=$1, placa_carreta=$2, capacidade_carga_cavalo=$3, ' +
-            'eixos_cavalo=$4, capacidade_carga_carreta=$5, eixos_carreta=$6, ' +
-            'eixos=COALESCE($7,eixos), updated_at=NOW() WHERE id::text=$8 ' +
-            'RETURNING id::text AS id, motorista, motorista_rg, motorista_cpf, placa, placa_carreta, ' +
+          const params = [placaCarreta || null, capacidadeCavalo || null, eixosCavalo, capacidadeCarreta || null, eixosCarreta, eixosTotal, id];
+          const extras = Object.keys(cnh).map(k => { params.push(cnh[k]); return ', ' + k + '=$' + params.length; }).join('');
+          let where = 'WHERE id::text=$7';
+          if (docUser && docUser.client_id) { params.push(docUser.client_id); where += ' AND client_id=$' + params.length; }
+          const sql = 'UPDATE coletas SET placa_carreta=$1, capacidade_carga_cavalo=$2, ' +
+            'eixos_cavalo=$3, capacidade_carga_carreta=$4, eixos_carreta=$5, ' +
+            'eixos=COALESCE($6,eixos)' + extras + ', updated_at=NOW() ' + where + ' ' +
+            'RETURNING id::text AS id, motorista, motorista_rg, motorista_cpf, cnh_numero, cnh_categoria, ' +
+            "to_char(cnh_validade,'YYYY-MM-DD') AS cnh_validade, placa, placa_carreta, " +
             'capacidade_carga_cavalo, eixos_cavalo, capacidade_carga_carreta, eixos_carreta, eixos';
-          const r = await pool.query(sql, [
-            rg || null, placaCarreta || null, capacidadeCavalo || null, eixosCavalo,
-            capacidadeCarreta || null, eixosCarreta, eixosTotal, id
-          ]);
+          const r = await pool.query(sql, params);
           if (!r.rowCount) return sendJson(res, 404, { ok:false, error:'Coleta não encontrada.' });
           return sendJson(res, 200, { ok:true, ...r.rows[0] });
         } catch (e) {

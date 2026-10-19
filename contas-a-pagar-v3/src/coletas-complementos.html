@@ -81,6 +81,7 @@
     ['pix_tipo', 'Tipo da chave Pix', 'select', ['', 'CPF', 'CNPJ', 'Celular', 'E-mail', 'Aleatória']],
     ['pix_chave', 'Chave Pix', 'text', 'Chave Pix do motorista']
   ];
+  const CNH_CAMPOS = ['motorista_cpf', 'motorista_rg', 'cnh_numero', 'cnh_categoria', 'cnh_validade'];
   const CAMINHAO_CAMPOS = ['placa', 'tipo_caminhao', 'implemento', 'eixos', 'placa_carreta', 'capacidade_carga_cavalo', 'eixos_cavalo', 'capacidade_carga_carreta', 'eixos_carreta'];
 
   function obj(v) {
@@ -228,7 +229,7 @@
     const k = norm(nome); if (!k) return null;
     const doMot = rows().filter(r => norm(r.motorista) === k && String(r.id) !== currentId())
       .sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
-    return { comPlaca: doMot.find(r => String(r.placa || '').trim()) || null, comBanco: doMot.find(r => Object.keys(obj(r.motorista_banco)).length) || null, ultima: doMot[0] || null };
+    return { comPlaca: doMot.find(r => String(r.placa || '').trim()) || null, comBanco: doMot.find(r => Object.keys(obj(r.motorista_banco)).length) || null, comCnh: doMot.find(r => String(r.motorista_cpf || r.cnh_numero || '').trim()) || null, ultima: doMot[0] || null };
   }
   function setVal(id, v, soVazio) {
     const el = byId(id); if (!el || v === undefined || v === null || String(v).trim() === '') return false;
@@ -252,6 +253,8 @@
     }
     setVal('telefone_motorista', h.ultima.telefone_motorista, !forcar);
     setVal('transportadora_agregado', h.ultima.transportadora_agregado, !forcar);
+    const cnh = h.comCnh;
+    if (cnh) CNH_CAMPOS.forEach(k => setVal(k, k === 'cnh_validade' ? String(cnh[k] || '').slice(0, 10) : cnh[k], true));
     if (h.comBanco) preencherBanco(h.comBanco.motorista_banco, !forcar);
     const note = byId('lcAutoNote');
     if (note && (caminhao || h.comBanco)) {
@@ -269,6 +272,10 @@
     } else if (t.id === 'motorista' && e.isTrusted && !currentId()) {
       puxarDadosMotorista(t.value, false);
     }
+  });
+  // Nome lido da CNH anexada: completa telefone, caminhão e banco com a última coleta do motorista (só campos vazios).
+  document.addEventListener('coleta:motorista-lido', e => {
+    if (byId('modal')?.open) puxarDadosMotorista(e.detail?.nome, false);
   });
 
   /* ---------- Gravar junto com a coleta ---------- */
@@ -296,7 +303,7 @@
   function dadosDoFormulario() {
     const base = currentId() ? { ...(rowById(currentId()) || {}) } : {};
     ['os_numero', 'cliente', 'endereco_coleta', 'data_carregamento', 'hora_carregamento', 'destinatario', 'endereco_entrega', 'previsao_entrega', 'data_descarga', 'status',
-      'motorista', 'telefone_motorista', 'transportadora_agregado', ...CAMINHAO_CAMPOS, 'quantidade_paletes', 'peso_total', 'observacoes', 'frete_pago', 'percentual_adiantamento'
+      'motorista', 'telefone_motorista', 'transportadora_agregado', ...CNH_CAMPOS, ...CAMINHAO_CAMPOS, 'quantidade_paletes', 'peso_total', 'observacoes', 'frete_pago', 'percentual_adiantamento'
     ].forEach(k => { if (byId(k)) base[k] = val(k) });
     base.entregas_extras = lerDestinos();
     base.entrega_principal = lerEntrega1();
@@ -355,7 +362,7 @@
       (entregas.length ? entregas.map((e, i) => '<div class="ent"><span class="nn">' + (i + 1) + '</span><div><b>' + esc(e.destinatario || '—') + '</b><div>' + esc(e.endereco_entrega || '—') + (e.cidade ? ' • ' + esc(e.cidade) + (e.uf ? '/' + esc(e.uf) : '') : '') + '</div>' + (e.observacao ? '<small>' + esc(e.observacao) + '</small>' : '') + '</div></div>').join('') : '<div class="obs">—</div>') +
       '</div>' +
       '<div class="two">' +
-      '<div class="sec"><h2>Motorista</h2><div class="g" style="grid-template-columns:1fr 1fr">' + campo('Nome', c.motorista, 'w3') + campo('Telefone / WhatsApp', c.telefone_motorista) + campo('Transportadora / Agregado', c.transportadora_agregado) + campo('CPF', c.motorista_cpf) + campo('RG', c.motorista_rg) + '</div></div>' +
+      '<div class="sec"><h2>Motorista</h2><div class="g" style="grid-template-columns:1fr 1fr">' + campo('Nome', c.motorista, 'w3') + campo('Telefone / WhatsApp', c.telefone_motorista) + campo('Transportadora / Agregado', c.transportadora_agregado) + campo('CPF', c.motorista_cpf) + campo('RG', c.motorista_rg) + campo('CNH (nº / categoria)', [c.cnh_numero, c.cnh_categoria].filter(x => String(x || '').trim()).join(' • ')) + campo('Validade da CNH', dt(c.cnh_validade)) + '</div></div>' +
       '<div class="sec"><h2>Dados bancários / Pix</h2><div class="g" style="grid-template-columns:1fr 1fr">' +
       (temBanco || banco.titular ? campo('Banco', banco.banco) + campo('Tipo de conta', banco.tipo_conta) + campo('Agência', banco.agencia) + campo('Conta', banco.conta) + campo('Titular', banco.titular) + campo('CPF / CNPJ do titular', banco.documento_titular) : (pix ? '' : campo('Dados bancários', '', 'w3'))) +
       '</div>' + pix + '</div>' +
