@@ -126,9 +126,10 @@ const DESPESAS475=[
 const lista475=()=>'<html><body><table><tr><th>Lan&ccedil;amento</th><th>Unid</th><th>Evento</th><th>Fornecedor</th><th>Inclus&atilde;o</th><th>Pagamento</th><th>Valor</th><th>Situa&ccedil;&atilde;o</th></tr>'+
   DESPESAS475.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'<tr><td colspan=6>Total geral</td><td>27.733,05</td><td></td></tr></table></body></html>';
 // ---------------------------------------------------------------- WebAPI do BI2 (https://ssw.inf.br/api/bi2/<sigla>/<pasta>?codigo=N)
-// Só a sigla "tsta" (empresa A da demonstração) tem BI2. Autorização: "Basic " + md5 da senha, como no SSW.
+// Têm BI2: a sigla "tsta" (empresa A, acesso próprio do BI2) e a "lgc" (empresa C, mesma sigla e senha
+// do login do SSW, o caso do BI2 automático). Autorização: "Basic " + md5 da senha, como no SSW.
 // CSV no formato do BI2: linha 0 = cabeçalho do arquivo, linha 1 = títulos, demais = dados.
-const BI2_CONTAS={tsta:{senha:'bi2-a',pastas:['cliente','ctrc','tabelas']}};
+const BI2_CONTAS={tsta:{senha:'bi2-a',pastas:['cliente','ctrc','tabelas']},lgc:{senha:'segredo-c-3',pastas:['cliente','ctrc','tabelas']}};
 const HOJE4=new Date().toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit',year:'numeric'});
 const bi2Csv=(cod,titulos,linhas)=>['0;TSTA;TRANSPORTES TESTE A;'+cod+';'+HOJE4+';08:00','1;'+titulos.join(';'),...linhas.map(l=>'2;'+l.join(';'))].join('\r\n')+'\r\n';
 const BI2_RELATORIOS={
