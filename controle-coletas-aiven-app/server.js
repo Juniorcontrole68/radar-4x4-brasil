@@ -1078,6 +1078,7 @@ async function demoRotas(req,res,u){
       const t=await movitDemo.testarLoginSsw(d);
       if(!t.ok){sendJson(res,t.indisponivel?503:401,{ok:false,error:t.erro});return true}
       if(d.bi2){const tb=await movitDemo.testarBi2(d.bi2);if(!tb.ok){sendJson(res,tb.indisponivel?503:401,{ok:false,error:tb.erro});return true}}
+      else if(!(await pool.query('SELECT 1 FROM movit_client_ssw WHERE dominio=$1 AND bi2_senha_cifrada IS NOT NULL',[d.dominio])).rowCount)d.bi2=await movitDemo.bi2Automatico(d);
       const senhaCifrada=movitDemo.cifrar(d.senha);
       const bi2Cifrada=d.bi2?movitDemo.cifrar(d.bi2.senha):null;
       let clientId=(await pool.query('SELECT client_id FROM movit_client_ssw WHERE dominio=$1',[d.dominio])).rows[0]?.client_id;

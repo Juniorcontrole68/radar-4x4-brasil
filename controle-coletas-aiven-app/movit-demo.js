@@ -147,22 +147,31 @@ async function testarLoginSsw({ dominio, cpf, usuario, senha }) {
 // A WebAPI do BI2 (a mesma que o dashboard lê) responde 200 com CSV quando sigla, pasta e senha
 // conferem. Testa os relatórios usados pelos cards; basta um responder.
 const BI2_BASE = 'https://ssw.inf.br/api/bi2/';
-async function testarBi2({ sigla, senha, pasta }) {
+async function testarBi2({ sigla, senha, pasta }, { timeoutMs = 15000 } = {}) {
   const auth = 'Basic ' + crypto.createHash('md5').update(senha).digest('hex');
   let respondeu = false;
   for (const codigo of [13, 16, 83]) {
     try {
       const r = await fetch(BI2_BASE + encodeURIComponent(sigla) + '/' + encodeURIComponent(pasta) + '?codigo=' + codigo, {
         headers: { 'User-Agent': 'MOVIT-BI2/1.0', Accept: 'text/csv,*/*', Authorization: auth, 'Cache-Control': 'no-cache' },
-        signal: AbortSignal.timeout(15000)
+        signal: AbortSignal.timeout(timeoutMs)
       });
       await r.arrayBuffer().catch(() => null);
       respondeu = true;
       if (r.status === 200) return { ok: true };
+      if (r.status === 401 || r.status === 403) break;   // acesso recusado: não adianta tentar outro relatório
     } catch { /* tenta o próximo */ }
   }
   if (!respondeu) return { ok: false, indisponivel: true, erro: 'Não foi possível falar com o BI2 agora. Tente de novo em instantes, ou entre sem o BI2.' };
   return { ok: false, erro: 'O BI2 não aceitou esse acesso. Confira sigla, senha e pasta do BI2, ou deixe esses campos vazios.' };
+}
+
+// BI2 automático: sem os campos do BI2, tenta a WebAPI com o domínio do SSW como sigla e a senha do
+// SSW. Se o BI2 aceitar, a empresa ganha os cards do BI2 sem digitar nada; se não, segue sem eles.
+async function bi2Automatico({ dominio, senha }) {
+  const acesso = { sigla: String(dominio || '').toLowerCase(), senha, pasta: 'cliente' };
+  const t = await testarBi2(acesso, { timeoutMs: 6000 });
+  return t.ok ? acesso : null;
 }
 
 // ------------------------------------------------------------------ banco
@@ -305,6 +314,6 @@ function rotaLiberada(user, pathname, onde) {
 }
 
 module.exports = {
-  ATIVA, MODULOS, modulosProntos, cifrar, decifrar, normalizarEntrada, testarLoginSsw, testarBi2, initDb,
+  ATIVA, MODULOS, modulosProntos, cifrar, decifrar, normalizarEntrada, testarLoginSsw, testarBi2, bi2Automatico, initDb,
   processoDaEmpresa, encerrar, encerrarTodos, repassar, clienteDemo, comBi2, modulosLiberados, telasLiberadas, permsLiberadas, rotaLiberada
 };

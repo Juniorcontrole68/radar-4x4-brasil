@@ -193,7 +193,13 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   for(const p of ['/api/bi2/receita','/api/bi2/sla-clientes','/api/sheet/lancamentos'])
   {r=await call('GET',p,{cookie:cookieBi2});check('com BI2, GET '+p+' continua 403',r.status===403,'veio '+r.status+' '+r.text.slice(0,120))}
   const pedidos=await (await fetch(M+'/__mock/bi2')).json();
-  check('o BI2 consultado é só o da empresa A',Object.keys(pedidos).every(k=>k==='tsta'),JSON.stringify(pedidos));
+  check('cada empresa só consulta o BI2 da sua sigla',Object.keys(pedidos).every(k=>['tsta','tst','xyz','lgc'].includes(k)),JSON.stringify(pedidos));
+  r=await call('GET','/api/auth/me',{cookie:cookieC});
+  check('BI2 automático: a empresa C, que o BI2 aceita com o login do SSW, ganha os cards sem digitar nada',r.json?.user?.client?.bi2===true&&(r.json?.user?.demo_perms||[]).includes('ssw_atrasos'),JSON.stringify(r.json?.user?.client||{}).slice(0,200));
+  const bi2C=(await db.query("SELECT bi2_sigla,bi2_senha_cifrada FROM movit_client_ssw WHERE dominio='LGC'")).rows[0];
+  check('...com a senha do BI2 guardada criptografada',bi2C.bi2_sigla==='lgc'&&/^v1:/.test(bi2C.bi2_senha_cifrada||'')&&!bi2C.bi2_senha_cifrada.includes('segredo'),JSON.stringify(bi2C).slice(0,120));
+  r=await call('GET','/api/bi2/atrasos',{cookie:cookieC});
+  check('...e lê os CT-es atrasados do BI2 dela',r.status===200&&r.json?.total===2,r.status+' '+r.text.slice(0,160));
   r=await call('GET','/api/bi2/atrasos',{cookie:cookieB});
   check('empresa B (sem BI2) continua sem os cards do BI2',r.status===403,'veio '+r.status);
   r=await call('GET','/api/auth/me',{cookie:cookieB});
