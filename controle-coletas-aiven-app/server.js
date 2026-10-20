@@ -985,7 +985,7 @@ async function dashboardUserContext(row){
     client_modules:clientModules
   };
   // Cliente da demo: o painel só mostra os módulos contratados que já funcionam separados por empresa.
-  if(movitDemo.clienteDemo(ctx)){ctx.client_modules=movitDemo.modulosLiberados(ctx);ctx.demo=true;ctx.demo_telas=movitDemo.telasLiberadas(ctx)}
+  if(movitDemo.clienteDemo(ctx)){ctx.client_modules=movitDemo.modulosLiberados(ctx);ctx.demo=true;ctx.demo_telas=movitDemo.telasLiberadas(ctx);ctx.demo_perms=[...movitDemo.permsLiberadas(ctx)]}
   ctx.sandbox=tenantSandbox(ctx);
   return ctx;
 }

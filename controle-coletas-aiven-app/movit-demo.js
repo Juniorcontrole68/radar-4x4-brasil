@@ -44,13 +44,19 @@ const MODULOS = {
     ssw: [/^\/api\/agendamento-teste(\/nf)?$/],
     telas: ['agendamento-teste']
   },
-  usuarios: { painel: [], ssw: [], telas: ['usuarios'] }
+  usuarios: { painel: [], ssw: [], telas: ['usuarios'] },
+  // Dashboards: por enquanto só os cards que leem a opção 38 do SSW com o login da empresa.
+  dashboards: {
+    painel: [],
+    ssw: [/^\/api\/evolucao-motoristas$/, /^\/api\/bi2\/saidas-baixas$/],
+    telas: ['dashboards']
+  }
 };
 // Rotas que todo cliente da demo usa (login, sessão, usuários da própria empresa, guia e vídeos,
 // e a conferência da conexão com o SSW da empresa).
 const ROTAS_BASE = { painel: [/^\/api\/empresa\/logo$/, /^\/api\/auth\//, /^\/api\/painel\/auth\//, /^\/api\/demo\//, /^\/api\/guia(\/|$)/], ssw: [/^\/api\/ssw\/conexao$/] };
 // Permissões internas que cada módulo libera (as mesmas usadas pelo painel).
-const PERMS_POR_MODULO = { roteirizador: ['roteirizador'], agendamento: ['agendamentos'], usuarios: [] };
+const PERMS_POR_MODULO = { roteirizador: ['roteirizador'], agendamento: ['agendamentos'], usuarios: [], dashboards: ['evolucao', 'ssw_saidas'] };
 
 function modulosProntos() { return Object.keys(MODULOS); }
 

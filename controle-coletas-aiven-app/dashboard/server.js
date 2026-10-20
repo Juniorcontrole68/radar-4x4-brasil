@@ -12,6 +12,10 @@ const SEM_ROTINAS=TEST_MODE||DEMO_MODE;
 // sem a variável valem as da CONSTRULOG (AMR). A primeira é a usada para consultar CT-es (opção 101).
 const SSW_UNIDADES_CFG=String(process.env.SSW_UNIDADES||'').toUpperCase().split(/[\s,;]+/).filter(x=>/^[A-Z0-9]{3}$/.test(x));
 const SSW_UNIDADE=SSW_UNIDADES_CFG[0]||'AMR';
+// Unidades lidas na opção 38 (romaneios do dia por unidade). CONSTRULOG: AMR e TBT.
+const SSW38_UNIDADES=SSW_UNIDADES_CFG.length?SSW_UNIDADES_CFG:['AMR','TBT'];
+const SSW38_ROM_RE=new RegExp('^(?:'+SSW38_UNIDADES.join('|')+')','i');
+function fetchSsw38QuickTodas(){return Promise.allSettled(SSW38_UNIDADES.map(u=>fetchSsw38QuickPrefix(u)))}
 const ID=String(process.env.SPREADSHEET_ID||'').trim()||(SEM_ROTINAS?'':'1miU5AW514LbRk5UsXYsVgXL1JTj_ZJgafRmBDF-tzWU');
 // Chave das chamadas servidor-a-servidor, entregue pelo server.js ao iniciar este processo.
 const INTERNAL_KEY=String(process.env.DASH_INTERNAL_KEY||'');
@@ -367,7 +371,7 @@ function parseSsw38Table(html){
   const rows=[];
   for(const cells of parsed.slice(hi+1)){
     const rom=ir>=0?cells[ir]:'',mot=im>=0?cells[im]:'',qraw=iq>=0?cells[iq]:'';
-    if(!rom||!/^(?:AMR|TBT)/i.test(rom)||!mot)continue;
+    if(!rom||!SSW38_ROM_RE.test(rom)||!mot)continue;
     const q=Number(String(qraw).replace(/\D/g,''))||0;
     rows.push({romaneio:rom,veiculo:iv>=0?cells[iv]:'',inclusao:ii>=0?cells[ii]:'',motorista:mot,qtdeCtrcs:q,faltaOcorr:ifalta>=0?(Number(String(cells[ifalta]||'').replace(/\D/g,''))||0):0,
       seqRomaneio:(String(trs[parsed.indexOf(cells)]||'').replace(/&amp;/g,'&').match(/[?&]seq_romaneio=(\d+)/i)||[])[1]||''});
@@ -486,7 +490,7 @@ async function fetchSsw38RomaneioDetailDirect(romaneio,qtdeCtrcs=0,motorista='',
 
 async function fetchSsw38QuickPrefix(prefix='AMR'){
   prefix=String(prefix||'AMR').trim().toUpperCase();
-  if(!/^[A-Z]{3}$/.test(prefix))prefix='AMR';
+  if(!/^[A-Z0-9]{3}$/.test(prefix))prefix=SSW38_UNIDADES[0];
   const cached=SSW38_PREFIX_CACHE.get(prefix);
   if(cached&&Date.now()-cached.at<10000)return cached.value;
   if(SSW38_PREFIX_INFLIGHT.has(prefix))return SSW38_PREFIX_INFLIGHT.get(prefix);
@@ -554,14 +558,14 @@ async function fetchSsw38QuickPrefix(prefix='AMR'){
       if(previous?.rows?.length){
         console.log('SSW38 QUICK '+prefix+' vazio temporário; preservando '+previous.rows.length+' romaneio(s) válidos em cache.');
         SSW38_PREFIX_CACHE.set(prefix,{at:Date.now(),value:previous});
-        if(prefix==='AMR')SSW38_QUICK_CACHE={at:Date.now(),value:previous};
+        if(prefix===SSW38_UNIDADES[0])SSW38_QUICK_CACHE={at:Date.now(),value:previous};
         return previous
       }
     }
     const total=p.rows.reduce((a,x)=>a+Number(x.qtdeCtrcs||0),0);
     const value={ok:true,prefix,rows:p.rows,total,motoristas:[...new Set(p.rows.map(x=>x.motorista).filter(Boolean))].length,romaneios:p.rows.length};
     if(p.rows.length)SSW38_PREFIX_CACHE.set(prefix,{at:Date.now(),value});
-    if(prefix==='AMR'&&p.rows.length)SSW38_QUICK_CACHE={at:Date.now(),value};
+    if(prefix===SSW38_UNIDADES[0]&&p.rows.length)SSW38_QUICK_CACHE={at:Date.now(),value};
     console.log('SSW38 QUICK '+prefix+': '+JSON.stringify({
       total:value.total,romaneios:value.romaneios,motoristas:value.motoristas,
       rows:value.rows.map(x=>({romaneio:x.romaneio,motorista:x.motorista,veiculo:x.veiculo,total:x.qtdeCtrcs}))
@@ -572,7 +576,14 @@ async function fetchSsw38QuickPrefix(prefix='AMR'){
   return job
 }
 async function fetchSsw38Quick(){
-  return fetchSsw38QuickPrefix('AMR')
+  // CONSTRULOG (sem SSW_UNIDADES): a leitura rápida continua só na AMR, como sempre foi.
+  if(!SSW_UNIDADES_CFG.length)return fetchSsw38QuickPrefix('AMR');
+  // Outra empresa: junta os romaneios de todas as unidades dela.
+  const lidas=await fetchSsw38QuickTodas(),ok=lidas.filter(x=>x.status==='fulfilled').map(x=>x.value);
+  if(!ok.length)throw lidas[0].reason;
+  const rows=ok.flatMap(v=>v.rows||[]);
+  return{ok:true,prefix:SSW38_UNIDADES.join(','),rows,total:rows.reduce((a,x)=>a+Number(x.qtdeCtrcs||0),0),
+    motoristas:new Set(rows.map(x=>x.motorista).filter(Boolean)).size,romaneios:rows.length}
 }
 
 
@@ -4193,7 +4204,7 @@ async function buildTrackingPlannedRoute(date='',driver='',plate='',prio=0){
   };
 
   if(target===spDateISO()){
-    const quick=await Promise.allSettled([fetchSsw38QuickPrefix('AMR'),fetchSsw38QuickPrefix('TBT')]);
+    const quick=await fetchSsw38QuickTodas();
     for(const q of quick)if(q.status==='fulfilled')for(const x of (q.value?.rows||[]))addCandidate(x)
   }
 
@@ -5138,7 +5149,7 @@ async function lancBuscarRomaneio(numero,data){
   const alvo=/^\d{4}-\d{2}-\d{2}$/.test(String(data||''))?data:spDateISO();
   const lista=[];
   if(alvo===spDateISO()){
-    const quick=await Promise.allSettled([fetchSsw38QuickPrefix('AMR'),fetchSsw38QuickPrefix('TBT')]);
+    const quick=await fetchSsw38QuickTodas();
     for(const q of quick)if(q.status==='fulfilled')lista.push(...(q.value?.rows||[]))
   }
   // para hoje basta a lista da opção 38; a leitura completa do dia (pesada) só para outra data ou se a lista falhar
@@ -5182,7 +5193,7 @@ async function lancMotoristasAgora(token){
   const doSsw=[];
   try{
     const hoje=spDateISO(),lista=[];
-    const quick=await Promise.allSettled([fetchSsw38QuickPrefix('AMR'),fetchSsw38QuickPrefix('TBT')]);
+    const quick=await fetchSsw38QuickTodas();
     for(const q of quick)if(q.status==='fulfilled')lista.push(...(q.value?.rows||[]));
     for(const x of lista){
       const nome=String(x.motorista||'').trim();
@@ -5565,7 +5576,7 @@ async function lancPorKm(data,id,linhas){
 }
 // Romaneios abertos hoje no SSW (opção 38), das duas filiais.
 async function lancRomaneiosDeHoje(){
-  const quick=await Promise.allSettled([fetchSsw38QuickPrefix('AMR'),fetchSsw38QuickPrefix('TBT')]),lista=[];
+  const quick=await fetchSsw38QuickTodas(),lista=[];
   for(const q of quick)if(q.status==='fulfilled')lista.push(...(q.value?.rows||[]));
   return lista
 }
@@ -5717,7 +5728,7 @@ if(!SEM_ROTINAS)setInterval(()=>{const h=Number(new Date().toLocaleString('en-GB
 async function buildRoteirizadorLista(date){
   let romRows=[],operation=null;
   if(date===spDateISO()){
-    const quick=await Promise.allSettled([fetchSsw38QuickPrefix('AMR'),fetchSsw38QuickPrefix('TBT')]);
+    const quick=await fetchSsw38QuickTodas();
     for(const q of quick)if(q.status==='fulfilled')romRows.push(...(q.value?.rows||[]));
     const cacheKey='online|'+date+'|'+date,hit=SSW_DRIVER_CACHE.get(cacheKey);
     if(hit?.value)operation=hit.value;
@@ -6465,7 +6476,7 @@ if(u.pathname==='/api/evolucao-motoristas'&&req.method==='GET'){try{
   const nkey=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
   let operation=null,quickRows=[];
   if(date===spDateISO()){
-    const quick=await Promise.allSettled([fetchSsw38QuickPrefix('AMR'),fetchSsw38QuickPrefix('TBT')]);
+    const quick=await fetchSsw38QuickTodas();
     for(const q of quick)if(q.status==='fulfilled')quickRows.push(...(q.value?.rows||[]));
     const cacheKey='online|'+date+'|'+date,hit=SSW_DRIVER_CACHE.get(cacheKey);
     operation=hit?.value||(SSW_DRIVER_LAST?.key===cacheKey?SSW_DRIVER_LAST.value:null);
