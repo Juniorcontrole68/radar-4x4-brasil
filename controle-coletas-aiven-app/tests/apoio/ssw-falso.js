@@ -11,11 +11,13 @@ const DATA={
   TBT:[['TBT000321-1','TBT9Z99',HOJE,'ROGER TESTE','3','3']],
   // unidades da empresa A da demonstração (tests/movit-demo.js)
   MTZ:[['MTZ000777-1','ABC1D23',HOJE,'CARLOS DEMO MTZ','6','2']],
-  CPS:[['CPS000088-1','CPS9K88',HOJE,'PAULO DEMO CPS','4','4']]
+  CPS:[['CPS000088-1','CPS9K88',HOJE,'PAULO DEMO CPS','4','4']],
+  // unidade de um parceiro da empresa A
+  PRC:[['PRC000015-0','PRC1A11',HOJE,'PEDRO PARCEIRO','7','3']]
 };
 const page=rows=>'<html><body><form><input name="act" value=""><input name="dummy" value="1"></form><table><tr><th>Romaneio</th><th>Veículo</th><th>Inclusão</th><th>Motorista</th><th>Qtde CTRCs</th><th>Falta Ocorr.</th><th></th></tr>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'<td><a href=# class=sra onclick="ajaxEnvia(\'\',1,\'ssw0198?act=ENV_ROM_COMPROV&seq_romaneio='+SEQ[r[0]]+'\');return(false)"><u>Imagens</u></a></td></tr>').join('')+'</table></body></html>';
 // número interno de cada romaneio (o link Imagens abre a tela de comprovantes por ele)
-const SEQ={'AMR001056-1':5056,'AMR001057-1':5057,'TBT000321-1':5321,'MTZ000777-1':7777,'CPS000088-1':8088};
+const SEQ={'AMR001056-1':5056,'AMR001057-1':5057,'TBT000321-1':5321,'MTZ000777-1':7777,'CPS000088-1':8088,'PRC000015-0':9015};
 const loginPage='<html><body><form action="ssw0422"><input name="f1"><input name="f2"><input name="f3"><input type="password" name="f4"></form></body></html>';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 

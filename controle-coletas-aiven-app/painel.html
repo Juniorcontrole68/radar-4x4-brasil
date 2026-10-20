@@ -116,6 +116,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
       <button class="tab" data-group="operacao" data-module="frota" data-src="/frota?embed=1" data-name="Frota">🚚 Frota</button>
       <button class="tab" data-group="operacao" data-module="dashboard" data-src="/dashboard/?embed=1&view=dashboard" data-name="Visão Geral">📊 Visão Geral</button>
       <button class="tab" data-group="operacao" data-module="dashboards" data-src="/dashboard/?embed=1&view=dashboards" data-name="Dashboards">📈 Dashboards</button>
+      <button class="tab" data-group="operacao" data-module="parceiros" data-src="/dashboard/?embed=1&view=parceiros" data-name="Parceiros">🤝 Parceiros</button>
       <button class="tab" data-group="operacao" data-module="agendamento-teste" data-src="/dashboard/?embed=1&view=agendamento-teste" data-name="Agendamento">📅 Agendamento</button>
       <button class="tab" data-group="operacao" data-module="lancamentos" data-src="/dashboard/?embed=1&view=lancamentos" data-name="Lançamentos">📝 Lançamentos</button>
       <button class="tab" data-group="operacao" data-module="carga" data-src="/dashboard/?embed=1&view=carga" data-name="Montar carga">📦 Montar carga</button>
@@ -284,7 +285,7 @@ async function abrirModulo(btn){
   try{
     let src=btn.dataset.src;
     const sep=src.includes('?')?'&':'?';
-    if(mod==='dashboard'||mod==='dashboards'||mod==='programacao'||mod==='carga'||mod==='lancamentos'||mod==='tracking'||mod==='agendamento-teste'||mod==='usuarios'||mod==='fin-op'||mod==='receita-ssw'||mod==='remetentes'||mod==='faturas'||mod==='despesas'||mod==='holerites'){
+    if(mod==='dashboard'||mod==='dashboards'||mod==='parceiros'||mod==='programacao'||mod==='carga'||mod==='lancamentos'||mod==='tracking'||mod==='agendamento-teste'||mod==='usuarios'||mod==='fin-op'||mod==='receita-ssw'||mod==='remetentes'||mod==='faturas'||mod==='despesas'||mod==='holerites'){
       DASH_FRAME_TOKEN='';
       const ticket=await dashboardTicket();
       src += sep+'ticket='+encodeURIComponent(ticket)+'&refresh='+Date.now();

@@ -1064,6 +1064,51 @@ async function demoRotas(req,res,u){
     const mq=await pool.query('SELECT key,name FROM movit_modules WHERE active=TRUE AND key=ANY($1::text[]) ORDER BY name',[movitDemo.modulosProntos()]);
     sendJson(res,200,{ok:true,demo:true,modulos:mq.rows});return true;
   }
+  // Parceiros da empresa (cadastro pelo administrador dela) e a evolução das entregas de cada um.
+  const parc=u.pathname.match(/^\/api\/painel\/parceiros(?:\/(\d+|evolucao))?$/);
+  if(parc){
+    try{
+      const user=await dashboardSession(req,false);
+      if(!movitDemo.clienteDemo(user)){sendJson(res,403,{ok:false,error:'Disponível só para empresas conectadas ao SSW.'});return true}
+      const sub=parc[1]||'';
+      if(req.method==='GET'&&!sub){
+        const q=await pool.query('SELECT id::text AS id,nome,dominio,usuario,unidades,created_at FROM movit_parceiros WHERE client_id=$1 ORDER BY nome',[user.client_id]);
+        sendJson(res,200,{ok:true,parceiros:q.rows});return true;
+      }
+      if(req.method==='GET'&&sub==='evolucao'){
+        if(!dashboardHas(user,'evolucao')){sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});return true}
+        const q=await pool.query('SELECT id::text AS id,nome,unidades FROM movit_parceiros WHERE client_id=$1 ORDER BY nome',[user.client_id]);
+        const parceiros=[],num=v=>Number(v)||0;
+        // Um parceiro por vez: cada um tem o seu processo de leitura, e o limite de processos é pequeno.
+        for(const pc of q.rows){
+          try{
+            const proc=await movitDemo.processoDoParceiro(pool,user.client_id,pc.id,'http://127.0.0.1:'+PORT);
+            const ev=await movitDemo.consultar(proc.porta,'/api/evolucao-motoristas',req.headers);
+            parceiros.push({id:pc.id,nome:pc.nome,unidades:pc.unidades,ok:true,total:num(ev.total??ev.totalRomaneado),entregues:num(ev.entregues??ev.entregues38??ev.baixadas),pendentes:num(ev.pendentes??ev.pendentes38),ocorrencias:Array.isArray(ev.ocorrencias)?num(ev.ocorrencias38??ev.ocorrencias.length):num(ev.ocorrencias),taxa:num(ev.taxa),motoristas:(ev.motoristas38||[]).map(m=>({motorista:m.motorista,total:num(m.total),entregues:num(m.entregues),pendentes:num(m.pendentes)}))});
+          }catch(e){parceiros.push({id:pc.id,nome:pc.nome,unidades:pc.unidades,ok:false,erro:e.message||'Falha na leitura do SSW do parceiro.'})}
+        }
+        sendJson(res,200,{ok:true,parceiros});return true;
+      }
+      if(!user.is_admin){sendJson(res,403,{ok:false,error:'Só o administrador da empresa cadastra parceiros.'});return true}
+      if(req.method==='POST'&&!sub){
+        const d=movitDemo.normalizarParceiro(await readJsonBodyLimited(req,16*1024));
+        if(d.erros.length){sendJson(res,400,{ok:false,error:d.erros[0],erros:d.erros});return true}
+        const t=await movitDemo.testarLoginSsw(d);
+        if(!t.ok){sendJson(res,t.indisponivel?503:400,{ok:false,error:t.erro.replace('esse login','o login do parceiro')});return true}
+        const q=await pool.query(`INSERT INTO movit_parceiros(client_id,nome,dominio,cpf,usuario,senha_cifrada,unidades) VALUES($1,$2,$3,$4,$5,$6,$7)
+          ON CONFLICT(client_id,dominio,usuario) DO UPDATE SET nome=EXCLUDED.nome,cpf=EXCLUDED.cpf,senha_cifrada=EXCLUDED.senha_cifrada,unidades=EXCLUDED.unidades
+          RETURNING id::text AS id,nome,dominio,usuario,unidades,created_at`,[user.client_id,d.nome,d.dominio,d.cpf,d.usuario,movitDemo.cifrar(d.senha),d.unidades.join(',')]);
+        movitDemo.encerrar('parceiro:'+q.rows[0].id);
+        sendJson(res,201,{ok:true,parceiro:q.rows[0]});return true;
+      }
+      if(req.method==='DELETE'&&/^\d+$/.test(sub)){
+        const q=await pool.query('DELETE FROM movit_parceiros WHERE id=$1 AND client_id=$2',[sub,user.client_id]);
+        movitDemo.encerrar('parceiro:'+sub);
+        sendJson(res,q.rowCount?200:404,{ok:!!q.rowCount,error:q.rowCount?undefined:'Parceiro não encontrado.'});return true;
+      }
+      sendJson(res,405,{ok:false,error:'Método não suportado.'});return true;
+    }catch(e){sendJson(res,e.status||500,{ok:false,error:e.status?e.message:'Não foi possível concluir agora.'});return true}
+  }
   if(req.method==='POST'&&u.pathname==='/api/demo/entrar'){
     try{
       const ip=String(req.headers['x-forwarded-for']||req.socket?.remoteAddress||'').split(',')[0].trim();
