@@ -3306,6 +3306,22 @@ async function start() {
 
       if (u.pathname === '/api/empresa/logo') return rotaLogo(req,res,u);
 
+      // Atalho de acesso direto: um link secreto (ATALHO_TOKEN) que já entra com o usuário ATALHO_USUARIO,
+      // para o atalho do computador abrir sem pedir senha. Sem as duas variáveis, a rota não existe.
+      if (req.method === 'GET' && u.pathname.startsWith('/atalho/')) {
+        const segredo=String(process.env.ATALHO_TOKEN||''),usuario=String(process.env.ATALHO_USUARIO||'').trim();
+        let dado='';try{dado=decodeURIComponent(u.pathname.slice('/atalho/'.length))}catch{}
+        const igual=segredo.length>=32&&crypto.timingSafeEqual(crypto.createHash('sha256').update(dado).digest(),crypto.createHash('sha256').update(segredo).digest());
+        if(!igual||!usuario){res.writeHead(404,{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'});return res.end('Não encontrado.');}
+        try{
+          const r=await pool.query('SELECT id::text AS id FROM dashboard_users WHERE lower(username)=lower($1) AND active=TRUE LIMIT 1',[usuario]);
+          if(!r.rowCount){res.writeHead(404,{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'});return res.end('Usuário do atalho não encontrado.');}
+          const token=await dashboardCreateSession(r.rows[0].id,365);
+          res.writeHead(302,{'Location':'/','Cache-Control':'no-store','Referrer-Policy':'no-referrer','Set-Cookie':dashboardSetCookie(token,365*24*60*60)});
+          return res.end();
+        }catch(e){console.error('ATALHO:',e.message);return sendJson(res,500,{ok:false,error:'Não foi possível entrar pelo atalho.'});}
+      }
+
       if (req.method === 'GET' && u.pathname === '/api/auth/me') {
         try {
           const user=await dashboardSession(req,false);
