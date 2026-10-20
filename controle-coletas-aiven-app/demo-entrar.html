@@ -28,6 +28,7 @@ button:disabled{opacity:.6;cursor:wait}
 ol{margin:0;padding-left:20px;font-size:14px;line-height:1.55;color:#334155}ol li{margin-bottom:9px}
 .mods{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}.mods span{background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:600}
 .admin{display:block;text-align:center;margin-top:14px;font-size:12px;color:var(--muted)}
+.logo-row{display:flex;align-items:center;gap:10px}.logo-row img{height:40px;max-width:120px;object-fit:contain;border:1px solid var(--border);border-radius:8px;padding:3px;background:#fff}input[type=file]{padding:8px;font-size:13px}
 @media(max-width:760px){.main{grid-template-columns:1fr}h1{font-size:24px}.row{grid-template-columns:1fr}}
 </style>
 </head>
@@ -55,6 +56,8 @@ ol{margin:0;padding-left:20px;font-size:14px;line-height:1.55;color:#334155}ol l
     <input id="unidades" name="unidades" maxlength="80" autocapitalize="characters" placeholder="Ex.: MTZ, CPS">
     <label for="contato">WhatsApp ou e-mail para contato <small>(opcional)</small></label>
     <input id="contato" name="contato" maxlength="160">
+    <label for="logo">Logo da sua empresa <small>(opcional, sem logo usamos o da MOVIT)</small></label>
+    <div class="logo-row"><img id="logoPrev" alt="" hidden><input id="logo" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></div>
     <button id="btn" type="submit">Entrar na demonstração</button>
     <div id="msg" class="msg" role="status"></div>
     <div class="safe"><span>🔒</span><span>O login é conferido direto no SSW. A senha fica guardada criptografada e é usada só para ler os dados da sua própria empresa. Nenhuma outra empresa vê os seus dados, e você pode pedir a exclusão a qualquer momento.</span></div>
@@ -82,11 +85,34 @@ fetch('/api/demo/info',{cache:'no-store'}).then(r=>r.json()).then(j=>{
   for(const m of j.modulos||[]){const s=document.createElement('span');s.textContent=m.name;el.appendChild(s)}
   if(!(j.modulos||[]).length)el.textContent='—';
 }).catch(()=>{$('#mods').textContent='—'});
+// Logo opcional: reduzido no navegador (até 360x120) e enviado em PNG junto com o login.
+let logoData='';
+function reduzir(arquivo){
+  return new Promise((ok,falha)=>{
+    if(!/^image\/(png|jpeg|webp|gif)$/.test(arquivo.type))return falha(new Error('Use uma imagem PNG, JPG, WebP ou GIF.'));
+    const url=URL.createObjectURL(arquivo),img=new Image();
+    img.onload=()=>{
+      const k=Math.min(1,360/img.width,120/img.height),c=document.createElement('canvas');
+      c.width=Math.max(1,Math.round(img.width*k));c.height=Math.max(1,Math.round(img.height*k));
+      c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(url);ok(c.toDataURL('image/png'));
+    };
+    img.onerror=()=>{URL.revokeObjectURL(url);falha(new Error('Não consegui abrir essa imagem.'))};
+    img.src=url;
+  });
+}
+$('#logo').addEventListener('change',async e=>{
+  const f=e.target.files&&e.target.files[0],prev=$('#logoPrev'),msg=$('#msg');
+  logoData='';prev.hidden=true;msg.className='msg';msg.textContent='';
+  if(!f)return;
+  try{logoData=await reduzir(f);prev.src=logoData;prev.hidden=false}
+  catch(err){e.target.value='';msg.className='msg err';msg.textContent=err.message}
+});
 $('#f').addEventListener('submit',async e=>{
   e.preventDefault();
   const btn=$('#btn'),msg=$('#msg');
   btn.disabled=true;btn.textContent='Conferindo no SSW…';msg.className='msg';msg.textContent='';
   const body=Object.fromEntries(new FormData(e.target).entries());
+  delete body.logo;if(logoData)body.logo=logoData;
   try{
     const r=await fetch('/api/demo/entrar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json().catch(()=>({}));

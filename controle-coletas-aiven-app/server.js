@@ -870,7 +870,7 @@ const FROTA_SEM_ACESSO='Seu usuário não tem acesso ao módulo Frota. Peça a l
 // dados separados por empresa. O resto do sistema lê o SSW e as planilhas da CONSTRULOG e fica fechado.
 const SANDBOX_PERMS=new Set(['roteirizador']);
 const DEMO_RATE=new Map();
-const SANDBOX_API=[/^\/api\/rc\//,/^\/api\/rc$/,/^\/api\/auth\//,/^\/api\/painel\/auth\//,/^\/api\/guia(\/|$)/];
+const SANDBOX_API=[/^\/api\/empresa\/logo$/,/^\/api\/rc\//,/^\/api\/rc$/,/^\/api\/auth\//,/^\/api\/painel\/auth\//,/^\/api\/guia(\/|$)/];
 function tenantSandbox(user){return !!(user&&!user.internal&&!user.is_platform_admin&&user.client&&String(user.client.slug||'').toLowerCase()!=='construlog'&&!movitDemo.clienteDemo(user))}
 function clienteBloqueado(user){
   if(!user||user.is_platform_admin||!user.client)return '';
@@ -922,10 +922,53 @@ function dashboardHas(user,perm){
   if(tenantSandbox(user)&&!SANDBOX_PERMS.has(perm))return false;
   return !!(user&&(user.is_admin||user.permissions?.includes('*')||user.permissions?.includes(perm)))
 }
+// ---------------------------------------------------------------- logo da empresa
+// Logo padrão (marca MOVIT), usado quando a empresa ainda não subiu o dela.
+const LOGO_MOVIT_SVG='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#14b8a6"/><stop offset="1" stop-color="#0f766e"/></linearGradient></defs><rect width="64" height="64" rx="14" fill="url(#g)"/><g transform="translate(8 14) scale(.75)"><rect x="2" y="6" width="36" height="24" rx="3" fill="#fff"/><path d="M38 12h13l9 10v8H38z" fill="#ccfbf1"/><path d="M42 15h8l6 7H42z" fill="#0f766e"/><circle cx="14" cy="32" r="6" fill="#0f172a"/><circle cx="14" cy="32" r="2.5" fill="#cbd5e1"/><circle cx="50" cy="32" r="6" fill="#0f172a"/><circle cx="50" cy="32" r="2.5" fill="#cbd5e1"/></g></svg>';
+const LOGO_MAX_BYTES=300*1024;
+// Confere a imagem enviada (data URL de PNG, JPEG, WebP ou GIF, até 300 KB). SVG não entra porque
+// pode carregar script. Devolve o data URL normalizado ou lança erro com status 400.
+function logoValido(dataUrl){
+  const m=/^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+=*)$/.exec(String(dataUrl||'').trim());
+  const erro=msg=>{const e=new Error(msg);e.status=400;return e};
+  if(!m)throw erro('Envie o logo em PNG, JPG, WebP ou GIF.');
+  const buf=Buffer.from(m[2],'base64');
+  if(!buf.length)throw erro('Arquivo de logo vazio.');
+  if(buf.length>LOGO_MAX_BYTES)throw erro('O logo passa de 300 KB. Use uma imagem menor.');
+  const assinatura={'image/png':[0x89,0x50,0x4e,0x47],'image/jpeg':[0xff,0xd8,0xff],'image/gif':[0x47,0x49,0x46,0x38],'image/webp':[0x52,0x49,0x46,0x46]}[m[1]];
+  if(!assinatura.every((b,i)=>buf[i]===b))throw erro('O arquivo não é uma imagem válida.');
+  return 'data:'+m[1]+';base64,'+buf.toString('base64');
+}
+async function salvarLogo(clientId,dataUrl){
+  const logo=dataUrl==null?null:logoValido(dataUrl);
+  await pool.query('UPDATE movit_clients SET logo=$2,logo_at=CASE WHEN $2::text IS NULL THEN NULL ELSE NOW() END,updated_at=NOW() WHERE id=$1',[clientId,logo]);
+}
+async function rotaLogo(req,res,u){
+  if(req.method==='GET'){
+    let logo=null;
+    if(!u.searchParams.has('padrao')){
+      try{const user=await dashboardSession(req,false,{checarRota:false});if(user.client_id)logo=(await pool.query('SELECT logo FROM movit_clients WHERE id=$1',[user.client_id])).rows[0]?.logo||null}catch{ /* sem sessão: logo da MOVIT */ }
+    }
+    const m=logo&&/^data:([^;]+);base64,(.+)$/.exec(logo);
+    const corpo=m?Buffer.from(m[2],'base64'):Buffer.from(LOGO_MOVIT_SVG);
+    res.writeHead(200,{'Content-Type':m?m[1]:'image/svg+xml','Cache-Control':'private, max-age=300','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'"});
+    return res.end(corpo);
+  }
+  if(req.method==='POST'||req.method==='DELETE'){
+    try{
+      const user=await dashboardSession(req,true,{checarRota:false});
+      if(!user.client_id)return sendJson(res,400,{ok:false,error:'Usuário sem empresa.'});
+      const body=req.method==='POST'?await readJsonBodyLimited(req,LOGO_MAX_BYTES*2):{};
+      await salvarLogo(user.client_id,req.method==='POST'?body.logo:null);
+      return sendJson(res,200,{ok:true});
+    }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Não foi possível salvar o logo.'})}
+  }
+  return sendJson(res,405,{ok:false,error:'Método não permitido.'});
+}
 async function dashboardUserContext(row){
   let client=null,clientModules=[];
   if(row?.client_id){
-    const cq=await pool.query("SELECT id::text,name,slug,status,plan,monthly_fee,due_day,trial_ends_at FROM movit_clients WHERE id=$1 LIMIT 1",[row.client_id]);
+    const cq=await pool.query("SELECT id::text,name,slug,status,plan,monthly_fee,due_day,trial_ends_at,(logo IS NOT NULL) AS has_logo,COALESCE(FLOOR(EXTRACT(EPOCH FROM logo_at))::bigint,0)::text AS logo_v FROM movit_clients WHERE id=$1 LIMIT 1",[row.client_id]);
     if(cq.rowCount){
       client=cq.rows[0];
       const mq=await pool.query("SELECT module_key FROM movit_client_modules WHERE client_id=$1 AND enabled=TRUE ORDER BY module_key",[row.client_id]);
@@ -1015,8 +1058,11 @@ async function demoRotas(req,res,u){
       const lim=DEMO_ENTRADAS.get(ip)||{n:0,at:Date.now()};if(Date.now()-lim.at>15*60*1000){lim.n=0;lim.at=Date.now()}
       if(++lim.n>10){DEMO_ENTRADAS.set(ip,lim);sendJson(res,429,{ok:false,error:'Muitas tentativas. Aguarde alguns minutos e tente de novo.'});return true}
       DEMO_ENTRADAS.set(ip,lim);
-      const d=movitDemo.normalizarEntrada(await readJsonBodyLimited(req,32*1024));
+      const corpo=await readJsonBodyLimited(req,LOGO_MAX_BYTES*2);
+      const d=movitDemo.normalizarEntrada(corpo);
       if(d.erros.length){sendJson(res,400,{ok:false,error:d.erros[0],erros:d.erros});return true}
+      // Logo opcional da empresa: confere antes de ir ao SSW, para o erro aparecer logo.
+      const logo=corpo&&corpo.logo?logoValido(corpo.logo):null;
       const t=await movitDemo.testarLoginSsw(d);
       if(!t.ok){sendJson(res,t.indisponivel?503:401,{ok:false,error:t.erro});return true}
       const senhaCifrada=movitDemo.cifrar(d.senha);
@@ -1043,6 +1089,7 @@ async function demoRotas(req,res,u){
         for(const k of mods)await pool.query('INSERT INTO movit_client_modules(client_id,module_key,enabled) SELECT $1,key,TRUE FROM movit_modules WHERE key=$2 ON CONFLICT(client_id,module_key) DO UPDATE SET enabled=TRUE,updated_at=NOW()',[clientId,k]);
         for(let i=1;i<=4;i++)await pool.query("INSERT INTO dashboard_groups(client_id,nome,ordem) VALUES($1,$2,$3)",[clientId,'Grupo '+i,i]);
       }
+      if(logo)await salvarLogo(clientId,logo);
       // Cada login do SSW vira um usuário da empresa (administrador dela). A senha deste usuário é
       // sorteada e nunca usada: ele sempre entra pelo SSW.
       const username=d.dominio.toLowerCase()+'.'+d.usuario;
@@ -1061,7 +1108,7 @@ async function demoRotas(req,res,u){
       res.end(JSON.stringify({ok:true,user}));
     }catch(e){
       console.error('DEMO entrada:',e.message);
-      if(!res.headersSent)sendJson(res,e.status||500,{ok:false,error:e.code==='23505'?'Já existe uma empresa com esse nome. Use outro nome.':'Não foi possível entrar agora. Tente de novo.'});
+      if(!res.headersSent)sendJson(res,e.status||500,{ok:false,error:e.code==='23505'?'Já existe uma empresa com esse nome. Use outro nome.':e.status===400?e.message:'Não foi possível entrar agora. Tente de novo.'});
     }
     return true;
   }
@@ -1831,8 +1878,9 @@ async function start() {
   if(construlogId){
     await pool.query('UPDATE dashboard_users SET client_id=$1 WHERE client_id IS NULL',[construlogId]);
   }
-  // Administradores já existentes são considerados administradores MOVIT nesta migração inicial.
-  await pool.query('UPDATE dashboard_users SET is_platform_admin=TRUE WHERE is_admin=TRUE AND is_platform_admin=FALSE');
+  // Só administradores da CONSTRULOG viram administradores MOVIT. O administrador de outra empresa
+  // (cliente da MOVIT Central ou da demonstração) é administrador só da empresa dele.
+  if(construlogId)await pool.query('UPDATE dashboard_users SET is_platform_admin=TRUE WHERE is_admin=TRUE AND is_platform_admin=FALSE AND client_id=$1',[construlogId]);
   // Venda: preço mensal por módulo, taxa de implantação, fim do teste grátis e cliente de demonstração.
   await pool.query('ALTER TABLE movit_modules ADD COLUMN IF NOT EXISTS price_monthly NUMERIC(12,2) NOT NULL DEFAULT 0');
   // Passo a passo: vídeo de cada módulo ligado ou não por cliente (MOVIT Central) e passos concluídos por usuário.
@@ -1840,6 +1888,9 @@ async function start() {
   await pool.query('CREATE TABLE IF NOT EXISTS movit_guia_feitos (user_id BIGINT NOT NULL REFERENCES dashboard_users(id) ON DELETE CASCADE, passo TEXT NOT NULL, feito_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(user_id,passo))');
   await pool.query('ALTER TABLE movit_clients ADD COLUMN IF NOT EXISTS installation_fee NUMERIC(12,2) NOT NULL DEFAULT 0');
   await pool.query('ALTER TABLE movit_clients ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ');
+  // Logo da empresa (imagem em data URL). Sem logo, o painel mostra o da MOVIT.
+  await pool.query('ALTER TABLE movit_clients ADD COLUMN IF NOT EXISTS logo TEXT');
+  await pool.query('ALTER TABLE movit_clients ADD COLUMN IF NOT EXISTS logo_at TIMESTAMPTZ');
   await pool.query("CREATE TABLE IF NOT EXISTS movit_config (chave TEXT PRIMARY KEY, valor JSONB NOT NULL DEFAULT '{}'::jsonb, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())");
   await pool.query(`INSERT INTO movit_config(chave,valor) VALUES('precos','{"instalacao":1500,"teste_dias":7}'::jsonb) ON CONFLICT DO NOTHING`);
   {
@@ -1896,7 +1947,12 @@ async function start() {
     }
   }
   // No modo teste não importa nada do sistema antigo (traria contas reais para o banco de teste).
-  if (movitDemo.ATIVA) await movitDemo.initDb(pool);
+  if (movitDemo.ATIVA) {
+    await movitDemo.initDb(pool);
+    // Conserta quem a migração antiga promoveu: usuário de empresa da demo nunca é administrador MOVIT.
+    const r=await pool.query('UPDATE dashboard_users SET is_platform_admin=FALSE WHERE is_platform_admin=TRUE AND client_id IN (SELECT client_id FROM movit_client_ssw)');
+    if(r.rowCount)console.log('MOVIT_DEMO: '+r.rowCount+' usuário(s) de empresa da demo deixaram de ser administradores MOVIT.');
+  }
   if (!TEST_MODE && !movitDemo.ATIVA) await migrateLegacyBillsIfNeeded();
   else console.log('TEST_MODE: importação do sistema antigo de contas desativada.');
   startUnifiedDashboardChild();
@@ -3185,6 +3241,8 @@ async function start() {
           return res.end(JSON.stringify({ok:true,user}));
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao entrar.'});}
       }
+
+      if (u.pathname === '/api/empresa/logo') return rotaLogo(req,res,u);
 
       if (req.method === 'GET' && u.pathname === '/api/auth/me') {
         try {

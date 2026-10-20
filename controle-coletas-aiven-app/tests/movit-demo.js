@@ -132,6 +132,52 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
     check('...e o passo do Roteirizador deixa de mostrar o vídeo',(r.json?.passos||[]).find(p=>p.id==='roteirizador')?.video==='',r.text.slice(0,300));
   }finally{if(!existia){fs.unlinkSync(vfile);if(criouDir)fs.rmdirSync(vdir)}}
 
+  console.log('H. Logo da empresa (sem logo, o da MOVIT)');
+  const PNG1='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+  const logoDe=async cookie=>{const x=await fetch(B+'/api/empresa/logo',{headers:cookie?{Cookie:cookie}:{}});return{status:x.status,tipo:x.headers.get('content-type')||'',corpo:Buffer.from(await x.arrayBuffer())}};
+  let lg=await logoDe('');check('sem sessão, o logo é o da MOVIT',lg.status===200&&/svg/.test(lg.tipo)&&lg.corpo.toString().includes('<svg'),lg.status+' '+lg.tipo);
+  r=await call('GET','/api/auth/me',{cookie:cookieG});check('empresa sem logo: painel sabe que é o da MOVIT',r.json?.user?.client?.has_logo===false,JSON.stringify(r.json?.user?.client||{}).slice(0,200));
+  lg=await logoDe(cookieG);check('empresa sem logo recebe o logo da MOVIT',/svg/.test(lg.tipo));
+  r=await call('POST','/api/empresa/logo',{cookie:cookieG,body:{logo:'data:image/svg+xml;base64,'+Buffer.from('<svg onload="alert(1)"/>').toString('base64')}});
+  check('logo em SVG é recusado (pode ter script)',r.status===400,r.status+' '+r.text.slice(0,120));
+  r=await call('POST','/api/empresa/logo',{cookie:cookieG,body:{logo:'data:image/png;base64,'+Buffer.from('não é imagem').toString('base64')}});
+  check('arquivo que não é imagem é recusado',r.status===400,r.status+' '+r.text.slice(0,120));
+  r=await call('POST','/api/empresa/logo',{cookie:cookieG,body:{logo:'data:image/png;base64,'+Buffer.concat([Buffer.from([0x89,0x50,0x4e,0x47]),Buffer.alloc(310*1024)]).toString('base64')}});
+  check('logo acima de 300 KB é recusado',r.status===400||r.status===413,r.status+' '+r.text.slice(0,120));
+  r=await call('POST','/api/empresa/logo',{body:{logo:PNG1}});check('subir logo exige login',r.status===401,'veio '+r.status);
+  r=await call('POST','/api/empresa/logo',{cookie:cookieG,body:{logo:PNG1}});check('administrador da empresa sobe o logo',r.status===200,r.status+' '+r.text.slice(0,160));
+  lg=await logoDe(cookieG);check('logo da empresa A aparece para ela (PNG enviado)',lg.tipo==='image/png'&&lg.corpo.equals(Buffer.from(PNG1.split(',')[1],'base64')),lg.tipo+' '+lg.corpo.length);
+  r=await call('GET','/api/auth/me',{cookie:cookieG});check('painel sabe que a empresa tem logo',r.json?.user?.client?.has_logo===true&&r.json.user.client.logo_v!=='0',JSON.stringify(r.json?.user?.client||{}).slice(0,200));
+  lg=await logoDe(cookieB);check('empresa B continua com o logo da MOVIT (não vê o logo da A)',/svg/.test(lg.tipo),lg.tipo);
+  r=await call('DELETE','/api/empresa/logo',{cookie:cookieG});lg=await logoDe(cookieG);
+  check('remover volta ao logo da MOVIT',r.status===200&&/svg/.test(lg.tipo),r.status+' '+lg.tipo);
+  const EMPRESA_C={empresa:'Cargas Teste C',dominio:'LGC',cpf:'11122233344',usuario:'ana',senha:'segredo-c-3',unidades:'MTZ'};
+  r=await call('POST','/api/demo/entrar',{body:{...EMPRESA_C,logo:'data:image/gif;base64,'+Buffer.from('nada').toString('base64')}});
+  check('entrada da demo com logo inválido mostra o erro do logo',r.status===400&&/imagem/i.test(r.json?.error||''),r.status+' '+r.text.slice(0,160));
+  r=await call('POST','/api/demo/entrar',{body:{...EMPRESA_C,logo:PNG1}});const cookieC=r.cookie;
+  lg=await logoDe(cookieC);check('logo enviado junto com o login do SSW já aparece no painel',r.status===200&&lg.tipo==='image/png',r.status+' '+lg.tipo+' '+r.text.slice(0,160));
+
+  console.log('I. Reinício do servidor não transforma cliente da demo em administrador MOVIT');
+  // Simula o estado que a versão antiga deixava (empresa A promovida) e sobe outra instância do
+  // servidor no mesmo banco: a inicialização tem de desfazer e não promover ninguém da demo.
+  await db.query("UPDATE dashboard_users SET is_platform_admin=TRUE WHERE username='tst.joao'");
+  const {spawn}=require('child_process');
+  const P2=10200,env2={TEST_MODE:'1',PGSSLMODE:'disable',MOVIT_CHAVE_SSW:'chave-de-teste-com-mais-de-32-caracteres',DASHBOARD_INITIAL_ADMIN_USER:ADMIN_USER,DASHBOARD_INITIAL_ADMIN_PASSWORD:ADMIN_PASS,...process.env,MOVIT_DEMO:'1',PORT:String(P2),DASH_INTERNAL_PORT:String(P2+1),MOVIT_DEMO_PORTA_INICIAL:String(P2+10),
+    NODE_OPTIONS:'--require '+path.join(__dirname,'apoio','sem-rede.js')+' --require '+path.join(__dirname,'apoio','ssw-desvio.js')};
+  const srv2=spawn(process.execPath,['server.js'],{cwd:path.join(__dirname,'..'),env:env2,detached:true,stdio:'ignore'});
+  try{
+    let no_ar=false;for(let i=0;i<60&&!no_ar;i++){await new Promise(ok=>setTimeout(ok,1000));try{no_ar=(await fetch('http://127.0.0.1:'+P2+'/demo')).status===200}catch{}}
+    check('segunda instância do servidor sobe',no_ar);
+    const adms=(await db.query("SELECT username FROM dashboard_users WHERE is_platform_admin=TRUE AND client_id IN (SELECT client_id FROM movit_client_ssw)")).rows.map(x=>x.username);
+    check('nenhum usuário de empresa da demo fica administrador MOVIT depois do reinício',adms.length===0,JSON.stringify(adms));
+    const x=await fetch('http://127.0.0.1:'+P2+'/api/auth/me',{headers:{Cookie:cookieG}});const me=(await x.json()).user||{};
+    check('...e continua cliente da demo, só com os módulos prontos',me.demo===true&&me.is_platform_admin===false&&me.is_admin===true&&JSON.stringify(me.client_modules)==='["roteirizador","agendamento","usuarios"]',JSON.stringify(me).slice(0,300));
+    const y=await fetch('http://127.0.0.1:'+P2+'/api/lancamentos',{headers:{Cookie:cookieG}});
+    check('...e o que não está pronto continua fechado (Lançamentos -> 403)',y.status===403,'veio '+y.status);
+    const adm=(await db.query('SELECT is_platform_admin FROM dashboard_users WHERE lower(username)=lower($1)',[ADMIN_USER])).rows[0];
+    check('administrador MOVIT continua administrador MOVIT',adm?.is_platform_admin===true);
+  }finally{try{process.kill(-srv2.pid,'SIGTERM')}catch{}}
+
   await db.end();
   console.log('\nResultado demo: '+pass+' OK, '+fail+' falha(s)');process.exit(fail?1:0);
 })().catch(e=>{console.error('ERRO NO TESTE',e);process.exit(2)});

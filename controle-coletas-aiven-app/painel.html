@@ -138,7 +138,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
       <button class="tab" data-group="rh" data-module="holerites" data-src="/dashboard/?embed=1&view=holerites" data-name="Holerites">🧾 Holerites</button>
     </div>
   </div>
-  <div class="bar"><span class="dot"></span><span id="module">Lotação</span><span>• Sistema conectado</span><span id="sessionUser" class="bar-user"></span><span class="bar-spacer"></span><button id="pdfQuickBtn" class="pdf-quick-btn" type="button">PDF</button><button id="guiaBtn" class="guia-btn" type="button" style="display:none">📘 Passo a passo</button><button id="logoutBtn" class="bar-logout-btn" type="button">Sair</button><button id="duplicateColeta" class="duplicate-btn" type="button">Duplicar coleta</button><button id="deleteColeta" class="delete-btn" type="button">Excluir coleta</button></div>
+  <div class="bar"><span class="dot"></span><span id="module">Lotação</span><span>• Sistema conectado</span><span id="sessionUser" class="bar-user"></span><span class="bar-spacer"></span><button id="pdfQuickBtn" class="pdf-quick-btn" type="button">PDF</button><button id="guiaBtn" class="guia-btn" type="button" style="display:none">📘 Passo a passo</button><button id="logoBtn" class="bar-logout-btn" type="button" style="display:none" title="Trocar o logo da sua empresa">🖼 Logo</button><input id="logoFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden><button id="logoutBtn" class="bar-logout-btn" type="button">Sair</button><button id="duplicateColeta" class="duplicate-btn" type="button">Duplicar coleta</button><button id="deleteColeta" class="delete-btn" type="button">Excluir coleta</button></div>
   <div id="licenseAlert" class="license-alert"></div>
   <div class="body"><div id="moduleLoading" class="module-loading">Abrindo módulo…</div><iframe id="frame" src="/lotacao?embed=1" data-module="lotacao" title="CONSTRULOG - Torre de Controle"></iframe></div>
 </div>
@@ -224,12 +224,17 @@ function applyModulePermissions(){
   document.querySelectorAll('.group-card').forEach(g=>g.style.setProperty('display',[...document.querySelectorAll('.subtabs[data-group-panel="'+g.dataset.group+'"] .tab')].some(b=>moduleAllowed(b.dataset.module))?'flex':'none'));
   const company=AUTH?.client?.name?(' • '+AUTH.client.name):'';
   if(typeof window.guiaAplicar==='function')window.guiaAplicar();
-  if(AUTH?.demo){
-    // Versão de demonstração: marca MOVIT no lugar da CONSTRULOG
+  // Empresa cliente da MOVIT (demonstração ou contratada): logo e nome dela no lugar da CONSTRULOG.
+  // Sem logo enviado, aparece o logo da MOVIT.
+  const empresaMovit=!!(AUTH?.client&&String(AUTH.client.slug||'').toLowerCase()!=='construlog'&&!AUTH.is_platform_admin);
+  if(empresaMovit){
     const bs=document.querySelector('.brand strong'),bi=document.querySelector('.brand img');
-    if(bs)bs.textContent='MOVIT';if(bi)bi.style.display='none';
+    if(bi){bi.src='/api/empresa/logo?v='+encodeURIComponent(AUTH.client.logo_v||'0');bi.alt=AUTH.client.has_logo?AUTH.client.name:'MOVIT';bi.style.display=''}
+    if(bs)bs.textContent=AUTH.client.has_logo?AUTH.client.name:'MOVIT';
     document.title='Torre de Controle MOVIT';
   }
+  const logoBtn=document.getElementById('logoBtn');
+  if(logoBtn)logoBtn.style.display=empresaMovit&&AUTH.is_admin?'':'none';
   document.getElementById('sessionUser').textContent=AUTH?(AUTH.username+company+(AUTH.is_admin?' • Administrador':'')):'';
   const alert=document.getElementById('licenseAlert');
   if(alert){
@@ -731,6 +736,40 @@ async function bootstrapAuth(){
   document.body.classList.add('auth-pending');
   document.getElementById('authGate').classList.remove('hide')
 }
+// Logo da empresa: a imagem é reduzida no navegador (até 360x120) e enviada em PNG.
+// Com logo já enviado, o botão pergunta se é para trocar ou voltar ao logo da MOVIT.
+function logoReduzido(arquivo){
+  return new Promise((ok,falha)=>{
+    if(!/^image\/(png|jpeg|webp|gif)$/.test(arquivo.type))return falha(new Error('Use uma imagem PNG, JPG, WebP ou GIF.'));
+    const url=URL.createObjectURL(arquivo),img=new Image();
+    img.onload=()=>{
+      const k=Math.min(1,360/img.width,120/img.height),c=document.createElement('canvas');
+      c.width=Math.max(1,Math.round(img.width*k));c.height=Math.max(1,Math.round(img.height*k));
+      c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(url);ok(c.toDataURL('image/png'));
+    };
+    img.onerror=()=>{URL.revokeObjectURL(url);falha(new Error('Não consegui abrir essa imagem.'))};
+    img.src=url;
+  });
+}
+window.logoReduzido=logoReduzido;
+document.getElementById('logoBtn').addEventListener('click',async()=>{
+  if(AUTH?.client?.has_logo&&!confirm('Trocar o logo da empresa?\n\nOK: escolher outra imagem.\nCancelar: voltar ao logo da MOVIT.')){
+    const r=await fetch('/api/empresa/logo',{method:'DELETE'});const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)return alert(j.error||'Não foi possível remover o logo.');
+    return location.reload();
+  }
+  document.getElementById('logoFile').click();
+});
+document.getElementById('logoFile').addEventListener('change',async e=>{
+  const f=e.target.files&&e.target.files[0];e.target.value='';if(!f)return;
+  try{
+    const logo=await logoReduzido(f);
+    const r=await fetch('/api/empresa/logo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({logo})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível salvar o logo.');
+    location.reload();
+  }catch(err){alert(err.message)}
+});
 document.getElementById('logoutBtn').addEventListener('click',async()=>{
   const demo=!!AUTH?.demo;
   try{await fetch('/api/auth/logout',{method:'POST'})}catch{}
