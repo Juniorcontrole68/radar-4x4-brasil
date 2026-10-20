@@ -108,6 +108,8 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   r=await call('GET','/api/movit-central/clients',{cookie:cookieAdm});
   const nomes=(r.json?.clients||[]).map(c=>c.name);
   check('MOVIT Central lista as empresas que entraram pela demo',r.status===200&&nomes.includes('Transportes Teste A')&&nomes.includes('Logística Teste B'),r.text.slice(0,200));
+  const usoA=(r.json?.clients||[]).find(c=>c.name==='Transportes Teste A')||{},usoB=(r.json?.clients||[]).find(c=>c.name==='Logística Teste B')||{},usoCl=(r.json?.clients||[]).find(c=>/construlog/i.test(c.slug||''))||{};
+  check('MOVIT Central mostra entradas e último acesso de cada empresa da demo',usoA.demo_entradas===2&&usoB.demo_entradas===1&&!!usoA.demo_ultimo_acesso&&usoA.demo_dominio==='TST'&&usoCl.demo_entradas==null,JSON.stringify([usoA.demo_entradas,usoB.demo_entradas,usoA.demo_ultimo_acesso,usoA.demo_dominio,usoCl.demo_entradas]));
   r=await call('GET','/api/ssw/conexao',{cookie:cookieAdm});
   check('administrador não usa o SSW de nenhuma empresa da demo',r.json?.dominio!=='TST'&&r.json?.dominio!=='XYZ',r.text.slice(0,200));
 
