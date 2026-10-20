@@ -229,7 +229,7 @@ function applyModulePermissions(){
   const empresaMovit=!!(AUTH?.client&&String(AUTH.client.slug||'').toLowerCase()!=='construlog'&&!AUTH.is_platform_admin);
   if(empresaMovit){
     const bs=document.querySelector('.brand strong'),bi=document.querySelector('.brand img');
-    if(bi){bi.src='/api/empresa/logo?v='+encodeURIComponent(AUTH.client.logo_v||'0');bi.alt=AUTH.client.has_logo?AUTH.client.name:'MOVIT';bi.style.display=''}
+    if(bi){bi.src=AUTH.client.has_logo?'/api/empresa/logo?v='+encodeURIComponent(AUTH.client.logo_v||'0'):'/api/empresa/logo?padrao=1&fundo=escuro';bi.alt=AUTH.client.has_logo?AUTH.client.name:'MOVIT';bi.style.display=''}
     if(bs)bs.textContent=AUTH.client.has_logo?AUTH.client.name:'MOVIT';
     document.title='Torre de Controle MOVIT';
   }

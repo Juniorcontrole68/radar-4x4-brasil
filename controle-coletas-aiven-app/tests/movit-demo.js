@@ -9,8 +9,8 @@ const path=require('path');
 const {Pool}=require(path.join(__dirname,'..','node_modules','pg'));
 let pass=0,fail=0;
 function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}else{fail++;console.log('  FALHA',name,extra);if(process.env.GITHUB_ACTIONS)console.log('::error title=Teste falhou::'+String(name+' '+extra).replace(/\r?\n/g,' ').slice(0,900))}}
-async function call(method,p,{body,cookie}={}){
-  const h={};if(body!==undefined)h['Content-Type']='application/json';if(cookie)h.Cookie=cookie;
+async function call(method,p,{body,cookie,ip}={}){
+  const h={};if(body!==undefined)h['Content-Type']='application/json';if(cookie)h.Cookie=cookie;if(ip)h['X-Forwarded-For']=ip;   // ip: outro visitante (limite de entradas por IP)
   const r=await fetch(B+p,{method,headers:h,body:body!==undefined?JSON.stringify(body):undefined,redirect:'manual'});
   const text=await r.text();let json=null;try{json=JSON.parse(text)}catch{}
   return{status:r.status,json,text,location:r.headers.get('location')||'',cookie:((r.headers.get('set-cookie')||'').match(/cl_session=[^;]+/)||[''])[0]};
@@ -145,9 +145,15 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   console.log('H. Logo da empresa (sem logo, o da MOVIT)');
   const PNG1='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
   const logoDe=async cookie=>{const x=await fetch(B+'/api/empresa/logo',{headers:cookie?{Cookie:cookie}:{}});return{status:x.status,tipo:x.headers.get('content-type')||'',corpo:Buffer.from(await x.arrayBuffer())}};
-  let lg=await logoDe('');check('sem sessão, o logo é o da MOVIT',lg.status===200&&/svg/.test(lg.tipo)&&lg.corpo.toString().includes('<svg'),lg.status+' '+lg.tipo);
+  const LOGO_MOVIT=require('fs').readFileSync(path.join(__dirname,'..','movit-logo.png'));
+  const ehMovit=lg=>lg.tipo==='image/png'&&Buffer.compare(lg.corpo,LOGO_MOVIT)===0;
+  let lg=await logoDe('');check('sem sessão, o logo é o da MOVIT',lg.status===200&&ehMovit(lg),lg.status+' '+lg.tipo);
+  const claro=await fetch(B+'/api/empresa/logo?padrao=1&fundo=escuro');const claroBuf=Buffer.from(await claro.arrayBuffer());
+  check('cabeçalho escuro recebe a versão clara do logo da MOVIT',claro.status===200&&/png/.test(claro.headers.get('content-type')||'')&&claroBuf.length>1000&&Buffer.compare(claroBuf,LOGO_MOVIT)!==0,claro.status);
+  r=await call('GET','/?login=1');
+  check('tela de acesso da demo mostra a MOVIT, não a CONSTRULOG',r.status===200&&r.text.includes('src="/api/empresa/logo?padrao=1" alt="MOVIT"')&&!/alt="CONSTRULOG —/.test(r.text),r.status);
   r=await call('GET','/api/auth/me',{cookie:cookieG});check('empresa sem logo: painel sabe que é o da MOVIT',r.json?.user?.client?.has_logo===false,JSON.stringify(r.json?.user?.client||{}).slice(0,200));
-  lg=await logoDe(cookieG);check('empresa sem logo recebe o logo da MOVIT',/svg/.test(lg.tipo));
+  lg=await logoDe(cookieG);check('empresa sem logo recebe o logo da MOVIT',ehMovit(lg),lg.tipo);
   r=await call('POST','/api/empresa/logo',{cookie:cookieG,body:{logo:'data:image/svg+xml;base64,'+Buffer.from('<svg onload="alert(1)"/>').toString('base64')}});
   check('logo em SVG é recusado (pode ter script)',r.status===400,r.status+' '+r.text.slice(0,120));
   r=await call('POST','/api/empresa/logo',{cookie:cookieG,body:{logo:'data:image/png;base64,'+Buffer.from('não é imagem').toString('base64')}});
@@ -158,16 +164,44 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   r=await call('POST','/api/empresa/logo',{cookie:cookieG,body:{logo:PNG1}});check('administrador da empresa sobe o logo',r.status===200,r.status+' '+r.text.slice(0,160));
   lg=await logoDe(cookieG);check('logo da empresa A aparece para ela (PNG enviado)',lg.tipo==='image/png'&&lg.corpo.equals(Buffer.from(PNG1.split(',')[1],'base64')),lg.tipo+' '+lg.corpo.length);
   r=await call('GET','/api/auth/me',{cookie:cookieG});check('painel sabe que a empresa tem logo',r.json?.user?.client?.has_logo===true&&r.json.user.client.logo_v!=='0',JSON.stringify(r.json?.user?.client||{}).slice(0,200));
-  lg=await logoDe(cookieB);check('empresa B continua com o logo da MOVIT (não vê o logo da A)',/svg/.test(lg.tipo),lg.tipo);
+  lg=await logoDe(cookieB);check('empresa B continua com o logo da MOVIT (não vê o logo da A)',ehMovit(lg),lg.tipo);
   r=await call('DELETE','/api/empresa/logo',{cookie:cookieG});lg=await logoDe(cookieG);
-  check('remover volta ao logo da MOVIT',r.status===200&&/svg/.test(lg.tipo),r.status+' '+lg.tipo);
+  check('remover volta ao logo da MOVIT',r.status===200&&ehMovit(lg),r.status+' '+lg.tipo);
   const EMPRESA_C={empresa:'Cargas Teste C',dominio:'LGC',cpf:'11122233344',usuario:'ana',senha:'segredo-c-3',unidades:'MTZ'};
   r=await call('POST','/api/demo/entrar',{body:{...EMPRESA_C,logo:'data:image/gif;base64,'+Buffer.from('nada').toString('base64')}});
   check('entrada da demo com logo inválido mostra o erro do logo',r.status===400&&/imagem/i.test(r.json?.error||''),r.status+' '+r.text.slice(0,160));
   r=await call('POST','/api/demo/entrar',{body:{...EMPRESA_C,logo:PNG1}});const cookieC=r.cookie;
   lg=await logoDe(cookieC);check('logo enviado junto com o login do SSW já aparece no painel',r.status===200&&lg.tipo==='image/png',r.status+' '+lg.tipo+' '+r.text.slice(0,160));
 
-  console.log('I. Reinício do servidor não transforma cliente da demo em administrador MOVIT');
+  console.log('I. Cards do BI2: só para a empresa que informou o acesso ao BI2');
+  const BI2_A={bi2_sigla:'TSTA',bi2_senha:'bi2-a',bi2_pasta:'cliente'};
+  r=await call('POST','/api/demo/entrar',{ip:'10.0.0.9',body:{...EMPRESA_A,bi2_sigla:'tsta'}});
+  check('BI2 com sigla e sem senha -> 400',r.status===400&&/BI2/.test(r.json?.error||''),r.status+' '+r.text.slice(0,160));
+  r=await call('POST','/api/demo/entrar',{ip:'10.0.0.9',body:{...EMPRESA_A,...BI2_A,bi2_senha:'outra'}});
+  check('senha do BI2 recusada -> 401 e nada do BI2 é guardado',r.status===401&&/BI2/.test(r.json?.error||'')&&!(await db.query("SELECT bi2_sigla FROM movit_client_ssw WHERE dominio='TST'")).rows[0].bi2_sigla,r.status+' '+r.text.slice(0,160));
+  r=await call('POST','/api/demo/entrar',{ip:'10.0.0.9',body:{...EMPRESA_A,...BI2_A}});const cookieBi2=r.cookie;
+  check('empresa A entra com o BI2',r.status===200&&r.json?.user?.client?.bi2===true,r.status+' '+r.text.slice(0,200));
+  const bi2Row=(await db.query("SELECT bi2_sigla,bi2_pasta,bi2_senha_cifrada FROM movit_client_ssw WHERE dominio='TST'")).rows[0];
+  check('senha do BI2 guardada criptografada',bi2Row.bi2_sigla==='tsta'&&bi2Row.bi2_pasta==='cliente'&&/^v1:/.test(bi2Row.bi2_senha_cifrada||'')&&!bi2Row.bi2_senha_cifrada.includes('bi2-a')&&!r.text.includes('bi2-a'),JSON.stringify(bi2Row).slice(0,200));
+  check('com BI2, a empresa A ganha os cards do BI2',['ssw_atrasos','remetentes','remetentes_comparativo','cidade_destino'].every(x=>(r.json?.user?.demo_perms||[]).includes(x)),JSON.stringify(r.json?.user?.demo_perms));
+  r=await call('GET','/api/bi2/atrasos',{cookie:cookieBi2});
+  check('CT-es atrasados vêm do BI2 da empresa A',r.status===200&&r.json?.total===2&&/CLIENTE ATRASADO UM/.test(r.text),r.status+' '+r.text.slice(0,300));
+  r=await call('GET','/api/bi2/remetentes',{cookie:cookieBi2});
+  check('Clientes remetentes vêm do BI2 da empresa A',r.status===200&&/REMETENTE DEMO A/.test(r.text)&&/OUTRO REMETENTE A/.test(r.text),r.status+' '+r.text.slice(0,300));
+  r=await call('GET','/api/ssw/cidades-mapa',{cookie:cookieBi2});
+  check('Mapa de cidades abre com o BI2 da empresa A',r.status===200,r.status+' '+r.text.slice(0,300));
+  for(const p of ['/api/bi2/receita','/api/bi2/sla-clientes','/api/sheet/lancamentos'])
+  {r=await call('GET',p,{cookie:cookieBi2});check('com BI2, GET '+p+' continua 403',r.status===403,'veio '+r.status+' '+r.text.slice(0,120))}
+  const pedidos=await (await fetch(M+'/__mock/bi2')).json();
+  check('o BI2 consultado é só o da empresa A',Object.keys(pedidos).every(k=>k==='tsta'),JSON.stringify(pedidos));
+  r=await call('GET','/api/bi2/atrasos',{cookie:cookieB});
+  check('empresa B (sem BI2) continua sem os cards do BI2',r.status===403,'veio '+r.status);
+  r=await call('GET','/api/auth/me',{cookie:cookieB});
+  check('...e sem as permissões do BI2',r.json?.user?.client?.bi2===false&&!(r.json?.user?.demo_perms||[]).includes('ssw_atrasos'),JSON.stringify(r.json?.user?.demo_perms));
+  r=await call('POST','/api/demo/entrar',{ip:'10.0.0.9',body:EMPRESA_A});
+  check('nova entrada sem os campos do BI2 mantém o BI2 guardado',r.status===200&&r.json?.user?.client?.bi2===true,r.status+' '+r.text.slice(0,160));
+
+  console.log('J. Reinício do servidor não transforma cliente da demo em administrador MOVIT');
   // Simula o estado que a versão antiga deixava (empresa A promovida) e sobe outra instância do
   // servidor no mesmo banco: a inicialização tem de desfazer e não promover ninguém da demo.
   await db.query("UPDATE dashboard_users SET is_platform_admin=TRUE WHERE username='tst.joao'");

@@ -125,6 +125,33 @@ const DESPESAS475=[
 ];
 const lista475=()=>'<html><body><table><tr><th>Lan&ccedil;amento</th><th>Unid</th><th>Evento</th><th>Fornecedor</th><th>Inclus&atilde;o</th><th>Pagamento</th><th>Valor</th><th>Situa&ccedil;&atilde;o</th></tr>'+
   DESPESAS475.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'<tr><td colspan=6>Total geral</td><td>27.733,05</td><td></td></tr></table></body></html>';
+// ---------------------------------------------------------------- WebAPI do BI2 (https://ssw.inf.br/api/bi2/<sigla>/<pasta>?codigo=N)
+// Só a sigla "tsta" (empresa A da demonstração) tem BI2. Autorização: "Basic " + md5 da senha, como no SSW.
+// CSV no formato do BI2: linha 0 = cabeçalho do arquivo, linha 1 = títulos, demais = dados.
+const BI2_CONTAS={tsta:{senha:'bi2-a',pastas:['cliente','ctrc','tabelas']}};
+const HOJE4=new Date().toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit',year:'numeric'});
+const bi2Csv=(cod,titulos,linhas)=>['0;TSTA;TRANSPORTES TESTE A;'+cod+';'+HOJE4+';08:00','1;'+titulos.join(';'),...linhas.map(l=>'2;'+l.join(';'))].join('\r\n')+'\r\n';
+const BI2_RELATORIOS={
+  13:()=>bi2Csv(13,['FILIAL','CTRC','NF','REMETENTE','PAGADOR','DESTINATARIO','UF DESTINO','CIDADE DESTINO','PREVISAO ENTREGA','DIAS ATRASO','VAL MERC','FRETE','QTD VOLUMES','PESO','M3'],[
+    ['MTZ','MTZ000901-2','70001','REMETENTE DEMO A','REMETENTE DEMO A','CLIENTE ATRASADO UM','SP','CAMPINAS',HOJE4,'2','1.500,00','120,00','3','80,5','0,4'],
+    ['CPS','CPS000902-0','70002','OUTRO REMETENTE A','OUTRO REMETENTE A','CLIENTE ATRASADO DOIS','SP','JUNDIAI',HOJE4,'1','800,00','95,50','1','20','0,1']]),
+  174:()=>bi2Csv(174,['numero_ctrc','numero_nf','data_emissao','situacao','remetente_nome','destinatario_nome','cidade_destino','uf_destino','valor_frete','valor_n_fiscal','qtd_volumes','peso_real','m3','prev_ent'],[
+    ['MTZ000901-2','70001',HOJE4,'EM TRANSITO','REMETENTE DEMO A','CLIENTE ATRASADO UM','CAMPINAS','SP','120,00','1.500,00','3','80,5','0,4',HOJE4],
+    ['CPS000902-0','70002',HOJE4,'EM TRANSITO','OUTRO REMETENTE A','CLIENTE ATRASADO DOIS','JUNDIAI','SP','95,50','800,00','1','20','0,1',HOJE4]]),
+  16:()=>bi2Csv(16,['CTRC'],[]),17:()=>bi2Csv(17,['CTRC'],[]),83:()=>bi2Csv(83,['CTRC'],[]),245:()=>bi2Csv(245,['CIDADE'],[])
+};
+const bi2Pedidos={};
+function bi2Responder(u,req,send){
+  const m=u.pathname.match(/^\/api\/bi2\/([^/]+)\/([^/]+)$/);if(!m)return send(404,'');
+  const sigla=decodeURIComponent(m[1]),pasta=decodeURIComponent(m[2]),conta=BI2_CONTAS[sigla];
+  bi2Pedidos[sigla]=(bi2Pedidos[sigla]||0)+1;
+  const auth='Basic '+require('crypto').createHash('md5').update(conta?conta.senha:'').digest('hex');
+  if(!conta||req.headers.authorization!==auth)return send(401,'Acesso negado');
+  if(!conta.pastas.includes(pasta))return send(404,'');
+  const rel=BI2_RELATORIOS[u.searchParams.get('codigo')];
+  if(!rel)return send(404,'');
+  return send(200,rel(),{'Content-Type':'text/csv; charset=utf-8'});
+}
 let despesasProibidas=0,ultimaListagem=null;
 const semCte='<html><body><form><input type="hidden" name="act" value=""></form><div class=texto>CTRC n&atilde;o encontrado.</div></body></html>';
 http.createServer(async(req,res)=>{
@@ -133,6 +160,8 @@ http.createServer(async(req,res)=>{
   const tok=(String(req.headers.cookie||'').match(/(?:^|;\s*)token=([^;]+)/)||[])[1]||'';
   const send=(code,txt,h={})=>{res.writeHead(code,{'Content-Type':'text/html; charset=utf-8',...h});res.end(txt)};
   if(u.pathname==='/__mock/stats')return send(200,JSON.stringify({logins,recusados,activeTokens:tokens.size,paths,ultimoLogin,porDominio,despesasProibidas,ultimaListagem}),{'Content-Type':'application/json'});
+  if(u.pathname==='/__mock/bi2')return send(200,JSON.stringify(bi2Pedidos),{'Content-Type':'application/json'});
+  if(u.pathname.startsWith('/api/bi2/'))return bi2Responder(u,req,send);
   if(u.pathname==='/__mock/expire'){tokens.clear();return send(200,'{}')}
   // /__mock/cte?nro=15326&sit=09/10/26 15:20 01-MERCADORIA ENTREGUE  muda a situação atual do CT-e (sit vazio volta ao normal)
   if(u.pathname==='/__mock/cte'){

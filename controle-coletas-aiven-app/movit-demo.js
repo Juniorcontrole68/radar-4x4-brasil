@@ -45,12 +45,20 @@ const MODULOS = {
     telas: ['agendamento-teste']
   },
   usuarios: { painel: [], ssw: [], telas: ['usuarios'] },
-  // Dashboards: por enquanto só os cards que leem a opção 38 do SSW com o login da empresa.
+  // Dashboards: os cards que leem a opção 38 do SSW com o login da empresa. Os cards do BI2 (lista
+  // BI2 abaixo) entram só para a empresa que informou o acesso ao BI2 na entrada.
   dashboards: {
     painel: [],
     ssw: [/^\/api\/evolucao-motoristas$/, /^\/api\/bi2\/saidas-baixas$/],
     telas: ['dashboards']
   }
+};
+// Cards dos Dashboards que leem a WebAPI do BI2 da empresa: rotas do processo de leitura e permissões.
+// Os cards que dependem das planilhas ou do banco da CONSTRULOG (Ocorrências e SLA, Receita) ficam fora.
+const BI2 = {
+  modulo: 'dashboards',
+  ssw: [/^\/api\/bi2\/atrasos$/, /^\/api\/bi2\/remetentes$/, /^\/api\/ssw\/cidades-mapa$/],
+  perms: ['ssw_atrasos', 'remetentes', 'remetentes_comparativo', 'cidade_destino']
 };
 // Rotas que todo cliente da demo usa (login, sessão, usuários da própria empresa, guia e vídeos,
 // e a conferência da conexão com o SSW da empresa).
@@ -89,13 +97,23 @@ function normalizarEntrada(body) {
   const empresa = String(body.empresa || '').trim().replace(/\s+/g, ' ').slice(0, 120);
   const unidades = [...new Set(String(body.unidades || '').toUpperCase().split(/[\s,;/]+/).filter(x => /^[A-Z0-9]{3}$/.test(x)))].slice(0, 12);
   const contato = String(body.contato || '').trim().slice(0, 160);
+  // Acesso ao BI2 (opcional): sigla e senha da WebAPI do BI2, que não são o login do SSW.
+  const bi2Sigla = String(body.bi2_sigla || '').trim().toLowerCase();
+  const bi2Senha = String(body.bi2_senha || '');
+  const bi2Pasta = String(body.bi2_pasta || '').trim().toLowerCase() || 'cliente';
+  const bi2 = bi2Sigla || bi2Senha ? { sigla: bi2Sigla, senha: bi2Senha, pasta: bi2Pasta } : null;
   const erros = [];
   if (!/^[A-Z0-9]{2,10}$/.test(dominio)) erros.push('Informe o domínio do SSW (as letras que você digita no primeiro campo do login).');
   if (cpf.length !== 11) erros.push('Informe o CPF do login do SSW (11 números).');
   if (!/^[a-z0-9._-]{1,40}$/.test(usuario)) erros.push('Informe o usuário do SSW.');
   if (!senha || senha.length > 80) erros.push('Informe a senha do SSW.');
   if (empresa.length < 2) erros.push('Informe o nome da transportadora.');
-  return { dominio, cpf, usuario, senha, empresa, unidades, contato, erros };
+  if (bi2) {
+    if (!/^[a-z0-9._-]{1,20}$/.test(bi2Sigla)) erros.push('Informe a sigla do BI2 (ou deixe os campos do BI2 vazios).');
+    if (!bi2Senha || bi2Senha.length > 80) erros.push('Informe a senha do BI2 (ou deixe os campos do BI2 vazios).');
+    if (!/^[a-z0-9._-]{1,40}$/.test(bi2Pasta)) erros.push('Pasta do BI2 inválida. Se não souber, use "cliente".');
+  }
+  return { dominio, cpf, usuario, senha, empresa, unidades, contato, bi2, erros };
 }
 
 // ------------------------------------------------------------------ conferência do login no SSW
@@ -125,6 +143,28 @@ async function testarLoginSsw({ dominio, cpf, usuario, senha }) {
   return { ok: true };
 }
 
+// ------------------------------------------------------------------ conferência do acesso ao BI2
+// A WebAPI do BI2 (a mesma que o dashboard lê) responde 200 com CSV quando sigla, pasta e senha
+// conferem. Testa os relatórios usados pelos cards; basta um responder.
+const BI2_BASE = 'https://ssw.inf.br/api/bi2/';
+async function testarBi2({ sigla, senha, pasta }) {
+  const auth = 'Basic ' + crypto.createHash('md5').update(senha).digest('hex');
+  let respondeu = false;
+  for (const codigo of [13, 16, 83]) {
+    try {
+      const r = await fetch(BI2_BASE + encodeURIComponent(sigla) + '/' + encodeURIComponent(pasta) + '?codigo=' + codigo, {
+        headers: { 'User-Agent': 'MOVIT-BI2/1.0', Accept: 'text/csv,*/*', Authorization: auth, 'Cache-Control': 'no-cache' },
+        signal: AbortSignal.timeout(15000)
+      });
+      await r.arrayBuffer().catch(() => null);
+      respondeu = true;
+      if (r.status === 200) return { ok: true };
+    } catch { /* tenta o próximo */ }
+  }
+  if (!respondeu) return { ok: false, indisponivel: true, erro: 'Não foi possível falar com o BI2 agora. Tente de novo em instantes, ou entre sem o BI2.' };
+  return { ok: false, erro: 'O BI2 não aceitou esse acesso. Confira sigla, senha e pasta do BI2, ou deixe esses campos vazios.' };
+}
+
 // ------------------------------------------------------------------ banco
 async function initDb(pool) {
   await pool.query(`CREATE TABLE IF NOT EXISTS movit_client_ssw (
@@ -139,6 +179,7 @@ async function initDb(pool) {
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
+  await pool.query('ALTER TABLE movit_client_ssw ADD COLUMN IF NOT EXISTS bi2_sigla TEXT, ADD COLUMN IF NOT EXISTS bi2_pasta TEXT, ADD COLUMN IF NOT EXISTS bi2_senha_cifrada TEXT');
 }
 
 // ------------------------------------------------------------------ processos de leitura do SSW
@@ -185,7 +226,7 @@ async function processoDaEmpresa(pool, clientId, portalUrl) {
   const id = String(clientId);
   let p = PROCESSOS.get(id);
   if (p) { p.usado = Date.now(); await p.pronto; return p; }
-  const q = await pool.query('SELECT dominio,cpf,usuario,senha_cifrada,unidades FROM movit_client_ssw WHERE client_id=$1', [id]);
+  const q = await pool.query('SELECT dominio,cpf,usuario,senha_cifrada,unidades,bi2_sigla,bi2_pasta,bi2_senha_cifrada FROM movit_client_ssw WHERE client_id=$1', [id]);
   if (!q.rowCount) { const e = new Error('Esta empresa ainda não conectou o SSW.'); e.status = 403; throw e; }
   const c = q.rows[0];
   while (PROCESSOS.size >= MAX_PROCESSOS) {
@@ -207,6 +248,8 @@ async function processoDaEmpresa(pool, clientId, portalUrl) {
     SSW_INTERNAL_SENHA: decifrar(c.senha_cifrada),
     SSW_UNIDADES: c.unidades || ''
   });
+  // Acesso ao BI2 da empresa, quando informado (sem BI2_HOST: só a WebAPI, nada de SFTP).
+  if (c.bi2_sigla && c.bi2_senha_cifrada) Object.assign(env, { BI2_COMPANY: c.bi2_sigla, BI2_USERNAME: c.bi2_sigla, BI2_PASSWORD: decifrar(c.bi2_senha_cifrada), BI2_FOLDER: c.bi2_pasta || 'cliente' });
   const proc = spawn(process.execPath, [path.join(DASHBOARD_DIR, 'server.js')], { cwd: DASHBOARD_DIR, env, stdio: ['ignore', 'inherit', 'inherit'] });
   p = { proc, porta, chaveInterna, usado: Date.now(), pronto: null };
   p.pronto = aguardarSaude(porta).catch(e => { encerrar(id); throw e; });
@@ -247,15 +290,21 @@ function modulosLiberados(user) {
 function telasLiberadas(user) {
   return modulosLiberados(user).flatMap(m => MODULOS[m].telas || []);
 }
+function comBi2(user) {
+  return !!(user && user.client && user.client.bi2 && modulosLiberados(user).includes(BI2.modulo));
+}
 function permsLiberadas(user) {
-  return new Set(modulosLiberados(user).flatMap(m => PERMS_POR_MODULO[m] || []));
+  const perms = modulosLiberados(user).flatMap(m => PERMS_POR_MODULO[m] || []);
+  if (comBi2(user)) perms.push(...BI2.perms);
+  return new Set(perms);
 }
 function rotaLiberada(user, pathname, onde) {
   if ((ROTAS_BASE[onde] || []).some(re => re.test(pathname))) return true;
+  if (onde === 'ssw' && comBi2(user) && BI2.ssw.some(re => re.test(pathname))) return true;
   return modulosLiberados(user).some(m => (MODULOS[m][onde] || []).some(re => re.test(pathname)));
 }
 
 module.exports = {
-  ATIVA, MODULOS, modulosProntos, cifrar, decifrar, normalizarEntrada, testarLoginSsw, initDb,
-  processoDaEmpresa, encerrar, encerrarTodos, repassar, clienteDemo, modulosLiberados, telasLiberadas, permsLiberadas, rotaLiberada
+  ATIVA, MODULOS, modulosProntos, cifrar, decifrar, normalizarEntrada, testarLoginSsw, testarBi2, initDb,
+  processoDaEmpresa, encerrar, encerrarTodos, repassar, clienteDemo, comBi2, modulosLiberados, telasLiberadas, permsLiberadas, rotaLiberada
 };
