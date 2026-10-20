@@ -28,6 +28,7 @@ button:disabled{opacity:.6;cursor:wait}
 ol{margin:0;padding-left:20px;font-size:14px;line-height:1.55;color:#334155}ol li{margin-bottom:9px}
 .mods{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}.mods span{background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:600}
 .admin{display:block;text-align:center;margin-top:14px;font-size:12px;color:var(--muted)}
+details.bi2{margin-top:14px;border:1px solid var(--border);border-radius:10px;padding:0 12px}details.bi2 summary{cursor:pointer;padding:11px 0;font-size:13px;font-weight:700;color:var(--teal)}details.bi2[open]{padding-bottom:12px}details.bi2 p{margin:0;font-size:12.5px;color:var(--muted);line-height:1.45}
 .logo-row{display:flex;align-items:center;gap:10px}.logo-row img{height:40px;max-width:120px;object-fit:contain;border:1px solid var(--border);border-radius:8px;padding:3px;background:#fff}input[type=file]{padding:8px;font-size:13px}
 @media(max-width:760px){.main{grid-template-columns:1fr}h1{font-size:24px}.row{grid-template-columns:1fr}}
 </style>
@@ -58,6 +59,16 @@ ol{margin:0;padding-left:20px;font-size:14px;line-height:1.55;color:#334155}ol l
     <input id="contato" name="contato" maxlength="160">
     <label for="logo">Logo da sua empresa <small>(opcional, sem logo usamos o da MOVIT)</small></label>
     <div class="logo-row"><img id="logoPrev" alt="" hidden><input id="logo" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></div>
+    <details class="bi2" id="bi2Box">
+      <summary>Tenho BI2 do SSW (opcional)</summary>
+      <p>Com o BI2, os Dashboards mostram também CT-es atrasados, entregas por cidade, clientes remetentes e receita. São os dados de acesso à WebAPI do BI2, diferentes do login do SSW.</p>
+      <div class="row">
+        <div><label for="bi2_sigla">Sigla do BI2</label><input id="bi2_sigla" name="bi2_sigla" maxlength="20" autocapitalize="none"></div>
+        <div><label for="bi2_senha">Senha do BI2</label><input id="bi2_senha" name="bi2_senha" type="password" maxlength="80" autocomplete="new-password"></div>
+      </div>
+      <label for="bi2_pasta">Pasta do BI2 <small>(se não souber, deixe "cliente")</small></label>
+      <input id="bi2_pasta" name="bi2_pasta" maxlength="40" value="cliente" autocapitalize="none">
+    </details>
     <button id="btn" type="submit">Entrar na demonstração</button>
     <div id="msg" class="msg" role="status"></div>
     <div class="safe"><span>🔒</span><span>O login é conferido direto no SSW. A senha fica guardada criptografada e é usada só para ler os dados da sua própria empresa. Nenhuma outra empresa vê os seus dados, e você pode pedir a exclusão a qualquer momento.</span></div>

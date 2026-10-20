@@ -158,15 +158,25 @@ function stopDashboardChild(){
 process.on('exit',stopDashboardChild);
 for(const sig of ['SIGTERM','SIGINT'])process.on(sig,()=>{stopDashboardChild();process.exit(0)});
 
+// Na demo MOVIT, a tela de acesso do painel mostra a marca MOVIT no lugar da CONSTRULOG.
+function marcaMovit(html) {
+  return html
+    .replace(/(<div id="authGate"[\s\S]*?<img src=")data:image\/[a-z]+;base64,[^"]+(" alt=")[^"]*(")/, '$1/api/empresa/logo?padrao=1$2MOVIT$3')
+    .replace(/<title>[^<]*<\/title>/i, '<title>Torre de Controle MOVIT</title>');
+}
 function sendHtml(res, file) {
   res.writeHead(200, {
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store'
   });
-  if (TEST_MODE) {
+  const demo = file === PANEL && movitDemo.ATIVA;
+  if (TEST_MODE || demo) {
+    let html = fs.readFileSync(file, 'utf8');
+    if (demo) html = marcaMovit(html);
     // Faixa fixa para ninguém confundir o teste com a produção.
     const banner = '<div style="position:sticky;top:0;z-index:99999;background:#b45309;color:#fff;font:600 13px Segoe UI,Arial,sans-serif;text-align:center;padding:6px 10px">AMBIENTE DE TESTE — dados fictícios, integrações desligadas</div>';
-    return res.end(fs.readFileSync(file, 'utf8').replace(/<body([^>]*)>/i, m => m + banner));
+    if (TEST_MODE) html = html.replace(/<body([^>]*)>/i, m => m + banner);
+    return res.end(html);
   }
   res.end(fs.readFileSync(file));
 }
@@ -924,7 +934,9 @@ function dashboardHas(user,perm){
 }
 // ---------------------------------------------------------------- logo da empresa
 // Logo padrão (marca MOVIT), usado quando a empresa ainda não subiu o dela.
-const LOGO_MOVIT_SVG='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#14b8a6"/><stop offset="1" stop-color="#0f766e"/></linearGradient></defs><rect width="64" height="64" rx="14" fill="url(#g)"/><g transform="translate(8 14) scale(.75)"><rect x="2" y="6" width="36" height="24" rx="3" fill="#fff"/><path d="M38 12h13l9 10v8H38z" fill="#ccfbf1"/><path d="M42 15h8l6 7H42z" fill="#0f766e"/><circle cx="14" cy="32" r="6" fill="#0f172a"/><circle cx="14" cy="32" r="2.5" fill="#cbd5e1"/><circle cx="50" cy="32" r="6" fill="#0f172a"/><circle cx="50" cy="32" r="2.5" fill="#cbd5e1"/></g></svg>';
+const LOGO_MOVIT_PNG=fs.readFileSync(path.join(__dirname,'movit-logo.png'));
+// Versão com letras claras, para o cabeçalho escuro do painel (?padrao=1&fundo=escuro).
+const LOGO_MOVIT_CLARO_PNG=fs.readFileSync(path.join(__dirname,'movit-logo-claro.png'));
 const LOGO_MAX_BYTES=300*1024;
 // Confere a imagem enviada (data URL de PNG, JPEG, WebP ou GIF, até 300 KB). SVG não entra porque
 // pode carregar script. Devolve o data URL normalizado ou lança erro com status 400.
@@ -950,8 +962,8 @@ async function rotaLogo(req,res,u){
       try{const user=await dashboardSession(req,false,{checarRota:false});if(user.client_id)logo=(await pool.query('SELECT logo FROM movit_clients WHERE id=$1',[user.client_id])).rows[0]?.logo||null}catch{ /* sem sessão: logo da MOVIT */ }
     }
     const m=logo&&/^data:([^;]+);base64,(.+)$/.exec(logo);
-    const corpo=m?Buffer.from(m[2],'base64'):Buffer.from(LOGO_MOVIT_SVG);
-    res.writeHead(200,{'Content-Type':m?m[1]:'image/svg+xml','Cache-Control':'private, max-age=300','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'"});
+    const corpo=m?Buffer.from(m[2],'base64'):u.searchParams.get('fundo')==='escuro'?LOGO_MOVIT_CLARO_PNG:LOGO_MOVIT_PNG;
+    res.writeHead(200,{'Content-Type':m?m[1]:'image/png','Cache-Control':'private, max-age=300','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'"});
     return res.end(corpo);
   }
   if(req.method==='POST'||req.method==='DELETE'){
@@ -973,7 +985,7 @@ async function dashboardUserContext(row){
       client=cq.rows[0];
       const mq=await pool.query("SELECT module_key FROM movit_client_modules WHERE client_id=$1 AND enabled=TRUE ORDER BY module_key",[row.client_id]);
       clientModules=mq.rows.map(x=>String(x.module_key));
-      if(movitDemo.ATIVA)client.ssw=!!(await pool.query('SELECT 1 FROM movit_client_ssw WHERE client_id=$1',[row.client_id])).rowCount;
+      if(movitDemo.ATIVA){const sq=await pool.query('SELECT (bi2_sigla IS NOT NULL AND bi2_senha_cifrada IS NOT NULL) AS bi2 FROM movit_client_ssw WHERE client_id=$1',[row.client_id]);client.ssw=!!sq.rowCount;client.bi2=!!sq.rows[0]?.bi2}
     }
   }
   const ctx={
@@ -1065,12 +1077,16 @@ async function demoRotas(req,res,u){
       const logo=corpo&&corpo.logo?logoValido(corpo.logo):null;
       const t=await movitDemo.testarLoginSsw(d);
       if(!t.ok){sendJson(res,t.indisponivel?503:401,{ok:false,error:t.erro});return true}
+      if(d.bi2){const tb=await movitDemo.testarBi2(d.bi2);if(!tb.ok){sendJson(res,tb.indisponivel?503:401,{ok:false,error:tb.erro});return true}}
       const senhaCifrada=movitDemo.cifrar(d.senha);
+      const bi2Cifrada=d.bi2?movitDemo.cifrar(d.bi2.senha):null;
       let clientId=(await pool.query('SELECT client_id FROM movit_client_ssw WHERE dominio=$1',[d.dominio])).rows[0]?.client_id;
       if(clientId){
         // Empresa que já entrou antes: o login conferido agora passa a ser o usado na leitura do SSW.
         await pool.query('UPDATE movit_client_ssw SET cpf=$2,usuario=$3,senha_cifrada=$4,unidades=CASE WHEN $5<>\'\' THEN $5 ELSE unidades END,contato=COALESCE(NULLIF($6,\'\'),contato),validado_em=NOW(),updated_at=NOW() WHERE client_id=$1',
           [clientId,d.cpf,d.usuario,senhaCifrada,d.unidades.join(','),d.contato]);
+        // BI2 conferido agora substitui o anterior; sem BI2 nesta entrada, o guardado continua.
+        if(d.bi2)await pool.query('UPDATE movit_client_ssw SET bi2_sigla=$2,bi2_pasta=$3,bi2_senha_cifrada=$4 WHERE client_id=$1',[clientId,d.bi2.sigla,d.bi2.pasta,bi2Cifrada]);
         movitDemo.encerrar(clientId);
       }else{
         const precos=(await pool.query("SELECT valor FROM movit_config WHERE chave='precos'")).rows[0]?.valor||{};
@@ -1081,8 +1097,8 @@ async function demoRotas(req,res,u){
           VALUES($1,$2,$3,'Demonstração SSW',0,10,'trial',$4,NOW()+($5 * INTERVAL '1 day')) RETURNING id`,
           [d.empresa,slug,d.contato||null,'Entrou pela demonstração com o SSW (domínio '+d.dominio+') em '+new Date().toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'}),dias]);
         clientId=c.rows[0].id;
-        await pool.query('INSERT INTO movit_client_ssw(client_id,dominio,cpf,usuario,senha_cifrada,unidades,contato) VALUES($1,$2,$3,$4,$5,$6,$7)',
-          [clientId,d.dominio,d.cpf,d.usuario,senhaCifrada,d.unidades.join(','),d.contato||null]);
+        await pool.query('INSERT INTO movit_client_ssw(client_id,dominio,cpf,usuario,senha_cifrada,unidades,contato,bi2_sigla,bi2_pasta,bi2_senha_cifrada) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+          [clientId,d.dominio,d.cpf,d.usuario,senhaCifrada,d.unidades.join(','),d.contato||null,d.bi2?.sigla||null,d.bi2?.pasta||null,bi2Cifrada]);
         // Módulos da demo: a lista escolhida na MOVIT Central (chave demo_modulos) ou, sem escolha, todos.
         const escolhidos=(await pool.query("SELECT valor FROM movit_config WHERE chave='demo_modulos'")).rows[0]?.valor;
         const mods=Array.isArray(escolhidos)?escolhidos.map(String):(await pool.query('SELECT key FROM movit_modules WHERE active=TRUE')).rows.map(x=>x.key);
