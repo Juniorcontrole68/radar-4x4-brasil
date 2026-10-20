@@ -181,7 +181,7 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
     const adms=(await db.query("SELECT username FROM dashboard_users WHERE is_platform_admin=TRUE AND client_id IN (SELECT client_id FROM movit_client_ssw)")).rows.map(x=>x.username);
     check('nenhum usuário de empresa da demo fica administrador MOVIT depois do reinício',adms.length===0,JSON.stringify(adms));
     const x=await fetch('http://127.0.0.1:'+P2+'/api/auth/me',{headers:{Cookie:cookieG}});const me=(await x.json()).user||{};
-    check('...e continua cliente da demo, só com os módulos prontos',me.demo===true&&me.is_platform_admin===false&&me.is_admin===true&&JSON.stringify(me.client_modules)==='["roteirizador","agendamento","usuarios"]',JSON.stringify(me).slice(0,300));
+    check('...e continua cliente da demo, só com os módulos prontos',me.demo===true&&me.is_platform_admin===false&&me.is_admin===true&&JSON.stringify(me.client_modules)==='["roteirizador","agendamento","usuarios","dashboards"]',JSON.stringify(me).slice(0,300));
     const y=await fetch('http://127.0.0.1:'+P2+'/api/lancamentos',{headers:{Cookie:cookieG}});
     check('...e o que não está pronto continua fechado (Lançamentos -> 403)',y.status===403,'veio '+y.status);
     const adm=(await db.query('SELECT is_platform_admin FROM dashboard_users WHERE lower(username)=lower($1)',[ADMIN_USER])).rows[0];
