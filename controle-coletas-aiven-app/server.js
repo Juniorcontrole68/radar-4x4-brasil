@@ -1166,6 +1166,7 @@ async function demoRotas(req,res,u){
       const user=await dashboardUserContext(row);
       const bq=clienteBloqueado(user);if(bq){sendJson(res,402,{ok:false,error:bq});return true}
       const token=await dashboardCreateSession(row.id,14);
+      await pool.query('UPDATE movit_client_ssw SET entradas=entradas+1,ultimo_acesso=NOW() WHERE client_id=$1',[clientId]);
       res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Set-Cookie':dashboardSetCookie(token,14*24*60*60)});
       res.end(JSON.stringify({ok:true,user}));
     }catch(e){
@@ -3325,6 +3326,8 @@ async function start() {
       if (req.method === 'GET' && u.pathname === '/api/auth/me') {
         try {
           const user=await dashboardSession(req,false);
+          // Demo: o painel abrindo com a sessão guardada também conta como acesso (no máximo a cada 5 minutos).
+          if(movitDemo.clienteDemo(user))pool.query("UPDATE movit_client_ssw SET ultimo_acesso=NOW() WHERE client_id=$1 AND (ultimo_acesso IS NULL OR ultimo_acesso<NOW()-INTERVAL '5 minutes')",[user.client_id]).catch(()=>{});
           if(user.is_admin){
             const token=dashboardBearer(req);
             if(token){
@@ -3441,7 +3444,9 @@ async function start() {
           const cq=await pool.query(`SELECT c.id::text,c.name,c.slug,c.document,c.email,c.phone,c.plan,c.monthly_fee,c.due_day,c.status,c.notes,c.created_at,c.updated_at,c.installation_fee,c.trial_ends_at,
             COALESCE((SELECT json_agg(cm.module_key ORDER BY cm.module_key) FROM movit_client_modules cm WHERE cm.client_id=c.id AND cm.enabled=TRUE),'[]'::json) AS modules,
             COALESCE((SELECT json_agg(cm.module_key ORDER BY cm.module_key) FROM movit_client_modules cm WHERE cm.client_id=c.id AND cm.enabled=TRUE AND cm.video=TRUE),'[]'::json) AS videos
-            FROM movit_clients c ORDER BY lower(c.name)`);
+            ${movitDemo.ATIVA?',s.dominio AS demo_dominio,s.entradas AS demo_entradas,s.ultimo_acesso AS demo_ultimo_acesso':''}
+            FROM movit_clients c ${movitDemo.ATIVA?'LEFT JOIN movit_client_ssw s ON s.client_id=c.id':''}
+            ORDER BY ${movitDemo.ATIVA?'s.ultimo_acesso DESC NULLS LAST,':''}lower(c.name)`);
           return sendJson(res,200,{ok:true,modules:mq.rows,clients:cq.rows});
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar MOVIT Central.'})}
       }

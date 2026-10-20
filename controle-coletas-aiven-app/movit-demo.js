@@ -191,6 +191,8 @@ async function initDb(pool) {
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
   await pool.query('ALTER TABLE movit_client_ssw ADD COLUMN IF NOT EXISTS bi2_sigla TEXT, ADD COLUMN IF NOT EXISTS bi2_pasta TEXT, ADD COLUMN IF NOT EXISTS bi2_senha_cifrada TEXT');
+  // Uso da demo, para a MOVIT Central: quantas vezes a empresa entrou e quando usou por último.
+  await pool.query('ALTER TABLE movit_client_ssw ADD COLUMN IF NOT EXISTS entradas INTEGER NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS ultimo_acesso TIMESTAMPTZ');
   // Parceiros de cada empresa: login do SSW que a empresa criou para o parceiro (ou o do domínio
   // do próprio parceiro) e as unidades onde saem os romaneios dele.
   await pool.query(`CREATE TABLE IF NOT EXISTS movit_parceiros (

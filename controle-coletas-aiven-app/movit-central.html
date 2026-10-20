@@ -144,12 +144,19 @@ async function loadPayments(){
   const r=await fetch('/api/movit-central/payments',{cache:'no-store'});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar mensalidades.');
   PAYMENTS=j.rows||[];renderBilling();
 }
+const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+// Empresas da demonstração: domínio do SSW, quantas vezes entraram e o último acesso.
+function usoDemo(c){
+  if(c.demo_entradas==null)return '';
+  const ult=c.demo_ultimo_acesso?new Date(c.demo_ultimo_acesso).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'nunca';
+  return '<br><b>Demo</b> • domínio '+esc(c.demo_dominio||'')+' • '+Number(c.demo_entradas||0)+' entrada(s) • último acesso '+ult;
+}
 function renderClients(){
   $('kClients').textContent=CLIENTS.length;
   $('kActive').textContent=CLIENTS.filter(x=>['active','pilot'].includes(x.status)).length;
   $('kMrr').textContent=money(CLIENTS.filter(x=>x.status==='active').reduce((s,x)=>s+Number(x.monthly_fee||0),0));
   $('kModules').textContent=MODULES.length;
-  $('clients').innerHTML=CLIENTS.length?CLIENTS.map(c=>'<div class="client" data-id="'+c.id+'"><div class="client-head"><h3>'+c.name+'</h3><span class="tag '+c.status+'">'+statusLabel(c.status)+'</span></div><div class="meta">'+(c.plan||'Personalizado')+' • '+money(c.monthly_fee)+' • vence dia '+c.due_day+(Number(c.installation_fee)?' • implantação '+money(c.installation_fee):'')+'<br>'+(c.modules||[]).length+' módulo(s) liberado(s)'+(c.trial_ends_at?' • teste até '+brDate(new Date(c.trial_ends_at).toLocaleDateString('sv-SE',{timeZone:'America/Sao_Paulo'})):'')+'</div></div>').join(''):'<div class="empty">Nenhum cliente cadastrado.</div>';
+  $('clients').innerHTML=CLIENTS.length?CLIENTS.map(c=>'<div class="client" data-id="'+c.id+'"><div class="client-head"><h3>'+esc(c.name)+'</h3><span class="tag '+c.status+'">'+statusLabel(c.status)+'</span></div><div class="meta">'+(c.plan||'Personalizado')+' • '+money(c.monthly_fee)+' • vence dia '+c.due_day+(Number(c.installation_fee)?' • implantação '+money(c.installation_fee):'')+'<br>'+(c.modules||[]).length+' módulo(s) liberado(s)'+(c.trial_ends_at?' • teste até '+brDate(new Date(c.trial_ends_at).toLocaleDateString('sv-SE',{timeZone:'America/Sao_Paulo'})):'')+usoDemo(c)+'</div></div>').join(''):'<div class="empty">Nenhum cliente cadastrado.</div>';
   document.querySelectorAll('.client').forEach(el=>el.onclick=()=>editClient(el.dataset.id));
 }
 function resetForm(){
