@@ -116,6 +116,7 @@ function tabAllowed(tab){
     'ssw-remetentes-comparativo':'remetentes_comparativo','receita-ssw':'receita_ssw','mapa-cidades':'cidade_destino'
   };
   if(tab==='usuarios')return !!AUTH?.is_admin;
+  if(tab==='parceiros')return !!AUTH?.demo&&(AUTH.demo_telas||[]).includes('parceiros')&&hasPerm('evolucao');
   if(tab==='lotacao')return hasAnyPerm(['lotacao','coletas','financeiro']);
   if(tab==='frota')return hasPerm('frota');
   if(tab==='roteirizador')return hasPerm('roteirizador');
@@ -129,6 +130,7 @@ function applyPermissions(){
     let show=true;
     if(b.dataset.adminOnly==='1')show=!!AUTH?.is_admin;
     else if(b.dataset.tab==='dashboards')show=tabAllowed('dashboards');
+    else if(b.dataset.tab==='parceiros')show=tabAllowed('parceiros');
     else if(b.dataset.tab==='agendamentos')show=hasPerm('agendamentos')&&!hasPerm('dashboard');
     else if(b.dataset.tab==='lotacao')show=tabAllowed('lotacao');
     else if(b.dataset.tab==='frota')show=hasPerm('frota');
@@ -5304,6 +5306,60 @@ async function agtLista(){
     table.innerHTML='<thead><tr><th>NF</th><th>Cliente</th><th>Cidade</th><th>Dia rota</th><th>Status SSW</th><th>Peso</th><th>Agendado</th><th>Data</th><th>Contato</th><th>Produtos</th><th>Observações</th></tr></thead><tbody>'+body+'</tbody>'
   }catch(e){table.innerHTML='<tbody><tr><td class="muted">Erro: '+safe(e.message)+'</td></tr></tbody>'}
 }
+// Parceiros (demo): o transportador cadastra o login SSW de cada parceiro e acompanha as entregas do dia de todos.
+async function parcJson(url,opt){
+  const r=await fetch(url,Object.assign({credentials:'same-origin',cache:'no-store'},opt||{}));
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok||j.ok===false)throw new Error(j.error||('Erro '+r.status));
+  return j;
+}
+async function parcLista(){
+  const el=$('#parcLista');if(!el)return;
+  $('#parcFormCard').style.display=AUTH?.is_admin?'':'none';
+  try{
+    const j=await parcJson('/api/painel/parceiros');
+    const l=j.parceiros||[];
+    if(!l.length){el.textContent='Nenhum parceiro cadastrado ainda.';return}
+    el.innerHTML=l.map(p=>`<div class="parc-item"><div><b>${safe(p.nome)}</b><div class="muted" style="font-size:11px">${safe(p.dominio)} · ${safe(p.usuario)} · ${safe(p.unidades)}</div></div>${AUTH?.is_admin?`<button type="button" data-parc-del="${p.id}">Remover</button>`:''}</div>`).join('');
+    el.querySelectorAll('[data-parc-del]').forEach(b=>b.onclick=async()=>{
+      b.disabled=true;
+      try{await parcJson('/api/painel/parceiros/'+b.dataset.parcDel,{method:'DELETE'});parcLista();parcEvolucao()}
+      catch(e){b.disabled=false;$('#parcMsg').textContent=e.message}
+    });
+  }catch(e){el.textContent=e.message}
+}
+async function parcEvolucao(){
+  const el=$('#parcEvolucao');if(!el)return;
+  el.textContent='Lendo o SSW de cada parceiro…';
+  try{
+    const j=await parcJson('/api/painel/parceiros/evolucao');
+    const l=j.parceiros||[];
+    if(!l.length){el.textContent='Cadastre um parceiro ao lado para ver a evolução das entregas dele aqui.';return}
+    const head='<div class="parc-row head"><span>Parceiro</span><span>Total</span><span>Entregues</span><span>Pendentes</span><span class="hide-sm">Ocorrências</span><span class="hide-sm">Evolução</span></div>';
+    el.innerHTML=head+l.map((p,i)=>{
+      if(!p.ok)return `<div class="parc-row"><span><b>${safe(p.nome)}</b></span><span style="grid-column:span 5;color:#b91c1c">${safe(p.erro||'Não consegui ler o SSW deste parceiro.')}</span></div>`;
+      const t=Math.max(0,Math.min(100,Math.round(p.taxa||0)));
+      const mots=(p.motoristas||[]).map(m=>`<tr><td>${safe(m.motorista||m.nome)}</td><td>${nf(m.total||0)}</td><td>${nf(m.entregues||0)}</td><td>${nf(m.pendentes||0)}</td></tr>`).join('');
+      return `<div class="parc-row" data-parc-i="${i}"><span><b>${safe(p.nome)}</b><div class="muted" style="font-size:11px">${safe(p.unidades)}</div></span><span>${nf(p.total||0)}</span><span>${nf(p.entregues||0)}</span><span>${nf(p.pendentes||0)}</span><span class="hide-sm">${nf(p.ocorrencias||0)}</span><span class="hide-sm"><div class="parc-bar"><i style="width:${t}%"></i></div><small>${t}%</small></span></div><div class="parc-mots" data-parc-mots="${i}" hidden>${mots?`<table><tr><th>Motorista</th><th>Total</th><th>Entregues</th><th>Pendentes</th></tr>${mots}</table>`:'Nenhum motorista com entregas hoje.'}</div>`;
+    }).join('');
+    el.querySelectorAll('[data-parc-i]').forEach(r=>r.onclick=()=>{const m=el.querySelector(`[data-parc-mots="${r.dataset.parcI}"]`);if(m)m.hidden=!m.hidden});
+  }catch(e){el.textContent=e.message}
+}
+function setupParceiros(){
+  const f=$('#parcForm');if(!f)return;
+  $('#parcAtualizar').onclick=parcEvolucao;
+  f.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const btn=$('#parcSalvar'),msg=$('#parcMsg');
+    btn.disabled=true;btn.textContent='Conferindo no SSW…';msg.textContent='';
+    try{
+      await parcJson('/api/painel/parceiros',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nome:$('#parcNome').value,dominio:$('#parcDominio').value,cpf:$('#parcCpf').value,usuario:$('#parcUsuario').value,senha:$('#parcSenha').value,unidades:$('#parcUnidades').value})});
+      f.reset();msg.textContent='Parceiro salvo.';parcLista();parcEvolucao();
+    }catch(err){msg.textContent=err.message}
+    finally{btn.disabled=false;btn.textContent='Salvar parceiro'}
+  });
+}
+setupParceiros();
 function setupAgendamentoTeste(){
   if($('#agtBuscar'))$('#agtBuscar').onclick=agtBuscar;
   if($('#agtNf'))$('#agtNf').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();agtBuscar()}};
@@ -5366,6 +5422,7 @@ $$('.nav button').forEach(b=>b.onclick=()=>{
   $('#'+b.dataset.tab).classList.add('active');
   $('#pageTitle').textContent=b.textContent;
   if(b.dataset.tab==='roteirizador-cargas'){const f=$('#rcFrame');if(f&&!f.src)f.src='/roteirizador-cargas?embed=1'}
+  if(b.dataset.tab==='parceiros'){parcLista();parcEvolucao()}
   setTimeout(()=>{
     if(b.dataset.tab==='dashboards'){
       setDashboardToday();

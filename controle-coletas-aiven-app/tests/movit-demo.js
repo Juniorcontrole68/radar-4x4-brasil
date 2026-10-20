@@ -207,7 +207,33 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   r=await call('POST','/api/demo/entrar',{ip:'10.0.0.9',body:EMPRESA_A});
   check('nova entrada sem os campos do BI2 mantém o BI2 guardado',r.status===200&&r.json?.user?.client?.bi2===true,r.status+' '+r.text.slice(0,160));
 
-  console.log('J. Reinício do servidor não transforma cliente da demo em administrador MOVIT');
+  console.log('J. Parceiros: cadastro com o login do SSW do parceiro e evolução das entregas dele');
+  const PARC={nome:'Parceiro Sul',dominio:'tst',cpf:'222.333.444-55',usuario:'parc1',senha:'parc-senha-1',unidades:'prc'};
+  r=await call('GET','/api/auth/me',{cookie:cookieBi2});
+  check('tela Parceiros liberada com os Dashboards',(r.json?.user?.demo_telas||[]).includes('parceiros'),JSON.stringify(r.json?.user?.demo_telas));
+  r=await call('POST','/api/painel/parceiros',{cookie:cookieBi2,body:{...PARC,unidades:''}});
+  check('parceiro sem unidade -> 400',r.status===400&&/unidade/i.test(r.json?.error||''),r.status+' '+r.text.slice(0,160));
+  r=await call('POST','/api/painel/parceiros',{cookie:cookieBi2,body:{...PARC,senha:'senha-errada'}});
+  check('login do parceiro recusado pelo SSW -> 400 e nada é guardado',r.status===400&&/parceiro/.test(r.json?.error||'')&&!(await db.query('SELECT count(*)::int n FROM movit_parceiros')).rows[0].n,r.status+' '+r.text.slice(0,160));
+  r=await call('POST','/api/painel/parceiros',{cookie:cookieBi2,body:PARC});
+  const parcId=r.json?.parceiro?.id;
+  check('parceiro cadastrado com o login conferido no SSW',r.status===201&&!!parcId&&r.json.parceiro.unidades==='PRC'&&!r.text.includes('parc-senha-1'),r.status+' '+r.text.slice(0,200));
+  const parcRow=(await db.query('SELECT senha_cifrada FROM movit_parceiros WHERE id=$1',[parcId])).rows[0];
+  check('senha do parceiro guardada criptografada',/^v1:/.test(parcRow?.senha_cifrada||'')&&!parcRow.senha_cifrada.includes('parc-senha'),JSON.stringify(parcRow).slice(0,80));
+  r=await call('GET','/api/painel/parceiros',{cookie:cookieBi2});
+  check('lista de parceiros da empresa A, sem senha nem CPF',r.status===200&&(r.json?.parceiros||[]).length===1&&!/senha|cpf/i.test(JSON.stringify(r.json.parceiros)),r.text.slice(0,200));
+  r=await call('GET','/api/painel/parceiros/evolucao',{cookie:cookieBi2});
+  const ev=(r.json?.parceiros||[])[0]||{};
+  const motsP=(ev.motoristas||[]).map(x=>x.motorista);
+  check('evolução do parceiro lê a opção 38 com o login dele, na unidade dele',r.status===200&&ev.ok===true&&JSON.stringify(motsP)==='["PEDRO PARCEIRO"]'&&ev.total===7&&ev.pendentes===3,r.status+' '+r.text.slice(0,300));
+  r=await call('GET','/api/painel/parceiros',{cookie:cookieB});
+  check('empresa B não vê os parceiros da empresa A',r.status===200&&(r.json?.parceiros||[]).length===0,r.text.slice(0,160));
+  r=await call('DELETE','/api/painel/parceiros/'+parcId,{cookie:cookieB});
+  check('empresa B não remove parceiro da empresa A',r.status===404,'veio '+r.status);
+  r=await call('DELETE','/api/painel/parceiros/'+parcId,{cookie:cookieBi2});
+  check('empresa A remove o parceiro',r.status===200&&!(await db.query('SELECT count(*)::int n FROM movit_parceiros')).rows[0].n,'veio '+r.status);
+
+  console.log('K. Reinício do servidor não transforma cliente da demo em administrador MOVIT');
   // Simula o estado que a versão antiga deixava (empresa A promovida) e sobe outra instância do
   // servidor no mesmo banco: a inicialização tem de desfazer e não promover ninguém da demo.
   await db.query("UPDATE dashboard_users SET is_platform_admin=TRUE WHERE username='tst.joao'");

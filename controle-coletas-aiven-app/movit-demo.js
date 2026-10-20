@@ -47,10 +47,12 @@ const MODULOS = {
   usuarios: { painel: [], ssw: [], telas: ['usuarios'] },
   // Dashboards: os cards que leem a opção 38 do SSW com o login da empresa. Os cards do BI2 (lista
   // BI2 abaixo) entram só para a empresa que informou o acesso ao BI2 na entrada.
+  // Parceiros (transportadoras que entregam pela empresa em outras regiões): cadastro com o login
+  // do SSW de cada parceiro e a evolução de todos, na tela Parceiros.
   dashboards: {
-    painel: [],
+    painel: [/^\/api\/painel\/parceiros(\/\d+|\/evolucao)?$/],
     ssw: [/^\/api\/evolucao-motoristas$/, /^\/api\/bi2\/saidas-baixas$/],
-    telas: ['dashboards']
+    telas: ['dashboards', 'parceiros']
   }
 };
 // Cards dos Dashboards que leem a WebAPI do BI2 da empresa: rotas do processo de leitura e permissões.
@@ -189,6 +191,31 @@ async function initDb(pool) {
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
   await pool.query('ALTER TABLE movit_client_ssw ADD COLUMN IF NOT EXISTS bi2_sigla TEXT, ADD COLUMN IF NOT EXISTS bi2_pasta TEXT, ADD COLUMN IF NOT EXISTS bi2_senha_cifrada TEXT');
+  // Parceiros de cada empresa: login do SSW que a empresa criou para o parceiro (ou o do domínio
+  // do próprio parceiro) e as unidades onde saem os romaneios dele.
+  await pool.query(`CREATE TABLE IF NOT EXISTS movit_parceiros (
+    id BIGSERIAL PRIMARY KEY,
+    client_id BIGINT NOT NULL REFERENCES movit_clients(id) ON DELETE CASCADE,
+    nome TEXT NOT NULL,
+    dominio TEXT NOT NULL,
+    cpf TEXT NOT NULL,
+    usuario TEXT NOT NULL,
+    senha_cifrada TEXT NOT NULL,
+    unidades TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(client_id, dominio, usuario)
+  )`);
+}
+
+// ------------------------------------------------------------------ parceiros
+// Mesmos campos da entrada da demo (o nome vai no lugar do nome da transportadora); as unidades
+// são obrigatórias, porque é por elas que a opção 38 separa os romaneios do parceiro.
+function normalizarParceiro(body) {
+  const d = normalizarEntrada({ ...body, empresa: body && body.nome });
+  d.nome = d.empresa;
+  d.erros = d.erros.map(e => e.replace('nome da transportadora', 'nome do parceiro'));
+  if (!d.unidades.length) d.erros.push('Informe a unidade do parceiro no SSW (sigla de 3 letras).');
+  return d;
 }
 
 // ------------------------------------------------------------------ processos de leitura do SSW
@@ -233,11 +260,22 @@ function aguardarSaude(porta, ms = 30000) {
 }
 async function processoDaEmpresa(pool, clientId, portalUrl) {
   const id = String(clientId);
-  let p = PROCESSOS.get(id);
+  const p = PROCESSOS.get(id);
   if (p) { p.usado = Date.now(); await p.pronto; return p; }
   const q = await pool.query('SELECT dominio,cpf,usuario,senha_cifrada,unidades,bi2_sigla,bi2_pasta,bi2_senha_cifrada FROM movit_client_ssw WHERE client_id=$1', [id]);
   if (!q.rowCount) { const e = new Error('Esta empresa ainda não conectou o SSW.'); e.status = 403; throw e; }
-  const c = q.rows[0];
+  return iniciarProcesso(id, id, q.rows[0], portalUrl);
+}
+// Processo de leitura de um parceiro da empresa: o mesmo leitor, com o login do SSW do parceiro.
+async function processoDoParceiro(pool, clientId, parceiroId, portalUrl) {
+  const chave = 'parceiro:' + parceiroId;
+  const p = PROCESSOS.get(chave);
+  if (p) { p.usado = Date.now(); await p.pronto; return p; }
+  const q = await pool.query('SELECT dominio,cpf,usuario,senha_cifrada,unidades FROM movit_parceiros WHERE id=$1 AND client_id=$2', [parceiroId, clientId]);
+  if (!q.rowCount) { const e = new Error('Parceiro não encontrado.'); e.status = 404; throw e; }
+  return iniciarProcesso(chave, String(clientId), q.rows[0], portalUrl);
+}
+async function iniciarProcesso(id, clientId, c, portalUrl) {
   while (PROCESSOS.size >= MAX_PROCESSOS) {
     const antigo = [...PROCESSOS.entries()].sort((a, b) => a[1].usado - b[1].usado)[0];
     encerrar(antigo[0]);
@@ -250,7 +288,7 @@ async function processoDaEmpresa(pool, clientId, portalUrl) {
     COLETAS_PORTAL_URL: portalUrl,
     DASH_INTERNAL_KEY: chaveInterna,
     MOVIT_DEMO: '1',
-    MOVIT_CLIENTE_ID: id,
+    MOVIT_CLIENTE_ID: clientId,
     SSW_INTERNAL_DOMINIO: c.dominio,
     SSW_INTERNAL_CPF: c.cpf,
     SSW_INTERNAL_USUARIO: c.usuario,
@@ -260,7 +298,7 @@ async function processoDaEmpresa(pool, clientId, portalUrl) {
   // Acesso ao BI2 da empresa, quando informado (sem BI2_HOST: só a WebAPI, nada de SFTP).
   if (c.bi2_sigla && c.bi2_senha_cifrada) Object.assign(env, { BI2_COMPANY: c.bi2_sigla, BI2_USERNAME: c.bi2_sigla, BI2_PASSWORD: decifrar(c.bi2_senha_cifrada), BI2_FOLDER: c.bi2_pasta || 'cliente' });
   const proc = spawn(process.execPath, [path.join(DASHBOARD_DIR, 'server.js')], { cwd: DASHBOARD_DIR, env, stdio: ['ignore', 'inherit', 'inherit'] });
-  p = { proc, porta, chaveInterna, usado: Date.now(), pronto: null };
+  const p = { proc, porta, chaveInterna, usado: Date.now(), pronto: null };
   p.pronto = aguardarSaude(porta).catch(e => { encerrar(id); throw e; });
   proc.on('exit', () => { if (PROCESSOS.get(id) === p) PROCESSOS.delete(id); });
   PROCESSOS.set(id, p);
@@ -285,6 +323,19 @@ function repassar(req, res, porta, alvo) {
     if (!res.writableEnded) res.end(JSON.stringify({ ok: false, error: 'Leitura do SSW da empresa indisponível: ' + err.message }));
   });
   req.pipe(pr);
+}
+
+// GET no processo de leitura, com a sessão do usuário (o processo confere a sessão no servidor principal).
+function consultar(porta, alvo, headers) {
+  return new Promise((ok, falha) => {
+    const r = http.get({ host: '127.0.0.1', port: porta, path: alvo, timeout: 60000, headers: { cookie: headers.cookie || '', authorization: headers.authorization || '' } }, res => {
+      let corpo = ''; res.setEncoding('utf8');
+      res.on('data', c => { corpo += c; });
+      res.on('end', () => { try { const j = JSON.parse(corpo); if (res.statusCode !== 200 || j.ok === false) return falha(new Error(j.error || ('HTTP ' + res.statusCode))); ok(j); } catch { falha(new Error('Resposta inválida da leitura do SSW.')); } });
+    });
+    r.on('timeout', () => r.destroy(new Error('A leitura do SSW do parceiro demorou demais.')));
+    r.on('error', falha);
+  });
 }
 
 // ------------------------------------------------------------------ regras de acesso do cliente da demo
@@ -315,5 +366,5 @@ function rotaLiberada(user, pathname, onde) {
 
 module.exports = {
   ATIVA, MODULOS, modulosProntos, cifrar, decifrar, normalizarEntrada, testarLoginSsw, testarBi2, bi2Automatico, initDb,
-  processoDaEmpresa, encerrar, encerrarTodos, repassar, clienteDemo, comBi2, modulosLiberados, telasLiberadas, permsLiberadas, rotaLiberada
+  processoDaEmpresa, processoDoParceiro, normalizarParceiro, consultar, encerrar, encerrarTodos, repassar, clienteDemo, comBi2, modulosLiberados, telasLiberadas, permsLiberadas, rotaLiberada
 };
