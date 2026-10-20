@@ -104,7 +104,8 @@ const PERMISSION_OPTIONS=[
 ];
 let CITY_BUBBLE_DATA=null,CITY_BUBBLE_MAP=null,CITY_BUBBLE_LAYER=null;
 let AUTH=null;
-function hasPerm(p){return !!(AUTH&&(AUTH.is_admin||AUTH.permissions?.includes('*')||AUTH.permissions?.includes(p)))}
+// Cliente da demonstração MOVIT: só os cards que já funcionam com o SSW da empresa dele.
+function hasPerm(p){if(AUTH?.demo)return (AUTH.demo_perms||[]).includes(p);return !!(AUTH&&(AUTH.is_admin||AUTH.permissions?.includes('*')||AUTH.permissions?.includes(p)))}
 function hasAnyPerm(list){return list.some(hasPerm)}
 function tabAllowed(tab){
   const map={
@@ -160,7 +161,9 @@ function applyPermissions(){
   document.querySelectorAll('#dashboards .dash-card').forEach(card=>{
     const title=card.querySelector('h3')?.textContent.trim()||'';
     const perm=cardMap[title];
-    card.style.display=!perm||hasPerm(perm)?'':'none';
+    // Na demonstração só aparecem os cards ligados ao SSW da empresa (Agendamentos aqui é a planilha da CONSTRULOG).
+    const ver=AUTH?.demo?!!perm&&perm!=='agendamentos'&&hasPerm(perm):!perm||hasPerm(perm);
+    card.style.display=ver?'':'none';
     card.querySelectorAll('.dash-open[data-open]').forEach(btn=>{
       btn.style.display=tabAllowed(btn.dataset.open)?'':'none';
     });
@@ -490,6 +493,8 @@ function normalizeDriverNames(value){
   return out
 }
 async function load(n){
+  // Demonstração MOVIT: as planilhas são da CONSTRULOG, nunca de outra empresa.
+  if(AUTH?.demo)return [];
   const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),18000);
   try{
     const r=await fetch('/api/sheet/'+n+'',{cache:'no-cache',signal:ctrl.signal}),j=await r.json();
@@ -655,6 +660,7 @@ function renderAgCopyHub(){
   set('#hubAgCopyInfo',rows.length?'Dados atualizados da aba Cópia de AGENDAMENTOS.':'Sem registros disponíveis.')
 }
 async function refreshAgCopy(force=false){
+  if(AUTH?.demo)return;
   if(!hasAnyPerm(['dashboard','agendamentos','agendamentos_copia']))return;
   if(window.__agCopyLoading)return;
   if(!force&&S.agCopy.length&&Date.now()-(window.__agCopyLoadedAt||0)<60000){agCopyPopulateFilters();renderAgCopy();renderAgCopyHub();renderAgStatusCards('#agStatusCards',(S.agCopy||[]).filter(o=>!agCopyOldDelivered(o)));return}
@@ -1186,7 +1192,7 @@ $('#hc').textContent=brl(helperCost);$('#hcc').textContent=brl(checkerCost);$('#
 if(active==='operacoes')table('#ops',[['Data','ENTREGUE','Entregue','Data','  Data','DATA'],['Motorista','Motorista'],['Veículo','Veiculo'],['Filial','Filial'],['Entregas','Entregas'],['Realizadas','Realizadas'],['KM','KM'],['Frete Motorista','Frete Mot Liq',' Frete Mot Liq'],['Receita Líq.','Frete Vialog Liq',' Frete Vialog Liq'],['Rota','Rota']],O.slice().reverse().slice(0,500));
 if(active==='agendamentos')table('#sch',[['NF','NF'],['Cidade','CIDADE'],['Cliente','NOME CLIENTE'],['Data','DATA AGENDADA'],['Status','STATUS'],['Motorista','MOTORISTA'],['Observação','OBSERVAÇÃO']],A.slice().reverse().slice(0,500));
 if(active==='ajudantes'){table('#helpHelpers',[['Data','Data'],['Nome','NOME'],['Valor','Valor'],['Função','FUNÇÃO']],HA.slice().reverse().slice(0,500));table('#helpCheckers',[['Data','Data'],['Nome','NOME'],['Valor','Valor'],['Função','FUNÇÃO']],HCf.slice().reverse().slice(0,500));}
-const now=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});$('#status').textContent='Atualização automática a cada 5 s • última: '+now+' • '+S.ops.length.toLocaleString('pt-BR')+' operações • '+S.sch.length.toLocaleString('pt-BR')+' agendamentos • '+S.help.length.toLocaleString('pt-BR')+' registros de ajudantes/conferentes'+(S.sheetWarnings?.lancamentos?' • ⚠ '+S.sheetWarnings.lancamentos:'')}
+const now=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});if(AUTH?.demo){$('#fonteDados').textContent='Dados lidos direto do SSW da sua empresa';$('#status').textContent='Última atualização: '+now;return}$('#status').textContent='Atualização automática a cada 5 s • última: '+now+' • '+S.ops.length.toLocaleString('pt-BR')+' operações • '+S.sch.length.toLocaleString('pt-BR')+' agendamentos • '+S.help.length.toLocaleString('pt-BR')+' registros de ajudantes/conferentes'+(S.sheetWarnings?.lancamentos?' • ⚠ '+S.sheetWarnings.lancamentos:'')}
 function cityBubbleSetDefaults(){
   const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
   const month=today.slice(0,8)+'01';
