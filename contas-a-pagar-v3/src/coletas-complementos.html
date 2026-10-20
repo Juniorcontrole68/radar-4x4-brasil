@@ -406,6 +406,12 @@
       '.ft{padding:8px 22px 14px;font-size:10.5px;color:#94a3b8;text-align:center}' +
       '@media(max-width:640px){.g,.tot{grid-template-columns:1fr 1fr}.two{grid-template-columns:1fr}.hd{flex-direction:column;align-items:flex-start}.hd .os{text-align:left}}' +
       '@media print{body{background:#fff}.pg{margin:0;max-width:none;box-shadow:none;border-radius:0}.hd,.sec h2,.chips,.pix,.tot div,.ent .nn{-webkit-print-color-adjust:exact;print-color-adjust:exact}}' +
+      // Impressão em uma folha A4: versão mais compacta e, se ainda passar da folha, a página é reduzida
+      // (zoom) na hora de imprimir, pelo script no fim do documento.
+      'html.imp body{background:#fff;font-size:11.5px}html.imp .pg{width:186mm;max-width:none;margin:0;box-shadow:none;border-radius:0}' +
+      'html.imp .hd{padding:10px 16px}html.imp .chips{padding:6px 16px}html.imp .bd{padding:9px 16px 2px}html.imp .sec{margin-bottom:7px}' +
+      'html.imp .g{gap:4px 12px;padding:6px 10px}html.imp .ent{padding:5px 10px}html.imp .tot{padding:6px 10px}html.imp .two{gap:8px}' +
+      'html.imp .ass{padding:22px 16px 6px}html.imp .ft{padding:4px 16px 0}' +
       '</style></head><bo' + 'dy><div class="pg">' +
       '<div class="hd"><div><div class="t">ORDEM DE COLETA</div><div class="s">CONSTRULOG • Lotação</div></div><div class="os"><span>Nº da coleta</span><b>' + esc(os) + '</b><span>Emitida em ' + esc(emitido) + '</span></div></div>' +
       '<div class="chips"><span class="chip">Status: <b>' + esc(c.status || 'Programada') + '</b></span><span class="chip">Coleta: <b>' + esc(dt(c.data_carregamento) || '—') + (hr(c.hora_carregamento) ? ' às ' + esc(hr(c.hora_carregamento)) : '') + '</b></span><span class="chip">Previsão de entrega: <b>' + esc(dt(c.previsao_entrega) || '—') + '</b></span>' + (coletasLista.length > 1 ? '<span class="chip">Coletas: <b>' + coletasLista.length + '</b></span>' : '') + '<span class="chip">Entregas: <b>' + entregas.length + '</b></span></div>' +
@@ -435,7 +441,10 @@
       '</div>' +
       '<div class="ass"><div>Motorista<br>' + esc(c.motorista || '') + '</div><div>Responsável pela expedição</div></div>' +
       '<div class="ft">Documento gerado pela Torre de Controle MOVIT • Confira os dados antes do carregamento.</div>' +
-      '</div></bo' + 'dy></html>';
+      '</div><scr' + 'ipt>(function(){var ALTURA=1000;' +
+      'function caber(){var d=document.documentElement,p=document.querySelector(".pg");d.classList.add("imp");p.style.zoom="";var h=p.getBoundingClientRect().height;if(h>ALTURA)p.style.zoom=String(Math.floor(ALTURA/h*1000)/1000)}' +
+      'function voltar(){document.documentElement.classList.remove("imp");document.querySelector(".pg").style.zoom=""}' +
+      'addEventListener("beforeprint",caber);addEventListener("afterprint",voltar)})()</scr' + 'ipt></bo' + 'dy></html>';
   }
   function nomeArquivo(c) { return 'ordem-coleta-' + String(c.os_numero || c.id || 'nova').replace(/[^a-zA-Z0-9_-]/g, '-') + '.html' }
   function abrirOrdem(c) {
