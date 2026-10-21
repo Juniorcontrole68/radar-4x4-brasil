@@ -100,7 +100,10 @@ const PERMISSION_OPTIONS=[
   ['remetentes','Entregas por Cliente Remetente'],
   ['remetentes_comparativo','Comparativo de Clientes Remetentes'],
   ['ssw_atrasos','SSW • CT-es Atrasados'],
-  ['bi2','SSW / BI2']
+  ['bi2','SSW / BI2'],
+  ['wms','Armazém (WMS) • gestão, cadastros e recebimento'],
+  ['wms_operador','Armazém (WMS) • aplicativo do operador'],
+  ['wms_supervisor','Armazém (WMS) • supervisor: divergências, bloqueios e exceções']
 ];
 let CITY_BUBBLE_DATA=null,CITY_BUBBLE_MAP=null,CITY_BUBBLE_LAYER=null;
 let AUTH=null;
