@@ -140,10 +140,10 @@ async function portalAuth(pathname,{method='GET',body=null,token='',timeout=2000
 async function dashboardUserFromReq(req){
   // Chamada do próprio servidor principal (ex.: rota do dia para o MOVIT), identificada pela
   // chave sorteada a cada inicialização. Vale só para a rota planejada do rastreio, a leitura da opção 475
-  // e a situação das sobras em galpão (conferência de hora em hora, das 05:00 às 20:00).
+  // a situação das sobras em galpão (conferência de hora em hora, das 05:00 às 20:00) e a varredura do agendamento.
   const ik=String(req.headers['x-internal-key']||'');
   if(INTERNAL_KEY&&ik.length===INTERNAL_KEY.length&&crypto.timingSafeEqual(Buffer.from(ik),Buffer.from(INTERNAL_KEY))
-     &&(String(req.url||'').startsWith('/api/tracking/planned-route')||String(req.url||'').startsWith('/api/ssw/despesas475?')||String(req.url||'').startsWith('/api/programacao-entregas/status-nfs?')))
+     &&(String(req.url||'').startsWith('/api/tracking/planned-route')||String(req.url||'').startsWith('/api/ssw/despesas475?')||String(req.url||'').startsWith('/api/programacao-entregas/status-nfs?')||String(req.url||'').split('?')[0]==='/api/agendamentos/ssw-snapshot'))
     return{token:'',id:0,username:'servidor',is_admin:true,permissions:['*'],internal:true};
   const token=dashboardRequestToken(req);
   if(!token){const e=new Error('Não autenticado.');e.status=401;throw e}
@@ -704,6 +704,7 @@ async function deliveryProgramEnrich(rows){
       cidade:x.cidade||pickField(a,'CIDADE DESTINO','CIDADE_DESTINO')||pickField(b,'CIDADE DESTINO')||pickField(d,'CIDADE DESTINO'),
       uf:pickField(a,'UF DESTINO','UF_DESTINO')||pickField(b,'UF DESTINO')||pickField(d,'UF DESTINO')||x.uf||'SP',
       mercadoria:pickField(a,'TIPO MERCADORIA','TIPO_MERCADORIA','MERCADORIA')||pickField(b,'MERCADORIA','TIPO MERCADORIA')||pickField(d,'MERCADORIA','TIPO MERCADORIA'),
+      emissao:pickField(a,'DATA EMISSAO','DATA_EMISSAO','EMISSAO','DT EMISSAO','DATA EMISSÃO')||pickField(b,'DATA EMISSAO','EMISSAO')||pickField(d,'DATA EMISSAO','EMISSAO'),
       frete:bi2Number(
         pickField(d,'FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO','FRETE VIAG LIQ','FRETE VIAGEM LIQ','FRETE TOTAL','FRETE') ||
         pickField(b,'FRETE LIQ','FRETE LIQUIDO','FRETE LÍQUIDO','FRETE VIAG LIQ','FRETE VIAGEM LIQ','FRETE TOTAL','FRETE') ||
@@ -1658,74 +1659,11 @@ function sswCteStore(ctrc,value){
   SSW_CTE_CACHE.set(sswCteKey(ctrc),{at:Date.now(),ttl:value?.cte?24*60*60*1000:(value?10*60*1000:3*60*1000),value});
   if(SSW_CTE_CACHE.size>4000)SSW_CTE_CACHE.delete(SSW_CTE_CACHE.keys().next().value)
 }
-// Agendamento: nota entregue ou devolvida não entra. A situação de cada CT-e da lista é relida
-// na opção 101 em segundo plano (fila do SSW, prioridade baixa) e guardada por 30 min.
-const AGENDAMENTO_SITUACAO=new Map();
+// Agendamento: nota entregue ou devolvida não entra.
 function agendamentoBloqueio(textos){return sswCte.situacaoBloqueiaAgendamento(textos)}
-function agendamentoSituacao(ctrc){
-  const c=String(ctrc||'').toUpperCase().trim();
-  if(!/^[A-Z]{3}0*\d+-\d$/.test(c)||!internalSswConfigured())return'';
-  const key=sswCteKey(c),hit=AGENDAMENTO_SITUACAO.get(key);
-  if(hit&&(hit.pendente||Date.now()-hit.at<30*60*1000))return hit.bloqueio||'';
-  AGENDAMENTO_SITUACAO.set(key,{at:Date.now(),pendente:true,bloqueio:hit?.bloqueio||''});
-  sswCteEnqueue('agt:'+key,0,async()=>{
-    let bloqueio=hit?.bloqueio||'';
-    try{const lido=await sswCteLer(await sswCteSession(),c);if(lido?.resumo?.ctrc||lido?.resumo?.situacao)bloqueio=agendamentoBloqueio([lido.resumo.situacao])}
-    catch(e){SSW_CTE_SESSION=null;console.log('AGENDAMENTO situação '+c+': '+String(e?.message||e))}
-    AGENDAMENTO_SITUACAO.set(key,{at:Date.now(),bloqueio});
-    if(AGENDAMENTO_SITUACAO.size>3000)AGENDAMENTO_SITUACAO.delete(AGENDAMENTO_SITUACAO.keys().next().value)
-  }).catch(()=>AGENDAMENTO_SITUACAO.set(key,{at:Date.now(),bloqueio:hit?.bloqueio||''}));
-  return hit?.bloqueio||''
-}
 // Nome cortado pelo SSW na lista (ex.: "LUCIANA DE .."): vale o nome completo de outra fonte.
 function agendamentoNomeCortado(v){const t=String(v||'').trim();return !t||/\.\.\)?\s*$/.test(t)||/\bNome:|Destinat/i.test(t)}
 function agendamentoNome(atual,novo){return agendamentoNomeCortado(atual)&&String(novo||'').trim()?String(novo).trim():String(atual||'')}
-// Registros salvos sem remetente, produtos ou situação (ou com nome cortado) são completados
-// pelo SSW em segundo plano; o que vier é gravado no registro e já aparece na próxima abertura.
-const AGENDAMENTO_COMPLETAR=new Map();
-let AGENDAMENTO_101={s:null,at:0};   // uma sessão da opção 101 reaproveitada por 10 min
-function agendamentoPrecisaCompletar(r){
-  return agendamentoNomeCortado(r.remetente)||agendamentoNomeCortado(r.cliente)||!String(r.produtos||'').trim()||!String(r.status_ssw||'').trim()
-}
-function agendamentoCompletar(r,token){
-  const nf=normNf(r.nf);if(!nf||!internalSswConfigured())return null;
-  const hit=AGENDAMENTO_COMPLETAR.get(nf);
-  if(hit&&(hit.pendente||Date.now()-hit.at<(hit.dados&&!hit.dados.erro?6*60:30)*60*1000))return hit.dados||null;
-  AGENDAMENTO_COMPLETAR.set(nf,{at:Date.now(),pendente:true,dados:hit?.dados||null});
-  sswCteEnqueue('agtc:'+nf,0,async()=>{
-    const d={remetente:'',cliente:'',status_ssw:'',produtos:'',produtos_diag:'',ctrc:String(r.ctrc||'').toUpperCase().trim()};
-    try{
-      if(!d.ctrc){try{d.ctrc=(await fetchSsw101ByNf(nf))?.ctrc||''}catch(e){console.log('AGENDAMENTO completar '+nf+' opção 101 NF: '+String(e?.message||e))}}
-      let prods=[];
-      try{
-        const m=await portalJson('/api/painel/nf-materiais?nf='+encodeURIComponent(nf)+'&limit=5',{timeout:15000});
-        for(const x of (m?.rows||[]))for(const p of (Array.isArray(x.produtos)?x.produtos:[])){const t=String(p||'').trim();if(t&&!prods.includes(t))prods.push(t)}
-      }catch{}
-      if(d.ctrc){
-        if(!AGENDAMENTO_101.s||Date.now()-AGENDAMENTO_101.at>10*60*1000)AGENDAMENTO_101={s:await deliveryProgramCreateSsw101Session(),at:Date.now()};
-        const det=await deliveryProgramFetchSsw101Detail(AGENDAMENTO_101.s,{ctrc:d.ctrc,frete:0},true);
-        if(det){
-          d.remetente=det.remetente||'';d.cliente=det.cliente||'';d.status_ssw=det.situacao||'';
-          if(!prods.length&&det.productLines?.length)prods=det.productLines.slice(0,60);
-          d.produtos_diag=prods.length?'':(det.productDiag||'');
-        }
-        if(agendamentoNomeCortado(d.remetente)||agendamentoNomeCortado(d.cliente)){
-          // Já estamos dentro da fila do SSW: lê o CT-e aqui mesmo, sem entrar na fila de novo.
-          let info=sswCteCached(d.ctrc)||null;
-          if(!info){try{info=sswCteFromLido(await sswCteLer(await sswCteSession(),d.ctrc),d.ctrc);sswCteStore(d.ctrc,info)}catch{SSW_CTE_SESSION=null}}
-          d.remetente=agendamentoNome(d.remetente,info?.cte?.remetente?.nome);d.cliente=agendamentoNome(d.cliente,info?.cte?.destinatario?.nome);
-        }
-      }else d.produtos_diag=prods.length?'':'NF sem CT-e (CTRC) no SSW, não há relação de produtos';
-      d.produtos=prods.join('\n');
-      if(r.id&&token&&(d.remetente||d.cliente||d.produtos||d.status_ssw||d.ctrc)){
-        await portalAuth('/api/painel/agendamento-teste',{method:'POST',token,timeout:20000,body:{completar:true,id:r.id,nf,ctrc:d.ctrc,remetente:d.remetente,cliente:d.cliente,status_ssw:d.status_ssw,produtos:d.produtos}}).catch(e=>console.log('AGENDAMENTO completar '+nf+' gravar: '+String(e?.message||e)))
-      }
-    }catch(e){AGENDAMENTO_101={s:null,at:0};d.erro=true;d.produtos_diag=d.produtos_diag||'erro ao consultar o SSW: '+String(e?.message||e);console.log('AGENDAMENTO completar '+nf+': '+String(e?.message||e))}
-    AGENDAMENTO_COMPLETAR.set(nf,{at:Date.now(),dados:d});
-    if(AGENDAMENTO_COMPLETAR.size>3000)AGENDAMENTO_COMPLETAR.delete(AGENDAMENTO_COMPLETAR.keys().next().value)
-  }).catch(()=>AGENDAMENTO_COMPLETAR.set(nf,{at:Date.now(),dados:hit?.dados||null}));
-  return hit?.dados||null
-}
 function sswCteFromLido(lido,ctrc){
   if(!lido||!(lido.entrega||lido.cte||Object.keys(lido.mapas||{}).length||lido.resumo?.ctrc))return null;
   return{ctrc:lido.resumo?.ctrc||String(ctrc||'').toUpperCase(),cte:lido.cte,entrega:lido.entrega,mapas:lido.mapas||{},resumo:lido.resumo||{}}
@@ -6267,7 +6205,9 @@ if(u.pathname==='/api/programacao-simulacao'&&req.method==='GET'){try{
   res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
-if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
+// Agendamento de entregas: consulta a NF no SSW (só leitura) para preencher o formulário. Quando há mais de uma
+// nota pendente com o mesmo número (remetentes diferentes), devolve as opções para o usuário escolher pelo CT-e.
+if(u.pathname==='/api/agendamentos/nf'&&req.method==='GET'){try{
   if(!dashboardHasAny(authUser,['agendamentos','dashboard','programacao']))return dashboardDeny(res);
   const nf=normNf(u.searchParams.get('nf')||'');
   if(!nf){res.writeHead(400,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:'Informe a nota fiscal.'}))}
@@ -6282,7 +6222,13 @@ if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
   try{
     pending=await fetchSswPendingDeliveries();
     enriched=await deliveryProgramEnrich(pending.rows||[]);
-    row=enriched.find(x=>normNf(x.nf)===nf)||null;
+    const iguais=enriched.filter(x=>normNf(x.nf)===nf);
+    const pedido=normCtrc(u.searchParams.get('ctrc')||'');
+    if(pedido)row=iguais.find(x=>normCtrc(x.ctrc)===pedido)||null;
+    else if(iguais.length>1){
+      res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+      return res.end(JSON.stringify({ok:true,varias:true,opcoes:iguais.slice(0,20).map(x=>({nf:x.nf,ctrc:x.ctrc,remetente:x.remetente||'',destinatario:x.cliente||'',cidade:x.cidade||'',uf:x.uf||'',peso:Number(x.peso||0),volumes:Number(x.volumes||0),status_ssw:x.status||''})),source:pending.source||'SSW opção 38'}))
+    }else row=iguais[0]||null;
     if(row)source=pending.source||'SSW opção 38';
   }catch(e){
     console.log('AGENDAMENTO NF pendências: '+String(e.message||e));
@@ -6412,9 +6358,22 @@ if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
   if(!produtos.length&&row.produtosSsw?.length){produtos=row.produtosSsw.slice(0,60);produtosFonte='ssw'}
   const produtosDiag=produtos.length?'':(!row.ctrc?'NF sem CT-e (CTRC) no SSW, não há relação de produtos':(row.produtosDiag||'relação de produtos do SSW não consultada'));
 
+  // Endereço de entrega pelo CT-e (XML ou tela 101), quando vier rápido.
+  let endereco='';
+  if(row.ctrc){
+    try{
+      const info=sswCteCached(row.ctrc)||await Promise.race([sswCteInfo(row.ctrc,2),new Promise(r=>setTimeout(()=>r(null),8000))]);
+      const cands=info?sswCte.enderecosEntrega(info,''):[];
+      const c=cands.find(x=>x.outroLocal)||cands[0];
+      if(c)endereco=[c.endereco+(c.numero?', '+c.numero:''),c.bairro].filter(Boolean).join(' - ');
+    }catch(e){console.log('AGENDAMENTO NF endereço: '+String(e.message||e))}
+  }
+
   const out={
     ok:true,
     row:{
+      destinatario:row.cliente||'',endereco,data_emissao:row.emissao||'',
+      produto:(produtos.length?produtos.slice(0,6).join('; '):'')||row.tipoMercadoria||row.mercadoria||row.especieMercadoria||'',
       produtos,produtos_fonte:produtosFonte,produtos_diag:produtosDiag,
       nf:row.nf||nf,ctrc:row.ctrc||'',remetente:row.remetente||'',cliente:row.cliente||'',cidade:row.cidade||'',uf:row.uf||'SP',
       status_ssw:row.situacao101||row.status||'',mercadoria:row.tipoMercadoria||row.mercadoria||row.especieMercadoria||'',
@@ -6430,35 +6389,47 @@ if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
   res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
-if(u.pathname==='/api/agendamento-teste'&&req.method==='GET'){try{
+// Varredura do agendamento (só leitura no SSW): pendências da opção 38 (com peso e mercadoria do BI2) e, para as
+// notas que o servidor principal já conhece e saíram das pendências, a situação do CT-e na opção 101
+// (entregue, devolvida ou ainda em rota). Chamado pelo servidor principal: varredura das 02h00 e botão manual.
+if(u.pathname==='/api/agendamentos/ssw-snapshot'&&req.method==='POST'){try{
   if(!dashboardHasAny(authUser,['agendamentos','dashboard']))return dashboardDeny(res);
-  const q=new URLSearchParams();
-  if(u.searchParams.get('nf'))q.set('nf',u.searchParams.get('nf'));
-  q.set('limit',String(Math.max(1,Math.min(500,Number(u.searchParams.get('limit')||100)))));
-  const x=await portalAuth('/api/painel/agendamento-teste?'+q.toString(),{token:authUser.token,timeout:25000});
-  // Tira da lista as notas que já foram entregues (baixadas) ou devolvidas ao remetente.
-  if(Array.isArray(x?.rows)){
-    const antes=x.rows.length;
-    x.rows=x.rows.filter(r=>!agendamentoSituacao(r.ctrc||AGENDAMENTO_COMPLETAR.get(normNf(r.nf))?.dados?.ctrc));
-    x.ocultas=antes-x.rows.length;
-    for(const r of x.rows){
-      if(!agendamentoPrecisaCompletar(r))continue;
-      const d=agendamentoCompletar(r,authUser.token);if(!d)continue;
-      r.ctrc=r.ctrc||d.ctrc||'';
-      r.remetente=agendamentoNome(r.remetente,d.remetente);r.cliente=agendamentoNome(r.cliente,d.cliente);
-      r.status_ssw=r.status_ssw||d.status_ssw||'';r.produtos=String(r.produtos||'').trim()||d.produtos||'';
-      if(!r.produtos&&d.produtos_diag)r.produtos_diag=d.produtos_diag
-    }
+  const body=await readJsonLimited(req,4*1024*1024);
+  const alvos=(Array.isArray(body.alvos)?body.alvos:[]).slice(0,3000);
+  SSW_PENDING_CACHE={at:0,value:null};
+  const pending=await fetchSswPendingDeliveries();   // sem pendências o SSW está fora: erro, nada muda lá
+  let rows=pending.rows||[];
+  try{rows=await deliveryProgramEnrich(rows)}catch(e){console.log('AGENDAMENTO varredura BI2: '+String(e.message||e))}
+  const pendentes=rows.map(x=>({nf:x.nf,ctrc:x.ctrc,remetente:x.remetente||'',destinatario:x.cliente||'',cidade:x.cidade||'',uf:x.uf||'',peso:Number(x.peso||0),volumes:Number(x.volumes||0),
+    previsao:x.previsao||'',status:x.status||'',mercadoria:x.mercadoria||'',emissao:x.emissao||''}));
+  const naLista=new Set(),nfsNaLista=new Set();
+  for(const x of rows){if(normCtrcLoose(x.ctrc))naLista.add(normCtrcLoose(x.ctrc));if(normNf(x.nf))nfsNaLista.add(normNf(x.nf))}
+  const conferir=alvos.filter(a=>a&&a.chave&&!(a.ctrc?naLista.has(normCtrcLoose(a.ctrc)):nfsNaLista.has(normNf(a.nf))));
+  const verificados={},avisos=[],limite=Date.now()+8*60*1000;
+  // uma nota por vez na fila do SSW (a mesma do mapa do rastreio), com respiro entre as consultas
+  for(const a of conferir.slice(0,400)){
+    if(Date.now()>limite){avisos.push('Tempo esgotado: '+(conferir.length-Object.keys(verificados).length)+' nota(s) ficaram para a próxima varredura.');break}
+    try{
+      verificados[a.chave]=await sswCteEnqueue('agv:'+a.chave,0,async()=>{
+        let ctrc=String(a.ctrc||'').toUpperCase().trim();
+        if(!ctrc){ctrc=(await fetchSsw101ByNf(a.nf))?.ctrc||''}
+        if(!ctrc)return{situacao:'desconhecida',erro:'NF sem CT-e no SSW'};
+        const k=sswCteKey(ctrc);SSW_CTE_CACHE.delete(k);   // a situação muda: lê de novo
+        let lido;try{lido=await sswCteLer(await sswCteSession(),ctrc)}catch(e){SSW_CTE_SESSION=null;throw e}
+        const sit=String(lido?.resumo?.situacao||'').trim();
+        if(!sit)return{situacao:'desconhecida',ctrc,erro:'situação do CT-e não lida na opção 101'};
+        const b=agendamentoBloqueio([sit]);
+        const em=(sit.match(/(\d{2}\/\d{2}\/\d{2,4})/)||[])[1]||'';
+        if(/devolvida/.test(b))return{situacao:'devolvida',ctrc,texto:sit.slice(0,200),em};
+        if(b)return{situacao:'entregue',ctrc,texto:sit.slice(0,200),em};
+        return{situacao:'em_rota',ctrc,texto:sit.slice(0,200)}
+      })
+    }catch(e){verificados[a.chave]={situacao:'desconhecida',erro:String(e.message||e).slice(0,200)}}
   }
+  if(conferir.length>400)avisos.push((conferir.length-400)+' nota(s) acima do limite de 400 conferências por varredura.');
+  console.log('AGENDAMENTO varredura SSW: '+JSON.stringify({pendentes:pendentes.length,conferir:conferir.length,conferidas:Object.keys(verificados).length}));
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
-  return res.end(JSON.stringify(x))
-}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
-if(u.pathname==='/api/agendamento-teste'&&req.method==='POST'){try{
-  if(!dashboardHasAny(authUser,['agendamentos','dashboard']))return dashboardDeny(res);
-  const body=await readJsonLimited(req,64*1024);
-  const x=await portalAuth('/api/painel/agendamento-teste',{method:'POST',body,token:authUser.token,timeout:25000});
-  res.writeHead(201,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
-  return res.end(JSON.stringify(x))
+  return res.end(JSON.stringify({ok:true,source:pending.source,pendentes,verificados,avisos,at:new Date().toISOString()}))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 // CTRCs disponíveis para entrega (SSW opção 038, pendências), com peso, m³ e frete cruzados no BI2.
 // Usado pelo Roteirizador de Cargas para trazer as notas sem planilha.

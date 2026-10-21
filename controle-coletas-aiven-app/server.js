@@ -33,6 +33,7 @@ const { economizarBanda } = require('./compressao');
 const lotacaoRastreio = require('./lotacao-rastreio');
 const entregas = require('./entregas');
 const movitDemo = require('./movit-demo');
+const agendamento = require('./agendamento');
 const movitGuia = require('./movit-guia');
 const veic = require('./veic');
 const wms = require('./wms');
@@ -93,7 +94,7 @@ let DASH_CHILD = null;
 const DASH_API_PREFIXES = [
   '/api/sheet/','/api/bi2/','/api/ssw/','/api/tracking/','/api/roteirizador/',
   '/api/programacao-entregas','/api/programacao-simulacao','/api/evolucao-motoristas',
-  '/api/agendamento-teste','/api/nf-materiais','/api/frota-state','/api/frota-maintenance-file',
+  '/api/agendamentos/','/api/nf-materiais','/api/frota-state','/api/frota-maintenance-file',
   '/api/carregamentos-count','/api/carregamentos-finais','/api/coletas/status',
   '/api/lotacao','/api/lancamentos'
 ];
@@ -1031,6 +1032,19 @@ function isInternalCall(req){
   const expected=Buffer.from(INTERNAL_KEY);
   return given.length===expected.length&&crypto.timingSafeEqual(given,expected);
 }
+// Leitura do SSW para a varredura do agendamento (só consulta): o painel lê as pendências e confere as notas.
+// Produção: o painel deste servidor, com a chave interna. Demonstração: o processo de leitura da própria empresa.
+function agendamentoLerSswInterno(alvos){
+  return agendamento.postJson(DASH_INTERNAL_PORT,'/api/agendamentos/ssw-snapshot',{'X-Internal-Key':INTERNAL_KEY},{alvos});
+}
+function agendamentoLerSswDoUsuario(user,req){
+  if(!movitDemo.clienteDemo(user))return agendamentoLerSswInterno;
+  const headers={cookie:req.headers.cookie||'',authorization:req.headers.authorization||''};
+  return async alvos=>{
+    const p=await movitDemo.processoDaEmpresa(pool,user.client_id,'http://127.0.0.1:'+PORT);
+    return agendamento.postJson(p.porta,'/api/agendamentos/ssw-snapshot',headers,{alvos});
+  };
+}
 // Aceita sessão de usuário OU chamada interna do dashboard. Sem nenhuma das duas: 401.
 // O dashboard já conferiu a permissão do usuário antes de fazer a chamada interna.
 async function sessionOrInternal(req){
@@ -1580,6 +1594,7 @@ async function start() {
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
   await pool.query('CREATE INDEX IF NOT EXISTS idx_tracking_test_assignments_plate_date ON driver_tracking_test_assignments (upper(vehicle_plate),work_date DESC)');
+  // tela antiga de agendamento (substituída por agendamento.js): a tabela fica só como histórico
   await pool.query(`CREATE TABLE IF NOT EXISTS agendamento_teste (
     id BIGSERIAL PRIMARY KEY,
     nf TEXT NOT NULL,
@@ -1862,6 +1877,11 @@ async function start() {
       const ks=['construlog'].concat(cq.rows[0]?['c'+cq.rows[0].id]:[]);
       return (await pool.query("SELECT DISTINCT cliente FROM rc_docs WHERE colecao='op/main/sobras' AND cliente=ANY($1)",[ks])).rows.map(r=>r.cliente)
     }});
+  await agendamento.ensureSchema(pool);
+  // varredura noturna do agendamento (02:00 por padrão, horário na tela): o painel lê o SSW, aqui grava
+  if(!TEST_MODE&&!movitDemo.ATIVA&&process.env.AGENDAMENTO_SSW_AUTO!=='0')agendamento.iniciarVarreduraAutomatica({pool,
+    lerSsw:(cli,alvos)=>agendamentoLerSswInterno(alvos),
+    clientes:async()=>{const cq=await pool.query("SELECT id::text FROM movit_clients WHERE lower(slug)='construlog' LIMIT 1").catch(()=>({rows:[]}));return [cq.rows[0]?cq.rows[0].id:null]}});
   await lotacaoRastreio.ensureSchema(pool);
   await entregas.ensureSchema(pool);
   // se o esquema do WMS falhar, desliga só o WMS e o resto do servidor sobe normalmente
@@ -3003,6 +3023,8 @@ async function start() {
 
       // Lançamentos da operação (substitui a aba de lançamentos da planilha): ver lancamentos.js
       if (await lancamentos.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,sessionOrInternal,dashboardSession,dashboardHas,spToday})) return;
+      // Agendamento de entregas (notas pendentes no SSW, com e sem agendamento): ver agendamento.js
+      if (await agendamento.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,lerSswDoUsuario:agendamentoLerSswDoUsuario})) return;
       // Despesas (DRE) do Financeiro, com os holerites da conta Salários: ver dre.js
       if (await dre.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
       // Roteirizador de Cargas (substitui o Roteirizador Teste e o Roteirizador V02): ver roteirizador-cargas.js
@@ -4312,71 +4334,6 @@ async function start() {
         }
       }
 
-      if (req.method === 'GET' && u.pathname === '/api/painel/agendamento-teste') {
-        try {
-          const user=await dashboardSession(req,false);
-          if(!(user.is_admin||dashboardHas(user,'agendamentos')||dashboardHas(user,'dashboard')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
-          const nf=String(u.searchParams.get('nf')||'').replace(/\D/g,'').replace(/^0+(?=\d)/,'');
-          const params=[],where=[];
-          if(user.client_id){params.push(user.client_id);where.push('client_id=$'+params.length)}
-          if(nf){params.push(nf);where.push('nf=$'+params.length)}
-          const limit=Math.max(1,Math.min(500,Number(u.searchParams.get('limit')||100)));
-          params.push(limit);
-          // Uma linha por NF (a mais recente), mesmo que a nota tenha sido salva mais de uma vez.
-          const sql='SELECT * FROM (SELECT DISTINCT ON (nf) id::text AS id,nf,ctrc,remetente,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,produtos,observacoes,contato_nome,criado_em,atualizado_em FROM agendamento_teste ' +
-            (where.length?('WHERE '+where.join(' AND ')+' '):'') + 'ORDER BY nf, criado_em DESC, id DESC) t ORDER BY criado_em DESC LIMIT $'+params.length;
-          const q=await pool.query(sql,params);
-          return sendJson(res,200,{ok:true,rows:q.rows});
-        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao consultar agendamentos de teste.'})}
-      }
-
-      if (req.method === 'POST' && u.pathname === '/api/painel/agendamento-teste') {
-        try {
-          const user=await dashboardSession(req,false);
-          if(!(user.is_admin||dashboardHas(user,'agendamentos')||dashboardHas(user,'dashboard')))return sendJson(res,403,{ok:false,error:'Acesso não autorizado.'});
-          const body=await readJsonBodyLimited(req,64*1024);
-          const nf=String(body.nf||'').replace(/\D/g,'').replace(/^0+(?=\d)/,'');
-          if(!nf)return sendJson(res,400,{ok:false,error:'Informe a nota fiscal.'});
-          const txt=(v,n)=>String(v||'').trim().slice(0,n);
-          const cols='id::text AS id,nf,ctrc,remetente,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,produtos,observacoes,contato_nome,criado_em';
-          // Completar pelo SSW (segundo plano do dashboard): só preenche o que está vazio ou cortado ("..").
-          if(body.completar===true){
-            const vazio=c=>"(COALESCE("+c+",'')='' OR "+c+" LIKE '%..' OR "+c+" LIKE '%..)' OR "+c+" LIKE '%Nome:%')";
-            const params=[String(body.id||''),nf,txt(body.ctrc,40),txt(body.remetente,200),txt(body.cliente,200),txt(body.status_ssw,200),String(body.produtos||'').slice(0,4000)];
-            let where='id::text=$1 AND nf=$2';
-            if(user.client_id){params.push(user.client_id);where+=' AND client_id=$'+params.length}
-            const q=await pool.query(
-              "UPDATE agendamento_teste SET ctrc=CASE WHEN COALESCE(ctrc,'')='' AND $3<>'' THEN $3 ELSE ctrc END,"+
-              'remetente=CASE WHEN '+vazio('remetente')+" AND $4<>'' THEN $4 ELSE remetente END,"+
-              'cliente=CASE WHEN '+vazio('cliente')+" AND $5<>'' THEN $5 ELSE cliente END,"+
-              "status_ssw=CASE WHEN COALESCE(status_ssw,'')='' AND $6<>'' THEN $6 ELSE status_ssw END,"+
-              "produtos=CASE WHEN COALESCE(produtos,'')='' AND $7<>'' THEN $7 ELSE produtos END,"+
-              'atualizado_em=NOW() WHERE '+where+' RETURNING '+cols,params);
-            return sendJson(res,200,{ok:true,row:q.rows[0]||null});
-          }
-          const agendado=!!body.agendado;
-          const data=/^\d{4}-\d{2}-\d{2}$/.test(String(body.data_agendamento||''))?String(body.data_agendamento):null;
-          if(agendado&&!data)return sendJson(res,400,{ok:false,error:'Informe a data do agendamento.'});
-          // A mesma NF salva de novo atualiza o registro que já existe, em vez de duplicar.
-          const exParams=[nf];let exWhere='nf=$1';
-          if(user.client_id){exParams.push(user.client_id);exWhere+=' AND client_id=$2'}else exWhere+=' AND client_id IS NULL';
-          const ex=await pool.query('SELECT id FROM agendamento_teste WHERE '+exWhere+' ORDER BY criado_em DESC, id DESC LIMIT 1',exParams);
-          if(ex.rows[0]){
-            const q=await pool.query(
-              "UPDATE agendamento_teste SET ctrc=COALESCE(NULLIF($2,''),ctrc),cliente=COALESCE(NULLIF($3,''),cliente),cidade=COALESCE(NULLIF($4,''),cidade),uf=COALESCE(NULLIF($5,''),uf),"+
-              "status_ssw=COALESCE(NULLIF($6,''),status_ssw),mercadoria=COALESCE(NULLIF($7,''),mercadoria),peso=CASE WHEN $8::numeric>0 THEN $8::numeric ELSE peso END,volumes=CASE WHEN $9::numeric>0 THEN $9::numeric ELSE volumes END,"+
-              "previsao_ssw=COALESCE(NULLIF($10,''),previsao_ssw),dia_rota=COALESCE(NULLIF($11,''),dia_rota),agendado=$12,data_agendamento=$13,produtos=COALESCE(NULLIF($14,''),produtos),"+
-              "observacoes=COALESCE(NULLIF($15,''),observacoes),contato_nome=COALESCE(NULLIF($16,''),contato_nome),remetente=COALESCE(NULLIF($17,''),remetente),atualizado_em=NOW() WHERE id=$1 RETURNING "+cols,
-              [ex.rows[0].id,String(body.ctrc||''),String(body.cliente||''),String(body.cidade||''),String(body.uf||''),String(body.status_ssw||''),String(body.mercadoria||''),Number(body.peso||0),Number(body.volumes||0),String(body.previsao_ssw||''),String(body.dia_rota||''),agendado,data,String(body.produtos||'').slice(0,4000),String(body.observacoes||'').slice(0,2000),txt(body.contato_nome,160),txt(body.remetente,200)]);
-            return sendJson(res,200,{ok:true,row:q.rows[0],atualizado:true});
-          }
-          const q=await pool.query(
-            'INSERT INTO agendamento_teste (nf,ctrc,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,criado_por,client_id,produtos,observacoes,contato_nome,remetente) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING id::text AS id,nf,ctrc,remetente,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,produtos,observacoes,contato_nome,criado_em',
-            [nf,String(body.ctrc||''),String(body.cliente||''),String(body.cidade||''),String(body.uf||''),String(body.status_ssw||''),String(body.mercadoria||''),Number(body.peso||0),Number(body.volumes||0),String(body.previsao_ssw||''),String(body.dia_rota||''),agendado,data,user.id,user.client_id,String(body.produtos||'').slice(0,4000),String(body.observacoes||'').slice(0,2000),String(body.contato_nome||'').trim().slice(0,160),String(body.remetente||'').trim().slice(0,200)]
-          );
-          return sendJson(res,201,{ok:true,row:q.rows[0]});
-        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao salvar agendamento de teste.'})}
-      }
       const coletaStatusMatch=u.pathname.match(/^\/api\/painel\/coletas-status\/(\d+)$/);
       if (coletaStatusMatch && req.method === 'PATCH') {
         try{
