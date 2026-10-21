@@ -943,7 +943,7 @@ async function handle(req,res,u,deps){
       const r=await pool.query(`SELECT p.id::text,p.cliente_id::text,c.nome AS cliente,p.sku,p.descricao,p.ean,p.codigos_alt,p.unidade,p.un_por_caixa,p.caixas_por_palete,p.peso_bruto_kg::float,
           p.comprimento_cm::float,p.largura_cm::float,p.altura_cm::float,p.controla_lote,p.controla_validade,p.curva_abc,p.estoque_min::float,p.estoque_max::float,p.ativo,
           COALESCE((SELECT SUM(s.qtd) FROM wms_saldos s WHERE s.produto_id=p.id),0)::float AS saldo
-        FROM wms_produtos p JOIN wms_clientes c ON c.id=p.cliente_id WHERE p.empresa=$1 AND ($2::bigint IS NULL OR p.cliente_id=$2)
+        FROM wms_produtos p JOIN wms_clientes c ON c.id=p.cliente_id WHERE p.empresa=$1 AND p.ativo AND ($2::bigint IS NULL OR p.cliente_id=$2)
           AND ($3='' OR p.sku ILIKE '%'||$3||'%' OR p.descricao ILIKE '%'||$3||'%' OR p.ean=$3) ORDER BY c.nome,p.sku LIMIT 500`,[ctx.emp,cli&&/^\d+$/.test(cli)?cli:null,q]);
       return json(200,{ok:true,rows:r.rows});
     }
@@ -965,6 +965,31 @@ async function handle(req,res,u,deps){
       if(!Object.keys(f).length)throw erro(400,'Nada para alterar.');
       await pool.query(`UPDATE wms_produtos SET ${Object.keys(f).map((k,i)=>k+'=$'+(i+2)).join(',')},atualizado_em=NOW() WHERE id=$1`,[m[1],...Object.values(f)]);
       return json(200,{ok:true});
+    }
+    // excluir: some de vez se nunca foi usado; se já tem histórico, fica inativo (o histórico não se apaga)
+    if(m&&M==='DELETE'){
+      const ctx=await contexto(deps,req,'gestao');
+      await doEmpresa(pool,ctx,'wms_produtos',m[1],'Produto não encontrado.');
+      return json(200,await tx(pool,async c=>{
+        const prod=(await c.query('SELECT id,sku,descricao FROM wms_produtos WHERE id=$1 FOR UPDATE',[m[1]])).rows[0];
+        const saldo=+(await c.query('SELECT COALESCE(SUM(qtd),0) AS q FROM wms_saldos WHERE produto_id=$1',[prod.id])).rows[0].q;
+        if(saldo>0)throw erro(409,'O produto '+prod.sku+' ainda tem '+fmt(saldo,0)+' em estoque. Movimente ou dê baixa antes de excluir.','COM_SALDO');
+        const aberto=(await c.query(`SELECT r.id FROM wms_recebimento_itens i JOIN wms_recebimentos r ON r.id=i.recebimento_id
+          WHERE i.produto_id=$1 AND r.status NOT IN ('finalizado','cancelado') LIMIT 1`,[prod.id])).rows[0];
+        if(aberto)throw erro(409,'O produto '+prod.sku+' está num recebimento em andamento (nº '+aberto.id+'). Desvincule o item ou cancele o recebimento antes.','EM_RECEBIMENTO');
+        const usado=(await c.query(`SELECT EXISTS(SELECT 1 FROM wms_movimentos WHERE produto_id=$1) OR EXISTS(SELECT 1 FROM wms_recebimento_itens WHERE produto_id=$1)
+          OR EXISTS(SELECT 1 FROM wms_contagens WHERE produto_id=$1) OR EXISTS(SELECT 1 FROM wms_divergencias WHERE produto_id=$1)
+          OR EXISTS(SELECT 1 FROM wms_lotes WHERE produto_id=$1) OR EXISTS(SELECT 1 FROM wms_saldos WHERE produto_id=$1) AS u`,[prod.id])).rows[0].u;
+        if(usado){
+          // libera o SKU para um novo cadastro certo; o antigo continua no histórico com o código marcado
+          await c.query("UPDATE wms_produtos SET ativo=FALSE,sku=sku||' (inativo '||id||')',atualizado_em=NOW() WHERE id=$1",[prod.id]);
+          await auditar(c,ctx,'inativar','produto',prod.id,{sku:prod.sku,descricao:prod.descricao});
+          return{ok:true,resultado:'inativado'};
+        }
+        await c.query('DELETE FROM wms_produtos WHERE id=$1',[prod.id]);
+        await auditar(c,ctx,'excluir','produto',prod.id,{sku:prod.sku,descricao:prod.descricao});
+        return{ok:true,resultado:'excluido'};
+      }));
     }
     if(p==='/api/wms/produtos/busca'&&M==='GET'){
       const ctx=await contexto(deps,req,'operador');

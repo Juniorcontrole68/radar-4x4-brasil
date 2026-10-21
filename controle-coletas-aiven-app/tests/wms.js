@@ -116,6 +116,16 @@ function nfe({chave,itens}){
   check('SKU repetido no mesmo cliente é recusado',r.status===409);
   r=await call('POST','/api/wms/produtos',{cookie:gest,body:{cliente_id:cli,sku:'X1',descricao:'x',ean:'123'}});
   check('EAN inválido é recusado',r.status===400);
+  r=await call('POST','/api/wms/produtos',{cookie:gest,body:{cliente_id:cli,sku:'ERR1',descricao:'Cadastrado errado'}});
+  const pErr=r.json.id;
+  r=await call('DELETE','/api/wms/produtos/'+pErr,{cookie:op});
+  check('operador não exclui produto',r.status===403);
+  r=await call('DELETE','/api/wms/produtos/'+pErr,{cookie:gest});
+  check('produto nunca usado é excluído de vez',r.status===200&&r.json.resultado==='excluido',r.json);
+  r=await call('GET','/api/wms/produtos?q=ERR1',{cookie:gest});
+  check('produto excluído some da lista',r.json.rows.length===0);
+  r=await call('POST','/api/wms/produtos',{cookie:gest,body:{cliente_id:cli,sku:'ERR1',descricao:'Cadastrado certo'}});
+  check('o mesmo SKU pode ser cadastrado de novo',r.status===201);
 
   console.log('Cenário 1 — receber mercadoria por XML');
   const chave='3526'+String(Date.now()).padStart(40,'0').slice(-40);
@@ -219,6 +229,8 @@ function nfe({chave,itens}){
   const tot=e=>(r.json.totais.find(t=>t.estado===e)||{}).qtd||0;
   check('saldo: 337 disponíveis e 1 avariado',tot('disponivel')===337&&tot('avariado')===1,r.json.totais);
   check('nada ficou na doca',!r.json.rows.some(x=>x.endereco.startsWith('D-')));
+  r=await call('DELETE','/api/wms/produtos/'+p1,{cookie:gest});
+  check('produto com estoque não pode ser excluído',r.status===409&&r.json.code==='COM_SALDO',r.json);
   r=await call('GET','/api/wms/consulta?armazem_id='+arm+'&codigo=A-01-01-01',{cookie:op});
   check('consulta por endereço mostra lote e validade',r.json.tipo==='endereco'&&r.json.saldos[0].lote==='L1'&&r.json.saldos[0].validade==='2027-04-30'&&r.json.saldos[0].qtd===200,r.json);
   r=await call('GET','/api/wms/consulta?codigo=7891234567895',{cookie:op});
@@ -273,6 +285,14 @@ function nfe({chave,itens}){
   const outra=(await db.query("INSERT INTO wms_armazens(empresa,codigo,nome) VALUES(987654,'OUTRA'||$1,'Armazém de outra empresa') RETURNING id::text",[sufixo])).rows[0].id;
   r=await call('GET','/api/wms/armazens',{cookie:gest});
   check('armazém de outra empresa não aparece',!r.json.rows.some(a=>a.id===outra));
+  r=await call('POST','/api/wms/produtos',{cookie:gest,body:{cliente_id:cli,sku:'USADO1',descricao:'Já teve lote'}});
+  const pUsado=r.json.id;
+  await db.query("INSERT INTO wms_lotes(produto_id,lote) VALUES($1,'LX')",[pUsado]);
+  r=await call('DELETE','/api/wms/produtos/'+pUsado,{cookie:gest});
+  const inat=(await db.query('SELECT ativo,sku FROM wms_produtos WHERE id=$1',[pUsado])).rows[0];
+  check('produto com histórico e sem estoque fica inativo (histórico mantido)',r.json.resultado==='inativado'&&inat&&inat.ativo===false&&inat.sku.startsWith('USADO1 (inativo'),{r:r.json,inat});
+  r=await call('POST','/api/wms/produtos',{cookie:gest,body:{cliente_id:cli,sku:'USADO1',descricao:'Cadastro certo'}});
+  check('depois de inativar, o SKU fica livre para o cadastro certo',r.status===201);
   r=await call('GET','/api/wms/enderecos?armazem_id='+outra,{cookie:gest});
   check('acesso direto pelo id de outra empresa: 404',r.status===404);
   r=await call('GET','/api/wms/recebimentos/999999999',{cookie:gest});
