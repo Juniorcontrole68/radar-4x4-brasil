@@ -750,11 +750,11 @@ function financePaid(o){
   if(comb!=='')return num(comb);
   return num(g(o,'Frete Mot Liq',' Frete Mot Liq','Frete Pago','FRETE PAGO'))
 }
-// Frete a receber = valor do romaneio (Frete Vialog) menos o frete das entregas em pendência (Desc).
+// Frete a receber = valor cheio do romaneio (Frete Vialog), sem tirar as pendências (Desc), igual ao frete pago.
 // Sem o valor do romaneio na linha, fica o líquido já calculado (Frete Vialog Liq / Frete a Receber).
 function financeReceive(o){
   const rom=String(g(o,'Frete Vialog',' Frete Vialog')??'').trim();
-  if(rom!=='')return num(rom)-num(g(o,'Desc'));
+  if(rom!=='')return num(rom);
   return num(g(o,'Frete Vialog Liq',' Frete Vialog Liq','Frete a Receber','Frete A Receber','FRETE A RECEBER'))
 }
 function financeRowsBetween(fromIso,toIso){
