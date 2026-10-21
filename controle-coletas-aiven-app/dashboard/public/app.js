@@ -743,7 +743,13 @@ function mood(el,v){el.classList.remove('positive','negative');el.classList.add(
 function table(id,cols,rows){$(id).innerHTML='<thead><tr>'+cols.map(c=>'<th>'+c[0]+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+cols.map(c=>'<td>'+safe(g(r,...c.slice(1)))+'</td>').join('')+'</tr>').join('')+'</tbody>'}
 
 function financeDateOfRow(o){return pd(gd(o))}
-function financePaid(o){return num(g(o,'Frete Mot Liq',' Frete Mot Liq','Frete Pago','FRETE PAGO'))}
+// Frete pago = valor negociado com o motorista (Frete Comb), sem tirar o desconto: enquanto as entregas
+// não terminam o líquido (Frete Mot Liq) fica menor e distorce o resultado. Sem o negociado, fica o líquido.
+function financePaid(o){
+  const comb=String(g(o,'Frete Comb',' Frete Comb','FRETE COMB')??'').trim();
+  if(comb!=='')return num(comb);
+  return num(g(o,'Frete Mot Liq',' Frete Mot Liq','Frete Pago','FRETE PAGO'))
+}
 // Frete a receber = valor do romaneio (Frete Vialog) menos o frete das entregas em pendência (Desc).
 // Sem o valor do romaneio na linha, fica o líquido já calculado (Frete Vialog Liq / Frete a Receber).
 function financeReceive(o){
