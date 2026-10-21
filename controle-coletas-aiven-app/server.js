@@ -1603,6 +1603,7 @@ async function start() {
   await pool.query('ALTER TABLE agendamento_teste ADD COLUMN IF NOT EXISTS produtos TEXT');
   await pool.query('ALTER TABLE agendamento_teste ADD COLUMN IF NOT EXISTS observacoes TEXT');
   await pool.query('ALTER TABLE agendamento_teste ADD COLUMN IF NOT EXISTS contato_nome TEXT');
+  await pool.query('ALTER TABLE agendamento_teste ADD COLUMN IF NOT EXISTS remetente TEXT');
   await pool.query('CREATE INDEX IF NOT EXISTS idx_agendamento_teste_data ON agendamento_teste (data_agendamento DESC, criado_em DESC)');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS destinatario TEXT');
   await pool.query('ALTER TABLE coletas ADD COLUMN IF NOT EXISTS motorista_cpf TEXT');
@@ -4321,7 +4322,7 @@ async function start() {
           if(nf){params.push(nf);where.push('nf=$'+params.length)}
           const limit=Math.max(1,Math.min(500,Number(u.searchParams.get('limit')||100)));
           params.push(limit);
-          const sql='SELECT id::text AS id,nf,ctrc,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,produtos,observacoes,contato_nome,criado_em,atualizado_em FROM agendamento_teste ' +
+          const sql='SELECT id::text AS id,nf,ctrc,remetente,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,produtos,observacoes,contato_nome,criado_em,atualizado_em FROM agendamento_teste ' +
             (where.length?('WHERE '+where.join(' AND ')+' '):'') + 'ORDER BY criado_em DESC LIMIT $'+params.length;
           const q=await pool.query(sql,params);
           return sendJson(res,200,{ok:true,rows:q.rows});
@@ -4339,8 +4340,8 @@ async function start() {
           const data=/^\d{4}-\d{2}-\d{2}$/.test(String(body.data_agendamento||''))?String(body.data_agendamento):null;
           if(agendado&&!data)return sendJson(res,400,{ok:false,error:'Informe a data do agendamento.'});
           const q=await pool.query(
-            'INSERT INTO agendamento_teste (nf,ctrc,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,criado_por,client_id,produtos,observacoes,contato_nome) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id::text AS id,nf,ctrc,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,produtos,observacoes,contato_nome,criado_em',
-            [nf,String(body.ctrc||''),String(body.cliente||''),String(body.cidade||''),String(body.uf||''),String(body.status_ssw||''),String(body.mercadoria||''),Number(body.peso||0),Number(body.volumes||0),String(body.previsao_ssw||''),String(body.dia_rota||''),agendado,data,user.id,user.client_id,String(body.produtos||'').slice(0,4000),String(body.observacoes||'').slice(0,2000),String(body.contato_nome||'').trim().slice(0,160)]
+            'INSERT INTO agendamento_teste (nf,ctrc,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,criado_por,client_id,produtos,observacoes,contato_nome,remetente) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING id::text AS id,nf,ctrc,remetente,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,produtos,observacoes,contato_nome,criado_em',
+            [nf,String(body.ctrc||''),String(body.cliente||''),String(body.cidade||''),String(body.uf||''),String(body.status_ssw||''),String(body.mercadoria||''),Number(body.peso||0),Number(body.volumes||0),String(body.previsao_ssw||''),String(body.dia_rota||''),agendado,data,user.id,user.client_id,String(body.produtos||'').slice(0,4000),String(body.observacoes||'').slice(0,2000),String(body.contato_nome||'').trim().slice(0,160),String(body.remetente||'').trim().slice(0,200)]
           );
           return sendJson(res,201,{ok:true,row:q.rows[0]});
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao salvar agendamento de teste.'})}

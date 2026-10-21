@@ -219,5 +219,16 @@ console.log('Tela de comprovantes do romaneio (opção 38)');
   check('arquivo vazio: lista vazia',cte.parseRelacaoProdutos('').length===0)
 }
 
+{
+  console.log('\nAgendamento: notas entregues ou devolvidas ficam de fora');
+  const b=cte.situacaoBloqueiaAgendamento;
+  check('mercadoria entregue bloqueia',b('01-MERCADORIA ENTREGUE')==='entregue (baixada)');
+  check('devolução ao remetente bloqueia',b(['','DEVOLUCAO AO REMETENTE'])==='devolvida ao remetente');
+  check('retorno ao remetente bloqueia',b('RETORNO AO REMETENTE')==='devolvida ao remetente');
+  check('não entregue passa',b('MERCADORIA NAO ENTREGUE')==='');
+  check('saída para entrega passa',b('SAIDA PARA ENTREGA')==='');
+  check('sem situação passa',b(['',null])==='')
+}
+
 console.log('\n'+ok+' ok, '+bad+' falha(s)');
 process.exit(bad?1:0);

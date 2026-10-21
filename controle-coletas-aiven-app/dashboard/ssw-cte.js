@@ -303,4 +303,17 @@ function parseRelacaoProdutos(body){
   return out
 }
 
-module.exports={parseRelacaoProdutos,parseComprovantes,zipEntries,isZip,xmlFromDownload,parseCteXml,parseTela101,parseMapaCall,xmlValue,xmlBlock,entregaNoComplemento,enderecosEntrega,recebedorEhOutroLocal};
+// Situação do CT-e no SSW que tira a nota do agendamento: já entregue (baixada) ou devolvida ao
+// remetente. Recebe os textos de situação/ocorrência (ex.: "09/10-01-MERCADORIA ENTREGUE EM ...")
+// e devolve o motivo, ou '' quando a nota ainda pode ser agendada.
+function situacaoBloqueiaAgendamento(textos){
+  const t=(Array.isArray(textos)?textos:[textos]).map(x=>String(x||'')).join(' | ')
+    .normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/\s+/g,' ');
+  if(!t.trim())return'';
+  if(/DEVOLVID|DEVOLUCAO|DEVOLVER AO REMET|RETORN\w*\s+(?:AO|P\/|PARA O?)\s*REMET/.test(t))return'devolvida ao remetente';
+  const semNegacao=t.replace(/\b(?:NAO|SEM)\s+(?:FOI\s+)?ENTREGUE\b/g,' ');
+  if(/\bMERCADORIA ENTREGUE\b|\bENTREGUE\b|\bENTREGA REALIZADA\b|\bBAIXAD[OA]\b/.test(semNegacao))return'entregue (baixada)';
+  return''
+}
+
+module.exports={situacaoBloqueiaAgendamento,parseRelacaoProdutos,parseComprovantes,zipEntries,isZip,xmlFromDownload,parseCteXml,parseTela101,parseMapaCall,xmlValue,xmlBlock,entregaNoComplemento,enderecosEntrega,recebedorEhOutroLocal};
