@@ -5254,7 +5254,7 @@ let AGT_CURRENT=null;
 function agtVal(id,v){const e=$(id);if(e)e.value=v??''}
 function agtReset(){
   AGT_CURRENT=null;
-  agtVal('#agtNf','');['#agtF_Nf','#agtF_Ctrc','#agtF_Cliente','#agtF_Cidade','#agtF_Uf','#agtF_Rota','#agtF_Status','#agtF_Mercadoria','#agtF_Peso','#agtF_Volumes','#agtF_Previsao','#agtF_Data','#agtF_Contato','#agtF_Produtos','#agtF_Obs'].forEach(id=>agtVal(id,''));
+  agtVal('#agtNf','');['#agtF_Nf','#agtF_Ctrc','#agtF_Remetente','#agtF_Cliente','#agtF_Cidade','#agtF_Uf','#agtF_Rota','#agtF_Status','#agtF_Mercadoria','#agtF_Peso','#agtF_Volumes','#agtF_Previsao','#agtF_Data','#agtF_Contato','#agtF_Produtos','#agtF_Obs'].forEach(id=>agtVal(id,''));
   if($('#agtF_ProdutosInfo'))$('#agtF_ProdutosInfo').textContent='';
   if($('#agtF_Agendado'))$('#agtF_Agendado').value='nao';
   if($('#agtF_Data'))$('#agtF_Data').disabled=true;
@@ -5271,7 +5271,7 @@ async function agtBuscar(){
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Nota não localizada.');
     AGT_CURRENT=j.row;
-    agtVal('#agtF_Nf',j.row.nf);agtVal('#agtF_Ctrc',j.row.ctrc);agtVal('#agtF_Cliente',j.row.cliente);agtVal('#agtF_Cidade',j.row.cidade);agtVal('#agtF_Uf',j.row.uf);
+    agtVal('#agtF_Nf',j.row.nf);agtVal('#agtF_Ctrc',j.row.ctrc);agtVal('#agtF_Remetente',j.row.remetente);agtVal('#agtF_Cliente',j.row.cliente);agtVal('#agtF_Cidade',j.row.cidade);agtVal('#agtF_Uf',j.row.uf);
     agtVal('#agtF_Rota',j.row.dia_rota);agtVal('#agtF_Status',j.row.status_ssw);agtVal('#agtF_Mercadoria',j.row.mercadoria);agtVal('#agtF_Peso',Number(j.row.peso||0).toLocaleString('pt-BR',{maximumFractionDigits:3}));
     agtVal('#agtF_Volumes',Number(j.row.volumes||0).toLocaleString('pt-BR',{maximumFractionDigits:0}));agtVal('#agtF_Previsao',j.row.previsao_ssw);
     const prods=Array.isArray(j.row.produtos)?j.row.produtos:[];
@@ -5305,8 +5305,8 @@ async function agtLista(){
     const r=await fetch('/api/agendamento-teste?limit=100',{cache:'no-cache'}),j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar.');
     const rows=j.rows||[];
-    const body=rows.length?rows.map(x=>'<tr><td><b>'+safe(x.nf||'')+'</b></td><td>'+safe(x.cliente||'')+'</td><td>'+safe(x.cidade||'')+'</td><td>'+safe(x.dia_rota||'')+'</td><td>'+safe(x.status_ssw||'')+'</td><td>'+programFmtNumber(Number(x.peso||0),0)+' kg</td><td>'+(x.agendado?'SIM':'NÃO')+'</td><td>'+safe(x.data_agendamento?String(x.data_agendamento).slice(0,10).split('-').reverse().join('/'):'—')+'</td><td>'+safe(x.contato_nome||'—')+'</td><td class="agt-wrap">'+safe(String(x.produtos||'').split('\n').filter(Boolean).join(' • ')||'—')+'</td><td class="agt-wrap">'+safe(x.observacoes||'—')+'</td></tr>').join(''):'<tr><td colspan="11" class="muted">Nenhum registro salvo.</td></tr>';
-    table.innerHTML='<thead><tr><th>NF</th><th>Cliente</th><th>Cidade</th><th>Dia rota</th><th>Status SSW</th><th>Peso</th><th>Agendado</th><th>Data</th><th>Contato</th><th>Produtos</th><th>Observações</th></tr></thead><tbody>'+body+'</tbody>'
+    const body=rows.length?rows.map(x=>'<tr><td><b>'+safe(x.nf||'')+'</b></td><td>'+safe(x.remetente||'—')+'</td><td>'+safe(x.cliente||'')+'</td><td>'+safe(x.cidade||'')+'</td><td>'+safe(x.dia_rota||'')+'</td><td>'+safe(x.status_ssw||'')+'</td><td>'+programFmtNumber(Number(x.peso||0),0)+' kg</td><td>'+(x.agendado?'SIM':'NÃO')+'</td><td>'+safe(x.data_agendamento?String(x.data_agendamento).slice(0,10).split('-').reverse().join('/'):'—')+'</td><td>'+safe(x.contato_nome||'—')+'</td><td class="agt-wrap">'+safe(String(x.produtos||'').split('\n').filter(Boolean).join(' • ')||'—')+'</td><td class="agt-wrap">'+safe(x.observacoes||'—')+'</td></tr>').join(''):'<tr><td colspan="12" class="muted">Nenhum registro salvo.</td></tr>';
+    table.innerHTML=(j.ocultas?'<caption class="muted" style="text-align:left;padding:6px 10px">'+j.ocultas+' nota(s) já entregue(s) ou devolvida(s) ao remetente fora da lista.</caption>':'')+'<thead><tr><th>NF</th><th>Remetente</th><th>Destinatário</th><th>Cidade</th><th>Dia rota</th><th>Status SSW</th><th>Peso</th><th>Agendado</th><th>Data</th><th>Contato</th><th>Produtos</th><th>Observações</th></tr></thead><tbody>'+body+'</tbody>'
   }catch(e){table.innerHTML='<tbody><tr><td class="muted">Erro: '+safe(e.message)+'</td></tr></tbody>'}
 }
 // Parceiros (demo): o transportador cadastra o login SSW de cada parceiro e acompanha as entregas do dia de todos.

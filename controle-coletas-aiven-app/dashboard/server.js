@@ -1398,6 +1398,8 @@ async function deliveryProgramFetchSsw101Detail(session,row,force=false){
       return plain.slice(start,end).replace(/\s+/g,' ').trim();
     };
     const cliente=sswField('Destinatário',['CNPJ','CPF','Endereço','Cidade','Município','Bairro','CEP','UF']);
+    const remetente=sswField('Remetente',['CNPJ','CPF','Endereço','Destinatário','Cidade','Município','Bairro','CEP','UF']);
+    let situacao='';try{situacao=sswCte.parseTela101(html).resumo?.situacao||''}catch{}
     const cidade=sswField('Cidade destino',['UF','CEP','Bairro','Previsão','Prazo','Rota'])||sswField('Município destino',['UF','CEP','Bairro','Previsão','Prazo','Rota']);
     const uf=(sswField('UF destino',['CEP','Bairro','Previsão','Prazo','Rota']).match(/[A-Z]{2}/i)||[])[0]||'';
     const pesoText=sswField('Peso (kg)',['Volumes','Qtde','Quantidade','Previsão','Valor'])||sswField('Peso',['Volumes','Qtde','Quantidade','Previsão','Valor']);
@@ -1447,7 +1449,7 @@ async function deliveryProgramFetchSsw101Detail(session,row,force=false){
       frete:fm?bi2Number(fm[1]):Number(row.frete||0),
       tipoMercadoria:String(tm?.[1]||'').trim(),
       especieMercadoria:String(em?.[1]||'').trim(),
-      cliente,cidade,uf,
+      cliente,remetente,situacao,cidade,uf,
       peso:bi2Number(pesoText),volumes:bi2Number(volumesText),previsao,status,
       specialClass:deliveryProgramSpecialClass(combined),
       specialProducts:products,
@@ -1655,6 +1657,25 @@ function sswCteStore(ctrc,value){
   if(value?.cte?.chave&&value.ctrc){SSW_CHAVE_CTRC.set(value.cte.chave,value.ctrc);if(SSW_CHAVE_CTRC.size>8000)SSW_CHAVE_CTRC.delete(SSW_CHAVE_CTRC.keys().next().value)}
   SSW_CTE_CACHE.set(sswCteKey(ctrc),{at:Date.now(),ttl:value?.cte?24*60*60*1000:(value?10*60*1000:3*60*1000),value});
   if(SSW_CTE_CACHE.size>4000)SSW_CTE_CACHE.delete(SSW_CTE_CACHE.keys().next().value)
+}
+// Agendamento: nota entregue ou devolvida não entra. A situação de cada CT-e da lista é relida
+// na opção 101 em segundo plano (fila do SSW, prioridade baixa) e guardada por 30 min.
+const AGENDAMENTO_SITUACAO=new Map();
+function agendamentoBloqueio(textos){return sswCte.situacaoBloqueiaAgendamento(textos)}
+function agendamentoSituacao(ctrc){
+  const c=String(ctrc||'').toUpperCase().trim();
+  if(!/^[A-Z]{3}0*\d+-\d$/.test(c)||!internalSswConfigured())return'';
+  const key=sswCteKey(c),hit=AGENDAMENTO_SITUACAO.get(key);
+  if(hit&&(hit.pendente||Date.now()-hit.at<30*60*1000))return hit.bloqueio||'';
+  AGENDAMENTO_SITUACAO.set(key,{at:Date.now(),pendente:true,bloqueio:hit?.bloqueio||''});
+  sswCteEnqueue('agt:'+key,0,async()=>{
+    let bloqueio=hit?.bloqueio||'';
+    try{const lido=await sswCteLer(await sswCteSession(),c);if(lido?.resumo?.ctrc||lido?.resumo?.situacao)bloqueio=agendamentoBloqueio([lido.resumo.situacao])}
+    catch(e){SSW_CTE_SESSION=null;console.log('AGENDAMENTO situação '+c+': '+String(e?.message||e))}
+    AGENDAMENTO_SITUACAO.set(key,{at:Date.now(),bloqueio});
+    if(AGENDAMENTO_SITUACAO.size>3000)AGENDAMENTO_SITUACAO.delete(AGENDAMENTO_SITUACAO.keys().next().value)
+  }).catch(()=>AGENDAMENTO_SITUACAO.set(key,{at:Date.now(),bloqueio:hit?.bloqueio||''}));
+  return hit?.bloqueio||''
 }
 function sswCteFromLido(lido,ctrc){
   if(!lido||!(lido.entrega||lido.cte||Object.keys(lido.mapas||{}).length||lido.resumo?.ctrc))return null;
@@ -6235,7 +6256,8 @@ if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
       row={
         nf,
         ctrc:pickField(hit,'CTRC','NUMERO CTRC','NUMERO_CTRC')||hit.numero_ctrc||'',
-        cliente:pickField(hit,'DESTINATARIO','DESTINATARIO NOME','DESTINATARIO_NOME','CLIENTE')||'',
+        remetente:pickField(hit,'remetente_nome','NOME REMETENTE','REMETENTE NOME','REMETENTE')||'',
+        cliente:pickField(hit,'destinatario_nome','DESTINATARIO NOME','DESTINATARIO_NOME','DESTINATARIO','CLIENTE')||'',
         cidade:pickField(hit,'CIDADE DESTINO','CIDADE_DESTINO','DEST CIDADE','DEST_CIDADE')||'',
         uf:pickField(hit,'UF DESTINO','UF_DESTINO','DEST UF','DEST_UF')||'SP',
         mercadoria:pickField(hit,'TIPO MERCADORIA','TIPO_MERCADORIA','MERCADORIA','PRODUTO')||'',
@@ -6262,7 +6284,8 @@ if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
           return (ck&&normCtrc(raw)===ck)||(lk&&normCtrcLoose(raw)===lk)
         });
         if(hit){
-          row.cliente=row.cliente||pickField(hit,'DESTINATARIO','DESTINATARIO NOME','DESTINATARIO_NOME','CLIENTE')||'';
+          row.remetente=row.remetente||pickField(hit,'remetente_nome','NOME REMETENTE','REMETENTE NOME','REMETENTE')||'';
+          row.cliente=row.cliente||pickField(hit,'destinatario_nome','DESTINATARIO NOME','DESTINATARIO_NOME','DESTINATARIO','CLIENTE')||'';
           row.cidade=row.cidade||pickField(hit,'CIDADE DESTINO','CIDADE_DESTINO','DEST CIDADE','DEST_CIDADE')||'';
           row.uf=row.uf||pickField(hit,'UF DESTINO','UF_DESTINO','DEST UF','DEST_UF')||'SP';
           row.mercadoria=row.mercadoria||pickField(hit,'TIPO MERCADORIA','TIPO_MERCADORIA','MERCADORIA','PRODUTO')||'';
@@ -6280,6 +6303,7 @@ if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
     return res.end(JSON.stringify({ok:false,error:'NF '+nf+' não foi localizada na opção 38, nos relatórios BI2 nem na opção 101 do SSW.'}))
   }
 
+  const statusFonte=row.status||'';   // situação da opção 38/BI2, antes do texto solto da tela 101
   // Se temos CTRC, enriquece produto/tipo de mercadoria pela opção 101.
   if(row.ctrc){
     try{
@@ -6287,6 +6311,8 @@ if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
       const det=await deliveryProgramFetchSsw101Detail(session,{ctrc:row.ctrc,frete:0},true);
       if(det){
         row.cliente=row.cliente||det.cliente||'';
+        row.remetente=row.remetente||det.remetente||'';
+        row.situacao101=det.situacao||'';
         row.cidade=row.cidade||det.cidade||'';
         row.uf=det.uf||row.uf||'SP';
         row.mercadoria=row.mercadoria||det.tipoMercadoria||det.especieMercadoria||'';
@@ -6298,6 +6324,21 @@ if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
         row.produtosDiag=det.productDiag||'';
       }
     }catch(e){console.log('AGENDAMENTO NF detalhe 101: '+String(e.message||e))}
+    // Nomes do remetente e do destinatário pelo XML do CT-e, quando a tela não trouxe.
+    if(!row.remetente||!row.cliente){
+      try{
+        const info=await Promise.race([sswCteInfo(row.ctrc,2),new Promise(r=>setTimeout(()=>r(null),20000))]);
+        row.remetente=row.remetente||info?.cte?.remetente?.nome||'';
+        row.cliente=row.cliente||info?.cte?.destinatario?.nome||'';
+      }catch(e){console.log('AGENDAMENTO NF XML do CT-e: '+String(e.message||e))}
+    }
+  }
+
+  // Nota já entregue (baixada) ou devolvida ao remetente não entra no agendamento.
+  const bloqueio=agendamentoBloqueio([row.situacao101,statusFonte]);
+  if(bloqueio){
+    res.writeHead(409,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+    return res.end(JSON.stringify({ok:false,bloqueada:true,error:'NF '+nf+' já está '+bloqueio+' no SSW'+(row.situacao101||statusFonte?' ('+String(row.situacao101||statusFonte).slice(0,90)+')':'')+'. Ela não entra no agendamento.'}))
   }
 
   // Regras de rota por cidade: usa toda a base aberta atual do SSW, sem depender da NF estar nela.
@@ -6326,8 +6367,8 @@ if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
     ok:true,
     row:{
       produtos,produtos_fonte:produtosFonte,produtos_diag:produtosDiag,
-      nf:row.nf||nf,ctrc:row.ctrc||'',cliente:row.cliente||'',cidade:row.cidade||'',uf:row.uf||'SP',
-      status_ssw:row.status||'',mercadoria:row.tipoMercadoria||row.mercadoria||row.especieMercadoria||'',
+      nf:row.nf||nf,ctrc:row.ctrc||'',remetente:row.remetente||'',cliente:row.cliente||'',cidade:row.cidade||'',uf:row.uf||'SP',
+      status_ssw:row.situacao101||row.status||'',mercadoria:row.tipoMercadoria||row.mercadoria||row.especieMercadoria||'',
       peso:Number(row.peso||0),volumes:Number(row.volumes||0),previsao_ssw:row.previsao||'',
       dia_rota:cityRule?.weekdayLabel||'',amostras_rota:cityRule?.samples||[]
     },
@@ -6346,6 +6387,12 @@ if(u.pathname==='/api/agendamento-teste'&&req.method==='GET'){try{
   if(u.searchParams.get('nf'))q.set('nf',u.searchParams.get('nf'));
   q.set('limit',String(Math.max(1,Math.min(500,Number(u.searchParams.get('limit')||100)))));
   const x=await portalAuth('/api/painel/agendamento-teste?'+q.toString(),{token:authUser.token,timeout:25000});
+  // Tira da lista as notas que já foram entregues (baixadas) ou devolvidas ao remetente.
+  if(Array.isArray(x?.rows)){
+    const antes=x.rows.length;
+    x.rows=x.rows.filter(r=>!agendamentoSituacao(r.ctrc));
+    x.ocultas=antes-x.rows.length
+  }
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
