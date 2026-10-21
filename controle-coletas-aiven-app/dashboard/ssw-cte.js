@@ -179,8 +179,13 @@ function parseTela101(html){
   const num=v=>{const n=Number(String(v||'').replace(/\./g,'').replace(',','.'));return Number.isFinite(n)?n:0};
   const ctrc=((plain.match(/CTRC[^:]{0,20}:\s*([A-Z]{3}\d{5,7}-\d)/i)||[])[1]||'').toUpperCase();
   const nfTxt=(plain.match(/da Nota Fiscal:\s*(?:\d{1,3}\/)?0*(\d{1,12})/i)||[])[1]||'';
+  // "Remetente: Destinatário: Nome: <rem> Nome: <dest> CNPJ:" (duas colunas). Nome que não coube
+  // vem com ".." ou "(..)" no fim; fica " .." para quem usa saber que está cortado.
+  const nomes=plain.match(/Remetente:\s*Destinat[aá]rio:\s*Nome:\s*(.*?)\s*Nome:\s*(.*?)\s*CNPJ:/i);
+  const nomeLimpo=v=>String(v||'').replace(/\s*\(\.\.\)\s*$/,' ..').replace(/\s+/g,' ').trim();
   const resumo={
     ctrc,nf:nfTxt,
+    remetente:nomes?nomeLimpo(nomes[1]):'',destinatario:nomes?nomeLimpo(nomes[2]):'',
     volumes:Number((plain.match(/Qtde\.?\s*de\s*vol\.?[^:]{0,12}:\s*(\d+)/i)||[])[1]||0),
     peso:num((plain.match(/Peso real[^:]{0,40}:\s*([\d.,]+)/i)||[])[1]),
     valorNf:num((plain.match(/Valor da Nota Fiscal:\s*([\d.,]+)/i)||[])[1]),

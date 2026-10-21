@@ -107,6 +107,11 @@ console.log('Tela da opção 101 (como o SSW mostra)');
   check('bloco Entrega: endereço da coluna da direita',t.entrega&&t.entrega.endereco==='SITIO BAIRRO OL,3'&&t.entrega.logradouro==='SITIO BAIRRO OL'&&t.entrega.numero==='3',t.entrega);
   check('bloco Entrega: complemento (o do expedidor vem vazio)',t.entrega.complemento==='SN ENDERECO ENTREGA RUA JULIA',t.entrega.complemento);
   check('bloco Entrega: bairro, CEP, cidade e UF',t.entrega.bairro==='ZONA RURAL'&&t.entrega.cep==='13871-160'&&t.entrega.cidade==='SAO JOAO DA BOA VISTA'&&t.entrega.uf==='SP',t.entrega);
+  check('remetente e destinatário da tela, sem misturar os rótulos',t.resumo.remetente==='NAVAS E CIA LTDA (B2)'&&t.resumo.destinatario==='3056207 WAGNO ABREU DE JES ..',t.resumo);
+  {
+    const r=cte.parseTela101('<div>Remetente:</div><div>Destinat&aacute;rio:</div><div>Nome:</div><div>BENTER COMERCIO LTDA (..)</div><div>Nome:</div><div>BENEDITO DE OLIVEIRA MENDES ..</div><div>CNPJ:</div>').resumo;
+    check('nome cortado "(..)" vira " .."',r.remetente==='BENTER COMERCIO LTDA ..'&&r.destinatario==='BENEDITO DE OLIVEIRA MENDES ..',r)
+  }
   check('bloco Entrega: nome de quem recebe',t.entrega.nome==='3056207 WAGNO ABREU DE JESUZ',t.entrega.nome);
   check('ponto do mapa da entrega (vírgula decimal do SSW)',t.mapas.ent&&t.mapas.ent.lat===-21.9777401&&t.mapas.ent.lon===-46.7894998,t.mapas.ent);
   check('ponto do mapa do destinatário, com a rua inteira',t.mapas.dest.logradouro==='SITIO BAIRRO OLARIA'&&t.mapas.dest.numero==='3'&&t.mapas.dest.cidade==='SAO JOAO DA BOA VISTA'&&t.mapas.dest.uf==='SP',t.mapas.dest);

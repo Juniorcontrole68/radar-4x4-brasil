@@ -4341,7 +4341,7 @@ async function start() {
           const cols='id::text AS id,nf,ctrc,remetente,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,produtos,observacoes,contato_nome,criado_em';
           // Completar pelo SSW (segundo plano do dashboard): só preenche o que está vazio ou cortado ("..").
           if(body.completar===true){
-            const vazio=c=>"(COALESCE("+c+",'')='' OR "+c+" LIKE '%..')";
+            const vazio=c=>"(COALESCE("+c+",'')='' OR "+c+" LIKE '%..' OR "+c+" LIKE '%..)' OR "+c+" LIKE '%Nome:%')";
             const params=[String(body.id||''),nf,txt(body.ctrc,40),txt(body.remetente,200),txt(body.cliente,200),txt(body.status_ssw,200),String(body.produtos||'').slice(0,4000)];
             let where='id::text=$1 AND nf=$2';
             if(user.client_id){params.push(user.client_id);where+=' AND client_id=$'+params.length}
