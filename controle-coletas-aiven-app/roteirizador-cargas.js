@@ -148,4 +148,74 @@ async function resetDemo(pool, cliente) {
   await pool.query('DELETE FROM rc_docs_removidos WHERE cliente=$1', [cliente]);
   return semear(pool, cliente, true);
 }
-module.exports = { resetDemo, ensureSchema, handle, semear, versaoPagina, caminhoValido, colecaoDe, podeGravar, PERM };
+// ---------------- Sobras em galpão: baixa automática pelo SSW ----------------
+// Duas vezes por dia (09:00 e 19:00 de Brasília) o servidor confere no SSW as notas que ficaram no
+// galpão e ainda não foram entregues: entregue (baixa no SSW) sai da lista; em rota / pendente
+// atualiza a situação. A sobra marcada à mão não é mexida. A nota ligada à sobra acompanha.
+const HORARIOS_SOBRAS = ['09:00', '19:00'];
+const agoraSP = () => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date()).map((x) => [x.type, x.value]));
+  return { dia: p.year + '-' + p.month + '-' + p.day, hora: p.hour + ':' + p.minute };
+};
+const somaDias = (d, n) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+const chaveNf = (v) => String(v || '').replace(/\D/g, '').replace(/^0+/, '');
+
+// statusNfs(nfs, desde) -> { itens: { "<nf>": { status: 'entregue'|'em_rota'|'pendente', em, fonte } } }
+async function conferirSobras(pool, cliente, statusNfs, hoje) {
+  hoje = hoje || agoraSP().dia;
+  const docs = (await pool.query("SELECT path,data FROM rc_docs WHERE cliente=$1 AND (colecao='op/main/sobras' OR colecao='op/main/notas')", [cliente])).rows;
+  const notas = new Map(docs.filter((d) => d.path.startsWith('op/main/notas/')).map((d) => [d.data.id || d.path.split('/').pop(), d]));
+  const limite = somaDias(hoje, -20);
+  const abertas = docs.filter((d) => {
+    if (!d.path.startsWith('op/main/sobras/')) return false;
+    const s = d.data || {};
+    if (!chaveNf(s.numero) || s.statusManual || s.status === 'entregue' || !s.data || s.data < limite || s.data > hoje) return false;
+    const n = s.notaId && notas.get(s.notaId);
+    return !(n && n.data.status === 'entregue');
+  });
+  const out = { cliente, conferidas: abertas.length, entregues: 0, emRota: 0, alteradas: 0 };
+  if (!abertas.length) return out;
+  const desde = abertas.map((d) => d.data.data).sort()[0];
+  const itens = {};
+  const nfs = [...new Set(abertas.map((d) => chaveNf(d.data.numero)))];
+  for (let i = 0; i < nfs.length; i += 300) Object.assign(itens, ((await statusNfs(nfs.slice(i, i + 300), desde)) || {}).itens || {});
+  const grava = (path, data) => pool.query(`INSERT INTO rc_docs(cliente,path,colecao,data,updated_by,updated_at) VALUES($1,$2,$3,$4::jsonb,$5,clock_timestamp())
+    ON CONFLICT (cliente,path) DO UPDATE SET data=EXCLUDED.data,updated_by=EXCLUDED.updated_by,updated_at=clock_timestamp()`, [cliente, path, colecaoDe(path), JSON.stringify(data), 'conferência SSW']);
+  for (const d of abertas) {
+    const s = d.data, r = itens[chaveNf(s.numero)];
+    if (!r || !['entregue', 'em_rota', 'pendente'].includes(r.status)) continue;
+    if (r.status === 'entregue') out.entregues++; else if (r.status === 'em_rota') out.emRota++;
+    const q = Object.assign({}, s, { conferidoEm: new Date().toISOString() });
+    if (r.status !== (s.status || 'pendente')) {
+      Object.assign(q, { status: r.status, statusFonte: r.fonte || 'SSW', statusEm: hoje });
+      if (r.status === 'entregue') q.entregueEm = r.em || hoje; else delete q.entregueEm;
+      out.alteradas++;
+      const n = s.notaId && notas.get(s.notaId);
+      if (n) {
+        const st = n.data.status, ns = r.status === 'entregue' ? 'entregue' : r.status === 'em_rota' ? 'em_rota' : (st === 'em_rota' ? 'pronta' : st);
+        if (ns !== st) await grava(n.path, Object.assign({}, n.data, { status: ns }, ns === 'entregue' ? { entregueEm: q.entregueEm } : {}));
+      }
+    }
+    await grava(d.path, q);
+  }
+  return out;
+}
+
+// Roda nos HORARIOS_SOBRAS (uma vez por horário por dia). clientes(): chaves de cliente com SSW (a CONSTRULOG).
+function iniciarConferenciaSobras({ pool, statusNfs, clientes, horarios = HORARIOS_SOBRAS, log = console.log }) {
+  const feitos = new Set();
+  const tick = async () => {
+    const { dia, hora } = agoraSP();
+    const h = horarios.find((x) => hora >= x && hora < somaMin(x, 30));
+    if (!h || feitos.has(dia + ' ' + h)) return;
+    feitos.add(dia + ' ' + h);
+    for (const c of await clientes()) {
+      try { log('SOBRAS SSW ' + h + ': ' + JSON.stringify(await conferirSobras(pool, c, statusNfs, dia))); }
+      catch (e) { log('SOBRAS SSW ' + h + ' ERRO (' + c + '): ' + (e.message || e)); }
+    }
+  };
+  return setInterval(() => { tick().catch(() => {}); }, 60 * 1000);
+}
+const somaMin = (hhmm, n) => { const [a, b] = hhmm.split(':').map(Number), t = a * 60 + b + n; return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0'); };
+
+module.exports = { resetDemo, ensureSchema, handle, semear, versaoPagina, caminhoValido, colecaoDe, podeGravar, PERM, conferirSobras, iniciarConferenciaSobras, HORARIOS_SOBRAS };

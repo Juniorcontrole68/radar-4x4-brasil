@@ -25,6 +25,37 @@ const login = async (u, s) => { const r = await call('POST', '/api/auth/login', 
   const arac = seed.find((d) => d.path === 'cad/main/cidades/3502903');
   check('carga inicial: 148 cidades, Araçoiaba da Serra terça e quinta', seed.filter((d) => d.path.startsWith('cad/main/cidades/')).length === 148 && arac && arac.data.dias.join() === '2,4', arac);
 
+  console.log('Sobras em galpão: baixa pelo SSW às 09:00 e 19:00');
+  check('horários da conferência', lib.HORARIOS_SOBRAS.join() === '09:00,19:00');
+  if (process.env.DATABASE_URL) {
+    const { Pool } = require('pg');
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    await lib.ensureSchema(pool);
+    const C = 'teste-sobras', put = (p, d) => pool.query('INSERT INTO rc_docs(cliente,path,colecao,data) VALUES($1,$2,$3,$4::jsonb) ON CONFLICT (cliente,path) DO UPDATE SET data=EXCLUDED.data', [C, p, lib.colecaoDe(p), JSON.stringify(d)]);
+    await pool.query('DELETE FROM rc_docs WHERE cliente=$1', [C]);
+    await put('op/main/notas/n-a', { id: 'n-a', numero: '669950', status: 'pronta' });
+    await put('op/main/sobras/2026-10-20_n-a', { id: '2026-10-20_n-a', data: '2026-10-20', notaId: 'n-a', numero: '669950', ctrc: 'AMR15326-5' });
+    await put('op/main/sobras/2026-10-20_nf1001', { id: '2026-10-20_nf1001', data: '2026-10-20', numero: '1001' });
+    await put('op/main/sobras/2026-10-20_nf1002', { id: '2026-10-20_nf1002', data: '2026-10-20', numero: '1002', statusManual: 'pendente' });
+    await put('op/main/sobras/2026-09-01_nf1003', { id: '2026-09-01_nf1003', data: '2026-09-01', numero: '1003' });
+    let pedidas = null;
+    const x = await lib.conferirSobras(pool, C, async (nfs, desde) => { pedidas = { nfs: nfs.slice().sort(), desde }; return { ok: true, itens: { 669950: { status: 'entregue', em: '2026-10-21', fonte: 'Baixa no SSW' }, 1001: { status: 'em_rota', fonte: 'romaneio' }, 1002: { status: 'entregue' }, 1003: { status: 'entregue' } } }; }, '2026-10-21');
+    check('confere só as sobras abertas dos últimos 20 dias e sem situação marcada à mão', pedidas && pedidas.nfs.join() === '1001,669950' && pedidas.desde === '2026-10-20', pedidas);
+    const doc = async (p) => (await pool.query('SELECT data,updated_by FROM rc_docs WHERE cliente=$1 AND path=$2', [C, p])).rows[0];
+    const a = await doc('op/main/sobras/2026-10-20_n-a'), na = await doc('op/main/notas/n-a'), b = await doc('op/main/sobras/2026-10-20_nf1001'), m = await doc('op/main/sobras/2026-10-20_nf1002');
+    check('baixa no SSW: a sobra fica entregue (sai da lista) e a nota acompanha', a.data.status === 'entregue' && a.data.entregueEm === '2026-10-21' && a.data.ctrc === 'AMR15326-5' && na.data.status === 'entregue' && a.updated_by === 'conferência SSW', [a, na]);
+    check('saiu em romaneio: em rota', b.data.status === 'em_rota' && !b.data.entregueEm, b.data);
+    check('marcada à mão não muda', !m.data.status, m.data);
+    check('resumo da conferência', x.conferidas === 2 && x.entregues === 1 && x.emRota === 1 && x.alteradas === 2, x);
+    const y = await lib.conferirSobras(pool, C, async (nfs) => ({ itens: { 1001: { status: 'em_rota' } } }), '2026-10-21');
+    check('segunda conferência: a entregue não é consultada de novo', y.conferidas === 1 && y.alteradas === 0, y);
+    await pool.query('DELETE FROM rc_docs WHERE cliente=$1', [C]);
+    await pool.end();
+  } else console.log('  (sem DATABASE_URL: conferência no banco não testada)');
+  const fonte = fs.readFileSync(path.join(__dirname, '..', 'roteirizador-cargas-fonte', 'app.js'), 'utf8');
+  check('tela de sobras tem o campo do CT-e ao lado da NF', fonte.includes('id="sbCTE"') && fonte.includes('CT-e (código de barras)') && fonte.includes("flex:0 1 200px"));
+  check('a página não consulta mais as sobras no SSW a cada 10 minutos', !fonte.includes('sincronizarSobras'));
+
   console.log('Sem login');
   let r = await call('GET', '/roteirizador-cargas');
   check('página sem login vai para o login do portal', r.status === 302 && /login=1/.test(r.location), r.status + ' ' + r.location);
@@ -44,6 +75,10 @@ const login = async (u, s) => { const r = await call('POST', '/api/auth/login', 
   check('versão publicada igual à da página (aviso de versão nova)', r.status === 200 && r.json.versao && pag.includes('name="rc-versao" content="' + r.json.versao + '"'), r.json);
   r = await call('GET', '/api/rc/eu', { cookie: adm });
   check('usuário e perfil de administrador', r.status === 200 && r.json.admin === true && r.json.username === ADMIN_USER, r.json);
+  r = await call('GET', '/api/roteirizador/cte-nf?codigo=12345', { cookie: adm });
+  check('CT-e bipado nas sobras: código curto é recusado com aviso', r.status === 400 && /Não reconheci/.test(r.json && r.json.error), r.status + ' ' + r.text.slice(0, 200));
+  r = await call('GET', '/api/roteirizador/cte-nf?codigo=' + '35261012345678000190' + '55' + '001' + '000669950' + '1' + '12345678' + '9', { cookie: adm });
+  check('  ...código da NF-e (DANFE) pede o do CT-e', r.status === 400 && /DACTE/.test(r.json && r.json.error), r.status + ' ' + r.text.slice(0, 200));
   r = await call('GET', '/api/rc/mudancas', { cookie: adm });
   const cid = (r.json && r.json.docs || []).filter((d) => d.path.startsWith('cad/main/cidades/'));
   check('primeira leitura traz a carga inicial completa', r.status === 200 && r.json.completo === true && cid.length === 148 && r.json.docs.some((d) => d.path === 'cad/main'), r.status + ' ' + (r.json && r.json.docs || []).length);

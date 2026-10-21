@@ -1848,6 +1848,19 @@ async function start() {
   }});
   if(!TEST_MODE)veic.iniciarImportacaoAutomatica(pool);
   await roteirizadorCargas.ensureSchema(pool);
+  // sobras em galpão: às 09:00 e às 19:00 confere no SSW o que já foi entregue e tira da lista (o painel lê o SSW)
+  if(!TEST_MODE&&process.env.SOBRAS_SSW_AUTO!=='0')roteirizadorCargas.iniciarConferenciaSobras({pool,
+    statusNfs:async(nfs,desde)=>{
+      const r=await fetch('http://'+DASH_INTERNAL_HOST+':'+DASH_INTERNAL_PORT+'/api/programacao-entregas/status-nfs?'+new URLSearchParams({nfs:nfs.join(','),desde}),{headers:{'X-Internal-Key':INTERNAL_KEY,'Accept':'application/json'},signal:AbortSignal.timeout(10*60*1000)});
+      const j=await r.json().catch(()=>null);
+      if(!r.ok||!j||j.ok===false)throw new Error((j&&j.error)||('HTTP '+r.status));
+      return j
+    },
+    clientes:async()=>{
+      const cq=await pool.query("SELECT id::text FROM movit_clients WHERE lower(slug)='construlog' LIMIT 1").catch(()=>({rows:[]}));
+      const ks=['construlog'].concat(cq.rows[0]?['c'+cq.rows[0].id]:[]);
+      return (await pool.query("SELECT DISTINCT cliente FROM rc_docs WHERE colecao='op/main/sobras' AND cliente=ANY($1)",[ks])).rows.map(r=>r.cliente)
+    }});
   await lotacaoRastreio.ensureSchema(pool);
   await entregas.ensureSchema(pool);
   // se o esquema do WMS falhar, desliga só o WMS e o resto do servidor sobe normalmente
