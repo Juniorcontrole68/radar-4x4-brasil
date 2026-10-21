@@ -129,7 +129,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}dialog form,dialog .in{padding:18
 
   <section data-sec="enderecos" hidden>
     <div class="lado">
-      <div class="card"><div class="bar" style="justify-content:space-between"><h2>Armazéns</h2><button class="btn p" id="armNovo">+ Armazém</button></div><div id="armLista"></div></div>
+      <div class="card"><div class="bar" style="justify-content:space-between"><h2>Armazéns</h2><div class="bar"><button class="btn" id="zonaNova">+ Zona</button><button class="btn p" id="armNovo">+ Armazém</button></div></div><div id="armLista"></div></div>
       <div class="card"><h2>Gerar endereços em lote</h2>
         <form id="fLote" class="cols" style="display:grid">
           <label>Zona<select name="zona_id" id="loteZona" required></select></label>
@@ -444,6 +444,12 @@ $('#endEtq').onclick=()=>{if(!ST.arm)return;open('/wms/etiquetas?tipo=endereco&a
 $('#armNovo').onclick=()=>{
   abrir('<h2>Novo armazém</h2><form id="fArm"><div class="cols"><label>Código<input name="codigo" maxlength="20" required placeholder="CD01"></label><label>Nome<input name="nome" required placeholder="CD Indaiatuba"></label></div><label>Endereço<input name="endereco"></label><p class="muted">O armazém já nasce com as zonas Docas, Quarentena, Avarias e Pulmão. Depois gere os endereços de cada zona.</p><div class="bar"><button class="btn p">Criar</button><button class="btn" type="button" data-fechar>Cancelar</button></div></form>');
   $('#fArm').onsubmit=tenta(async e=>{e.preventDefault();const j=await api('POST','/api/wms/armazens',Object.fromEntries(new FormData(e.target)));ST.arm=j.id;try{localStorage.setItem('wmsArm',j.id)}catch{};fechar();aviso('Armazém criado.',true);carregarEnderecos()});
+};
+const TIPOS_ZONA=[['pulmao','Pulmão (armazenagem)'],['picking','Picking'],['blocado','Blocado'],['doca','Doca'],['quarentena','Quarentena'],['avaria','Avaria'],['devolucao','Devolução'],['cross_docking','Cross-docking'],['expedicao','Expedição']];
+$('#zonaNova').onclick=()=>{
+  const a=armAtual();if(!a)return aviso('Crie um armazém primeiro.');
+  abrir('<h2>Nova zona em '+esc(a.nome)+'</h2><form id="fZona"><div class="cols"><label>Código<input name="codigo" maxlength="20" required placeholder="PICK"></label><label>Nome<input name="nome" maxlength="80" required placeholder="Picking"></label></div><label>Tipo<select name="tipo">'+TIPOS_ZONA.map(t=>'<option value="'+t[0]+'">'+t[1]+'</option>').join('')+'</select></label><p class="muted">Zonas já criadas: '+esc(a.zonas.map(z=>z.nome).join(', ')||'nenhuma')+'. Depois de criar, gere os endereços da zona em "Gerar endereços em lote".</p><div class="bar"><button class="btn p">Criar zona</button><button class="btn" type="button" data-fechar>Cancelar</button></div></form>');
+  $('#fZona').onsubmit=tenta(async e=>{e.preventDefault();await api('POST','/api/wms/armazens/'+a.id+'/zonas',Object.fromEntries(new FormData(e.target)));fechar();aviso('Zona criada.',true);carregarEnderecos()});
 };
 function corpoLote(){const f=Object.fromEntries(new FormData($('#fLote')));return{armazem_id:ST.arm,zona_id:f.zona_id,tipo:f.tipo,rua_de:f.rua_de,rua_ate:f.rua_ate,colunas:{de:f.col_de,ate:f.col_ate},niveis:{de:f.niv_de,ate:f.niv_ate},posicoes:{de:f.pos_de,ate:f.pos_ate},cap_paletes:f.cap_paletes,cap_kg:f.cap_kg,cap_m3:f.cap_m3,distancia_base_m:f.distancia_base_m}}
 function prevLote(){const b=corpoLote();const r=(b.rua_de&&b.rua_ate&&/^[A-Za-z]$/.test(b.rua_de)&&/^[A-Za-z]$/.test(b.rua_ate))?b.rua_ate.toUpperCase().charCodeAt(0)-b.rua_de.toUpperCase().charCodeAt(0)+1:(/^\d+$/.test(b.rua_de)&&/^\d+$/.test(b.rua_ate||b.rua_de)?+(b.rua_ate||b.rua_de)-+b.rua_de+1:1);const t=r*(b.colunas.ate-b.colunas.de+1)*(b.niveis.ate-b.niveis.de+1)*(b.posicoes.ate-b.posicoes.de+1);$('#lotePrev').textContent=t>0?'Vai gerar '+t+' endereço(s), do '+String(b.rua_de).toUpperCase()+'-'+String(b.colunas.de).padStart(2,'0')+'-'+String(b.niveis.de).padStart(2,'0')+'-'+String(b.posicoes.de).padStart(2,'0')+' em diante.':''}
