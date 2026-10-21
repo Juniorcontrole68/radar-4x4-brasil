@@ -4322,8 +4322,9 @@ async function start() {
           if(nf){params.push(nf);where.push('nf=$'+params.length)}
           const limit=Math.max(1,Math.min(500,Number(u.searchParams.get('limit')||100)));
           params.push(limit);
-          const sql='SELECT id::text AS id,nf,ctrc,remetente,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,produtos,observacoes,contato_nome,criado_em,atualizado_em FROM agendamento_teste ' +
-            (where.length?('WHERE '+where.join(' AND ')+' '):'') + 'ORDER BY criado_em DESC LIMIT $'+params.length;
+          // Uma linha por NF (a mais recente), mesmo que a nota tenha sido salva mais de uma vez.
+          const sql='SELECT * FROM (SELECT DISTINCT ON (nf) id::text AS id,nf,ctrc,remetente,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,produtos,observacoes,contato_nome,criado_em,atualizado_em FROM agendamento_teste ' +
+            (where.length?('WHERE '+where.join(' AND ')+' '):'') + 'ORDER BY nf, criado_em DESC, id DESC) t ORDER BY criado_em DESC LIMIT $'+params.length;
           const q=await pool.query(sql,params);
           return sendJson(res,200,{ok:true,rows:q.rows});
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao consultar agendamentos de teste.'})}
@@ -4336,9 +4337,39 @@ async function start() {
           const body=await readJsonBodyLimited(req,64*1024);
           const nf=String(body.nf||'').replace(/\D/g,'').replace(/^0+(?=\d)/,'');
           if(!nf)return sendJson(res,400,{ok:false,error:'Informe a nota fiscal.'});
+          const txt=(v,n)=>String(v||'').trim().slice(0,n);
+          const cols='id::text AS id,nf,ctrc,remetente,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,produtos,observacoes,contato_nome,criado_em';
+          // Completar pelo SSW (segundo plano do dashboard): só preenche o que está vazio ou cortado ("..").
+          if(body.completar===true){
+            const vazio=c=>"(COALESCE("+c+",'')='' OR "+c+" LIKE '%..')";
+            const params=[String(body.id||''),nf,txt(body.ctrc,40),txt(body.remetente,200),txt(body.cliente,200),txt(body.status_ssw,200),String(body.produtos||'').slice(0,4000)];
+            let where='id::text=$1 AND nf=$2';
+            if(user.client_id){params.push(user.client_id);where+=' AND client_id=$'+params.length}
+            const q=await pool.query(
+              "UPDATE agendamento_teste SET ctrc=CASE WHEN COALESCE(ctrc,'')='' AND $3<>'' THEN $3 ELSE ctrc END,"+
+              'remetente=CASE WHEN '+vazio('remetente')+" AND $4<>'' THEN $4 ELSE remetente END,"+
+              'cliente=CASE WHEN '+vazio('cliente')+" AND $5<>'' THEN $5 ELSE cliente END,"+
+              "status_ssw=CASE WHEN COALESCE(status_ssw,'')='' AND $6<>'' THEN $6 ELSE status_ssw END,"+
+              "produtos=CASE WHEN COALESCE(produtos,'')='' AND $7<>'' THEN $7 ELSE produtos END,"+
+              'atualizado_em=NOW() WHERE '+where+' RETURNING '+cols,params);
+            return sendJson(res,200,{ok:true,row:q.rows[0]||null});
+          }
           const agendado=!!body.agendado;
           const data=/^\d{4}-\d{2}-\d{2}$/.test(String(body.data_agendamento||''))?String(body.data_agendamento):null;
           if(agendado&&!data)return sendJson(res,400,{ok:false,error:'Informe a data do agendamento.'});
+          // A mesma NF salva de novo atualiza o registro que já existe, em vez de duplicar.
+          const exParams=[nf];let exWhere='nf=$1';
+          if(user.client_id){exParams.push(user.client_id);exWhere+=' AND client_id=$2'}else exWhere+=' AND client_id IS NULL';
+          const ex=await pool.query('SELECT id FROM agendamento_teste WHERE '+exWhere+' ORDER BY criado_em DESC, id DESC LIMIT 1',exParams);
+          if(ex.rows[0]){
+            const q=await pool.query(
+              "UPDATE agendamento_teste SET ctrc=COALESCE(NULLIF($2,''),ctrc),cliente=COALESCE(NULLIF($3,''),cliente),cidade=COALESCE(NULLIF($4,''),cidade),uf=COALESCE(NULLIF($5,''),uf),"+
+              "status_ssw=COALESCE(NULLIF($6,''),status_ssw),mercadoria=COALESCE(NULLIF($7,''),mercadoria),peso=CASE WHEN $8::numeric>0 THEN $8::numeric ELSE peso END,volumes=CASE WHEN $9::numeric>0 THEN $9::numeric ELSE volumes END,"+
+              "previsao_ssw=COALESCE(NULLIF($10,''),previsao_ssw),dia_rota=COALESCE(NULLIF($11,''),dia_rota),agendado=$12,data_agendamento=$13,produtos=COALESCE(NULLIF($14,''),produtos),"+
+              "observacoes=COALESCE(NULLIF($15,''),observacoes),contato_nome=COALESCE(NULLIF($16,''),contato_nome),remetente=COALESCE(NULLIF($17,''),remetente),atualizado_em=NOW() WHERE id=$1 RETURNING "+cols,
+              [ex.rows[0].id,String(body.ctrc||''),String(body.cliente||''),String(body.cidade||''),String(body.uf||''),String(body.status_ssw||''),String(body.mercadoria||''),Number(body.peso||0),Number(body.volumes||0),String(body.previsao_ssw||''),String(body.dia_rota||''),agendado,data,String(body.produtos||'').slice(0,4000),String(body.observacoes||'').slice(0,2000),txt(body.contato_nome,160),txt(body.remetente,200)]);
+            return sendJson(res,200,{ok:true,row:q.rows[0],atualizado:true});
+          }
           const q=await pool.query(
             'INSERT INTO agendamento_teste (nf,ctrc,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,criado_por,client_id,produtos,observacoes,contato_nome,remetente) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING id::text AS id,nf,ctrc,remetente,cliente,cidade,uf,status_ssw,mercadoria,peso,volumes,previsao_ssw,dia_rota,agendado,data_agendamento,produtos,observacoes,contato_nome,criado_em',
             [nf,String(body.ctrc||''),String(body.cliente||''),String(body.cidade||''),String(body.uf||''),String(body.status_ssw||''),String(body.mercadoria||''),Number(body.peso||0),Number(body.volumes||0),String(body.previsao_ssw||''),String(body.dia_rota||''),agendado,data,user.id,user.client_id,String(body.produtos||'').slice(0,4000),String(body.observacoes||'').slice(0,2000),String(body.contato_nome||'').trim().slice(0,160),String(body.remetente||'').trim().slice(0,200)]

@@ -5294,7 +5294,7 @@ async function agtSalvar(e){
     const r=await fetch('/api/agendamento-teste',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível salvar.');
-    if(msg)msg.textContent='✓ Registro salvo.';
+    if(msg)msg.textContent=j.atualizado?'✓ Essa NF já estava salva: registro atualizado.':'✓ Registro salvo.';
     await agtLista();
   }catch(e){if(msg)msg.textContent='Erro ao salvar: '+e.message}
   finally{if(btn){btn.disabled=false;btn.textContent='Salvar teste'}}
@@ -5305,7 +5305,7 @@ async function agtLista(){
     const r=await fetch('/api/agendamento-teste?limit=100',{cache:'no-cache'}),j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar.');
     const rows=j.rows||[];
-    const body=rows.length?rows.map(x=>'<tr><td><b>'+safe(x.nf||'')+'</b></td><td>'+safe(x.remetente||'—')+'</td><td>'+safe(x.cliente||'')+'</td><td>'+safe(x.cidade||'')+'</td><td>'+safe(x.dia_rota||'')+'</td><td>'+safe(x.status_ssw||'')+'</td><td>'+programFmtNumber(Number(x.peso||0),0)+' kg</td><td>'+(x.agendado?'SIM':'NÃO')+'</td><td>'+safe(x.data_agendamento?String(x.data_agendamento).slice(0,10).split('-').reverse().join('/'):'—')+'</td><td>'+safe(x.contato_nome||'—')+'</td><td class="agt-wrap">'+safe(String(x.produtos||'').split('\n').filter(Boolean).join(' • ')||'—')+'</td><td class="agt-wrap">'+safe(x.observacoes||'—')+'</td></tr>').join(''):'<tr><td colspan="12" class="muted">Nenhum registro salvo.</td></tr>';
+    const body=rows.length?rows.map(x=>'<tr><td><b>'+safe(x.nf||'')+'</b></td><td>'+safe(x.remetente||'—')+'</td><td>'+safe(x.cliente||'')+'</td><td>'+safe(x.cidade||'')+'</td><td>'+safe(x.dia_rota||'')+'</td><td>'+safe(x.status_ssw||'')+'</td><td>'+programFmtNumber(Number(x.peso||0),0)+' kg</td><td>'+(x.agendado?'SIM':'NÃO')+'</td><td>'+safe(x.data_agendamento?String(x.data_agendamento).slice(0,10).split('-').reverse().join('/'):'—')+'</td><td>'+safe(x.contato_nome||'—')+'</td><td class="agt-wrap">'+(String(x.produtos||'').trim()?safe(String(x.produtos).split('\n').filter(Boolean).join(' • ')):'—'+(x.produtos_diag?'<div class="muted" style="font-size:11px">'+safe(x.produtos_diag)+'</div>':''))+'</td><td class="agt-wrap">'+safe(x.observacoes||'—')+'</td></tr>').join(''):'<tr><td colspan="12" class="muted">Nenhum registro salvo.</td></tr>';
     table.innerHTML=(j.ocultas?'<caption class="muted" style="text-align:left;padding:6px 10px">'+j.ocultas+' nota(s) já entregue(s) ou devolvida(s) ao remetente fora da lista.</caption>':'')+'<thead><tr><th>NF</th><th>Remetente</th><th>Destinatário</th><th>Cidade</th><th>Dia rota</th><th>Status SSW</th><th>Peso</th><th>Agendado</th><th>Data</th><th>Contato</th><th>Produtos</th><th>Observações</th></tr></thead><tbody>'+body+'</tbody>'
   }catch(e){table.innerHTML='<tbody><tr><td class="muted">Erro: '+safe(e.message)+'</td></tr></tbody>'}
 }

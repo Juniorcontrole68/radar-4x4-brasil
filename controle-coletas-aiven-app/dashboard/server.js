@@ -1677,6 +1677,55 @@ function agendamentoSituacao(ctrc){
   }).catch(()=>AGENDAMENTO_SITUACAO.set(key,{at:Date.now(),bloqueio:hit?.bloqueio||''}));
   return hit?.bloqueio||''
 }
+// Nome cortado pelo SSW na lista (ex.: "LUCIANA DE .."): vale o nome completo de outra fonte.
+function agendamentoNomeCortado(v){const t=String(v||'').trim();return !t||/\.\.\s*$/.test(t)}
+function agendamentoNome(atual,novo){return agendamentoNomeCortado(atual)&&String(novo||'').trim()?String(novo).trim():String(atual||'')}
+// Registros salvos sem remetente, produtos ou situação (ou com nome cortado) são completados
+// pelo SSW em segundo plano; o que vier é gravado no registro e já aparece na próxima abertura.
+const AGENDAMENTO_COMPLETAR=new Map();
+let AGENDAMENTO_101={s:null,at:0};   // uma sessão da opção 101 reaproveitada por 10 min
+function agendamentoPrecisaCompletar(r){
+  return agendamentoNomeCortado(r.remetente)||agendamentoNomeCortado(r.cliente)||!String(r.produtos||'').trim()||!String(r.status_ssw||'').trim()
+}
+function agendamentoCompletar(r,token){
+  const nf=normNf(r.nf);if(!nf||!internalSswConfigured())return null;
+  const hit=AGENDAMENTO_COMPLETAR.get(nf);
+  if(hit&&(hit.pendente||Date.now()-hit.at<(hit.dados&&!hit.dados.erro?6*60:30)*60*1000))return hit.dados||null;
+  AGENDAMENTO_COMPLETAR.set(nf,{at:Date.now(),pendente:true,dados:hit?.dados||null});
+  sswCteEnqueue('agtc:'+nf,0,async()=>{
+    const d={remetente:'',cliente:'',status_ssw:'',produtos:'',produtos_diag:'',ctrc:String(r.ctrc||'').toUpperCase().trim()};
+    try{
+      if(!d.ctrc){try{d.ctrc=(await fetchSsw101ByNf(nf))?.ctrc||''}catch(e){console.log('AGENDAMENTO completar '+nf+' opção 101 NF: '+String(e?.message||e))}}
+      let prods=[];
+      try{
+        const m=await portalJson('/api/painel/nf-materiais?nf='+encodeURIComponent(nf)+'&limit=5',{timeout:15000});
+        for(const x of (m?.rows||[]))for(const p of (Array.isArray(x.produtos)?x.produtos:[])){const t=String(p||'').trim();if(t&&!prods.includes(t))prods.push(t)}
+      }catch{}
+      if(d.ctrc){
+        if(!AGENDAMENTO_101.s||Date.now()-AGENDAMENTO_101.at>10*60*1000)AGENDAMENTO_101={s:await deliveryProgramCreateSsw101Session(),at:Date.now()};
+        const det=await deliveryProgramFetchSsw101Detail(AGENDAMENTO_101.s,{ctrc:d.ctrc,frete:0},true);
+        if(det){
+          d.remetente=det.remetente||'';d.cliente=det.cliente||'';d.status_ssw=det.situacao||'';
+          if(!prods.length&&det.productLines?.length)prods=det.productLines.slice(0,60);
+          d.produtos_diag=prods.length?'':(det.productDiag||'');
+        }
+        if(!d.remetente||!d.cliente){
+          // Já estamos dentro da fila do SSW: lê o CT-e aqui mesmo, sem entrar na fila de novo.
+          let info=sswCteCached(d.ctrc)||null;
+          if(!info){try{info=sswCteFromLido(await sswCteLer(await sswCteSession(),d.ctrc),d.ctrc);sswCteStore(d.ctrc,info)}catch{SSW_CTE_SESSION=null}}
+          d.remetente=d.remetente||info?.cte?.remetente?.nome||'';d.cliente=d.cliente||info?.cte?.destinatario?.nome||'';
+        }
+      }else d.produtos_diag=prods.length?'':'NF sem CT-e (CTRC) no SSW, não há relação de produtos';
+      d.produtos=prods.join('\n');
+      if(r.id&&token&&(d.remetente||d.cliente||d.produtos||d.status_ssw||d.ctrc)){
+        await portalAuth('/api/painel/agendamento-teste',{method:'POST',token,timeout:20000,body:{completar:true,id:r.id,nf,ctrc:d.ctrc,remetente:d.remetente,cliente:d.cliente,status_ssw:d.status_ssw,produtos:d.produtos}}).catch(e=>console.log('AGENDAMENTO completar '+nf+' gravar: '+String(e?.message||e)))
+      }
+    }catch(e){AGENDAMENTO_101={s:null,at:0};d.erro=true;d.produtos_diag=d.produtos_diag||'erro ao consultar o SSW: '+String(e?.message||e);console.log('AGENDAMENTO completar '+nf+': '+String(e?.message||e))}
+    AGENDAMENTO_COMPLETAR.set(nf,{at:Date.now(),dados:d});
+    if(AGENDAMENTO_COMPLETAR.size>3000)AGENDAMENTO_COMPLETAR.delete(AGENDAMENTO_COMPLETAR.keys().next().value)
+  }).catch(()=>AGENDAMENTO_COMPLETAR.set(nf,{at:Date.now(),dados:hit?.dados||null}));
+  return hit?.dados||null
+}
 function sswCteFromLido(lido,ctrc){
   if(!lido||!(lido.entrega||lido.cte||Object.keys(lido.mapas||{}).length||lido.resumo?.ctrc))return null;
   return{ctrc:lido.resumo?.ctrc||String(ctrc||'').toUpperCase(),cte:lido.cte,entrega:lido.entrega,mapas:lido.mapas||{},resumo:lido.resumo||{}}
@@ -6310,8 +6359,8 @@ if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
       const session=await deliveryProgramCreateSsw101Session();
       const det=await deliveryProgramFetchSsw101Detail(session,{ctrc:row.ctrc,frete:0},true);
       if(det){
-        row.cliente=row.cliente||det.cliente||'';
-        row.remetente=row.remetente||det.remetente||'';
+        row.cliente=agendamentoNome(row.cliente,det.cliente);
+        row.remetente=agendamentoNome(row.remetente,det.remetente);
         row.situacao101=det.situacao||'';
         row.cidade=row.cidade||det.cidade||'';
         row.uf=det.uf||row.uf||'SP';
@@ -6325,11 +6374,11 @@ if(u.pathname==='/api/agendamento-teste/nf'&&req.method==='GET'){try{
       }
     }catch(e){console.log('AGENDAMENTO NF detalhe 101: '+String(e.message||e))}
     // Nomes do remetente e do destinatário pelo XML do CT-e, quando a tela não trouxe.
-    if(!row.remetente||!row.cliente){
+    if(agendamentoNomeCortado(row.remetente)||agendamentoNomeCortado(row.cliente)){
       try{
         const info=await Promise.race([sswCteInfo(row.ctrc,2),new Promise(r=>setTimeout(()=>r(null),20000))]);
-        row.remetente=row.remetente||info?.cte?.remetente?.nome||'';
-        row.cliente=row.cliente||info?.cte?.destinatario?.nome||'';
+        row.remetente=agendamentoNome(row.remetente,info?.cte?.remetente?.nome);
+        row.cliente=agendamentoNome(row.cliente,info?.cte?.destinatario?.nome);
       }catch(e){console.log('AGENDAMENTO NF XML do CT-e: '+String(e.message||e))}
     }
   }
@@ -6390,8 +6439,16 @@ if(u.pathname==='/api/agendamento-teste'&&req.method==='GET'){try{
   // Tira da lista as notas que já foram entregues (baixadas) ou devolvidas ao remetente.
   if(Array.isArray(x?.rows)){
     const antes=x.rows.length;
-    x.rows=x.rows.filter(r=>!agendamentoSituacao(r.ctrc));
-    x.ocultas=antes-x.rows.length
+    x.rows=x.rows.filter(r=>!agendamentoSituacao(r.ctrc||AGENDAMENTO_COMPLETAR.get(normNf(r.nf))?.dados?.ctrc));
+    x.ocultas=antes-x.rows.length;
+    for(const r of x.rows){
+      if(!agendamentoPrecisaCompletar(r))continue;
+      const d=agendamentoCompletar(r,authUser.token);if(!d)continue;
+      r.ctrc=r.ctrc||d.ctrc||'';
+      r.remetente=agendamentoNome(r.remetente,d.remetente);r.cliente=agendamentoNome(r.cliente,d.cliente);
+      r.status_ssw=r.status_ssw||d.status_ssw||'';r.produtos=String(r.produtos||'').trim()||d.produtos||'';
+      if(!r.produtos&&d.produtos_diag)r.produtos_diag=d.produtos_diag
+    }
   }
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
