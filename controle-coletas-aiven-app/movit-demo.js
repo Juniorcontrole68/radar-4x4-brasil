@@ -39,10 +39,10 @@ const MODULOS = {
   },
   agendamento: {
     // agendamentos gravados por empresa (client_id) no servidor principal
-    painel: [/^\/api\/painel\/agendamento-teste$/],
-    // busca da NF no SSW da própria empresa (opções 38 e 101) e lista/gravação repassadas ao servidor principal
-    ssw: [/^\/api\/agendamento-teste(\/nf)?$/],
-    telas: ['agendamento-teste']
+    painel: [/^\/api\/painel\/agendamentos(\/|$)/],
+    // busca da NF no SSW da própria empresa (opções 38 e 101); a varredura chama o processo da empresa direto
+    ssw: [/^\/api\/agendamentos\/nf$/],
+    telas: ['agendamento-entregas']
   },
   usuarios: { painel: [], ssw: [], telas: ['usuarios'] },
   // Dashboards: os cards que leem a opção 38 do SSW com o login da empresa. Os cards do BI2 (lista

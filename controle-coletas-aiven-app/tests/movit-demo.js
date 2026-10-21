@@ -50,12 +50,20 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   const ctrcsA=(r.json?.rows||[]).map(x=>x.ctrc).sort();
   check('Roteirizador busca no SSW os CTRCs disponíveis das unidades da empresa (MTZ e CPS, sem repetir)',r.status===200&&JSON.stringify(ctrcsA)===JSON.stringify(['CPS000077-3','MTZ000501-1','MTZ000502-2']),r.status+' '+r.text.slice(0,240));
   check('...com cidade, peso e volumes de cada CTRC',(r.json?.rows||[]).some(x=>x.ctrc==='MTZ000501-1'&&x.cidade==='CAMPINAS'&&x.peso===120.5&&x.volumes===4),JSON.stringify((r.json?.rows||[])[0]||{}));
-  r=await call('GET','/api/agendamento-teste/nf?nf=30101',{cookie:cookieA});
-  check('Agendamento acha a NF no SSW da empresa (CTRC e cidade)',r.status===200&&r.json?.row?.ctrc==='MTZ000501-1'&&r.json?.row?.cidade==='CAMPINAS',r.status+' '+r.text.slice(0,240));
-  r=await call('POST','/api/agendamento-teste',{cookie:cookieA,body:{nf:'30101',ctrc:'MTZ000501-1',cliente:'LOJA CENTRO',cidade:'CAMPINAS',uf:'SP',agendado:true,data_agendamento:'2026-10-20'}});
-  check('Agendamento grava o agendamento da empresa',r.status===201&&r.json?.row?.nf==='30101',r.status+' '+r.text.slice(0,200));
-  r=await call('GET','/api/agendamento-teste',{cookie:cookieA});
-  check('Agendamento lista o agendamento gravado',r.status===200&&(r.json?.rows||[]).length===1&&r.json.rows[0].nf==='30101',r.status+' '+r.text.slice(0,200));
+  r=await call('GET','/api/agendamentos/nf?nf=30101',{cookie:cookieA});
+  check('Agendamento acha a NF no SSW da empresa (CT-e, destinatário e cidade)',r.status===200&&r.json?.row?.ctrc==='MTZ000501-1'&&r.json?.row?.cidade==='CAMPINAS'&&r.json?.row?.destinatario==='LOJA CENTRO',r.status+' '+r.text.slice(0,240));
+  r=await call('POST','/api/painel/agendamentos/sincronizar',{cookie:cookieA});
+  check('Sincronizar SSW agora (com o SSW da própria empresa) começa em segundo plano',r.status===202,r.status+' '+r.text.slice(0,200));
+  for(let i=0;i<60;i++){await new Promise(ok=>setTimeout(ok,500));r=await call('GET','/api/painel/agendamentos/painel',{cookie:cookieA});if(!r.json?.indicadores?.rodando)break}
+  check('...e termina com as pendências das unidades da empresa (MTZ e CPS, sem repetir)',r.json?.indicadores?.sync?.ultima?.status==='ok'&&r.json.indicadores.pendentes===3&&r.json.indicadores.sem_agendamento===3,r.text.slice(0,400));
+  r=await call('GET','/api/painel/agendamentos/lista?aba=sem',{cookie:cookieA});
+  const n30101=(r.json?.rows||[]).find(x=>x.nf==='30101');
+  check('Sem Agendamento lista as notas pendentes da empresa',r.status===200&&JSON.stringify((r.json?.rows||[]).map(x=>x.nf).sort())===JSON.stringify(['30101','30102','40201'])&&n30101?.ctrc==='MTZ000501-1',r.status+' '+r.text.slice(0,240));
+  const amanha=new Date(Date.now()+86400000).toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+  r=await call('POST','/api/painel/agendamentos',{cookie:cookieA,body:{nota_id:n30101?.nota_id,data_agendada:amanha,observacao:'teste'}});
+  check('Agendamento grava o agendamento da empresa',r.status===201,r.status+' '+r.text.slice(0,200));
+  r=await call('GET','/api/painel/agendamentos/lista?aba=agendadas',{cookie:cookieA});
+  check('Agendadas lista o agendamento gravado',r.status===200&&(r.json?.rows||[]).length===1&&r.json.rows[0].nf==='30101',r.status+' '+r.text.slice(0,200));
 
   r=await call('GET','/api/auth/me',{cookie:cookieA});
   check('Dashboards liberado na demo só com os cards do SSW da empresa',(r.json?.user?.demo_telas||[]).includes('dashboards')&&JSON.stringify((r.json?.user?.demo_perms||[]).slice().sort())===JSON.stringify(['agendamentos','evolucao','roteirizador','ssw_saidas']),JSON.stringify(r.json?.user||{}).slice(0,400));
@@ -88,8 +96,10 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   r=await call('GET','/api/evolucao-motoristas',{cookie:cookieB});
   check('Evolução da empresa B não mostra os motoristas da empresa A',r.status===200&&!/CARLOS DEMO|PAULO DEMO|JAILSON/.test(r.text),r.status+' '+r.text.slice(0,200));
   check('Roteirizador da empresa B não recebe os CTRCs da empresa A',!(r.json?.rows||[]).some(x=>/^(MTZ|CPS)/.test(x.ctrc)),r.status+' '+r.text.slice(0,200));
-  r=await call('GET','/api/agendamento-teste',{cookie:cookieB});
+  r=await call('GET','/api/painel/agendamentos/lista?aba=agendadas',{cookie:cookieB});
   check('Agendamento da empresa B não mostra os agendamentos da empresa A',r.status===200&&!(r.json?.rows||[]).length,r.status+' '+r.text.slice(0,200));
+  r=await call('GET','/api/painel/agendamentos/lista?aba=sem',{cookie:cookieB});
+  check('...nem as notas pendentes da empresa A',r.status===200&&!(r.json?.rows||[]).length,r.status+' '+r.text.slice(0,200));
   r=await call('GET','/api/rc/doc?path='+encodeURIComponent('cad/main/ajustes'),{cookie:cookieB});
   check('Roteirizador da empresa B responde',r.status===200||r.status===404,'veio '+r.status);
 

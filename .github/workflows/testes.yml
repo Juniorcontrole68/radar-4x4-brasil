@@ -70,6 +70,9 @@ jobs:
           node --check controle-coletas-aiven-app/veic.js
           node --check controle-coletas-aiven-app/dashboard/public/frota.js
           node --check controle-coletas-aiven-app/wms.js
+          node --check controle-coletas-aiven-app/agendamento.js
+          node --check controle-coletas-aiven-app/dashboard/public/agendamentos.js
+          node --check controle-coletas-aiven-app/tests/agendamento.js
           node --check controle-coletas-aiven-app/tests/wms.js
       - name: Subir o servidor em modo teste
         run: |
@@ -95,6 +98,8 @@ jobs:
         run: node controle-coletas-aiven-app/tests/veic.js
       - name: Armazém (WMS) — Fase 1
         run: node controle-coletas-aiven-app/tests/wms.js
+      - name: Agendamento de entregas (varredura do SSW simulada, listas e histórico)
+        run: node controle-coletas-aiven-app/tests/agendamento.js
       - name: Grupos de acesso em Usuários
         run: node controle-coletas-aiven-app/tests/grupos-acesso.js
       - name: Rastreio de lotação (base do cliente e link de rastreio)
