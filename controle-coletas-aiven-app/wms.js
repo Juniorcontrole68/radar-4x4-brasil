@@ -19,7 +19,7 @@ const fs=require('fs');
 const path=require('path');
 const crypto=require('crypto');
 
-const ATIVO=/^(1|true|sim|yes)$/i.test(String(process.env.WMS_ATIVO||'').trim());
+let ativo=/^(1|true|sim|yes)$/i.test(String(process.env.WMS_ATIVO||'').trim());
 const PAGINA_GESTAO=path.join(__dirname,'wms.html');
 const PAGINA_APP=path.join(__dirname,'wms-app.html');
 
@@ -810,7 +810,7 @@ async function handle(req,res,u,deps){
   const p=u.pathname;
   if(!(p==='/wms'||p.startsWith('/wms/')||p.startsWith('/api/wms/')||p==='/api/wms'))return false;
   const {pool,sendJson,readJsonBodyLimited,testMode}=deps;
-  if(!ATIVO){sendJson(res,404,{ok:false,error:'Módulo WMS desligado neste ambiente.'});return true}
+  if(!ativo){sendJson(res,404,{ok:false,error:'Módulo WMS desligado neste ambiente.'});return true}
   const json=(st,o)=>{sendJson(res,st,o);return true};
   const corpo=(max=256*1024)=>readJsonBodyLimited(req,max);
   const M=req.method;
@@ -1178,4 +1178,4 @@ async function handle(req,res,u,deps){
   }
 }
 
-module.exports={ATIVO,ensureSchema,handle,lerNfe,code128,code128Svg,ranquearEnderecos,cabe,gerarEnderecos,dataIso,num};
+module.exports={get ATIVO(){return ativo},desligar(){ativo=false},ensureSchema,handle,lerNfe,code128,code128Svg,ranquearEnderecos,cabe,gerarEnderecos,dataIso,num};

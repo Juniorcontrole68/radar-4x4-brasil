@@ -1850,7 +1850,8 @@ async function start() {
   await roteirizadorCargas.ensureSchema(pool);
   await lotacaoRastreio.ensureSchema(pool);
   await entregas.ensureSchema(pool);
-  if (wms.ATIVO) await wms.ensureSchema(pool);
+  // se o esquema do WMS falhar, desliga só o WMS e o resto do servidor sobe normalmente
+  if (wms.ATIVO) await wms.ensureSchema(pool).catch(e=>{console.error('[wms] esquema falhou, WMS desligado:',e.message);wms.desligar()});
   await pool.query(`CREATE TABLE IF NOT EXISTS fleet_maintenance_files (
     maintenance_id TEXT PRIMARY KEY,
     nome_arquivo TEXT NOT NULL,
