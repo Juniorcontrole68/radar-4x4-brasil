@@ -1397,9 +1397,9 @@ async function deliveryProgramFetchSsw101Detail(session,row,force=false){
       }
       return plain.slice(start,end).replace(/\s+/g,' ').trim();
     };
-    const cliente=sswField('Destinatário',['CNPJ','CPF','Endereço','Cidade','Município','Bairro','CEP','UF']);
-    const remetente=sswField('Remetente',['CNPJ','CPF','Endereço','Destinatário','Cidade','Município','Bairro','CEP','UF']);
-    let situacao='';try{situacao=sswCte.parseTela101(html).resumo?.situacao||''}catch{}
+    // Nomes e situação pelo leitor da tela 101 (os rótulos ficam em duas colunas, "Remetente: Destinatário:").
+    let tela101={};try{tela101=sswCte.parseTela101(html).resumo||{}}catch{}
+    const cliente=tela101.destinatario||'',remetente=tela101.remetente||'',situacao=tela101.situacao||'';
     const cidade=sswField('Cidade destino',['UF','CEP','Bairro','Previsão','Prazo','Rota'])||sswField('Município destino',['UF','CEP','Bairro','Previsão','Prazo','Rota']);
     const uf=(sswField('UF destino',['CEP','Bairro','Previsão','Prazo','Rota']).match(/[A-Z]{2}/i)||[])[0]||'';
     const pesoText=sswField('Peso (kg)',['Volumes','Qtde','Quantidade','Previsão','Valor'])||sswField('Peso',['Volumes','Qtde','Quantidade','Previsão','Valor']);
@@ -1678,7 +1678,7 @@ function agendamentoSituacao(ctrc){
   return hit?.bloqueio||''
 }
 // Nome cortado pelo SSW na lista (ex.: "LUCIANA DE .."): vale o nome completo de outra fonte.
-function agendamentoNomeCortado(v){const t=String(v||'').trim();return !t||/\.\.\s*$/.test(t)}
+function agendamentoNomeCortado(v){const t=String(v||'').trim();return !t||/\.\.\)?\s*$/.test(t)||/\bNome:|Destinat/i.test(t)}
 function agendamentoNome(atual,novo){return agendamentoNomeCortado(atual)&&String(novo||'').trim()?String(novo).trim():String(atual||'')}
 // Registros salvos sem remetente, produtos ou situação (ou com nome cortado) são completados
 // pelo SSW em segundo plano; o que vier é gravado no registro e já aparece na próxima abertura.
@@ -1709,11 +1709,11 @@ function agendamentoCompletar(r,token){
           if(!prods.length&&det.productLines?.length)prods=det.productLines.slice(0,60);
           d.produtos_diag=prods.length?'':(det.productDiag||'');
         }
-        if(!d.remetente||!d.cliente){
+        if(agendamentoNomeCortado(d.remetente)||agendamentoNomeCortado(d.cliente)){
           // Já estamos dentro da fila do SSW: lê o CT-e aqui mesmo, sem entrar na fila de novo.
           let info=sswCteCached(d.ctrc)||null;
           if(!info){try{info=sswCteFromLido(await sswCteLer(await sswCteSession(),d.ctrc),d.ctrc);sswCteStore(d.ctrc,info)}catch{SSW_CTE_SESSION=null}}
-          d.remetente=d.remetente||info?.cte?.remetente?.nome||'';d.cliente=d.cliente||info?.cte?.destinatario?.nome||'';
+          d.remetente=agendamentoNome(d.remetente,info?.cte?.remetente?.nome);d.cliente=agendamentoNome(d.cliente,info?.cte?.destinatario?.nome);
         }
       }else d.produtos_diag=prods.length?'':'NF sem CT-e (CTRC) no SSW, não há relação de produtos';
       d.produtos=prods.join('\n');
