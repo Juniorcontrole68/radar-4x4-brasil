@@ -140,7 +140,7 @@ async function portalAuth(pathname,{method='GET',body=null,token='',timeout=2000
 async function dashboardUserFromReq(req){
   // Chamada do próprio servidor principal (ex.: rota do dia para o MOVIT), identificada pela
   // chave sorteada a cada inicialização. Vale só para a rota planejada do rastreio, a leitura da opção 475
-  // e a situação das sobras em galpão (conferência das 09:00 e 19:00).
+  // e a situação das sobras em galpão (conferência de hora em hora, das 05:00 às 20:00).
   const ik=String(req.headers['x-internal-key']||'');
   if(INTERNAL_KEY&&ik.length===INTERNAL_KEY.length&&crypto.timingSafeEqual(Buffer.from(ik),Buffer.from(INTERNAL_KEY))
      &&(String(req.url||'').startsWith('/api/tracking/planned-route')||String(req.url||'').startsWith('/api/ssw/despesas475?')||String(req.url||'').startsWith('/api/programacao-entregas/status-nfs?')))

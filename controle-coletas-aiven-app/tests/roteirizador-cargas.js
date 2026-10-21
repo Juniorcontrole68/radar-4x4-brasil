@@ -25,8 +25,8 @@ const login = async (u, s) => { const r = await call('POST', '/api/auth/login', 
   const arac = seed.find((d) => d.path === 'cad/main/cidades/3502903');
   check('carga inicial: 148 cidades, Araçoiaba da Serra terça e quinta', seed.filter((d) => d.path.startsWith('cad/main/cidades/')).length === 148 && arac && arac.data.dias.join() === '2,4', arac);
 
-  console.log('Sobras em galpão: baixa pelo SSW às 09:00 e 19:00');
-  check('horários da conferência', lib.HORARIOS_SOBRAS.join() === '09:00,19:00');
+  console.log('Sobras em galpão: baixa pelo SSW de hora em hora, das 05:00 às 20:00');
+  check('horários da conferência', lib.HORARIOS_SOBRAS.length === 16 && lib.HORARIOS_SOBRAS[0] === '05:00' && lib.HORARIOS_SOBRAS[15] === '20:00');
   if (process.env.DATABASE_URL) {
     const { Pool } = require('pg');
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });

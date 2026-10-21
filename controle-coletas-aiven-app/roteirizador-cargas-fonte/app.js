@@ -886,7 +886,7 @@
     if (!ST.carregado || !ST.carregado.notas) return;
     if (window.RC_HOST && ST.admin && !ui.frotaAuto) { ui.frotaAuto = true; setTimeout(() => importarFrota(), 50); }
     if (window.RC_HOST && !ui.sswSync) { ui.sswSync = true; setTimeout(() => sincronizarSSW(), 80); }
-    // a situação das sobras (entregue no SSW) é conferida pelo servidor às 09:00 e às 19:00 (ver ../roteirizador-cargas.js)
+    // a situação das sobras (entregue no SSW) é conferida pelo servidor de hora em hora, das 05:00 às 20:00 (ver ../roteirizador-cargas.js)
     if (window.RC_HOST && !ui.sbSyncIni) { ui.sbSyncIni = true; setTimeout(() => situacaoPeloSSW().catch(() => {}), 6000); setInterval(() => { if (document.visibilityState === 'hidden') return; situacaoPeloSSW().catch(() => {}); }, 10 * 60000); }
     if (!ui.juntAuto) { ui.juntAuto = true; setTimeout(() => juntarDuplicadasSSW().catch((e) => console.warn('juntar', e.message)), 2500); }
     if (!ui.sbNotasAuto) { ui.sbNotasAuto = true; setTimeout(() => notasDasSobras().catch((e) => console.warn('sobras→notas', e.message)), 1500); setInterval(() => notasDasSobras().catch(() => {}), 3 * 60000); }
@@ -1710,7 +1710,7 @@
     const d = ui.data;
     const doDia = [...ST.sobras.values()].filter((s) => sobraVisivel(s, d));
     const cte = !!(window.RC_HOST && window.RC_HOST.cteNfs);
-    let h = embutido ? '<p class="small muted" style="margin:4px 0 12px">Notas que ficaram no galpão (sobras): ' + (cte ? 'bipe o código de barras do CT-e ou ' : '') + 'digite o número da NF (ou várias, separadas por espaço). Elas entram como prioridade na Programação, inclusive as com tubo.' + (cte ? ' Quando a nota é baixada como entregue no SSW, sai da lista (conferência às 09:00 e às 19:00).' : '') + '</p>' : topo('Notas que ficaram', (cte ? 'Bipe o código de barras do CT-e ou d' : 'D') + 'igite o número da NF (ou várias, separadas por espaço): o sistema preenche o resto e sugere o motivo. Elas viram prioridade nas próximas rotas.', true);
+    let h = embutido ? '<p class="small muted" style="margin:4px 0 12px">Notas que ficaram no galpão (sobras): ' + (cte ? 'bipe o código de barras do CT-e ou ' : '') + 'digite o número da NF (ou várias, separadas por espaço). Elas entram como prioridade na Programação, inclusive as com tubo.' + (cte ? ' Quando a nota é baixada como entregue no SSW, sai da lista (conferência de hora em hora, das 05:00 às 20:00).' : '') + '</p>' : topo('Notas que ficaram', (cte ? 'Bipe o código de barras do CT-e ou d' : 'D') + 'igite o número da NF (ou várias, separadas por espaço): o sistema preenche o resto e sugere o motivo. Elas viram prioridade nas próximas rotas.', true);
     const sb = ui.sb;
     h += '<div class="card"><div class="row"><label class="f" style="flex:0 1 200px;min-width:140px">NF<input type="text" id="sbNF" inputmode="numeric" autocomplete="off" value="' + esc(sb ? sb.q : '') + '" placeholder="Ex.: 669950"></label>' +
       (cte ? '<label class="f" style="flex:1 1 300px;min-width:200px">CT-e (código de barras)<input type="text" id="sbCTE" autocomplete="off" enterkeyhint="search" placeholder="Bipe o DACTE ou digite AMR15326-5"' + (ui.sbCteLendo ? ' disabled' : '') + '></label>' : '') +

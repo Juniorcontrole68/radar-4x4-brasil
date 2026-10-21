@@ -149,10 +149,10 @@ async function resetDemo(pool, cliente) {
   return semear(pool, cliente, true);
 }
 // ---------------- Sobras em galpão: baixa automática pelo SSW ----------------
-// Duas vezes por dia (09:00 e 19:00 de Brasília) o servidor confere no SSW as notas que ficaram no
+// De hora em hora, das 05:00 às 20:00 (Brasília), o servidor confere no SSW as notas que ficaram no
 // galpão e ainda não foram entregues: entregue (baixa no SSW) sai da lista; em rota / pendente
 // atualiza a situação. A sobra marcada à mão não é mexida. A nota ligada à sobra acompanha.
-const HORARIOS_SOBRAS = ['09:00', '19:00'];
+const HORARIOS_SOBRAS = Array.from({ length: 16 }, (_, i) => String(5 + i).padStart(2, '0') + ':00');   // 05:00 ... 20:00
 const agoraSP = () => {
   const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date()).map((x) => [x.type, x.value]));
   return { dia: p.year + '-' + p.month + '-' + p.day, hora: p.hour + ':' + p.minute };

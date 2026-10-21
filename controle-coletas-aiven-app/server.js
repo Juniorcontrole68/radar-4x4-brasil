@@ -1848,7 +1848,7 @@ async function start() {
   }});
   if(!TEST_MODE)veic.iniciarImportacaoAutomatica(pool);
   await roteirizadorCargas.ensureSchema(pool);
-  // sobras em galpão: às 09:00 e às 19:00 confere no SSW o que já foi entregue e tira da lista (o painel lê o SSW)
+  // sobras em galpão: de hora em hora, das 05:00 às 20:00, confere no SSW o que já foi entregue e tira da lista (o painel lê o SSW)
   if(!TEST_MODE&&process.env.SOBRAS_SSW_AUTO!=='0')roteirizadorCargas.iniciarConferenciaSobras({pool,
     statusNfs:async(nfs,desde)=>{
       const r=await fetch('http://'+DASH_INTERNAL_HOST+':'+DASH_INTERNAL_PORT+'/api/programacao-entregas/status-nfs?'+new URLSearchParams({nfs:nfs.join(','),desde}),{headers:{'X-Internal-Key':INTERNAL_KEY,'Accept':'application/json'},signal:AbortSignal.timeout(10*60*1000)});
