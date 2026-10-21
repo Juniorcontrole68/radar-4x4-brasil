@@ -157,6 +157,8 @@
     // CTRCs disponíveis para entrega: SSW opção 038 (pendências), com peso, m³ e frete do BI2
     // situação das notas que ficaram: em rota (saiu dos disponíveis = romaneio) ou entregue (baixa no BI2)
     statusNfs: (nfs, desde) => api('GET', '/api/programacao-entregas/status-nfs?nfs=' + encodeURIComponent(nfs.join(',')) + '&desde=' + encodeURIComponent(desde || '')),
+    // sobras em galpão: CT-e bipado (código de barras do DACTE) ou digitado -> NFs dele no SSW
+    cteNfs: (codigo) => api('GET', '/api/roteirizador/cte-nf?codigo=' + encodeURIComponent(codigo)),
     // romaneios emitidos no SSW num dia (por motorista) e a rota de um romaneio (km e pontos de entrega)
     romaneiosDoDia: (data) => api('GET', '/api/roteirizador/lista?date=' + encodeURIComponent(data)),
     recalcularRota: (corpo) => api('POST', '/api/roteirizador/recalcular', corpo),

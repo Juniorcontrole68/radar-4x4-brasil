@@ -139,10 +139,11 @@ async function portalAuth(pathname,{method='GET',body=null,token='',timeout=2000
 }
 async function dashboardUserFromReq(req){
   // Chamada do próprio servidor principal (ex.: rota do dia para o MOVIT), identificada pela
-  // chave sorteada a cada inicialização. Vale só para a rota planejada do rastreio e a leitura da opção 475.
+  // chave sorteada a cada inicialização. Vale só para a rota planejada do rastreio, a leitura da opção 475
+  // e a situação das sobras em galpão (conferência de hora em hora, das 05:00 às 20:00).
   const ik=String(req.headers['x-internal-key']||'');
   if(INTERNAL_KEY&&ik.length===INTERNAL_KEY.length&&crypto.timingSafeEqual(Buffer.from(ik),Buffer.from(INTERNAL_KEY))
-     &&(String(req.url||'').startsWith('/api/tracking/planned-route')||String(req.url||'').startsWith('/api/ssw/despesas475?')))
+     &&(String(req.url||'').startsWith('/api/tracking/planned-route')||String(req.url||'').startsWith('/api/ssw/despesas475?')||String(req.url||'').startsWith('/api/programacao-entregas/status-nfs?')))
     return{token:'',id:0,username:'servidor',is_admin:true,permissions:['*'],internal:true};
   const token=dashboardRequestToken(req);
   if(!token){const e=new Error('Não autenticado.');e.status=401;throw e}
@@ -1735,8 +1736,8 @@ function sswCtePorChave(key){
   SSW_CTE_INFLIGHT.set(inKey,job);
   return job
 }
-// Um CT-e bipado (ou digitado) vira uma parada: dados e endereço vêm do SSW (tela 101 + XML).
-async function routeBiparCte(codigo){
+// CT-e bipado (chave de 44 dígitos do DACTE) ou digitado (AMR15326-5): os dados do CT-e no SSW.
+async function sswCteDoCodigo(codigo){
   const raw=String(codigo||'').trim(),digits=raw.replace(/\D/g,''),up=raw.toUpperCase().replace(/\s+/g,'');
   const fail=(status,msg)=>Object.assign(new Error(msg),{status});
   let info=null,chave='';
@@ -1751,12 +1752,20 @@ async function routeBiparCte(codigo){
     info=await sswCtePorChave(digits);
     if(!info)throw fail(404,'CT-e nº '+k.numero+' não encontrado no SSW. Se acabou de ser emitido, tente de novo em instantes ou digite o número (ex.: AMR15326-5).')
   }else throw fail(400,'Não reconheci o código ('+digits.length+' dígitos). Bipe o código de barras do CT-e ou digite o número, ex.: AMR15326-5.');
+  return{info,chave}
+}
+// notas fiscais de um CT-e: a da tela 101 e as chaves de NF-e do XML
+const sswCteNfs=info=>[...new Set([info.resumo?.nf,...(info.cte?.nfChaves||[]).map(c=>String(Number(c.slice(25,34))))].filter(Boolean))];
+// Um CT-e bipado (ou digitado) vira uma parada: dados e endereço vêm do SSW (tela 101 + XML).
+async function routeBiparCte(codigo){
+  const fail=(status,msg)=>Object.assign(new Error(msg),{status});
+  const {info,chave}=await sswCteDoCodigo(codigo);
   const base=await routeBaseGeo();
   if(!base)throw new Error('Não foi possível localizar a base de Americana.');
   const loc=await routeLocateEntrega(info,'','','SP','');
   const dest=info.cte?.destinatario||info.cte?.recebedor||null;
   const destinatario=info.cte?.destinatario?.nome||info.entrega?.nome||'Destinatário';
-  const nfs=[...new Set([info.resumo?.nf,...(info.cte?.nfChaves||[]).map(c=>String(Number(c.slice(25,34))))].filter(Boolean))];
+  const nfs=sswCteNfs(info);
   const comum={
     source:'cte',barcode:chave||info.cte?.chave||'',originalOrder:0,ctrc:info.ctrc,nf:nfs.slice(0,4).join(', '),destinatario,
     complemento:String(dest?.complemento||info.entrega?.complemento||'').slice(0,120),
@@ -6754,6 +6763,15 @@ if(u.pathname==='/api/roteirizador/bipar'){try{
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:true,stop,radiusLimitKm:300}))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e),stop:e.stop||null}))}}
+if(u.pathname==='/api/roteirizador/cte-nf'&&req.method==='GET'){try{
+  // Sobras em galpão: o CT-e bipado (código de barras do DACTE) ou digitado devolve as NFs dele.
+  if(!dashboardHasAny(authUser,['programacao','roteirizador','dashboard','ssw_saidas','montar_carga']))return dashboardDeny(res);
+  const {info,chave}=await sswCteDoCodigo(u.searchParams.get('codigo')||'');
+  const nfs=sswCteNfs(info);
+  if(!nfs.length)throw Object.assign(new Error('CT-e '+info.ctrc+' encontrado, mas o SSW não informa a nota fiscal dele. Digite a NF.'),{status:422});
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:true,ctrc:info.ctrc,chave:chave||info.cte?.chave||'',nfs,remetente:info.cte?.remetente?.nome||'',destinatario:info.cte?.destinatario?.nome||info.entrega?.nome||'',situacao:info.resumo?.situacao||''}))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(req.method==='GET'&&u.pathname==='/api/roteirizador/motoristas'){try{
   if(!dashboardHasAny(authUser,['montar_carga']))return dashboardDeny(res);
   const x=await portalAuth('/api/painel/roteirizador/motoristas',{token:authUser.token,timeout:15000});

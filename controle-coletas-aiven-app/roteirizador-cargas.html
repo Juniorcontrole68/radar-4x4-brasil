@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"><meta name="rc-versao" content="7ed1825f1d56"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="rc-versao" content="b8882aa6e410"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
 <title>Roteirizador Inteligente de Cargas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -385,6 +385,8 @@ td:has(> .bloq-nf),td:has(> .copiar-nf){white-space:nowrap}
     // CTRCs disponíveis para entrega: SSW opção 038 (pendências), com peso, m³ e frete do BI2
     // situação das notas que ficaram: em rota (saiu dos disponíveis = romaneio) ou entregue (baixa no BI2)
     statusNfs: (nfs, desde) => api('GET', '/api/programacao-entregas/status-nfs?nfs=' + encodeURIComponent(nfs.join(',')) + '&desde=' + encodeURIComponent(desde || '')),
+    // sobras em galpão: CT-e bipado (código de barras do DACTE) ou digitado -> NFs dele no SSW
+    cteNfs: (codigo) => api('GET', '/api/roteirizador/cte-nf?codigo=' + encodeURIComponent(codigo)),
     // romaneios emitidos no SSW num dia (por motorista) e a rota de um romaneio (km e pontos de entrega)
     romaneiosDoDia: (data) => api('GET', '/api/roteirizador/lista?date=' + encodeURIComponent(data)),
     recalcularRota: (corpo) => api('POST', '/api/roteirizador/recalcular', corpo),
@@ -2889,7 +2891,8 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     if (!ST.carregado || !ST.carregado.notas) return;
     if (window.RC_HOST && ST.admin && !ui.frotaAuto) { ui.frotaAuto = true; setTimeout(() => importarFrota(), 50); }
     if (window.RC_HOST && !ui.sswSync) { ui.sswSync = true; setTimeout(() => sincronizarSSW(), 80); }
-    if (window.RC_HOST && !ui.sbSyncIni) { ui.sbSyncIni = true; setTimeout(() => sincronizarSobras(), 2000); setTimeout(() => situacaoPeloSSW().catch(() => {}), 6000); setInterval(() => { if (document.visibilityState === 'hidden') return; sincronizarSobras(); situacaoPeloSSW().catch(() => {}); }, 10 * 60000); }
+    // a situação das sobras (entregue no SSW) é conferida pelo servidor de hora em hora, das 05:00 às 20:00 (ver ../roteirizador-cargas.js)
+    if (window.RC_HOST && !ui.sbSyncIni) { ui.sbSyncIni = true; setTimeout(() => situacaoPeloSSW().catch(() => {}), 6000); setInterval(() => { if (document.visibilityState === 'hidden') return; situacaoPeloSSW().catch(() => {}); }, 10 * 60000); }
     if (!ui.juntAuto) { ui.juntAuto = true; setTimeout(() => juntarDuplicadasSSW().catch((e) => console.warn('juntar', e.message)), 2500); }
     if (!ui.sbNotasAuto) { ui.sbNotasAuto = true; setTimeout(() => notasDasSobras().catch((e) => console.warn('sobras→notas', e.message)), 1500); setInterval(() => notasDasSobras().catch(() => {}), 3 * 60000); }
     if (window.RC_HOST && !ui.geoAuto) { ui.geoAuto = true; setTimeout(() => localizarEnderecosXML(), 4000); setInterval(() => { if (document.visibilityState !== 'hidden') localizarEnderecosXML(); }, 10 * 60000); }
@@ -3593,32 +3596,8 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     if (s.status) return { st: s.status, em: s.status === 'entregue' ? s.entregueEm || '' : s.statusEm || '', fonte: s.statusFonte || 'SSW' };
     return { st: 'pendente', em: '', fonte: '' };
   }
-  // fica no quadro até o dia seguinte à entrega
-  const sobraVisivel = (s, d) => s.data === d || (s.data < d && !(sobraSituacao(s).st === 'entregue' && (sobraSituacao(s).em || s.data) < d));
-  async function sincronizarSobras() {
-    if (!window.RC_HOST || !window.RC_HOST.statusNfs || ui.sbSync) return;
-    const abertas = [...ST.sobras.values()].filter((s) => s.numero && !s.statusManual && sobraSituacao(s).st !== 'entregue' && s.data >= RE.addDays(hoje(), -20));
-    if (!abertas.length) return;
-    ui.sbSync = true; ui.sbSyncEm = Date.now();
-    try {
-      const desde = abertas.map((s) => s.data).sort()[0];
-      const j = await window.RC_HOST.statusNfs(abertas.map((s) => s.numero), desde);
-      const hojeD = hoje();
-      for (const s of abertas) {
-        const r = (j.itens || {})[String(s.numero).replace(/\D/g, '').replace(/^0+/, '')];
-        if (!r || (r.status === (s.status || 'pendente'))) continue;
-        const q = Object.assign({}, s, { status: r.status, statusFonte: r.fonte, statusEm: hojeD });
-        if (r.status === 'entregue') q.entregueEm = r.em || hojeD; else delete q.entregueEm;
-        await salvar('sobras', s.id, q);
-        const n = s.notaId ? ST.notas.get(s.notaId) : null;
-        if (n) {
-          const ns = r.status === 'entregue' ? 'entregue' : r.status === 'em_rota' ? 'em_rota' : (n.status === 'em_rota' ? 'pronta' : n.status);
-          if (ns !== n.status) await salvar('notas', n.id, Object.assign({}, n, { status: ns }, ns === 'entregue' ? { entregueEm: q.entregueEm } : {}));
-        }
-      }
-    } catch (e) { console.warn('situação das sobras', e.message); }
-    ui.sbSync = false; render();
-  }
+  // sai do quadro quando a nota é baixada como entregue (no SSW ou à mão); num dia passado, aparece se a entrega foi depois dele
+  const sobraVisivel = (s, d) => { if (!s.data || s.data > d) return false; const si = sobraSituacao(s); return si.st !== 'entregue' || (si.em || s.data) > d; };
   // ---------------- Romaneios emitidos no SSW: km e pontos de entrega de cada um ----------------
   const romChave = (d, r) => d + '|' + r;
   async function carregarRomaneios(forcar) {
@@ -3734,11 +3713,14 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
   }
   function vSobras(embutido) {
     const d = ui.data;
-    if (window.RC_HOST && !ui.sbSync && (!ui.sbSyncEm || Date.now() - ui.sbSyncEm > 5 * 60000)) setTimeout(sincronizarSobras, 60);
     const doDia = [...ST.sobras.values()].filter((s) => sobraVisivel(s, d));
-    let h = embutido ? '<p class="small muted" style="margin:4px 0 12px">Notas que ficaram no galpão (sobras): digite o número da NF (ou várias, separadas por espaço). Elas entram como prioridade na Programação, inclusive as com tubo.</p>' : topo('Notas que ficaram', 'Digite o número da NF (ou várias, separadas por espaço): o sistema preenche o resto e sugere o motivo. Elas viram prioridade nas próximas rotas.', true);
+    const cte = !!(window.RC_HOST && window.RC_HOST.cteNfs);
+    let h = embutido ? '<p class="small muted" style="margin:4px 0 12px">Notas que ficaram no galpão (sobras): ' + (cte ? 'bipe o código de barras do CT-e ou ' : '') + 'digite o número da NF (ou várias, separadas por espaço). Elas entram como prioridade na Programação, inclusive as com tubo.' + (cte ? ' Quando a nota é baixada como entregue no SSW, sai da lista (conferência de hora em hora, das 05:00 às 20:00).' : '') + '</p>' : topo('Notas que ficaram', (cte ? 'Bipe o código de barras do CT-e ou d' : 'D') + 'igite o número da NF (ou várias, separadas por espaço): o sistema preenche o resto e sugere o motivo. Elas viram prioridade nas próximas rotas.', true);
     const sb = ui.sb;
-    h += '<div class="card"><div class="row"><label class="f" style="flex:1;min-width:200px">NF<input type="text" id="sbNF" inputmode="numeric" autocomplete="off" value="' + esc(sb ? sb.q : '') + '" placeholder="Ex.: 669950 669926"></label><button class="btn pri" data-a="sbBuscar" style="align-self:flex-end">Buscar</button></div>';
+    h += '<div class="card"><div class="row"><label class="f" style="flex:0 1 200px;min-width:140px">NF<input type="text" id="sbNF" inputmode="numeric" autocomplete="off" value="' + esc(sb ? sb.q : '') + '" placeholder="Ex.: 669950"></label>' +
+      (cte ? '<label class="f" style="flex:1 1 300px;min-width:200px">CT-e (código de barras)<input type="text" id="sbCTE" autocomplete="off" enterkeyhint="search" placeholder="Bipe o DACTE ou digite AMR15326-5"' + (ui.sbCteLendo ? ' disabled' : '') + '></label>' : '') +
+      '<button class="btn pri" data-a="sbBuscar" style="align-self:flex-end">Buscar</button></div>' +
+      (ui.sbCteMsg ? '<p class="small' + (ui.sbCteMsg.bad ? '' : ' muted') + '" style="margin-top:6px' + (ui.sbCteMsg.bad ? ';color:var(--bad)' : '') + '"' + (ui.sbCteMsg.bad ? ' role="alert"' : '') + '>' + esc(ui.sbCteMsg.t) + '</p>' : '');
     if (sb) {
       const achadas = sb.itens.filter((x) => x.id), doSSW = sb.itens.filter((x) => x.ssw), faltam = sb.itens.filter((x) => !x.id && !x.ssw);
       if (achadas.length) {
@@ -3759,7 +3741,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     const quadro = (titulo, l) => {
       if (!l.length) return '';
       const g = new Map(); for (const s of l) { const k = s.embarcador || 'Sem embarcador'; if (!g.has(k)) g.set(k, []); g.get(k).push(s); }
-      return '<h3 style="margin:14px 0 8px">' + titulo + ' <span class="chip">' + l.length + '</span></h3><div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(min(100%,640px),1fr))">' + [...g].sort((a, b) => a[0].localeCompare(b[0])).map(([emb, ls]) => '<div class="tbl-wrap"><table><thead><tr><th colspan="7" style="background:var(--brand);color:var(--brand-ink)">' + esc(emb) + ' · ' + ls.length + '</th></tr><tr><th>Cidade</th><th>Carga</th><th>Chegou</th><th>NF</th><th>Motivo</th><th>Situação</th><th></th></tr></thead><tbody>' + ls.sort((a, b) => (a.cidade || '').localeCompare(b.cidade || '')).map((s) => { const n = s.notaId ? notaE(s.notaId) : null; return '<tr><td>' + esc((s.cidade || '').split('/')[0]) + '</td><td class="small">' + esc(s.carga || '') + '</td><td class="mono small">' + dBR(s.chegou) + '</td><td class="mono">' + esc(s.numero) + '</td><td><select data-sbmot="' + esc(s.id) + '" style="min-width:150px">' + MOTIVOS.map((m) => '<option' + (s.motivo === m ? ' selected' : '') + '>' + m + '</option>').join('') + '</select>' + (s.obs ? '<div class="tiny">' + esc(s.obs) + '</div>' : '') + '</td><td>' + (() => { const si = sobraSituacao(s); return '<select data-sbst="' + esc(s.id) + '" class="sb-st ' + SB_ST[si.st][1] + '" title="' + esc(si.fonte ? 'Origem: ' + si.fonte : '') + '">' + Object.entries(SB_ST).map(([k, v]) => '<option value="' + k + '"' + (si.st === k ? ' selected' : '') + '>' + v[0] + (si.st === k && si.em ? ' ' + dBR(si.em) : '') + '</option>').join('') + '</select>' + (s.statusManual ? ' <button class="btn sm ghost" data-a="sbAuto" data-v="' + esc(s.id) + '" title="Voltar a seguir o SSW">auto</button>' : '') + (!n ? '<div class="tiny">sem nota no roteirizador</div>' : '') + (s.statusFonte ? '<div class="tiny muted">' + esc(s.statusFonte) + '</div>' : ''); })() + '</td><td style="white-space:nowrap">' + (window.RC_HOST ? '<button class="btn sm ghost" data-a="sbConferir" data-v="' + esc(s.id) + '" title="Conferir agora no SSW" aria-label="Conferir no SSW">🔎</button>' : '') + '<button class="btn sm ghost danger" data-a="sbExcluir" data-v="' + esc(s.id) + '" aria-label="Desfazer lançamento">' + I.x + '</button></td></tr>'; }).join('') + '</tbody></table></div>').join('') + '</div>';
+      return '<h3 style="margin:14px 0 8px">' + titulo + ' <span class="chip">' + l.length + '</span></h3><div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(min(100%,640px),1fr))">' + [...g].sort((a, b) => a[0].localeCompare(b[0])).map(([emb, ls]) => '<div class="tbl-wrap"><table><thead><tr><th colspan="7" style="background:var(--brand);color:var(--brand-ink)">' + esc(emb) + ' · ' + ls.length + '</th></tr><tr><th>Cidade</th><th>Carga</th><th>Chegou</th><th>NF</th><th>Motivo</th><th>Situação</th><th></th></tr></thead><tbody>' + ls.sort((a, b) => (a.cidade || '').localeCompare(b.cidade || '')).map((s) => { const n = s.notaId ? notaE(s.notaId) : null; return '<tr><td>' + esc((s.cidade || '').split('/')[0]) + '</td><td class="small">' + esc(s.carga || '') + '</td><td class="mono small">' + dBR(s.chegou) + '</td><td class="mono">' + esc(s.numero) + (s.ctrc ? '<div class="tiny">CT-e ' + esc(s.ctrc) + '</div>' : '') + '</td><td><select data-sbmot="' + esc(s.id) + '" style="min-width:150px">' + MOTIVOS.map((m) => '<option' + (s.motivo === m ? ' selected' : '') + '>' + m + '</option>').join('') + '</select>' + (s.obs ? '<div class="tiny">' + esc(s.obs) + '</div>' : '') + '</td><td>' + (() => { const si = sobraSituacao(s); return '<select data-sbst="' + esc(s.id) + '" class="sb-st ' + SB_ST[si.st][1] + '" title="' + esc(si.fonte ? 'Origem: ' + si.fonte : '') + '">' + Object.entries(SB_ST).map(([k, v]) => '<option value="' + k + '"' + (si.st === k ? ' selected' : '') + '>' + v[0] + (si.st === k && si.em ? ' ' + dBR(si.em) : '') + '</option>').join('') + '</select>' + (s.statusManual ? ' <button class="btn sm ghost" data-a="sbAuto" data-v="' + esc(s.id) + '" title="Voltar a seguir o SSW">auto</button>' : '') + (!n ? '<div class="tiny">sem nota no roteirizador</div>' : '') + (s.statusFonte ? '<div class="tiny muted">' + esc(s.statusFonte) + '</div>' : ''); })() + '</td><td style="white-space:nowrap">' + (window.RC_HOST ? '<button class="btn sm ghost" data-a="sbConferir" data-v="' + esc(s.id) + '" title="Conferir agora no SSW" aria-label="Conferir no SSW">🔎</button>' : '') + '<button class="btn sm ghost danger" data-a="sbExcluir" data-v="' + esc(s.id) + '" aria-label="Desfazer lançamento">' + I.x + '</button></td></tr>'; }).join('') + '</tbody></table></div>').join('') + '</div>';
     };
     h += '<div class="card"><div class="card-h"><h2>Ficaram no galpão em ' + dBR(d) + '</h2><span class="chip ' + (doDia.length ? 'warn' : 'ok') + '">' + doDia.length + ' nota(s)' + (doDia.some((s) => s.kg) ? ' · ' + nf(doDia.reduce((s, x) => s + (x.kg || 0), 0), 0) + ' kg' : '') + '</span></div>' +
       (porMotivo.size ? '<div class="row">' + [...porMotivo].sort((x, y) => y[1] - x[1]).map(([m, k]) => '<span class="chip">' + esc(m) + ': ' + k + '</span>').join('') + '</div>' : '') +
@@ -3771,8 +3753,8 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     h += '<datalist id="dlEmb">' + embs.map((e) => '<option value="' + esc(e) + '">').join('') + '</datalist>';
     return h;
   }
-  function buscarSobra() {
-    const q = ($('#sbNF') || {}).value || '';
+  function buscarSobra(texto) {
+    const q = texto != null ? texto : ($('#sbNF') || {}).value || '';
     const ts = tokensNF(q);
     if (!ts.length) return;
     const itens = ts.map((t) => { const n = acharNota(t); if (n) return { t, id: n.id }; const r = acharSSW(t); return r ? { t, ssw: r } : { t }; });
@@ -3783,8 +3765,29 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
     render();
     const s = $('#sbMotivo'); if (s) s.focus();
   }
+  // CT-e bipado (chave de 44 dígitos do DACTE) ou digitado: o SSW devolve as NFs, que entram na busca como se fossem digitadas
+  async function lerCteSobra() {
+    const i = $('#sbCTE'), cod = ((i && i.value) || '').trim();
+    if (!cod || ui.sbCteLendo || !window.RC_HOST || !window.RC_HOST.cteNfs) return;
+    const nfTxt = ($('#sbNF') || {}).value || '';
+    ui.sbCteLendo = true; ui.sbCteMsg = { t: 'Procurando o CT-e no SSW…' }; render();
+    try {
+      const j = await window.RC_HOST.cteNfs(cod);
+      const nfs = (j.nfs || []).map(nfChave).filter(Boolean);
+      ui.sbCtrc = ui.sbCtrc || {}; for (const n of nfs) ui.sbCtrc[n] = j.ctrc || '';
+      const todas = [...new Set(tokensNF(nfTxt).concat(nfs))];
+      ui.sbCteMsg = { t: 'CT-e ' + (j.ctrc || cod) + ': NF ' + nfs.join(', ') + (j.destinatario ? ' · ' + j.destinatario : '') };
+      ui.sbCteLendo = false;
+      buscarSobra(todas.join(' '));
+    } catch (e) {
+      ui.sbCteLendo = false; ui.sbCteMsg = { t: e.message || 'Falha ao ler o CT-e.', bad: true }; render();
+      const n = $('#sbNF'); if (n) n.value = nfTxt;
+    }
+    setTimeout(() => { const c = $('#sbCTE'); if (c) { c.value = ''; c.focus(); } }, 30);
+  }
   async function registrarSobra() {
     const sb = ui.sb; if (!sb) return;
+    const ctrcDe = (nf) => (ui.sbCtrc || {})[nfChave(nf)] || '';
     const d = ui.data;
     const motivo = ($('#sbMotivo') || {}).value || 'Outro', obs = (($('#sbObs') || {}).value || '').trim();
     const reenvio = $('#sbReenvio') ? $('#sbReenvio').checked : true, dataMin = ($('#sbData') || {}).value || null;
@@ -3803,7 +3806,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
         const rr = rotaDaNota(x.id, d);
         const mot = rr && rr.r.motoristaId ? (ST.motoristas.get(rr.r.motoristaId) || {}).nome : '';
         const id = d + '_' + n.id;
-        await salvar('sobras', id, { id, data: d, notaId: n.id, numero: n.numero, serie: n.serie || '', embarcador: n.emitente || '', cliente: n.destNome || '', cidade: e.cidadeNome, carga: cargaTxt(e), chegou: chegouDe(e), kg: e.pesoKg, valor: n.valorMerc || 0, veiculo: rr ? rr.r.veiculoNome + (rr.r.placa ? ' ' + rr.r.placa : '') : '', motorista: mot || '', motivo, obs, reenvio, dataMin, em: agoraISO(), por: ST.uid });
+        await salvar('sobras', id, { id, data: d, notaId: n.id, numero: n.numero, serie: n.serie || '', embarcador: n.emitente || '', cliente: n.destNome || '', cidade: e.cidadeNome, carga: cargaTxt(e), chegou: chegouDe(e), kg: e.pesoKg, valor: n.valorMerc || 0, veiculo: rr ? rr.r.veiculoNome + (rr.r.placa ? ' ' + rr.r.placa : '') : '', motorista: mot || '', motivo, obs, reenvio, dataMin, ctrc: ctrcDe(n.numero) || n.ctrc || '', em: agoraISO(), por: ST.uid });
         const oc = (n.ocorrencias || []).filter((o) => o.data !== d).concat([{ data: d, motivo, obs }]);
         const q = Object.assign({}, n, { ocorrencias: oc, planoData: null });
         if (reenvio) Object.assign(q, { status: 'pronta', prioridade: true, prioridadeDesde: n.prioridade ? n.prioridadeDesde || d : d, dataMinima: dataMin });
@@ -3813,14 +3816,14 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
         const id = d + '_nf' + x.t;
         const f = lerNotaManual('sb');
         const m = munPorTexto(f.cidade) || RE.findMun(null, f.cidade, 'SP');
-        await salvar('sobras', id, { id, data: d, notaId: null, numero: x.t, embarcador: f.emitente, cliente: f.cliente, cidade: m ? m.nome + '/' + m.uf : f.cidade, carga: f.carga || (f.tubo ? 'COM TUBO' : ''), chegou: f.chegou || '', kg: f.peso, motivo, obs, reenvio: false, em: agoraISO(), por: ST.uid });
+        await salvar('sobras', id, { id, data: d, notaId: null, numero: x.t, embarcador: f.emitente, cliente: f.cliente, cidade: m ? m.nome + '/' + m.uf : f.cidade, carga: f.carga || (f.tubo ? 'COM TUBO' : ''), chegou: f.chegou || '', kg: f.peso, motivo, obs, reenvio: false, ctrc: ctrcDe(x.t), em: agoraISO(), por: ST.uid });
       }
       k++;
     }
     registrar('Notas que ficaram', k + ' nota(s): ' + sb.itens.map((x) => x.t).join(', ') + ' (' + motivo + ')');
     toast(k + ' nota(s) registrada(s)' + (reenvio && sb.itens.some((x) => x.id) ? ' e marcadas como prioridade.' : '.'));
-    ui.sb = null; render();
-    setTimeout(() => { const i = $('#sbNF'); if (i) i.focus(); }, 30);
+    ui.sb = null; ui.sbCtrc = null; ui.sbCteMsg = null; render();
+    setTimeout(() => { const i = $('#sbCTE') || $('#sbNF'); if (i) i.focus(); }, 30);
   }
 
   function vRotas() {
@@ -4128,8 +4131,8 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
       case 'novoCombo': { const c = clone(ST.cfg); c.combos = (c.combos || []).concat([{ id: 'c-' + uid(), nome: 'Nova combinação', cidades: [] }]); await salvar('cfg', 'main', c); render(); break; }
       case 'excluirCombo': { const c = clone(ST.cfg); c.combos.splice(+v, 1); await salvar('cfg', 'main', c); render(); break; }
       case 'abrirPlano': ui.data = v; ui.alertasPag = 0; ui.tab = 'rotas'; render(); window.scrollTo(0, 0); break;
-      case 'sbBuscar': buscarSobra(); break;
-      case 'sbLimpar': ui.sb = null; render(); setTimeout(() => { const i = $('#sbNF'); if (i) i.focus(); }, 30); break;
+      case 'sbBuscar': if ((($('#sbCTE') || {}).value || '').trim()) await lerCteSobra(); else buscarSobra(); break;
+      case 'sbLimpar': ui.sb = null; ui.sbCtrc = null; ui.sbCteMsg = null; render(); setTimeout(() => { const i = $('#sbNF'); if (i) i.focus(); }, 30); break;
       case 'sbRegistrar': await registrarSobra(); break;
       case 'selNota': break;
       case 'excluirUma': { ui.notasSel = new Set([v]); ui.confirmar = { a: 'excluirSel' }; render(); window.scrollTo(0, 0); break; }
@@ -4193,7 +4196,7 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
         if (!(munPorTexto(f.cidade) || RE.findMun(null, f.cidade, 'SP'))) { toast('Escolha a cidade na lista (Cidade/UF).', true); return; }
         const id = await criarNotaManual(f); toast('NF ' + f.numero + ' inserida.'); ui.notaAberta = id; render(); break;
       }
-      case 'sbAuto': { const s = ST.sobras.get(v); if (s) { const q = Object.assign({}, s); delete q.statusManual; delete q.statusManualEm; await salvar('sobras', v, q); ui.sbSyncEm = 0; render(); } break; }
+      case 'sbAuto': { const s = ST.sobras.get(v); if (s) { const q = Object.assign({}, s); delete q.statusManual; delete q.statusManualEm; await salvar('sobras', v, q); render(); } break; }
       case 'sbExcluir': {
         const s = ST.sobras.get(v); await remover('sobras', v);
         if (s && s.notaId) { const n = ST.notas.get(s.notaId); if (n) { const oc = (n.ocorrencias || []).filter((o) => !(o.data === s.data && o.motivo === s.motivo)); const q = Object.assign({}, n, { ocorrencias: oc }); if (!oc.length) { q.prioridade = false; delete q.prioridadeDesde; delete q.dataMinima; } if (n.status === 'cancelada' && /^Devolvida/.test(n.motivoCancel || '')) q.status = 'pronta'; await salvar('notas', n.id, q); } }
@@ -4283,12 +4286,14 @@ var MUN_DATA="5200050;Abadia de Goiás;GO;-16.7573;-49.4412|3100104;Abadia dos D
   });
   let qT = null;
   document.addEventListener('input', (e) => {
+    if (e.target.id === 'sbCTE') { clearTimeout(qT); if (e.target.value.replace(/\D/g, '').length === 44) qT = setTimeout(() => lerCteSobra(), 150); return; }
     if (e.target.id === 'fSSWq') { clearTimeout(qT); const v = e.target.value; qT = setTimeout(() => { ui.sswFiltro.q = v; render(); const i = $('#fSSWq'); if (i) { i.focus(); i.setSelectionRange(v.length, v.length); } }, 250); return; }
     if (e.target.id === 'fMotQ') { clearTimeout(qT); const v = e.target.value; qT = setTimeout(() => { ui.motQ = v; render(); const i = $('#fMotQ'); if (i) { i.focus(); i.setSelectionRange(v.length, v.length); } }, 200); return; }
     if (e.target.id === 'fQ') { clearTimeout(qT); const v = e.target.value; qT = setTimeout(() => { ui.notasFiltro.q = v; ui.notasPag = 0; render(); const i = $('#fQ'); if (i) { i.focus(); i.setSelectionRange(v.length, v.length); } }, 250); }
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target.id === 'sbNF') { e.preventDefault(); buscarSobra(); return; } if (e.key === 'Escape' && ui.notaAberta) { ui.notaAberta = null; render(); } });
+    if (e.key === 'Enter' && e.target.id === 'sbNF') { e.preventDefault(); buscarSobra(); return; }
+    if (e.key === 'Enter' && e.target.id === 'sbCTE') { e.preventDefault(); lerCteSobra(); return; } if (e.key === 'Escape' && ui.notaAberta) { ui.notaAberta = null; render(); } });
 
   // ---------------- início ----------------
   async function iniciar() {
