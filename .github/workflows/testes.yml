@@ -42,6 +42,7 @@ jobs:
       PUBLIC_BASE_URL: http://127.0.0.1:10000
       DASHBOARD_INITIAL_ADMIN_USER: admin_teste
       DASHBOARD_INITIAL_ADMIN_PASSWORD: senha-de-teste-123
+      WMS_ATIVO: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -68,6 +69,8 @@ jobs:
           node --check controle-coletas-aiven-app/dashboard/ssw-despesas.js
           node --check controle-coletas-aiven-app/veic.js
           node --check controle-coletas-aiven-app/dashboard/public/frota.js
+          node --check controle-coletas-aiven-app/wms.js
+          node --check controle-coletas-aiven-app/tests/wms.js
       - name: Subir o servidor em modo teste
         run: |
           cd controle-coletas-aiven-app
@@ -90,6 +93,8 @@ jobs:
           node controle-coletas-aiven-app/tests/dre.js
       - name: Abastecimentos do Veic na Frota (Veic de mentira, sem rede externa)
         run: node controle-coletas-aiven-app/tests/veic.js
+      - name: Armazém (WMS) — Fase 1
+        run: node controle-coletas-aiven-app/tests/wms.js
       - name: Grupos de acesso em Usuários
         run: node controle-coletas-aiven-app/tests/grupos-acesso.js
       - name: Rastreio de lotação (base do cliente e link de rastreio)

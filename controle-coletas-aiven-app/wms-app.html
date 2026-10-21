@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="theme-color" content="#0f766e">
+<link rel="manifest" href="/wms/manifest.json"><link rel="icon" href="/wms/icone.svg">
+<title>WMS • Operador</title>
+<style>
+:root{--bg:#0f172a;--card:#1e293b;--line:#334155;--txt:#f8fafc;--muted:#94a3b8;--teal:#0f766e;--ok:#14b8a6}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--txt);font-family:Segoe UI,Roboto,Arial,sans-serif}
+header{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid var(--card);position:sticky;top:0;background:var(--bg);z-index:5}
+header b{font-size:18px}header small{display:block;color:var(--muted);font-size:12px}
+.fila{padding:5px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#134e4a;color:#99f6e4;border:0}.fila.off{background:#78350f;color:#fde68a}
+main{padding:16px;display:flex;flex-direction:column;gap:14px;max-width:560px;margin:0 auto}
+.menu{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.big{min-height:96px;border-radius:14px;border:1px solid var(--line);background:var(--card);color:var(--txt);font:700 17px Segoe UI,Roboto,Arial;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;cursor:pointer;padding:10px;text-align:center}
+.big span{font-size:30px}
+.btn{min-height:60px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--txt);font:700 17px Segoe UI,Roboto,Arial;cursor:pointer;padding:0 14px;width:100%}
+.btn.p{background:var(--teal);border-color:var(--teal)}.btn.w{background:transparent;border-color:#c2410c;color:#fdba74}
+.dupla{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.card{background:var(--card);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:6px}
+.card small,.muted{color:var(--muted);font-size:13px}
+.destaque{background:var(--teal);border-radius:14px;padding:16px}.destaque .end{font-size:40px;font-weight:800;letter-spacing:1px}.destaque small{color:#ccfbf1}
+label{display:flex;flex-direction:column;gap:6px;font-size:14px;color:#cbd5e1}
+input{height:58px;border-radius:10px;border:1px solid var(--line);background:#0b1220;color:#fff;font:600 20px Segoe UI,Roboto,Arial;padding:0 14px;width:100%}
+input:focus{outline:none;border:2px solid var(--ok)}
+.leitura{display:flex;gap:8px}.leitura input{flex:1}.leitura button{width:64px;flex:none;border-radius:10px;border:1px solid var(--line);background:#1e293b;color:#fff;font-size:24px}
+.lista{display:flex;flex-direction:column;gap:10px}
+.item{background:var(--card);border-radius:12px;padding:14px;border:1px solid var(--line);color:var(--txt);text-align:left;font:inherit;cursor:pointer;width:100%}
+.item b{font-size:16px}.item small{display:block;color:var(--muted);margin-top:4px}
+.aviso{padding:12px 14px;border-radius:10px;font-size:15px;font-weight:600}.aviso.ok{background:#134e4a;color:#ccfbf1}.aviso.err{background:#450a0a;color:#fecaca}.aviso.warn{background:#431407;color:#fed7aa}
+.voltar{background:none;border:0;color:var(--muted);font:600 15px Segoe UI,Roboto,Arial;padding:6px 0;text-align:left;cursor:pointer}
+video{width:100%;border-radius:12px;background:#000;max-height:50vh;object-fit:cover}
+#cam{position:fixed;inset:0;background:rgba(2,6,23,.92);display:none;flex-direction:column;gap:12px;padding:16px;z-index:20;justify-content:center}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header><div><b>WMS • Operador</b><small id="quem">carregando…</small></div><button class="fila" id="fila" type="button">Online</button></header>
+<main id="tela"></main>
+<div id="cam"><video id="video" playsinline muted></video><div class="muted" id="camMsg">Aponte para o código de barras ou QR Code.</div><button class="btn" id="camFechar" type="button">Fechar câmera</button></div>
+<script>
+const $=s=>document.querySelector(s);
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const n=v=>Number(v||0).toLocaleString('pt-BR',{maximumFractionDigits:3});
+const uuid=()=>(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+'-'+Math.random().toString(36).slice(2)+'-'+Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9-]/g,'');
+const S={arm:null,arms:[],status:{}};
+const lerLS=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))??d}catch{return d}};
+const gravarLS=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}};
+
+// ------------- rede e fila offline
+async function api(met,url,body){
+  const r=await fetch(url,{method:met,credentials:'same-origin',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined});
+  const j=await r.json().catch(()=>({}));
+  if(r.status===401){location.href='/?login=1';throw new Error('Sessão expirada')}
+  if(!r.ok||j.ok===false){const e=new Error(j.error||('Falha '+r.status));e.status=r.status;e.code=j.code;throw e}
+  return j;
+}
+function fila(){return lerLS('wmsFila',[])}
+function pendencias(){return lerLS('wmsPend',[])}
+function mostrarFila(){
+  const f=fila(),p=pendencias(),b=$('#fila');
+  b.textContent=!navigator.onLine?'Offline · '+f.length+' na fila':f.length?f.length+' na fila':p.length?p.length+' pendência(s)':'Online';
+  b.className='fila'+(!navigator.onLine||f.length||p.length?' off':'');
+}
+// Envia uma operação. Sem rede: guarda na fila com o mesmo uuid e reenvia depois; o servidor não duplica.
+async function enviar(tipo,dados){
+  const op={uuid:uuid(),tipo,dados,em:Date.now()};
+  try{
+    const j=await api('POST','/api/wms/sync',{ops:[op]});
+    const r=j.resultados[0];
+    if(!r.ok){const e=new Error(r.error);e.code=r.code;e.status=r.status;throw e}
+    return r.resultado;
+  }catch(e){
+    if(e.status)throw e;
+    gravarLS('wmsFila',[...fila(),op]);mostrarFila();
+    return{offline:true};
+  }
+}
+let sincronizando=false;
+async function sincronizar(){
+  const f=fila();if(!f.length||sincronizando||!navigator.onLine)return;
+  sincronizando=true;
+  try{
+    const j=await api('POST','/api/wms/sync',{ops:f});
+    const fica=[],pend=pendencias();
+    for(const op of f){
+      const r=j.resultados.find(x=>x.uuid===op.uuid);
+      if(!r||(!r.ok&&r.status>=500))fica.push(op);
+      else if(!r.ok)pend.push({...op,erro:r.error});   // conflito: não sobrescreve, mostra para o operador
+    }
+    gravarLS('wmsFila',fica);gravarLS('wmsPend',pend.slice(-50));
+  }catch{}finally{sincronizando=false;mostrarFila()}
+}
+addEventListener('online',()=>{mostrarFila();sincronizar()});addEventListener('offline',mostrarFila);
+setInterval(sincronizar,20000);
+$('#fila').onclick=()=>telaFila();
+
+// ------------- leitura: coletor (teclado + Enter) ou câmera
+let detector=null,stream=null,camAlvo=null;
+async function abrirCamera(input){
+  camAlvo=input;
+  if(!('BarcodeDetector' in window)){aviso('Este aparelho não lê códigos pela câmera no navegador. Use o coletor ou digite.','warn');return}
+  try{
+    detector=detector||new BarcodeDetector({formats:['code_128','ean_13','ean_8','qr_code','code_39','itf','upc_a','data_matrix']});
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    const v=$('#video');v.srcObject=stream;await v.play();$('#cam').style.display='flex';
+    const loop=async()=>{if(!stream)return;try{const c=await detector.detect(v);if(c.length){const val=c[0].rawValue;fecharCamera();camAlvo.value=val;camAlvo.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter'}));if(navigator.vibrate)navigator.vibrate(80);return}}catch{}requestAnimationFrame(loop)};loop();
+  }catch(e){fecharCamera();aviso('Não foi possível abrir a câmera: '+e.message,'err')}
+}
+function fecharCamera(){if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;$('#cam').style.display='none'}
+$('#camFechar').onclick=fecharCamera;
+const campo=(id,rot,extra='')=>'<label>'+rot+'<div class="leitura"><input id="'+id+'" autocomplete="off" autocapitalize="characters" '+extra+'><button type="button" data-cam="'+id+'" aria-label="Ler pela câmera">📷</button></div></label>';
+document.addEventListener('click',e=>{const b=e.target.closest('[data-cam]');if(b)abrirCamera($('#'+b.dataset.cam))});
+const aoLer=(id,fn)=>{$('#'+id).addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();fn($('#'+id).value.trim())}})};
+
+let avisoEl=null;
+function aviso(t,tipo='ok'){if(!avisoEl)return;avisoEl.className='aviso '+tipo;avisoEl.textContent=t;avisoEl.hidden=false;if(navigator.vibrate&&tipo==='err')navigator.vibrate([60,60,60])}
+function render(html){$('#tela').innerHTML=html+'<div class="aviso" id="aviso" hidden role="status"></div>';avisoEl=$('#aviso');scrollTo(0,0)}
+const voltar='<button class="voltar" data-home>← Menu</button>';
+document.addEventListener('click',e=>{if(e.target.closest('[data-home]'))home()});
+
+// ------------- telas
+function home(){
+  render('<div class="menu"><button class="big" id="mRec"><span>📥</span>Recebimento</button><button class="big" id="mArm"><span>📦</span>Armazenagem</button><button class="big" id="mMov"><span>🔀</span>Movimentação</button><button class="big" id="mCon"><span>🔎</span>Consulta</button></div>'+(S.arms.length>1?'<label>Armazém<select id="selArm" style="height:52px;border-radius:10px;background:#0b1220;color:#fff;font-size:17px;border:1px solid var(--line)">'+S.arms.map(a=>'<option value="'+a.id+'"'+(a.id===S.arm?' selected':'')+'>'+esc(a.codigo+' · '+a.nome)+'</option>').join('')+'</select></label>':''));
+  $('#mRec').onclick=listaRecebimentos;$('#mArm').onclick=listaTarefas;$('#mMov').onclick=telaMov;$('#mCon').onclick=telaConsulta;
+  if($('#selArm'))$('#selArm').onchange=e=>{S.arm=e.target.value;gravarLS('wmsArm',S.arm)};
+}
+async function listaRecebimentos(){
+  render(voltar+'<b>Recebimentos para conferir</b><div class="lista" id="l">carregando…</div>');
+  try{
+    const j=await api('GET','/api/wms/recebimentos?status=conferencia');gravarLS('wmsRecs',j.rows);mostrarRecs(j.rows);
+  }catch(e){if(e.status)aviso(e.message,'err');else{mostrarRecs(lerLS('wmsRecs',[]));aviso('Sem sinal: mostrando a última lista.','warn')}}
+}
+function mostrarRecs(rows){
+  $('#l').innerHTML=rows.length?rows.map(r=>'<button class="item" data-r="'+r.id+'"><b>NF '+esc(r.nf_numero||r.id)+' · doca '+esc(r.doca||'—')+'</b><small>'+esc(r.cliente)+' · '+(r.status==='recontagem'?'RECONTAGEM':r.status==='na_doca'?'aguardando início':'em conferência')+'</small></button>').join(''):'<div class="muted">Nenhum veículo na doca para conferir.</div>';
+  $('#l').onclick=e=>{const b=e.target.closest('[data-r]');if(b)contagem(b.dataset.r,rows.find(r=>r.id===b.dataset.r))};
+}
+async function contagem(id,resumo){
+  let rec=null;
+  try{rec=(await api('GET','/api/wms/recebimentos/'+id+'?cega=1')).recebimento}catch(e){if(e.status){aviso(e.message,'err');return}}
+  const cli=rec?.cliente?.id||'';
+  render(voltar+'<div class="card"><small>Recebimento '+esc(id)+' · '+esc(rec?.cliente?.nome||resumo?.cliente||'')+'</small><b style="font-size:18px">Conferência cega'+(rec?.status==='recontagem'?' · RECONTAGEM':'')+'</b>'+(rec?.recontar_produtos?.length?'<small>Recontar: '+esc(rec.recontar_produtos.map(p=>p.sku+' '+p.descricao).join(' · '))+'</small>':'')+'</div>'+
+    campo('cCod','Produto (EAN ou SKU)','inputmode="text"')+'<div class="card" id="cProd" hidden></div>'+
+    '<div class="dupla"><label>Lote<input id="cLote" autocomplete="off"></label><label>Validade<input id="cVal" placeholder="MM/AAAA" inputmode="numeric"></label></div>'+
+    '<label>Quantidade contada<input id="cQtd" inputmode="decimal" style="height:72px;font-size:32px"></label>'+
+    '<div id="cAvBox" hidden><label>Quantas avariadas?<input id="cAv" inputmode="decimal"></label><label>Foto da avaria<input id="cFoto" type="file" accept="image/*" capture="environment" style="height:auto;padding:10px"></label></div>'+
+    '<div class="dupla"><button class="btn w" id="cAvBtn" type="button">Avaria + foto</button><button class="btn p" id="cOk" type="button">Confirmar</button></div>'+
+    '<div class="card" id="cMinhas"><small>Minhas leituras nesta rodada</small>'+((rec?.contagens||[]).map(c=>'<div>'+esc(c.sku)+' · '+n(c.qtd)+(c.lote?' · lote '+esc(c.lote):'')+(c.avariada?' · '+n(c.avariada)+' avariada(s)':'')+'</div>').join('')||'<div class="muted">nenhuma ainda</div>')+'</div>'+
+    '<button class="btn" id="cFechar" type="button">Terminei: fechar conferência</button>');
+  $('#cCod').focus();
+  aoLer('cCod',async v=>{
+    if(!v)return;
+    try{const p=(await api('GET','/api/wms/produtos/busca?cliente_id='+cli+'&codigo='+encodeURIComponent(v))).produto;
+      $('#cProd').hidden=false;$('#cProd').innerHTML='<b>'+esc(p.sku+' · '+p.descricao)+'</b><small>'+(p.controla_lote?'exige lote · ':'')+(p.controla_validade?'exige validade · ':'')+'unidade '+esc(p.unidade)+'</small>';
+      (p.controla_lote?$('#cLote'):$('#cQtd')).focus();
+    }catch(e){if(e.status){$('#cProd').hidden=false;$('#cProd').innerHTML='<b style="color:#fecaca">'+esc(e.message)+'</b>';$('#cCod').select()}else{$('#cProd').hidden=false;$('#cProd').innerHTML='<small>Sem sinal: o produto será conferido quando a leitura sincronizar.</small>';$('#cLote').focus()}}
+  });
+  $('#cLote').addEventListener('keydown',e=>{if(e.key==='Enter')$('#cVal').focus()});
+  $('#cVal').addEventListener('keydown',e=>{if(e.key==='Enter')$('#cQtd').focus()});
+  $('#cQtd').addEventListener('keydown',e=>{if(e.key==='Enter')$('#cOk').click()});
+  $('#cAvBtn').onclick=()=>{$('#cAvBox').hidden=false;$('#cAv').focus()};
+  $('#cOk').onclick=async()=>{
+    const qtd=$('#cQtd').value.trim();
+    if(!$('#cCod').value.trim()||!qtd){aviso('Leia o produto e informe a quantidade.','err');return}
+    let foto=null;const av=$('#cAv').value.trim();
+    if($('#cFoto').files[0])foto=await reduzirFoto($('#cFoto').files[0]);
+    try{
+      const r=await enviar('contagem',{recebimento_id:id,codigo:$('#cCod').value.trim(),lote:$('#cLote').value.trim(),validade:$('#cVal').value.trim(),qtd,avariada:av||0,foto});
+      aviso(r.offline?'Sem sinal: leitura guardada na fila.':'Conferido: '+r.produto.sku+' · '+n(r.qtd)+(r.duplicado?' (já registrado)':''),r.offline?'warn':'ok');
+      if(!r.offline)$('#cMinhas').insertAdjacentHTML('beforeend','<div>'+esc(r.produto.sku)+' · '+n(r.qtd)+'</div>');
+      for(const k of['#cCod','#cLote','#cVal','#cQtd','#cAv'])$(k).value='';$('#cFoto').value='';$('#cAvBox').hidden=true;$('#cProd').hidden=true;$('#cCod').focus();
+    }catch(e){aviso(e.message,'err')}
+  };
+  $('#cFechar').onclick=async()=>{
+    if(fila().length){aviso('Há leituras na fila. Espere sincronizar antes de fechar.','warn');sincronizar();return}
+    try{const j=await api('POST','/api/wms/recebimentos/'+id+'/fechar',{});
+      aviso(j.status==='recontagem'?'Diferença na contagem: outro conferente precisa recontar.':j.status==='divergencia'?'Fechado com divergência: o supervisor vai decidir.':'Conferência fechada sem divergência.',j.status==='conferido'?'ok':'warn');
+    }catch(e){aviso(e.message,'err')}
+  };
+}
+function reduzirFoto(file){
+  return new Promise((ok,falha)=>{const img=new Image();img.onload=()=>{const m=1280,s=Math.min(1,m/Math.max(img.width,img.height)),c=document.createElement('canvas');c.width=img.width*s;c.height=img.height*s;c.getContext('2d').drawImage(img,0,0,c.width,c.height);let q=.8,d=c.toDataURL('image/jpeg',q);while(d.length>780000&&q>.3){q-=.15;d=c.toDataURL('image/jpeg',q)}URL.revokeObjectURL(img.src);ok(d)};img.onerror=falha;img.src=URL.createObjectURL(file)});
+}
+async function listaTarefas(){
+  render(voltar+'<b>Paletes para armazenar</b><div class="lista" id="l">carregando…</div>');
+  try{const j=await api('GET','/api/wms/tarefas');gravarLS('wmsTar',j.rows);mostrarTarefas(j.rows)}
+  catch(e){if(e.status)aviso(e.message,'err');else{mostrarTarefas(lerLS('wmsTar',[]));aviso('Sem sinal: mostrando a última lista.','warn')}}
+}
+function mostrarTarefas(rows){
+  $('#l').innerHTML=rows.length?rows.map(t=>'<button class="item" data-t="'+t.id+'"><b>'+esc(t.lpn)+' → '+esc(t.sugerido||'sem sugestão')+'</b><small>'+esc(t.conteudo||'')+'</small></button>').join(''):'<div class="muted">Nenhum palete esperando armazenagem.</div>';
+  $('#l').onclick=e=>{const b=e.target.closest('[data-t]');if(b)armazenar(rows.find(t=>t.id===b.dataset.t))};
+}
+function armazenar(t){
+  render(voltar+'<div class="card"><small>1. Palete</small><b style="font-size:20px">'+esc(t.lpn)+'</b><small>'+esc(t.conteudo||'')+'</small></div>'+
+    '<div class="destaque"><small>2. Leve até o endereço</small><div class="end" id="aSug">'+esc(t.sugerido||'—')+'</div><small id="aMot">'+esc(t.motivo_sugestao||'')+'</small></div>'+
+    campo('aLpn','Leia a etiqueta do palete')+campo('aEnd','3. Leia a etiqueta do endereço')+
+    '<label id="aJustBox" hidden>Por que outro endereço?<input id="aJust" autocomplete="off"></label>'+
+    '<div class="dupla"><button class="btn" id="aOutro" type="button">Endereço cheio</button><button class="btn p" id="aOk" type="button">Confirmar</button></div>');
+  $('#aLpn').focus();
+  aoLer('aLpn',v=>{if(v.toUpperCase()!==t.lpn){aviso('Este não é o palete da tarefa ('+t.lpn+').','err');$('#aLpn').select();return}$('#aEnd').focus()});
+  aoLer('aEnd',v=>{if(!v)return;if(v.toUpperCase()!==String(t.sugerido||'').toUpperCase()){$('#aJustBox').hidden=false;aviso('Endereço diferente do sugerido: explique o motivo (precisa de permissão de supervisor).','warn');$('#aJust').focus()}else $('#aOk').click()});
+  $('#aOutro').onclick=async()=>{try{const j=await api('POST','/api/wms/tarefas/'+t.id+'/sugerir',{motivo:'endereço cheio na hora da armazenagem'});t.sugerido=j.sugerido;t.motivo_sugestao=j.motivo;$('#aSug').textContent=j.sugerido||'—';$('#aMot').textContent=j.motivo;aviso('Nova sugestão: '+(j.sugerido||'nenhuma'),'ok')}catch(e){aviso(e.status?e.message:'Sem sinal para pedir outra sugestão.','err')}};
+  $('#aOk').onclick=async()=>{
+    try{const r=await enviar('armazenagem',{tarefa_id:t.id,lpn:$('#aLpn').value.trim(),endereco:$('#aEnd').value.trim(),justificativa:$('#aJust').value.trim()});
+      if(r.offline){aviso('Sem sinal: armazenagem guardada na fila.','warn');setTimeout(listaTarefas,1500);return}
+      aviso('Armazenado: '+r.lpn+' em '+r.endereco+'.','ok');setTimeout(listaTarefas,1200);
+    }catch(e){aviso(e.message,'err');if(e.code==='ENDERECO_DIFERENTE'){$('#aJustBox').hidden=false;$('#aJust').focus()}}
+  };
+}
+function telaMov(){
+  render(voltar+'<b>Movimentação</b><div class="muted">Palete inteiro: leia o LPN. Parte do saldo: leia origem e produto e informe a quantidade.</div>'+campo('mLpn','Palete (LPN)')+'<div class="muted">ou</div>'+campo('mOri','Endereço de origem')+campo('mProd','Produto (EAN ou SKU)')+'<label>Quantidade<input id="mQtd" inputmode="decimal"></label>'+campo('mDest','Endereço de destino')+'<button class="btn p" id="mOk" type="button">Confirmar</button>');
+  $('#mLpn').focus();aoLer('mLpn',()=>$('#mDest').focus());aoLer('mOri',()=>$('#mProd').focus());aoLer('mProd',()=>$('#mQtd').focus());aoLer('mDest',()=>$('#mOk').click());
+  $('#mOk').onclick=async()=>{
+    try{const r=await enviar('movimentacao',{armazem_id:S.arm,lpn:$('#mLpn').value.trim(),origem:$('#mOri').value.trim(),produto:$('#mProd').value.trim(),qtd:$('#mQtd').value.trim(),destino:$('#mDest').value.trim()});
+      aviso(r.offline?'Sem sinal: movimentação guardada na fila.':'Movido '+n(r.qtd)+' de '+r.origem+' para '+r.destino+'.',r.offline?'warn':'ok');
+      for(const k of['#mLpn','#mOri','#mProd','#mQtd','#mDest'])$(k).value='';$('#mLpn').focus();
+    }catch(e){aviso(e.message,'err')}
+  };
+}
+function telaConsulta(){
+  render(voltar+campo('qCod','Leia endereço, palete ou produto')+'<div class="lista" id="qRes"></div>');
+  $('#qCod').focus();
+  aoLer('qCod',async v=>{
+    if(!v)return;
+    try{const j=await api('GET','/api/wms/consulta?armazem_id='+(S.arm||'')+'&codigo='+encodeURIComponent(v));
+      $('#qRes').innerHTML=(j.endereco?'<div class="card"><b>'+esc(j.endereco.codigo)+'</b><small>'+esc(j.endereco.zona+' · '+j.endereco.status)+'</small></div>':'')+(j.saldos.length?j.saldos.map(s=>'<div class="card"><b>'+esc(s.sku+' · '+s.descricao)+'</b><small>'+esc(s.endereco+(s.lpn?' · '+s.lpn:'')+(s.lote?' · lote '+s.lote:'')+(s.validade?' · val. '+s.validade.split('-').reverse().join('/'):'')+' · '+s.estado)+'</small><b>'+n(s.qtd)+' '+esc(s.unidade)+'</b></div>').join(''):'<div class="muted">Sem saldo.</div>');
+      $('#qCod').select();
+    }catch(e){$('#qRes').innerHTML='';aviso(e.status?e.message:'Sem sinal para consultar.','err')}
+  });
+}
+function telaFila(){
+  const f=fila(),p=pendencias();
+  render(voltar+'<b>Fila do aparelho</b><div class="muted">Operações feitas sem sinal são enviadas sozinhas quando a conexão volta. O servidor não duplica nada que já recebeu.</div>'+
+    '<div class="card"><b>'+f.length+' aguardando envio</b>'+f.map(o=>'<small>'+esc(o.tipo)+' · '+new Date(o.em).toLocaleTimeString('pt-BR')+'</small>').join('')+'</div>'+
+    '<div class="card"><b>'+p.length+' recusada(s) pelo servidor</b><small>Não foram aplicadas porque alguém mudou o estoque antes. Confira e refaça se for o caso.</small>'+p.map(o=>'<small>'+esc(o.tipo)+': '+esc(o.erro)+'</small>').join('')+'</div>'+
+    '<div class="dupla"><button class="btn p" id="fEnviar">Enviar agora</button><button class="btn" id="fLimpar">Limpar recusadas</button></div>');
+  $('#fEnviar').onclick=async()=>{await sincronizar();telaFila()};$('#fLimpar').onclick=()=>{gravarLS('wmsPend',[]);mostrarFila();telaFila()};
+}
+
+(async()=>{
+  mostrarFila();
+  if('serviceWorker' in navigator)navigator.serviceWorker.register('/wms/sw.js',{scope:'/wms/'}).catch(()=>{});
+  try{
+    S.status=await api('GET','/api/wms/status');gravarLS('wmsUser',S.status.usuario);
+    S.arms=(await api('GET','/api/wms/armazens')).rows;gravarLS('wmsArms',S.arms);
+  }catch(e){if(e.status){render('<div class="aviso err">'+esc(e.message)+'</div>');return}S.arms=lerLS('wmsArms',[])}
+  S.arm=lerLS('wmsArm',null);if(!S.arms.some(a=>a.id===S.arm))S.arm=S.arms[0]?.id||null;
+  $('#quem').textContent=(S.status.usuario||lerLS('wmsUser',''))+(S.arms.length?' · '+(S.arms.find(a=>a.id===S.arm)?.nome||''):'');
+  home();sincronizar();
+})();
+</script>
+</body>
+</html>

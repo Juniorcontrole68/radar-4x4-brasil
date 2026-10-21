@@ -35,6 +35,7 @@ const entregas = require('./entregas');
 const movitDemo = require('./movit-demo');
 const movitGuia = require('./movit-guia');
 const veic = require('./veic');
+const wms = require('./wms');
 const { handler } = require('../contas-a-pagar-v3/src/handler');
 
 const PORT = process.env.PORT || 10000;
@@ -999,6 +1000,7 @@ async function dashboardUserContext(row){
   // Cliente da demo: o painel só mostra os módulos contratados que já funcionam separados por empresa.
   if(movitDemo.clienteDemo(ctx)){ctx.client_modules=movitDemo.modulosLiberados(ctx);ctx.demo=true;ctx.demo_telas=movitDemo.telasLiberadas(ctx);ctx.demo_perms=[...movitDemo.permsLiberadas(ctx)]}
   ctx.sandbox=tenantSandbox(ctx);
+  ctx.wms=wms.ATIVO&&!ctx.sandbox&&!ctx.demo;
   return ctx;
 }
 // grupo informado no cadastro do usuário: null (sem grupo), id do mesmo cliente, ou false (inválido)
@@ -1848,6 +1850,8 @@ async function start() {
   await roteirizadorCargas.ensureSchema(pool);
   await lotacaoRastreio.ensureSchema(pool);
   await entregas.ensureSchema(pool);
+  // se o esquema do WMS falhar, desliga só o WMS e o resto do servidor sobe normalmente
+  if (wms.ATIVO) await wms.ensureSchema(pool).catch(e=>{console.error('[wms] esquema falhou, WMS desligado:',e.message);wms.desligar()});
   await pool.query(`CREATE TABLE IF NOT EXISTS fleet_maintenance_files (
     maintenance_id TEXT PRIMARY KEY,
     nome_arquivo TEXT NOT NULL,
@@ -2993,6 +2997,9 @@ async function start() {
       if (await lotacaoRastreio.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,sqlNome,sqlPlaca,publicBase:DRIVER_PUBLIC_BASE,testMode:TEST_MODE})) return;
       // Comprovante de entrega pelo MOVIT (foto / não entregue) e a tela /entregas da central: ver entregas.js
       if (await entregas.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,movitCompanyLinkFromReq,testMode:TEST_MODE})) return;
+
+      // CONSTRULOG WMS 360° (armazém): só responde com WMS_ATIVO=1. Ver wms.js
+      if (await wms.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,testMode:TEST_MODE})) return;
 
       // Abastecimentos do Veic na Frota → Combustível (só leitura no Veic): ver veic.js
       if (await veic.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;

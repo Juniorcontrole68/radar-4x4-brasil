@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Armazém (WMS) • CONSTRULOG</title>
+<style>
+:root{--nav:#0f172a;--teal:#0f766e;--teal2:#115e59;--line:#e2e8f0;--bg:#f5f7fa;--muted:#64748b;--txt:#0f172a;--card:#fff}
+@media (prefers-color-scheme:dark){:root:not([data-tema="claro"]){--line:#334155;--bg:#0b1220;--muted:#94a3b8;--txt:#e2e8f0;--card:#111827}}
+:root[data-tema="escuro"]{--line:#334155;--bg:#0b1220;--muted:#94a3b8;--txt:#e2e8f0;--card:#111827}
+*{box-sizing:border-box}body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--txt)}
+.page{max-width:1280px;margin:0 auto;padding:16px}
+header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+h1{font-size:20px;margin:0}h2{font-size:15px;margin:0 0 10px}.muted{color:var(--muted);font-size:12px}
+nav.abas{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 4px}
+nav.abas button{border:1px solid var(--line);background:var(--card);color:var(--txt);border-radius:999px;padding:8px 14px;font-weight:700;font-size:13px;cursor:pointer}
+nav.abas button[aria-selected="true"]{background:var(--teal);border-color:var(--teal);color:#fff}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.kpi b{display:block;font-size:28px;margin-top:4px}.kpi.alerta b{color:#b91c1c}
+.bar{display:flex;gap:10px;align-items:end;flex-wrap:wrap}
+label{display:grid;gap:4px;font-size:11px;font-weight:700;color:var(--muted)}
+input,select,textarea{border:1px solid #cbd5e1;border-radius:9px;padding:9px;font-size:13px;background:var(--card);color:var(--txt);min-height:38px;font-family:inherit}
+.btn{border:1px solid #cbd5e1;background:var(--card);color:var(--txt);border-radius:9px;padding:9px 14px;font-weight:700;font-size:13px;cursor:pointer;min-height:38px}
+.btn.p{background:var(--teal);border-color:var(--teal);color:#fff}.btn.p:hover{background:var(--teal2)}
+.btn.d{border-color:#fecaca;color:#b91c1c}
+.tw{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--muted);font-weight:600;padding:8px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+.chip{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:800;background:#e2e8f0;color:#334155;white-space:nowrap}
+.chip.ok{background:#dcfce7;color:#166534}.chip.err{background:#fee2e2;color:#991b1b}.chip.warn{background:#fef3c7;color:#92400e}.chip.info{background:#ccfbf1;color:#115e59}
+.barra{height:9px;background:#e2e8f0;border-radius:5px;overflow:hidden}.barra i{display:block;height:9px;background:var(--teal)}.barra i.alto{background:#c2410c}
+.msg{position:fixed;right:16px;bottom:16px;max-width:420px;padding:12px 14px;border-radius:10px;font-size:13px;font-weight:700;display:none;z-index:60;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+.msg.ok{display:block;background:#dcfce7;color:#166534}.msg.err{display:block;background:#fee2e2;color:#991b1b}
+.mapa{display:flex;flex-direction:column;gap:6px;overflow-x:auto;padding-bottom:6px}
+.rua{display:flex;gap:4px;align-items:center}.rua>span{width:62px;font-weight:700;font-size:12px;flex:none}
+.pos{width:40px;height:40px;border-radius:6px;font:700 11px Segoe UI,Arial;cursor:pointer;flex:none;border:1px solid #94a3b8;background:#fff;color:#334155}
+.pos.parcial{background:#99f6e4;border-color:#0f766e;color:#134e4a}.pos.ocupado{background:#0f766e;border-color:#0f766e;color:#fff}.pos.bloqueado{background:#c2410c;border-color:#c2410c;color:#fff}
+.pos.sel{outline:3px solid var(--txt);outline-offset:2px}.pos.achado{box-shadow:0 0 0 3px #facc15}
+.leg{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-bottom:10px}.leg span{display:flex;gap:6px;align-items:center}.leg i{width:14px;height:14px;border-radius:3px;display:inline-block;border:1px solid #94a3b8}
+dialog{border:0;border-radius:14px;padding:0;max-width:min(720px,94vw);width:100%;background:var(--card);color:var(--txt)}
+dialog::backdrop{background:rgba(15,23,42,.55)}dialog form,dialog .in{padding:18px;display:grid;gap:12px}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.lado{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}.lado>.card{flex:1 1 320px}
+.vazio{color:var(--muted);font-size:13px;padding:12px 2px}
+.etapas{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div><h1>🏭 Armazém (WMS)</h1><div class="muted" id="sub">CONSTRULOG WMS 360° · Fase 1</div></div>
+    <div class="bar">
+      <label>Armazém<select id="selArm"></select></label>
+      <a class="btn" href="/wms/app" target="_blank" rel="noopener">📱 Aplicativo do operador</a>
+      <button class="btn" id="btnTema" type="button" aria-label="Alternar modo escuro">🌓</button>
+    </div>
+  </header>
+  <nav class="abas" role="tablist" id="abas">
+    <button role="tab" data-aba="painel" aria-selected="true">Painel</button>
+    <button role="tab" data-aba="mapa">Mapa</button>
+    <button role="tab" data-aba="recebimentos">Recebimentos</button>
+    <button role="tab" data-aba="tarefas">Armazenagem</button>
+    <button role="tab" data-aba="estoque">Estoque</button>
+    <button role="tab" data-aba="produtos">Produtos</button>
+    <button role="tab" data-aba="clientes">Clientes</button>
+    <button role="tab" data-aba="enderecos">Armazéns e endereços</button>
+    <button role="tab" data-aba="auditoria" data-sup>Auditoria</button>
+  </nav>
+
+  <section data-sec="painel">
+    <div class="grid" id="kpis"></div>
+    <div class="lado">
+      <div class="card"><h2>Ocupação por zona</h2><div id="zonas"></div></div>
+      <div class="card"><h2>Recebimentos e tarefas</h2><div id="filas"></div></div>
+    </div>
+    <div class="card"><h2>Últimas movimentações</h2><div class="tw" id="ultimos"></div></div>
+  </section>
+
+  <section data-sec="mapa" hidden>
+    <div class="card">
+      <div class="bar" style="justify-content:space-between">
+        <div class="leg"><span><i></i>Livre</span><span><i style="background:#99f6e4;border-color:#0f766e"></i>Parcial</span><span><i style="background:#0f766e;border-color:#0f766e"></i>Ocupado</span><span><i style="background:#c2410c;border-color:#c2410c"></i>Bloqueado</span></div>
+        <div class="bar"><label>Nível<select id="mapaNivel"></select></label><label>Localizar produto, palete ou endereço<input id="mapaBusca" placeholder="SKU, EAN, LPN ou A-03-05-02"></label><button class="btn" id="mapaIr">Localizar</button></div>
+      </div>
+      <div class="mapa" id="mapa"></div>
+    </div>
+    <div class="card" id="mapaDet"><div class="vazio">Clique numa posição para ver o conteúdo.</div></div>
+  </section>
+
+  <section data-sec="recebimentos" hidden>
+    <div class="card">
+      <div class="bar" style="justify-content:space-between">
+        <label>Situação<select id="recFiltro"><option value="abertos">Em aberto</option><option value="finalizado">Finalizados</option><option value="cancelado">Cancelados</option></select></label>
+        <div class="bar"><button class="btn" id="btnRecManual">+ Recebimento manual</button><label class="btn p" style="display:flex;align-items:center;cursor:pointer">⬆ Importar XML da NF-e<input type="file" id="xmlArq" accept=".xml,text/xml" multiple hidden></label></div>
+      </div>
+      <div class="tw" id="recLista"></div>
+    </div>
+    <div class="card" id="recDet" hidden></div>
+  </section>
+
+  <section data-sec="tarefas" hidden>
+    <div class="card"><div class="bar" style="justify-content:space-between"><h2>Tarefas de armazenagem</h2><label>Mostrar<select id="tarFiltro"><option value="">Abertas</option><option value="concluidas">Concluídas</option></select></label></div><div class="tw" id="tarLista"></div></div>
+  </section>
+
+  <section data-sec="estoque" hidden>
+    <div class="card">
+      <div class="bar">
+        <label>Buscar<input id="estQ" placeholder="SKU, descrição, EAN, endereço, LPN ou lote"></label>
+        <label>Cliente<select id="estCli"><option value="">Todos</option></select></label>
+        <label>Estado<select id="estEstado"><option value="">Todos</option><option value="disponivel">Disponível</option><option value="bloqueado">Bloqueado</option><option value="avariado">Avariado</option><option value="reservado">Reservado</option></select></label>
+        <button class="btn p" id="estIr">Consultar</button>
+        <button class="btn" id="estMover">Movimentar</button>
+        <button class="btn" id="estBloq" data-sup>Bloquear / liberar</button>
+      </div>
+      <div class="grid" id="estTot" style="margin-top:12px"></div>
+      <div class="tw" id="estLista" style="margin-top:8px"></div>
+    </div>
+    <div class="card"><h2>Rastreio (trajetória completa)</h2><div class="bar"><label>LPN<input id="raLpn"></label><label>Produto (SKU/EAN)<input id="raProd"></label><label>Lote<input id="raLote"></label><button class="btn p" id="raIr">Rastrear</button></div><div class="tw" id="raLista" style="margin-top:10px"></div></div>
+  </section>
+
+  <section data-sec="produtos" hidden>
+    <div class="card"><div class="bar" style="justify-content:space-between"><div class="bar"><label>Buscar<input id="prodQ" placeholder="SKU, descrição ou EAN"></label><label>Cliente<select id="prodCli"><option value="">Todos</option></select></label><button class="btn" id="prodIr">Buscar</button></div><button class="btn p" id="prodNovo">+ Produto</button></div><div class="tw" id="prodLista" style="margin-top:10px"></div></div>
+  </section>
+
+  <section data-sec="clientes" hidden>
+    <div class="card"><div class="bar" style="justify-content:space-between"><h2>Clientes depositantes</h2><button class="btn p" id="cliNovo">+ Cliente</button></div><div class="tw" id="cliLista"></div></div>
+  </section>
+
+  <section data-sec="enderecos" hidden>
+    <div class="lado">
+      <div class="card"><div class="bar" style="justify-content:space-between"><h2>Armazéns</h2><button class="btn p" id="armNovo">+ Armazém</button></div><div id="armLista"></div></div>
+      <div class="card"><h2>Gerar endereços em lote</h2>
+        <form id="fLote" class="cols" style="display:grid">
+          <label>Zona<select name="zona_id" id="loteZona" required></select></label>
+          <label>Tipo<select name="tipo"><option value="porta_palete">Porta-palete</option><option value="blocado">Blocado</option><option value="prateleira">Prateleira</option><option value="chao">Chão</option><option value="doca">Doca</option></select></label>
+          <label>Rua de<input name="rua_de" value="A" required></label><label>Rua até<input name="rua_ate" value="B"></label>
+          <label>Coluna de<input name="col_de" type="number" min="1" max="99" value="1"></label><label>Coluna até<input name="col_ate" type="number" min="1" max="99" value="10"></label>
+          <label>Nível de<input name="niv_de" type="number" min="1" max="99" value="1"></label><label>Nível até<input name="niv_ate" type="number" min="1" max="99" value="3"></label>
+          <label>Posição de<input name="pos_de" type="number" min="1" max="99" value="1"></label><label>Posição até<input name="pos_ate" type="number" min="1" max="99" value="1"></label>
+          <label>Paletes por posição<input name="cap_paletes" type="number" min="0" value="1"></label><label>Peso máx. (kg)<input name="cap_kg" type="number" min="0" value="1200"></label>
+          <label>Volume máx. (m³)<input name="cap_m3" type="number" min="0" step="0.01" value="0"></label><label>Distância da 1ª rua até a doca (m)<input name="distancia_base_m" type="number" min="0" value="5"></label>
+          <div style="grid-column:1/-1;display:flex;gap:8px;align-items:center"><button class="btn p">Gerar endereços</button><span class="muted" id="lotePrev"></span></div>
+        </form>
+      </div>
+    </div>
+    <div class="card"><div class="bar" style="justify-content:space-between"><h2>Endereços</h2><div class="bar"><label>Zona<select id="endZona"><option value="">Todas</option></select></label><button class="btn" id="endEtq">🏷 Etiquetas da zona</button></div></div><div class="tw" id="endLista"></div></div>
+  </section>
+
+  <section data-sec="auditoria" hidden>
+    <div class="card"><h2>Auditoria (últimas 300 operações críticas)</h2><div class="tw" id="audLista"></div></div>
+  </section>
+</div>
+
+<dialog id="dlg"><div class="in" id="dlgIn"></div></dialog>
+<div id="msg" class="msg" role="status"></div>
+
+<script>
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const n=(v,c=0)=>Number(v||0).toLocaleString('pt-BR',{maximumFractionDigits:c||3,minimumFractionDigits:c});
+const dt=t=>t?new Date(t).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'';
+const dBR=s=>s?String(s).slice(0,10).split('-').reverse().join('/'):'';
+const uuid=()=>(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9-]/g,'');
+let ST={arm:null,arms:[],status:{},clientes:[]};
+function aviso(t,ok){const m=$('#msg');m.textContent=t;m.className='msg '+(ok?'ok':'err');clearTimeout(aviso.t);aviso.t=setTimeout(()=>m.className='msg',ok?3500:7000)}
+async function api(met,url,body){
+  const r=await fetch(url,{method:met,credentials:'same-origin',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined});
+  const j=await r.json().catch(()=>({}));
+  if(r.status===401){location.href='/?login=1';throw new Error('Sessão expirada')}
+  if(!r.ok||j.ok===false)throw new Error(j.error||('Falha '+r.status));
+  return j;
+}
+const tenta=fn=>async(...a)=>{try{return await fn(...a)}catch(e){aviso(e.message)}};
+const ST_REC={aguardando:['Aguardando',''],na_doca:['Na doca','info'],em_conferencia:['Em conferência','warn'],recontagem:['Recontagem','warn'],divergencia:['Divergência','err'],conferido:['Conferido','ok'],finalizado:['Finalizado','ok'],cancelado:['Cancelado','']};
+const chipRec=s=>'<span class="chip '+(ST_REC[s]||['',''])[1]+'">'+esc((ST_REC[s]||[s])[0])+'</span>';
+const EST={disponivel:['Disponível','ok'],bloqueado:['Bloqueado','err'],avariado:['Avariado','warn'],reservado:['Reservado','info'],em_conferencia:['Em conferência','warn'],em_transferencia:['Em transferência','info']};
+const chipEst=s=>'<span class="chip '+(EST[s]||['',''])[1]+'">'+esc((EST[s]||[s])[0])+'</span>';
+const MOV={entrada:'Entrada',armazenagem:'Armazenagem',transferencia:'Transferência',bloqueio:'Bloqueio',desbloqueio:'Desbloqueio',ajuste:'Ajuste',saida:'Saída'};
+const tabela=(cols,rows,vazio)=>rows.length?'<table><thead><tr>'+cols.map(c=>'<th>'+c[0]+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+cols.map(c=>'<td>'+c[1](r)+'</td>').join('')+'</tr>').join('')+'</tbody></table>':'<div class="vazio">'+(vazio||'Nada por aqui ainda.')+'</div>';
+function abrir(html){$('#dlgIn').innerHTML=html;$('#dlg').showModal()}
+function fechar(){$('#dlg').close()}
+$('#dlg').addEventListener('click',e=>{if(e.target.matches('[data-fechar]'))fechar()});
+
+// tema
+try{const t=localStorage.getItem('wmsTema');if(t)document.documentElement.dataset.tema=t}catch{}
+$('#btnTema').onclick=()=>{const atual=document.documentElement.dataset.tema||(matchMedia('(prefers-color-scheme: dark)').matches?'escuro':'claro');const t=atual==='escuro'?'claro':'escuro';document.documentElement.dataset.tema=t;try{localStorage.setItem('wmsTema',t)}catch{}};
+
+// abas
+const CARREGA={painel:carregarPainel,mapa:carregarMapa,recebimentos:carregarRecebimentos,tarefas:carregarTarefas,estoque:carregarEstoque,produtos:carregarProdutos,clientes:carregarClientes,enderecos:carregarEnderecos,auditoria:carregarAuditoria};
+function irAba(a){$$('#abas button').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.aba===a)));$$('section[data-sec]').forEach(s=>s.hidden=s.dataset.sec!==a);try{sessionStorage.setItem('wmsAba',a)}catch{};tenta(CARREGA[a])()}
+$('#abas').addEventListener('click',e=>{const b=e.target.closest('button[data-aba]');if(b)irAba(b.dataset.aba)});
+
+async function iniciar(){
+  ST.status=await api('GET','/api/wms/status');
+  if(!ST.status.supervisor)$$('[data-sup]').forEach(x=>x.hidden=true);
+  await carregarArmazens();
+  await carregarListaClientes();
+  let a='painel';try{a=sessionStorage.getItem('wmsAba')||a}catch{}
+  if(!ST.arms.length)a='enderecos';
+  irAba(a);
+}
+async function carregarArmazens(){
+  ST.arms=(await api('GET','/api/wms/armazens')).rows;
+  const sel=$('#selArm');let atual=ST.arm;try{atual=atual||localStorage.getItem('wmsArm')}catch{}
+  sel.innerHTML=ST.arms.length?ST.arms.map(a=>'<option value="'+a.id+'">'+esc(a.codigo+' · '+a.nome)+'</option>').join(''):'<option value="">Cadastre um armazém</option>';
+  if(ST.arms.some(a=>a.id===atual))sel.value=atual;
+  ST.arm=sel.value||null;
+}
+$('#selArm').onchange=()=>{ST.arm=$('#selArm').value;try{localStorage.setItem('wmsArm',ST.arm)}catch{};const a=$$('#abas button').find(b=>b.getAttribute('aria-selected')==='true');irAba(a?.dataset.aba||'painel')};
+const armAtual=()=>ST.arms.find(a=>a.id===ST.arm);
+async function carregarListaClientes(){
+  ST.clientes=(await api('GET','/api/wms/clientes')).rows;
+  const op='<option value="">Todos</option>'+ST.clientes.map(c=>'<option value="'+c.id+'">'+esc(c.nome)+'</option>').join('');
+  $('#estCli').innerHTML=op;$('#prodCli').innerHTML=op;
+}
+
+// ---------------- painel
+async function carregarPainel(){
+  const j=await api('GET','/api/wms/painel'+(ST.arm?'?armazem_id='+ST.arm:''));
+  const cont=(arr,k)=>arr.filter(x=>!k||k.includes(x.status||x.tipo)).reduce((a,x)=>a+x.n,0);
+  const recAnd=cont(j.recebimentos,['na_doca','em_conferencia','recontagem','divergencia','conferido']),div=cont(j.divergencias),tar=cont(j.tarefas);
+  const disp=(j.estoque.find(e=>e.estado==='disponivel')||{}).paletes||0,bloq=j.estoque.filter(e=>e.estado!=='disponivel').reduce((a,e)=>a+e.paletes,0);
+  $('#kpis').innerHTML=[
+    ['Ocupação (posições de guarda)',n(j.ocupacao.pct,1)+'%',n(j.ocupacao.ocupados)+' de '+n(j.ocupacao.capacidade)+' posições','recebimentos'],
+    ['Recebimentos em andamento',recAnd,cont(j.recebimentos,['aguardando'])+' aguardando chegada','recebimentos'],
+    ['Tarefas de armazenagem',tar,'paletes esperando endereço','tarefas'],
+    ['Divergências abertas',div,j.divergencias.map(d=>d.n+' '+d.tipo.replace('_',' ')).join(' · ')||'nenhuma','recebimentos',div>0],
+    ['Paletes no estoque',disp+bloq,bloq+' bloqueado(s) ou avariado(s)','estoque']
+  ].map(k=>'<button class="card kpi'+(k[4]?' alerta':'')+'" data-ir="'+k[3]+'" style="text-align:left;cursor:pointer;margin:0;font:inherit;color:inherit"><span class="muted">'+k[0]+'</span><b>'+k[1]+'</b><span class="muted">'+esc(k[2])+'</span></button>').join('');
+  $('#zonas').innerHTML=j.zonas.length?j.zonas.map(z=>{const p=z.capacidade?Math.round(z.ocupados*100/z.capacidade):0;return'<div style="display:grid;grid-template-columns:150px 1fr 90px;gap:10px;align-items:center;margin:8px 0;font-size:13px"><span>'+esc(z.nome)+'</span><div class="barra"><i class="'+(p>80?'alto':'')+'" style="width:'+Math.min(p,100)+'%"></i></div><span style="text-align:right">'+p+'% · '+z.ocupados+'/'+z.capacidade+'</span></div>'}).join('')+'<div class="muted">Laranja = acima de 80%.</div>':'<div class="vazio">Sem zonas.</div>';
+  const fila=j.recebimentos.map(r=>chipRec(r.status)+' '+r.n).join(' ')||'—';
+  $('#filas').innerHTML='<p style="font-size:13px">Recebimentos: '+fila+'</p><p style="font-size:13px">Tarefas: '+(j.tarefas.map(t=>t.n+' '+t.status.replace('_',' ')).join(' · ')||'nenhuma')+'</p>';
+  $('#ultimos').innerHTML=tabela([['Hora',r=>dt(r.criado_em)],['Tipo',r=>esc(MOV[r.tipo]||r.tipo)],['Produto',r=>esc(r.sku)],['LPN',r=>esc(r.lpn||'')],['Qtd',r=>n(r.qtd)],['De → Para',r=>esc((r.origem||'—')+' → '+(r.destino||'—'))],['Usuário',r=>esc(r.usuario)]],j.movimentos,'Nenhuma movimentação ainda.');
+}
+$('#kpis').addEventListener('click',e=>{const b=e.target.closest('[data-ir]');if(b)irAba(b.dataset.ir)});
+
+// ---------------- mapa
+let MAPA=[],MAPA_SEL=null;
+async function carregarMapa(){
+  if(!ST.arm){$('#mapa').innerHTML='<div class="vazio">Cadastre um armazém.</div>';return}
+  MAPA=(await api('GET','/api/wms/enderecos?armazem_id='+ST.arm)).rows;
+  const niveis=[...new Set(MAPA.map(e=>e.nivel||1))].sort((a,b)=>a-b);
+  const sel=$('#mapaNivel'),ant=sel.value;sel.innerHTML=niveis.map(v=>'<option value="'+v+'">'+v+'</option>').join('');if(niveis.includes(+ant))sel.value=ant;
+  desenharMapa();
+}
+function desenharMapa(achados){
+  const nv=+$('#mapaNivel').value||1,set=new Set(achados||[]);
+  const doNivel=MAPA.filter(e=>(e.nivel||1)===nv),ruas=[...new Set(doNivel.map(e=>e.rua||'—'))];
+  $('#mapa').innerHTML=ruas.length?ruas.map(r=>'<div class="rua"><span>'+(r==='—'?'Outros':'Rua '+esc(r))+'</span>'+doNivel.filter(e=>(e.rua||'—')===r).map(e=>'<button type="button" class="pos '+e.situacao+(MAPA_SEL===e.id?' sel':'')+(set.has(e.codigo)?' achado':'')+'" data-id="'+e.id+'" title="'+esc(e.codigo+' · '+e.zona)+'" aria-label="'+esc(e.codigo)+'">'+esc(e.coluna?String(e.coluna).padStart(2,'0'):e.codigo.slice(-4))+'</button>').join('')+'</div>').join(''):'<div class="vazio">Nenhum endereço neste nível. Gere endereços em "Armazéns e endereços".</div>';
+}
+$('#mapaNivel').onchange=()=>desenharMapa();
+$('#mapa').addEventListener('click',tenta(async e=>{
+  const b=e.target.closest('.pos');if(!b)return;MAPA_SEL=b.dataset.id;desenharMapa();
+  const end=MAPA.find(x=>x.id===MAPA_SEL);
+  const j=await api('GET','/api/wms/consulta?armazem_id='+ST.arm+'&codigo='+encodeURIComponent(end.codigo));
+  $('#mapaDet').innerHTML='<h2>'+esc(end.codigo)+' <span class="chip '+({livre:'',parcial:'info',ocupado:'ok',bloqueado:'err'}[end.situacao])+'">'+end.situacao+'</span></h2><p class="muted">'+esc(end.zona+' · '+end.tipo.replace('_','-')+' · capacidade '+end.cap_paletes+' palete(s) / '+n(end.cap_kg)+' kg · '+n(end.distancia_m,1)+' m da doca · ocupado '+end.paletes+' palete(s), '+n(end.kg)+' kg')+'</p>'+
+    tabela([['Produto',r=>esc(r.sku+' · '+r.descricao)],['Cliente',r=>esc(r.cliente)],['Lote',r=>esc(r.lote||'')],['Validade',r=>dBR(r.validade)],['LPN',r=>esc(r.lpn||'')],['Estado',r=>chipEst(r.estado)],['Qtd',r=>n(r.qtd)+' '+esc(r.unidade)]],j.saldos,'Posição vazia.')+
+    '<div class="bar" style="margin-top:10px"><a class="btn" target="_blank" href="/wms/etiquetas?tipo=endereco&armazem_id='+ST.arm+'&ids='+end.id+'">🏷 Etiqueta</a>'+(ST.status.supervisor?'<button class="btn" data-endst="'+end.id+'" data-st="'+(end.status==='ativo'?'bloqueado':'ativo')+'">'+(end.status==='ativo'?'Bloquear endereço':'Liberar endereço')+'</button>':'')+'<button class="btn" data-rastro="'+esc(end.codigo)+'">Ver movimentações</button></div>';
+}));
+$('#mapaDet').addEventListener('click',tenta(async e=>{
+  const b=e.target.closest('[data-endst]');
+  if(b){let motivo='';if(b.dataset.st!=='ativo'){motivo=prompt('Motivo do bloqueio:');if(!motivo)return}await api('PATCH','/api/wms/enderecos/'+b.dataset.endst,{status:b.dataset.st,motivo});aviso('Endereço atualizado.',true);await carregarMapa();return}
+  const r=e.target.closest('[data-rastro]');
+  if(r){const j=await api('GET','/api/wms/consulta?armazem_id='+ST.arm+'&codigo='+encodeURIComponent(r.dataset.rastro));const l=j.saldos.find(s=>s.lpn);irAba('estoque');if(l){$('#raLpn').value=l.lpn;rastrear()}}
+}));
+$('#mapaIr').onclick=tenta(async()=>{
+  const q=$('#mapaBusca').value.trim();if(!q)return;
+  const j=await api('GET','/api/wms/consulta?armazem_id='+ST.arm+'&codigo='+encodeURIComponent(q));
+  const cods=j.tipo==='endereco'?[j.endereco.codigo]:j.saldos.map(s=>s.endereco);
+  if(!cods.length){aviso('Sem saldo para '+q+'.');return}
+  const prim=MAPA.find(e=>e.codigo===cods[0]);if(prim)$('#mapaNivel').value=prim.nivel||1;
+  desenharMapa(cods);aviso('Encontrado em: '+[...new Set(cods)].join(', '),true);
+});
+
+// ---------------- recebimentos
+async function carregarRecebimentos(){
+  const j=await api('GET','/api/wms/recebimentos?status='+$('#recFiltro').value);
+  $('#recLista').innerHTML=tabela([['#',r=>'<a href="#" data-rec="'+r.id+'">'+r.id+'</a>'],['NF',r=>esc(r.nf_numero||'')],['Cliente',r=>esc(r.cliente)],['Armazém',r=>esc(r.armazem)],['Doca',r=>esc(r.doca||'')],['Situação',r=>chipRec(r.status)+(r.divergencias_abertas?' <span class="chip err">'+r.divergencias_abertas+' diverg.</span>':'')+(r.itens_sem_produto?' <span class="chip warn">'+r.itens_sem_produto+' sem produto</span>':'')],['Criado',r=>dt(r.criado_em)]],j.rows,'Nenhum recebimento.');
+}
+$('#recFiltro').onchange=tenta(carregarRecebimentos);
+$('#recLista').addEventListener('click',e=>{const a=e.target.closest('[data-rec]');if(a){e.preventDefault();tenta(abrirRec)(a.dataset.rec)}});
+async function abrirRec(id){
+  const r=(await api('GET','/api/wms/recebimentos/'+id)).recebimento;
+  const box=$('#recDet');box.hidden=false;
+  const ordem=['aguardando','na_doca','em_conferencia','recontagem','divergencia','conferido','finalizado'];
+  const i=ordem.indexOf(r.status);
+  const etapas=[['Pré-aviso',0],['Chegada e doca',1],['Conferência cega',2],['Divergências',4],['Conferido',5],['LPN e armazenagem',6]].map(([t,k])=>'<span class="chip '+(r.status==='cancelado'?'':i>k?'ok':i===k||(k===2&&i===3)?'warn':'')+'">'+t+'</span>').join('');
+  const prods=r.itens.filter(x=>x.produto_id),soma={};r.contagens.forEach(c=>{const k=c.produto_id+'|'+c.rodada;soma[k]=(soma[k]||0)+c.qtd});
+  const sup=ST.status.supervisor;
+  box.innerHTML='<div class="bar" style="justify-content:space-between"><div><h2>Recebimento '+r.id+' · NF '+esc(r.nf_numero||'—')+' '+chipRec(r.status)+'</h2><div class="muted">'+esc(r.cliente.nome+' · emitente '+(r.emitente_nome||'—')+(r.nf_chave?' · chave '+r.nf_chave:'')+(r.doca?' · doca '+r.doca:'')+(r.placa?' · placa '+r.placa:'')+(r.motorista?' · '+r.motorista:''))+'</div></div><div class="bar">'+
+    (r.status==='aguardando'?'<button class="btn p" data-a="chegada">Registrar chegada</button>':'')+
+    (['em_conferencia','recontagem'].includes(r.status)?'<button class="btn p" data-a="fechar">Fechar conferência</button>':'')+
+    (r.status==='conferido'?'<button class="btn p" data-a="finalizar">Finalizar e gerar LPNs</button>':'')+
+    (r.lpns.length?'<a class="btn" target="_blank" href="/wms/etiquetas?tipo=lpn&recebimento_id='+r.id+'">🏷 Etiquetas LPN</a>':'')+
+    (!['finalizado','cancelado'].includes(r.status)?'<button class="btn d" data-a="cancelar">Cancelar</button>':'')+'</div></div>'+
+    '<div class="etapas">'+etapas+'</div>'+(r.status==='recontagem'?'<p class="chip warn">Contagem diferente da nota: os itens marcados precisam ser recontados por outro conferente no aplicativo.</p>':'')+
+    '<h2 style="margin-top:12px">Itens da nota × contagem</h2><div class="tw">'+tabela([['Item',x=>x.n_item],['Código NF',x=>esc(x.codigo)],['Descrição NF',x=>esc(x.descricao)],['Produto',x=>x.produto_id?esc(x.sku):'<button class="btn" data-vinc="'+x.id+'">Vincular produto</button>'],['Lote · Val.',x=>esc(x.lote||'')+(x.validade?' · '+dBR(x.validade):'')],['Esperado',x=>n(x.qtd_esperada)+(x.fator>1?' <span class="muted">('+n(x.qtd_nf)+' '+esc(x.unidade)+' × '+x.fator+')</span>':'')],['1ª contagem',x=>x.produto_id&&soma[x.produto_id+'|1']!=null?n(soma[x.produto_id+'|1']):'—'],['2ª contagem',x=>x.produto_id&&soma[x.produto_id+'|2']!=null?n(soma[x.produto_id+'|2']):(r.recontar.includes(x.produto_id)?'<span class="chip warn">recontar</span>':'—')]],r.itens)+'</div>'+
+    (r.contagens.length?'<h2 style="margin-top:12px">Leituras dos conferentes</h2><div class="tw">'+tabela([['Hora',c=>dt(c.criado_em)],['Rodada',c=>c.rodada],['Produto',c=>esc(c.sku+' · '+c.produto)],['Lote',c=>esc(c.lote)],['Validade',c=>dBR(c.validade)],['Qtd',c=>n(c.qtd)],['Avariada',c=>c.avariada?n(c.avariada)+(c.tem_foto?' <a target="_blank" href="/api/wms/fotos/contagem/'+c.id+'">foto</a>':''):''],['Conferente',c=>esc(c.usuario)]],r.contagens)+'</div>':'')+
+    (r.divergencias.length?'<h2 style="margin-top:12px">Divergências</h2><div class="tw">'+tabela([['Tipo',d=>'<span class="chip err">'+esc(d.tipo.replace('_',' '))+'</span>'],['Produto',d=>esc(d.sku+' · '+d.produto)],['Esperado',d=>n(d.qtd_esperada)],['Contado',d=>n(d.qtd_contada)],['Diferença',d=>n(d.qtd)],['Decisão',d=>d.status==='aberta'?(sup?(d.tipo==='falta'?'<button class="btn" data-div="'+d.id+'" data-dec="aceita">Registrar falta</button>':'<button class="btn" data-div="'+d.id+'" data-dec="aceita">Aceitar</button> <button class="btn" data-div="'+d.id+'" data-dec="bloqueada">Aceitar bloqueado</button> <button class="btn d" data-div="'+d.id+'" data-dec="recusada">Recusar</button>'):'<span class="chip warn">aguardando supervisor</span>'):'<span class="chip ok">'+esc(d.status)+'</span> <span class="muted">'+esc(d.decisao_por+' '+dt(d.decisao_em)+(d.obs?' · '+d.obs:''))+'</span>']],r.divergencias)+'</div>':'')+
+    (r.lpns.length?'<h2 style="margin-top:12px">Paletes (LPN)</h2><div class="tw">'+tabela([['LPN',l=>esc(l.codigo)],['Conteúdo',l=>esc(l.conteudo||'')],['Onde está',l=>esc(l.endereco||'')],['Sugestão',l=>esc(l.sugerido||'')],['Tarefa',l=>l.tarefa_status?'<span class="chip '+(l.tarefa_status==='concluida'?'ok':'warn')+'">'+esc(l.tarefa_status)+'</span>':'']],r.lpns)+'</div>':'');
+  box.dataset.id=r.id;box.dataset.arm=r.armazem_id;box.dataset.cli=r.cliente.id;box.scrollIntoView({behavior:'smooth',block:'start'});
+}
+$('#recDet').addEventListener('click',tenta(async e=>{
+  const box=$('#recDet'),id=box.dataset.id;
+  const a=e.target.closest('[data-a]');
+  if(a){
+    const ac=a.dataset.a;
+    if(ac==='chegada'){
+      const docas=(await api('GET','/api/wms/enderecos?armazem_id='+box.dataset.arm)).rows.filter(x=>x.zona_tipo==='doca'&&x.status==='ativo');
+      abrir('<h2>Chegada do veículo</h2><label>Doca<select id="cDoca">'+docas.map(d=>'<option>'+esc(d.codigo)+'</option>').join('')+'</select></label><div class="cols"><label>Placa<input id="cPlaca" maxlength="8"></label><label>Motorista<input id="cMot"></label><label>Documento do motorista<input id="cDoc"></label></div>'+(docas.length?'':'<p class="chip err">Cadastre endereços na zona Docas.</p>')+'<div class="bar"><button class="btn p" id="cOk">Registrar</button><button class="btn" data-fechar>Cancelar</button></div>');
+      $('#cOk').onclick=tenta(async()=>{await api('POST','/api/wms/recebimentos/'+id+'/chegada',{doca:$('#cDoca').value,placa:$('#cPlaca').value,motorista:$('#cMot').value,motorista_doc:$('#cDoc').value});fechar();aviso('Chegada registrada. A conferência já pode começar no aplicativo.',true);abrirRec(id);carregarRecebimentos()});
+      return;
+    }
+    if(ac==='fechar'){const j=await api('POST','/api/wms/recebimentos/'+id+'/fechar',{});aviso(j.status==='recontagem'?'Diferença encontrada: recontagem aberta para outro conferente.':j.status==='divergencia'?j.divergencias+' divergência(s) para o supervisor decidir.':'Conferência sem divergência.',j.status==='conferido')}
+    if(ac==='finalizar'){const j=await api('POST','/api/wms/recebimentos/'+id+'/finalizar',{uuid:uuid()});aviso(j.lpns.length+' palete(s) gerado(s) com tarefa de armazenagem.',true)}
+    if(ac==='cancelar'){const m=prompt('Motivo do cancelamento:');if(!m)return;await api('POST','/api/wms/recebimentos/'+id+'/cancelar',{motivo:m})}
+    await abrirRec(id);carregarRecebimentos();return;
+  }
+  const d=e.target.closest('[data-div]');
+  if(d){let obs='';if(d.dataset.dec!=='aceita'){obs=prompt('Observação (opcional):')||''}await api('POST','/api/wms/divergencias/'+d.dataset.div+'/decidir',{decisao:d.dataset.dec,obs});aviso('Decisão registrada.',true);await abrirRec(id);carregarRecebimentos();return}
+  const v=e.target.closest('[data-vinc]');
+  if(v){
+    const prods=(await api('GET','/api/wms/produtos?cliente_id='+box.dataset.cli)).rows;
+    abrir('<h2>Vincular item da nota a um produto</h2><label>Produto do cliente<select id="vProd">'+prods.map(p=>'<option value="'+p.id+'">'+esc(p.sku+' · '+p.descricao)+'</option>').join('')+'</select></label><label>Fator (unidades por unidade da nota; vazio = automático)<input id="vFator" type="number" min="0" step="any"></label><p class="muted">O código do fornecedor fica salvo no produto para as próximas notas.</p><div class="bar"><button class="btn p" id="vOk">Vincular</button><button class="btn" data-fechar>Cancelar</button></div>');
+    $('#vOk').onclick=tenta(async()=>{await api('POST','/api/wms/recebimentos/'+id+'/vincular',{item_id:v.dataset.vinc,produto_id:$('#vProd').value,fator:$('#vFator').value||null});fechar();abrirRec(id)});
+  }
+}));
+$('#xmlArq').onchange=tenta(async e=>{
+  const files=[...e.target.files];e.target.value='';
+  if(!ST.arm){aviso('Escolha o armazém.');return}
+  for(const f of files){
+    const xml=await f.text();
+    try{const j=await api('POST','/api/wms/recebimentos/xml',{armazem_id:ST.arm,xml});aviso('NF importada: recebimento '+j.id+' com '+j.itens+' item(ns)'+(j.sem_produto?', '+j.sem_produto+' sem produto vinculado':'')+'.',!j.sem_produto)}
+    catch(err){
+      if(/Nenhum cliente cadastrado/.test(err.message)&&ST.clientes.length){
+        abrir('<h2>'+esc(f.name)+'</h2><p>'+esc(err.message)+'</p><label>Cliente<select id="xCli">'+ST.clientes.map(c=>'<option value="'+c.id+'">'+esc(c.nome)+'</option>').join('')+'</select></label><div class="bar"><button class="btn p" id="xOk">Importar</button><button class="btn" data-fechar>Cancelar</button></div>');
+        await new Promise(res=>{$('#xOk').onclick=tenta(async()=>{const j=await api('POST','/api/wms/recebimentos/xml',{armazem_id:ST.arm,xml,cliente_id:$('#xCli').value});fechar();aviso('NF importada: recebimento '+j.id+'.',true);res()});$('#dlg').addEventListener('close',res,{once:true})});
+      }else aviso(f.name+': '+err.message);
+    }
+  }
+  carregarRecebimentos();
+});
+$('#btnRecManual').onclick=tenta(async()=>{
+  if(!ST.clientes.length){aviso('Cadastre um cliente primeiro.');return}
+  abrir('<h2>Recebimento manual (pré-aviso)</h2><div class="cols"><label>Cliente<select id="mCli">'+ST.clientes.map(c=>'<option value="'+c.id+'">'+esc(c.nome)+'</option>').join('')+'</select></label><label>Nº da NF / pedido<input id="mNf"></label><label>Previsão de chegada<input id="mPrev" type="date"></label></div><div id="mItens"></div><button class="btn" id="mMais" type="button">+ Item</button><div class="bar"><button class="btn p" id="mOk">Criar</button><button class="btn" data-fechar>Cancelar</button></div>');
+  let prods=[];
+  const linha=()=>'<div class="cols mi"><label>Produto<select class="miP">'+prods.map(p=>'<option value="'+p.id+'">'+esc(p.sku+' · '+p.descricao)+'</option>').join('')+'</select></label><label>Quantidade<input class="miQ" type="number" min="0" step="any"></label><label>Lote<input class="miL"></label><label>Validade<input class="miV" type="date"></label></div>';
+  const carregar=async()=>{prods=(await api('GET','/api/wms/produtos?cliente_id='+$('#mCli').value)).rows;$('#mItens').innerHTML=prods.length?linha():'<p class="chip warn">Este cliente não tem produtos.</p>'};
+  $('#mCli').onchange=tenta(carregar);await carregar();
+  $('#mMais').onclick=()=>{if(prods.length)$('#mItens').insertAdjacentHTML('beforeend',linha())};
+  $('#mOk').onclick=tenta(async()=>{const itens=$$('.mi').map(d=>({produto_id:d.querySelector('.miP').value,qtd:d.querySelector('.miQ').value,lote:d.querySelector('.miL').value,validade:d.querySelector('.miV').value})).filter(i=>i.qtd);
+    const j=await api('POST','/api/wms/recebimentos',{armazem_id:ST.arm,cliente_id:$('#mCli').value,nf_numero:$('#mNf').value,previsto_para:$('#mPrev').value,itens});fechar();aviso('Recebimento '+j.id+' criado.',true);carregarRecebimentos();abrirRec(j.id)});
+});
+
+// ---------------- tarefas
+async function carregarTarefas(){
+  const j=await api('GET','/api/wms/tarefas'+($('#tarFiltro').value?'?status='+$('#tarFiltro').value:''));
+  $('#tarLista').innerHTML=tabela([['#',t=>t.id],['LPN',t=>esc(t.lpn)],['Conteúdo',t=>esc(t.conteudo||'')],['De',t=>esc(t.origem||'')],['Endereço sugerido',t=>'<b>'+esc(t.sugerido||'sem sugestão')+'</b><div class="muted">'+esc(t.motivo_sugestao)+'</div>'],['Destino',t=>esc(t.destino||'')],['Situação',t=>'<span class="chip '+(t.status==='concluida'?'ok':'warn')+'">'+esc(t.status.replace('_',' '))+'</span>'],['Operador',t=>esc(t.operador)]],j.rows,'Nenhuma tarefa.');
+}
+$('#tarFiltro').onchange=tenta(carregarTarefas);
+
+// ---------------- estoque
+async function carregarEstoque(){
+  const q=new URLSearchParams();if(ST.arm)q.set('armazem_id',ST.arm);
+  for(const[k,s]of[['q','#estQ'],['cliente_id','#estCli'],['estado','#estEstado']])if($(s).value)q.set(k,$(s).value);
+  const j=await api('GET','/api/wms/saldos?'+q);
+  $('#estTot').innerHTML=['disponivel','reservado','bloqueado','avariado'].map(e=>'<div class="card kpi" style="margin:0"><span class="muted">'+EST[e][0]+'</span><b>'+n((j.totais.find(t=>t.estado===e)||{}).qtd)+'</b></div>').join('');
+  $('#estLista').innerHTML=tabela([['Cliente',r=>esc(r.cliente)],['Produto',r=>esc(r.sku+' · '+r.descricao)],['Lote',r=>esc(r.lote||'')],['Validade',r=>dBR(r.validade)],['Endereço',r=>esc(r.endereco)],['LPN',r=>r.lpn?'<a href="#" data-lpn="'+esc(r.lpn)+'">'+esc(r.lpn)+'</a>':''],['Estado',r=>chipEst(r.estado)],['Qtd',r=>n(r.qtd)+' '+esc(r.unidade)]],j.rows,'Sem saldo para este filtro.');
+}
+$('#estIr').onclick=tenta(carregarEstoque);$('#estQ').onkeydown=e=>{if(e.key==='Enter')tenta(carregarEstoque)()};
+$('#estLista').addEventListener('click',e=>{const a=e.target.closest('[data-lpn]');if(a){e.preventDefault();$('#raLpn').value=a.dataset.lpn;$('#raProd').value='';$('#raLote').value='';rastrear()}});
+const rastrear=tenta(async()=>{
+  const q=new URLSearchParams();for(const[k,s]of[['lpn','#raLpn'],['produto','#raProd'],['lote','#raLote']])if($(s).value.trim())q.set(k,$(s).value.trim());
+  const j=await api('GET','/api/wms/rastreio?'+q);
+  $('#raLista').innerHTML=tabela([['Quando',r=>dt(r.criado_em)],['Tipo',r=>esc(MOV[r.tipo]||r.tipo)],['Produto',r=>esc(r.sku)],['Lote',r=>esc(r.lote||'')],['LPN',r=>esc(r.lpn||'')],['Qtd',r=>n(r.qtd)],['De',r=>esc((r.origem||'—')+(r.estado_origem?' ('+r.estado_origem+')':''))],['Para',r=>esc((r.destino||'—')+(r.estado_destino?' ('+r.estado_destino+')':''))],['Motivo / documento',r=>esc([r.motivo,r.documento].filter(Boolean).join(' · '))],['Usuário',r=>esc(r.usuario)]],j.rows,'Nenhum movimento.');
+  $('#raLista').scrollIntoView({behavior:'smooth',block:'center'});
+});
+$('#raIr').onclick=rastrear;
+$('#estMover').onclick=()=>{
+  abrir('<h2>Movimentação interna</h2><p class="muted">Palete inteiro: informe o LPN. Parte de um saldo: informe origem, produto e quantidade.</p><div class="cols"><label>LPN<input id="mvLpn"></label><label>Origem<input id="mvOri"></label><label>Produto (SKU/EAN)<input id="mvProd"></label><label>Lote<input id="mvLote"></label><label>Quantidade<input id="mvQtd" type="number" min="0" step="any"></label><label>Destino<input id="mvDest" required></label></div><label>Motivo<input id="mvMot"></label><div class="bar"><button class="btn p" id="mvOk">Movimentar</button><button class="btn" data-fechar>Cancelar</button></div>');
+  $('#mvOk').onclick=tenta(async()=>{const j=await api('POST','/api/wms/movimentar',{uuid:uuid(),armazem_id:ST.arm,lpn:$('#mvLpn').value,origem:$('#mvOri').value,produto:$('#mvProd').value,lote:$('#mvLote').value,qtd:$('#mvQtd').value,destino:$('#mvDest').value,motivo:$('#mvMot').value});fechar();aviso('Movido '+n(j.qtd)+' de '+j.origem+' para '+j.destino+'.',true);carregarEstoque()});
+};
+$('#estBloq').onclick=()=>{
+  abrir('<h2>Bloquear ou liberar estoque</h2><div class="cols"><label>LPN<input id="blLpn"></label><label>ou Endereço<input id="blEnd"></label><label>Produto (SKU/EAN)<input id="blProd"></label><label>Quantidade (vazio = tudo)<input id="blQtd" type="number" min="0" step="any"></label></div><label>Motivo<input id="blMot" required></label><div class="bar"><button class="btn d" id="blB">Bloquear</button><button class="btn p" id="blL">Liberar</button><button class="btn" data-fechar>Cancelar</button></div>');
+  const ir=rota=>tenta(async()=>{const j=await api('POST','/api/wms/'+rota,{uuid:uuid(),armazem_id:ST.arm,lpn:$('#blLpn').value,endereco:$('#blEnd').value,produto:$('#blProd').value,qtd:$('#blQtd').value||null,motivo:$('#blMot').value});fechar();aviso((rota==='bloquear'?'Bloqueado ':'Liberado ')+n(j.qtd)+'.',true);carregarEstoque()});
+  $('#blB').onclick=ir('bloquear');$('#blL').onclick=ir('desbloquear');
+};
+
+// ---------------- produtos
+async function carregarProdutos(){
+  const q=new URLSearchParams();if($('#prodQ').value)q.set('q',$('#prodQ').value);if($('#prodCli').value)q.set('cliente_id',$('#prodCli').value);
+  const j=await api('GET','/api/wms/produtos?'+q);ST.prods=j.rows;
+  $('#prodLista').innerHTML=tabela([['Cliente',p=>esc(p.cliente)],['SKU',p=>'<a href="#" data-prod="'+p.id+'">'+esc(p.sku)+'</a>'],['Descrição',p=>esc(p.descricao)],['EAN',p=>esc(p.ean)],['Un.',p=>esc(p.unidade)],['Cx/palete',p=>(p.un_por_caixa||'—')+' un × '+(p.caixas_por_palete||'—')+' cx'],['Peso (kg/un)',p=>n(p.peso_bruto_kg)],['ABC',p=>esc(p.curva_abc)],['Controle',p=>[p.controla_lote?'lote':'',p.controla_validade?'validade':''].filter(Boolean).join(', ')],['Saldo',p=>n(p.saldo)]],j.rows,'Nenhum produto.');
+}
+$('#prodIr').onclick=tenta(carregarProdutos);$('#prodQ').onkeydown=e=>{if(e.key==='Enter')tenta(carregarProdutos)()};
+function formProduto(p){
+  p=p||{};const v=k=>esc(p[k]??'');const ck=k=>p[k]?' checked':'';
+  abrir('<h2>'+(p.id?'Produto '+esc(p.sku):'Novo produto')+'</h2><form id="fProd"><div class="cols">'+(p.id?'':'<label>Cliente<select name="cliente_id">'+ST.clientes.map(c=>'<option value="'+c.id+'">'+esc(c.nome)+'</option>').join('')+'</select></label><label>SKU<input name="sku" required></label>')+
+    '<label style="grid-column:span 2">Descrição<input name="descricao" value="'+v('descricao')+'" required></label><label>EAN/GTIN<input name="ean" value="'+v('ean')+'"></label><label>Códigos alternativos<input name="codigos_alt" value="'+esc((p.codigos_alt||[]).join(', '))+'"></label>'+
+    '<label>Unidade<input name="unidade" value="'+(v('unidade')||'UN')+'"></label><label>Unidades por caixa<input name="un_por_caixa" type="number" min="0" value="'+(p.un_por_caixa??0)+'"></label><label>Caixas por palete<input name="caixas_por_palete" type="number" min="0" value="'+(p.caixas_por_palete??0)+'"></label>'+
+    '<label>Peso bruto por unidade (kg)<input name="peso_bruto_kg" type="number" min="0" step="any" value="'+(p.peso_bruto_kg??0)+'"></label><label>Comprimento (cm)<input name="comprimento_cm" type="number" min="0" step="any" value="'+(p.comprimento_cm??0)+'"></label><label>Largura (cm)<input name="largura_cm" type="number" min="0" step="any" value="'+(p.largura_cm??0)+'"></label><label>Altura (cm)<input name="altura_cm" type="number" min="0" step="any" value="'+(p.altura_cm??0)+'"></label>'+
+    '<label>Curva ABC<select name="curva_abc">'+['A','B','C'].map(x=>'<option'+((p.curva_abc||'C')===x?' selected':'')+'>'+x+'</option>').join('')+'</select></label><label>Estoque mínimo<input name="estoque_min" type="number" min="0" step="any" value="'+(p.estoque_min??0)+'"></label><label>Estoque máximo<input name="estoque_max" type="number" min="0" step="any" value="'+(p.estoque_max??0)+'"></label>'+
+    '<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="controla_lote"'+ck('controla_lote')+' style="min-height:auto"> Controla lote</label><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="controla_validade"'+ck('controla_validade')+' style="min-height:auto"> Controla validade</label>'+
+    '</div><div class="bar"><button class="btn p">Salvar</button><button class="btn" type="button" data-fechar>Cancelar</button></div></form>');
+  $('#fProd').onsubmit=tenta(async e=>{e.preventDefault();const f=new FormData(e.target),b=Object.fromEntries(f);b.controla_lote=f.has('controla_lote');b.controla_validade=f.has('controla_validade');
+    if(p.id)await api('PATCH','/api/wms/produtos/'+p.id,b);else await api('POST','/api/wms/produtos',b);fechar();aviso('Produto salvo.',true);carregarProdutos()});
+}
+$('#prodNovo').onclick=()=>ST.clientes.length?formProduto():aviso('Cadastre um cliente primeiro.');
+$('#prodLista').addEventListener('click',e=>{const a=e.target.closest('[data-prod]');if(a){e.preventDefault();formProduto(ST.prods.find(p=>p.id===a.dataset.prod))}});
+
+// ---------------- clientes
+async function carregarClientes(){
+  await carregarListaClientes();
+  $('#cliLista').innerHTML=tabela([['Nome',c=>esc(c.nome)],['CNPJ',c=>esc(c.cnpj)],['Produtos',c=>c.produtos],['Recontagem automática',c=>c.regras.recontagem===false?'não':'sim'],['Política de saída',c=>esc(c.regras.politica||'FEFO')],['',c=>'<button class="btn" data-cli="'+c.id+'">Editar</button>']],ST.clientes,'Nenhum cliente.');
+}
+function formCliente(c){
+  c=c||{regras:{}};
+  abrir('<h2>'+(c.id?'Cliente':'Novo cliente')+'</h2><form id="fCli"><div class="cols"><label>Nome<input name="nome" value="'+esc(c.nome||'')+'" required></label>'+(c.id?'':'<label>CNPJ<input name="cnpj"></label>')+'<label>Política de saída<select name="politica"><option'+(c.regras.politica==='FIFO'?'':' selected')+'>FEFO</option><option'+(c.regras.politica==='FIFO'?' selected':'')+'>FIFO</option></select></label><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="recontagem" style="min-height:auto"'+(c.regras.recontagem===false?'':' checked')+'> Recontagem automática por outro conferente</label></div><div class="bar"><button class="btn p">Salvar</button><button class="btn" type="button" data-fechar>Cancelar</button></div></form>');
+  $('#fCli').onsubmit=tenta(async e=>{e.preventDefault();const f=new FormData(e.target),b={nome:f.get('nome'),cnpj:f.get('cnpj'),regras:{politica:f.get('politica'),recontagem:f.has('recontagem')}};
+    if(c.id)await api('PATCH','/api/wms/clientes/'+c.id,b);else await api('POST','/api/wms/clientes',b);fechar();aviso('Cliente salvo.',true);carregarClientes()});
+}
+$('#cliNovo').onclick=()=>formCliente();
+$('#cliLista').addEventListener('click',e=>{const b=e.target.closest('[data-cli]');if(b)formCliente(ST.clientes.find(c=>c.id===b.dataset.cli))});
+
+// ---------------- armazéns e endereços
+async function carregarEnderecos(){
+  await carregarArmazens();
+  $('#armLista').innerHTML=tabela([['Código',a=>esc(a.codigo)],['Nome',a=>esc(a.nome)],['Endereços',a=>a.enderecos],['Zonas',a=>esc(a.zonas.map(z=>z.nome).join(', '))]],ST.arms,'Nenhum armazém. Comece cadastrando um.');
+  const a=armAtual();
+  const zonas=a?a.zonas:[];
+  $('#loteZona').innerHTML=zonas.map(z=>'<option value="'+z.id+'">'+esc(z.nome+' ('+z.tipo+')')+'</option>').join('');
+  $('#endZona').innerHTML='<option value="">Todas</option>'+zonas.map(z=>'<option value="'+z.id+'">'+esc(z.nome)+'</option>').join('');
+  if(a){MAPA=(await api('GET','/api/wms/enderecos?armazem_id='+a.id)).rows;listarEnd()}else $('#endLista').innerHTML='';
+  prevLote();
+}
+function listarEnd(){
+  const z=$('#endZona').value,a=armAtual(),zn=z&&a.zonas.find(x=>x.id===z);
+  const rows=MAPA.filter(e=>!zn||e.zona===zn.nome).slice(0,800);
+  $('#endLista').innerHTML=tabela([['Código',e=>esc(e.codigo)],['Zona',e=>esc(e.zona)],['Tipo',e=>esc(e.tipo.replace('_','-'))],['Capacidade',e=>e.cap_paletes+' pal · '+n(e.cap_kg)+' kg'],['Distância',e=>n(e.distancia_m,1)+' m'],['Situação',e=>'<span class="chip '+({livre:'',parcial:'info',ocupado:'ok',bloqueado:'err'}[e.situacao])+'">'+e.situacao+'</span>']],rows,'Nenhum endereço.')+(MAPA.length>800?'<div class="muted">Mostrando 800 de '+MAPA.length+'.</div>':'');
+}
+$('#endZona').onchange=listarEnd;
+$('#endEtq').onclick=()=>{if(!ST.arm)return;open('/wms/etiquetas?tipo=endereco&armazem_id='+ST.arm+($('#endZona').value?'&zona_id='+$('#endZona').value:''),'_blank','noopener')};
+$('#armNovo').onclick=()=>{
+  abrir('<h2>Novo armazém</h2><form id="fArm"><div class="cols"><label>Código<input name="codigo" maxlength="20" required placeholder="CD01"></label><label>Nome<input name="nome" required placeholder="CD Indaiatuba"></label></div><label>Endereço<input name="endereco"></label><p class="muted">O armazém já nasce com as zonas Docas, Quarentena, Avarias e Pulmão. Depois gere os endereços de cada zona.</p><div class="bar"><button class="btn p">Criar</button><button class="btn" type="button" data-fechar>Cancelar</button></div></form>');
+  $('#fArm').onsubmit=tenta(async e=>{e.preventDefault();const j=await api('POST','/api/wms/armazens',Object.fromEntries(new FormData(e.target)));ST.arm=j.id;try{localStorage.setItem('wmsArm',j.id)}catch{};fechar();aviso('Armazém criado.',true);carregarEnderecos()});
+};
+function corpoLote(){const f=Object.fromEntries(new FormData($('#fLote')));return{armazem_id:ST.arm,zona_id:f.zona_id,tipo:f.tipo,rua_de:f.rua_de,rua_ate:f.rua_ate,colunas:{de:f.col_de,ate:f.col_ate},niveis:{de:f.niv_de,ate:f.niv_ate},posicoes:{de:f.pos_de,ate:f.pos_ate},cap_paletes:f.cap_paletes,cap_kg:f.cap_kg,cap_m3:f.cap_m3,distancia_base_m:f.distancia_base_m}}
+function prevLote(){const b=corpoLote();const r=(b.rua_de&&b.rua_ate&&/^[A-Za-z]$/.test(b.rua_de)&&/^[A-Za-z]$/.test(b.rua_ate))?b.rua_ate.toUpperCase().charCodeAt(0)-b.rua_de.toUpperCase().charCodeAt(0)+1:(/^\d+$/.test(b.rua_de)&&/^\d+$/.test(b.rua_ate||b.rua_de)?+(b.rua_ate||b.rua_de)-+b.rua_de+1:1);const t=r*(b.colunas.ate-b.colunas.de+1)*(b.niveis.ate-b.niveis.de+1)*(b.posicoes.ate-b.posicoes.de+1);$('#lotePrev').textContent=t>0?'Vai gerar '+t+' endereço(s), do '+String(b.rua_de).toUpperCase()+'-'+String(b.colunas.de).padStart(2,'0')+'-'+String(b.niveis.de).padStart(2,'0')+'-'+String(b.posicoes.de).padStart(2,'0')+' em diante.':''}
+$('#fLote').addEventListener('input',prevLote);
+$('#fLote').onsubmit=tenta(async e=>{e.preventDefault();if(!ST.arm){aviso('Cadastre um armazém.');return}const j=await api('POST','/api/wms/enderecos/lote',corpoLote());aviso(j.criados+' endereço(s) criado(s)'+(j.ja_existiam?', '+j.ja_existiam+' já existia(m)':'')+'.',true);carregarEnderecos()});
+
+// ---------------- auditoria
+async function carregarAuditoria(){
+  const j=await api('GET','/api/wms/auditoria');
+  $('#audLista').innerHTML=tabela([['Quando',r=>dt(r.criado_em)],['Usuário',r=>esc(r.usuario)],['Ação',r=>esc(r.acao.replace(/_/g,' '))],['Registro',r=>esc(r.entidade+' '+r.entidade_id)],['Detalhes',r=>'<code style="font-size:11px">'+esc(JSON.stringify(r.dados))+'</code>']],j.rows,'Nada registrado.');
+}
+
+tenta(iniciar)();
+</script>
+</body>
+</html>
