@@ -5659,8 +5659,10 @@ async function lancSincronizarAgora(){
   if(criados){lancMudou();console.log('LANCAMENTOS romaneios do SSW: '+criados+' novo(s) na lista')}
 }
 // Valor acordado com o motorista e KM digitados na planilha: entram nos lançamentos do sistema do mesmo
-// romaneio (últimos 45 dias). No máximo a cada 2 min; só grava o que mudou na planilha.
+// romaneio (últimos 45 dias). O KM da planilha é o do Circuit (coluna Circuit); o KM do lançamento é o da
+// rota do app Movit. No máximo a cada 2 min; só grava o que mudou na planilha.
 let LANC_PLAN_AT=0,LANC_PLAN_JOB=null;
+const LANC_KM_REFEITO=new Set();   // lançamentos que tinham o KM trocado pelo da planilha e já voltaram para a fila
 function lancPuxarPlanilha(force=false){
   if(LANC_PLAN_JOB)return LANC_PLAN_JOB;
   if(!ID||(!force&&Date.now()-LANC_PLAN_AT<2*60*1000))return Promise.resolve();
@@ -5682,7 +5684,9 @@ async function lancPuxarPlanilhaAgora(){
     const alvo=x.keys.slice().sort((a,b)=>Number(a)-Number(b)).map(k=>porKey.get(k)).find(r=>r&&dias(r.data,x.data)<=3);
     if(!alvo){semLancamento++;continue}
     const keys=x.keys.join(',');
-    if(alvo.valor_planilha===x.valor&&alvo.km_planilha===x.km&&(alvo.planilha_keys||'')===keys)continue;
+    // antes, o KM da planilha substituía o da rota: completa de novo (uma vez) para voltar o KM do app Movit
+    if(alvo.km_planilha>0&&alvo.km===alvo.km_planilha&&!String(alvo.planilha_keys||'').includes(',')&&alvo.romaneio_ssw&&!LANC_KM_REFEITO.has(alvo.id)){LANC_KM_REFEITO.add(alvo.id);lancEnfileirar(alvo.id,alvo.data,alvo.romaneio_ssw)}
+    if(alvo.valor_planilha===x.valor&&alvo.km_planilha===x.km&&(alvo.planilha_keys||'')===keys&&(x.km===null||alvo.km_circuit!==null))continue;
     try{
       await portalJson('/api/painel/lancamentos/'+encodeURIComponent(alvo.id),{method:'PATCH',timeout:20000,body:{planilha:{valor:x.valor,km:x.km,keys}}});
       gravados++

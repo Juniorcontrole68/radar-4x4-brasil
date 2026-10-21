@@ -82,8 +82,6 @@ function juntar(rs){
   // km da rota única com as entregas de todos os romaneios (calculado à parte); enquanto não vem, a soma das rotas
   const keys=rs.map(r=>romaneioKey(r.romaneio)).sort().join(',');
   const cj=p.conjunto&&p.conjunto.keys===keys&&Number(p.conjunto.km)>0?Number(p.conjunto.km):null;
-  // KM digitado na planilha para esses romaneios juntos vale mais que o calculado
-  const kp=prim(r=>r.planilha_keys===keys&&r.km_planilha>0?r.km_planilha:null);
   const cid=new Map();
   for(const r of rs)for(const c of (r.cidades||String(r.rota||'').split(',').map(x=>({c:x.trim(),n:0}))))if(c.c)cid.set(c.c,(cid.get(c.c)||0)+Number(c.n||0));
   const status=rs.map(r=>r.calculo?.status||'pendente').sort((a,b)=>(PIOR[b]||0)-(PIOR[a]||0))[0];
@@ -93,7 +91,7 @@ function juntar(rs){
     romaneio:rs.map(r=>r.romaneio).join(' / '),romaneio_ssw:rs.map(r=>r.romaneio_ssw).filter(Boolean).join(' / '),
     veiculo_tipo:prim(r=>r.veiculo_tipo)||'',placa:prim(r=>r.placa)||'',filial:prim(r=>r.filial)||'',operacao:prim(r=>r.operacao)||'',conferente:prim(r=>r.conferente)||'',
     erros:soma(r=>r.erros),entregas:soma(r=>r.entregas),realizadas:rs.every(r=>r.realizadas!==null)?soma(r=>r.realizadas):null,pend:soma(r=>r.pend),retorno:soma(r=>r.retorno),
-    km:kp??cj??soma(r=>r.km),km_soma:kp===null&&cj===null&&rs.filter(r=>r.km).length>1,
+    km:cj??soma(r=>r.km),km_soma:cj===null&&rs.filter(r=>r.km).length>1,
     valor,desconto,frete_mot_liq:valor===null?null:Math.round((valor-(desconto||0))*100)/100,
     frete_vialog:frete,desconto_vialog:descV,frete_vialog_liq:frete===null?null:Math.round((frete-(descV||0))*100)/100,
     rota:[...cid.keys()].join(','),cidades:[...cid].map(([c,n])=>({c,n})),
@@ -122,6 +120,7 @@ const camposDoGrupo=g=>({data:g.data,motorista:g.motorista,veiculo_tipo:g.veicul
 const dataLinha=r=>dataIso(r?.Data||r?.DATA||r?.ENTREGUE||r?.Entregue||r?.['  Data']||'');
 
 // Valor acordado com o motorista ("Frete Comb") e KM que a operação digita na planilha, por romaneio.
+// O KM da planilha é o do Circuit: vai para a coluna Circuit; o KM do lançamento é o da rota do app Movit.
 // Os títulos são achados sem diferença de maiúsculas, acentos e espaços. Uma linha com vários romaneios
 // ("1061-8 / 1062-6") vale para todos eles juntos (keys = os romaneios em ordem, separados por vírgula).
 const tituloNorm=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
@@ -183,7 +182,7 @@ function resumir(row){
     por_km:s.por_km&&s.por_km.valor_km>0?{valor_km:s.por_km.valor_km,km_nao:s.km_nao?.km??s.por_km.km_nao??null,keys:s.km_nao?.keys??s.por_km.keys??null,em:s.por_km.em||null}:null,
     // km das entregas não feitas (rota com todas − rota só com as feitas), para o líquido do motorista
     km_nao:s.km_nao?.km??s.por_km?.km_nao??null,km_nao_keys:s.km_nao?.keys??s.por_km?.keys??null,desconto_manual:!!s.desconto_manual,
-    // km que o Circuit apontou para a rota, digitado pelo usuário para comparar com o km do sistema
+    // km que o Circuit apontou para a rota (vem da planilha ou digitado aqui) para comparar com o km do app Movit
     km_circuit:Number.isFinite(Number(s.km_circuit))&&s.km_circuit!==null?Number(s.km_circuit):null,
     // o que veio da planilha (valor acordado e KM digitados pela operação)
     valor_planilha:s.planilha?.valor??null,km_planilha:s.planilha?.km??null,planilha_keys:s.planilha?.keys||'',
@@ -195,7 +194,7 @@ function resumir(row){
 // Sem cobrança por km: o valor negociado vale para todas as entregas; o líquido desconta a parte do km
 // das entregas não feitas (valor × km não feito ÷ km da rota). Desconto digitado à mão prevalece.
 function aplicarPorKm(c,ssw){
-  const km=Number(ssw.planilha?.km)>0?Number(ssw.planilha.km):Number(ssw.conjunto?.km)>0?Number(ssw.conjunto.km):numero(c.km);
+  const km=Number(ssw.conjunto?.km)>0?Number(ssw.conjunto.km):numero(c.km);
   const knRaw=ssw.km_nao&&ssw.km_nao.km!==undefined?ssw.km_nao.km:ssw.por_km?.km_nao;
   const kn=Number(knRaw);
   const pk=ssw.por_km;
@@ -516,15 +515,16 @@ async function atender(req,res,u,ctx){
           tentativas:status==='erro'?Number(ssw.calculo?.tentativas||0)+1:0}
       }
       // valor acordado e KM da planilha (só o próprio sistema grava): a planilha preenche o valor vazio e
-      // acompanha as mudanças dela, mas o valor digitado aqui prevalece; o KM da planilha vale mais que o calculado
+      // acompanha as mudanças dela, mas o valor digitado aqui prevalece. O KM da planilha é o do Circuit:
+      // preenche a coluna Circuit do mesmo jeito; o KM do lançamento continua sendo o da rota do app Movit.
       if(user.internal&&b.planilha&&typeof b.planilha==='object'){
         const ant=ssw.planilha||{},v=numero(b.planilha.valor),k=numero(b.planilha.km);
         const pl={valor:Number.isFinite(v)&&v>0?Math.round(v*100)/100:null,km:Number.isFinite(k)&&k>0?Math.round(k):null,keys:limpo(b.planilha.keys,200),em:new Date().toISOString()};
         if(pl.valor!==null&&!ssw.por_km&&(c.valor===null||c.valor===ant.valor))c.valor=pl.valor;
-        if(pl.km===null&&ant.km&&!String(ant.keys||'').includes(',')&&c.km===ant.km)c.km=null;   // apagado na planilha: o SSW volta a dar o km
+        if(pl.km!==null&&(ssw.km_circuit===undefined||ssw.km_circuit===null||ssw.km_circuit===ant.km))ssw.km_circuit=pl.km;
+        else if(pl.km===null&&ant.km&&ssw.km_circuit===ant.km)delete ssw.km_circuit;   // apagado na planilha
         if(pl.valor===null&&pl.km===null)delete ssw.planilha;else ssw.planilha=pl
       }
-      if(ssw.planilha?.km>0&&!String(ssw.planilha.keys||'').includes(','))c.km=ssw.planilha.km;
       aplicarPorKm(c,ssw);
       const r=await pool.query(
         "UPDATE operacao_lancamentos SET event_date=$2::date,romaneio=$3,romaneio_key=$4,motorista=$5,dados=$6::jsonb,ssw=$7::jsonb,updated_at=NOW() WHERE id=$1 RETURNING id::text AS id,origem,to_char(event_date,'YYYY-MM-DD') AS event_date,romaneio,romaneio_key,motorista,dados,ssw,linha,created_by,updated_at",

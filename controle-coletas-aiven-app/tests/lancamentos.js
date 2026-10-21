@@ -33,10 +33,10 @@ const temPdf=!require('child_process').spawnSync('pdftotext',['-v']).error;
    const pl=lib.lerPlanilha([R('15/10/2026','1061-8 / AMR001062-6','R$ 550,00','212'),R('15/10/2026','','1','3'),R('16/10/2026','1070-1','',''),R('16/10/2026','1071-2','300','')]);
    check('planilha: valor acordado (Frete Comb) e KM por romaneio, títulos sem diferença de maiúsculas e espaços',pl.length===2&&pl[0].keys.join(',')==='10618,10626'&&pl[0].valor===550&&pl[0].km===212&&pl[1].keys[0]==='10712'&&pl[1].valor===300&&pl[1].km===null,pl);
    const c={km:180,valor:null,desconto:null};lib.aplicarPorKm(c,{por_km:{valor_km:2},planilha:{km:200}});
-   check('cobrança por km usa o KM da planilha',c.valor===400,c);
+   check('cobrança por km usa o KM da rota do app, não o da planilha (que é o do Circuit)',c.valor===360,c);
    const base={origem:'sistema',data:'2026-10-15',motorista:'JOAO',calculo:{status:'ok'}};
-   const g=lib.agrupar([{...base,id:'1',romaneio:'1061-8',km:100,valor:550,km_planilha:212,planilha_keys:'10618,10626'},{...base,id:'2',romaneio:'1062-6',km:90,valor:null}]);
-   check('vários romaneios numa linha da planilha: o grupo mostra o KM digitado',g.length===1&&g[0].km===212&&g[0].km_soma===false&&g[0].valor===550,g[0])}
+   const g=lib.agrupar([{...base,id:'1',romaneio:'1061-8',km:100,valor:550,km_planilha:212,km_circuit:212,planilha_keys:'10618,10626'},{...base,id:'2',romaneio:'1062-6',km:90,valor:null}]);
+   check('vários romaneios numa linha da planilha: KM é o das rotas do app e o Circuit é o da planilha',g.length===1&&g[0].km===190&&g[0].km_soma===true&&g[0].km_circuit===212&&g[0].valor===550,g[0])}
   check('romaneio gravado como a operação escreve',lib.romaneioCurto('AMR001061-8')==='1061-8'&&lib.romaneioCurto('TBT000321-1')==='321-1');
   const d=lib.montarDados({data:'2026-10-09',motorista:'gilmar souza',veiculo_tipo:'van',filial:'amr',romaneio:'1060-0',operacao:'matcom/ecom',entregas:12,km:414,valor:1100,desconto:100,frete_vialog:4000});
   check('linha no formato da planilha: todas as colunas, valores em reais e valor por km',lib.COLUNAS.every(k=>k in d)&&d.Data==='09/10/2026'&&d.Motorista==='GILMAR SOUZA'&&d.Veiculo==='VAN'&&d['Operação']==='MATCOM/ECOM'&&d.Entregas==='12'&&d.KM==='414'&&d['Frete Comb']==='1.100,00'&&d['Desc.']==='100,00'&&d['Frete Mot Liq']==='1.000,00'&&d['Valor KM']==='2,42'&&d['Frete Vialog']==='4.000,00'&&d['Frete Vialog Liq']==='4.000,00',d);
