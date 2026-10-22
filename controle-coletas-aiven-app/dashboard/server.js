@@ -5140,6 +5140,45 @@ let LANC_MOT_CACHE={at:0,value:null};
 // Chamado a cada gravação: os painéis e a lista de motoristas são relidos na próxima consulta.
 function lancMudou(){LANC_FONTE_CACHE.at=0;LANC_MOT_CACHE.at=0}
 // Linhas no formato da planilha quando os painéis já leem do sistema; rows vazio enquanto a fonte é a planilha.
+// Resultado por motorista (painel Financeiro): uma linha por lançamento da planilha, sem repetir romaneio.
+// Frete pago = valor da planilha (Frete Comb). Frete a receber = valor do romaneio no SSW (soma do frete dos
+// CT-es, sem desconto nenhum); romaneio sem o valor do SSW no sistema fica com o Frete Vialog da planilha.
+// Romaneio que está no sistema e ainda não na planilha entra só com o frete a receber.
+let FIN_MOT_CACHE={at:0,value:null};
+const finTitulo=v=>String(v||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+async function financeiroMotoristas(){
+  if(FIN_MOT_CACHE.value&&Date.now()-FIN_MOT_CACHE.at<20000)return FIN_MOT_CACHE.value;
+  const [planilha,sistema]=await Promise.all([
+    rows(GIDS.lancamentos),
+    portalJson('/api/painel/lancamentos?soltos=1&de=2020-01-01&ate='+spDateISO(),{timeout:25000}).then(j=>j.rows||[])
+  ]);
+  const ssw=new Map();
+  for(const r of sistema){
+    const k=lancLib.romaneioKey(r.romaneio_ssw||r.romaneio),v=Number(r.frete_vialog);
+    if(k&&!ssw.has(k))ssw.set(k,{r,frete:r.frete_vialog!==null&&r.frete_vialog!==undefined&&Number.isFinite(v)?v:null})
+  }
+  let col=null;const usados=new Set(),out=[];
+  for(const r of planilha){
+    if(!r||typeof r!=='object')continue;
+    if(!col){const t=new Map(Object.keys(r).map(k=>[finTitulo(k),k]));col={comb:t.get('frete comb'),vialog:t.get('frete vialog'),rom:t.get('romaneio')||t.get('romaneios')}}
+    const data=['ENTREGUE','Entregue','DATA ENTREGA','Data Entrega','Data da Entrega','Data','  Data','DATA'].map(k=>r[k]).find(v=>v!==undefined&&v!==null&&String(v).trim()!=='');
+    const mot=String(r.Motorista||'').trim();
+    if(!data||!mot)continue;
+    const rom=String(col.rom?r[col.rom]:'').trim();
+    const keys=[...new Set(rom.split(/[\/,;+&]|\s+e\s+/i).map(lancLib.romaneioKey).filter(Boolean))];
+    let receber=null;
+    for(const k of keys){usados.add(k);const x=ssw.get(k);if(x&&x.frete!==null)receber=(receber||0)+x.frete}
+    if(receber===null)receber=lancLib.numero(col.vialog?r[col.vialog]:'');
+    const pago=lancLib.numero(col.comb?r[col.comb]:'');
+    out.push({Data:data,Motorista:mot,Romaneio:rom,'Frete Comb':Number.isFinite(pago)?pago:0,'Frete Vialog':Number.isFinite(receber)?Math.round(receber*100)/100:0,origem:'planilha'})
+  }
+  for(const[k,x]of ssw){
+    if(usados.has(k)||!x.r.data||!x.r.motorista)continue;
+    out.push({Data:lancLib.dataBr(x.r.data),Motorista:x.r.motorista,Romaneio:x.r.romaneio||'','Frete Comb':0,'Frete Vialog':x.frete??0,origem:'sistema'})
+  }
+  FIN_MOT_CACHE={at:Date.now(),value:out};
+  return out
+}
 async function lancamentosDoSistema(){
   if(LANC_FONTE_CACHE.value&&Date.now()-LANC_FONTE_CACHE.at<20000)return LANC_FONTE_CACHE.value;   // toda gravação feita por aqui zera esta memória
   const j=await portalJson('/api/painel/lancamentos/planilha',{timeout:20000});
@@ -7001,7 +7040,7 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
 }catch(e){
   res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
-}}if(u.pathname==='/api/bi2/remetentes'){try{if(!dashboardHasAny(authUser,['remetentes','remetentes_comparativo']))return dashboardDeny(res);const x=await buildBi2Remetentes(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/atrasos'){try{if(!dashboardHas(authUser,'ssw_atrasos'))return dashboardDeny(res);const x=await buildBi2Atrasos(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/api-status'){if(!dashboardHasAny(authUser,['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo','receita_ssw']))return dashboardDeny(res);if(!BI2_API_STATE.lastCheck||Date.now()-new Date(BI2_API_STATE.lastCheck).getTime()>60*1000)await refreshBi2ApiState();res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify(BI2_API_STATE))}if(u.pathname==='/api/bi2/status'){if(!dashboardHasAny(authUser,['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo','receita_ssw']))return dashboardDeny(res);if(!BI2_STATE.lastCheck||Date.now()-new Date(BI2_STATE.lastCheck).getTime()>5*60*1000)await refreshBi2State();res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});const x=BI2_STATE,pub={configured:x.configured,connected:x.connected,fileCount:x.fileCount||0,lastCheck:x.lastCheck,message:x.message,error:x.error||''};return res.end(JSON.stringify(pub))}if(u.pathname==='/api/ssw/status'){if(!dashboardHasAny(authUser,['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo','receita_ssw']))return dashboardDeny(res);const configured=sswConfigured();if(!configured){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:false,connected:false,source:'google-sheets',message:'SSW aguardando credenciais'}))}try{await getSswToken(false);res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:true,connected:true,source:'ssw',message:'SSW conectado'}))}catch(e){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:true,connected:false,source:'google-sheets',message:'SSW configurado, mas a autenticação falhou',error:String(e.message||e)}))}}if(u.pathname.startsWith('/api/sheet/')){const n=u.pathname.split('/').pop(),gid=GIDS[n],sheetName=SHEET_NAMES[n];if(!gid&&!sheetName){res.writeHead(404);return res.end()}try{
+}}if(u.pathname==='/api/bi2/remetentes'){try{if(!dashboardHasAny(authUser,['remetentes','remetentes_comparativo']))return dashboardDeny(res);const x=await buildBi2Remetentes(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/atrasos'){try{if(!dashboardHas(authUser,'ssw_atrasos'))return dashboardDeny(res);const x=await buildBi2Atrasos(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/api-status'){if(!dashboardHasAny(authUser,['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo','receita_ssw']))return dashboardDeny(res);if(!BI2_API_STATE.lastCheck||Date.now()-new Date(BI2_API_STATE.lastCheck).getTime()>60*1000)await refreshBi2ApiState();res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify(BI2_API_STATE))}if(u.pathname==='/api/bi2/status'){if(!dashboardHasAny(authUser,['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo','receita_ssw']))return dashboardDeny(res);if(!BI2_STATE.lastCheck||Date.now()-new Date(BI2_STATE.lastCheck).getTime()>5*60*1000)await refreshBi2State();res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});const x=BI2_STATE,pub={configured:x.configured,connected:x.connected,fileCount:x.fileCount||0,lastCheck:x.lastCheck,message:x.message,error:x.error||''};return res.end(JSON.stringify(pub))}if(u.pathname==='/api/ssw/status'){if(!dashboardHasAny(authUser,['bi2','ssw_saidas','evolucao','cidade_destino','ssw_atrasos','remetentes','remetentes_comparativo','receita_ssw']))return dashboardDeny(res);const configured=sswConfigured();if(!configured){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:false,connected:false,source:'google-sheets',message:'SSW aguardando credenciais'}))}try{await getSswToken(false);res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:true,connected:true,source:'ssw',message:'SSW conectado'}))}catch(e){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,configured:true,connected:false,source:'google-sheets',message:'SSW configurado, mas a autenticação falhou',error:String(e.message||e)}))}}if(u.pathname==='/api/sheet/financeiro'){if(!dashboardHasAny(authUser,['dashboard','financeiro']))return dashboardDeny(res);try{const x=await financeiroMotoristas();res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:true,rows:x,count:x.length}))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname.startsWith('/api/sheet/')){const n=u.pathname.split('/').pop(),gid=GIDS[n],sheetName=SHEET_NAMES[n];if(!gid&&!sheetName){res.writeHead(404);return res.end()}try{
   if(n==='lancamentos'&&!dashboardHasAny(authUser,['dashboard','operacional','financeiro','motoristas','filiais','rotas','ocorrencias']))return dashboardDeny(res);
   if(n==='agendamentos'&&!dashboardHasAny(authUser,['dashboard','agendamentos']))return dashboardDeny(res);
   if(n==='agendamentos_copia'&&!dashboardHasAny(authUser,['dashboard','agendamentos','agendamentos_copia']))return dashboardDeny(res);
