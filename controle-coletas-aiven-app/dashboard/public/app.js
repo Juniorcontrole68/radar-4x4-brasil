@@ -757,9 +757,12 @@ function financeReceive(o){
   if(rom!=='')return num(rom);
   return num(g(o,'Frete Vialog Liq',' Frete Vialog Liq','Frete a Receber','Frete A Receber','FRETE A RECEBER'))
 }
+// Linhas do Resultado por motorista: planilha (frete pago) + valor do romaneio no SSW (frete a receber),
+// montadas pelo servidor. Sem elas (ainda carregando ou falha), ficam os lançamentos dos outros painéis.
+function financeBase(){return Array.isArray(S.fin)?S.fin:(S.ops||[])}
 function financeRowsBetween(fromIso,toIso){
   const from=fromIso?new Date(fromIso+'T00:00:00'):null,to=toIso?new Date(toIso+'T23:59:59'):null;
-  return (S.ops||[]).filter(o=>{
+  return financeBase().filter(o=>{
     const d=financeDateOfRow(o);if(!d)return false;
     return(!from||d>=from)&&(!to||d<=to)
   })
@@ -783,7 +786,7 @@ function financeDriverRows(rows){
 function financeWeekIndex(d){return Math.min(5,Math.floor((d.getDate()-1)/7)+1)}
 function financeMonthLabel(d){return d.toLocaleDateString('pt-BR',{month:'short',year:'2-digit'}).replace('.','')}
 function financeMonthRows(year,month){
-  return(S.ops||[]).filter(o=>{const d=financeDateOfRow(o);return d&&d.getFullYear()===year&&d.getMonth()===month})
+  return financeBase().filter(o=>{const d=financeDateOfRow(o);return d&&d.getFullYear()===year&&d.getMonth()===month})
 }
 function financeWeeksForMonth(year,month,maxDateIso=''){
   const rows=financeMonthRows(year,month),weeks=Array.from({length:5},()=>[]);
@@ -866,7 +869,7 @@ function financeRender(){
     // Linhas com algo escrito na data, mas que não foi possível ler: ficam fora de qualquer período.
     const semData=(S.ops||[]).filter(o=>{const v=gd(o);return String(v??'').trim()!==''&&!pd(v)});
     if(semData.length&&window.__opsSemDataAviso!==semData.length){window.__opsSemDataAviso=semData.length;console.warn('Lançamentos com data não reconhecida:',semData.slice(0,10).map(o=>gd(o)))}
-    info.textContent=nf(rows.length)+' lançamento(s) • '+nf(drivers.length)+' motorista(s) • período '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje')+' • fonte atualizada às '+at+' • base: ENTREGUE / Frete Mot Liq / valor do romaneio menos pendências'+(semData.length?' • ATENÇÃO: '+nf(semData.length)+' lançamento(s) com data não reconhecida ficaram fora (ex.: "'+String(gd(semData[0])).slice(0,20)+'")':'')};
+    info.textContent=nf(rows.length)+' lançamento(s) • '+nf(drivers.length)+' motorista(s) • período '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje')+' • fonte atualizada às '+at+' • '+(Array.isArray(S.fin)?'frete pago: planilha (Frete Comb) • frete a receber: valor do romaneio no SSW':'carregando planilha + SSW…')+(semData.length?' • ATENÇÃO: '+nf(semData.length)+' lançamento(s) com data não reconhecida ficaram fora (ex.: "'+String(gd(semData[0])).slice(0,20)+'")':'')};
   const tableRows=drivers.map(x=>({
     motorista:x.motorista,pago:brl(x.paid),receber:brl(x.receive),lucro:brl(x.profit),
     lucroPct:x.profitPct.toFixed(1).replace('.',',')+'%',custoPct:x.costPct.toFixed(1).replace('.',',')+'%'
@@ -963,8 +966,9 @@ function financeSetToday(){
 }
 async function financeLoadFresh(){
   // Atualização independente da rotina global. Evita perder o clique quando refreshData já está em andamento.
-  const rows=await load('lancamentos');
+  const [rows,fin]=await Promise.all([load('lancamentos'),load('financeiro').catch(e=>{console.warn('Resultado por motorista (planilha + SSW):',e);return null})]);
   S.ops=Array.isArray(rows)?rows:[];
+  if(Array.isArray(fin))S.fin=fin;
   S.opsUpdatedAt=Date.now();
   try{filters()}catch(e){}
   financeRender();
@@ -992,6 +996,7 @@ function setupFinanceDashboard(){
   if($('#financeMonth'))$('#financeMonth').onclick=async()=>{financeSetMonthCurrent();await financeLoadFresh()};
   if($('#financeToday'))$('#financeToday').onclick=async()=>{financeSetToday();await financeLoadFresh()};
   if($('#financeExportPdf'))$('#financeExportPdf').onclick=financeExportPdf;
+  load('financeiro').then(f=>{if(Array.isArray(f)){S.fin=f;financeRender()}}).catch(e=>console.warn('Resultado por motorista (planilha + SSW):',e));
   if($('#financeFrom'))$('#financeFrom').onchange=financeRender;
   if($('#financeTo'))$('#financeTo').onchange=financeRender;
 
