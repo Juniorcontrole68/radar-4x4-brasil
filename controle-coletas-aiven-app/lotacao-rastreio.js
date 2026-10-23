@@ -193,17 +193,41 @@ async function encerrarPorColeta(pool,coletaId){
 
 function linkPublico(base,token){return String(base||'').replace(/\/+$/,'')+'/rastreio/'+token}
 
-// Posições do motorista desde o início da viagem (de qualquer aparelho dele), reduzidas para
-// o mapa: no máximo ~600 pontos na linha, sempre com o último.
+// Posições do motorista desde o início da viagem, reduzidas para o mapa (no máximo ~1500 pontos
+// na linha, sempre com o último). Para o mapa não mostrar o caminhão fora da estrada:
+// - com placa na viagem, só os aparelhos dessa placa (o nome sozinho, como "José", junta outros motoristas);
+// - descarta posição imprecisa (precisão pior que 150 m, típica de localização por antena);
+// - descarta salto impossível (mais de 180 km/h desde o último ponto bom).
+const PRECISAO_MAX_M=150,VELOCIDADE_MAX_KMH=180;
+function pontosConfiaveis(pts){
+  const plausivel=(a,b)=>{
+    const h=(new Date(b.captured_at)-new Date(a.captured_at))/3600000;
+    const km=metros({lat:Number(a.latitude),lon:Number(a.longitude)},{lat:Number(b.latitude),lon:Number(b.longitude)})/1000;
+    return km<=1||(h>0&&km/h<=VELOCIDADE_MAX_KMH)
+  };
+  const bons=[];let salto=[];
+  for(const p of pts){
+    const acc=p.accuracy_m==null?null:Number(p.accuracy_m);
+    if(acc!==null&&Number.isFinite(acc)&&acc>PRECISAO_MAX_M)continue;
+    const ant=bons[bons.length-1];
+    if(!ant||plausivel(ant,p)){bons.push(p);salto=[];continue}
+    // Dois pontos seguidos coerentes entre si depois de um salto: o ponto anterior é que estava errado.
+    if(salto.length&&plausivel(salto[salto.length-1],p)){salto.push(p);if(salto.length>=2){if(bons.length===1)bons.length=0;bons.push(...salto);salto=[]}}
+    else salto=[p]
+  }
+  return bons
+}
 async function trilhaDaViagem(pool,deps,v,ate=null){
   const {sqlNome,sqlPlaca}=deps;
-  const q=await pool.query(`SELECT p.latitude,p.longitude,p.speed_mps,p.captured_at
+  const temPlaca=!!placaKey(v.vehicle_plate);
+  const q=await pool.query(`SELECT p.latitude,p.longitude,p.accuracy_m,p.speed_mps,p.captured_at
     FROM driver_tracking_points p JOIN driver_tracking_devices d ON d.id=p.device_id
     WHERE p.captured_at>=$1::timestamptz AND p.captured_at<=COALESCE($4::timestamptz,NOW()+INTERVAL '5 minutes')
-      AND ((COALESCE($2,'')<>'' AND ${sqlPlaca('d.vehicle_plate')}=${sqlPlaca('$2')}) OR (COALESCE($3,'')<>'' AND ${sqlNome('d.driver_name')}=${sqlNome('$3')}))
-    ORDER BY p.captured_at DESC LIMIT 6000`,[v.created_at,v.vehicle_plate||'',v.driver_name||'',ate]);
-  const pts=q.rows.reverse();
-  const passo=Math.max(1,Math.ceil(pts.length/600));
+      AND ((COALESCE($2,'')<>'' AND ${sqlPlaca('d.vehicle_plate')}=${sqlPlaca('$2')})
+        OR (COALESCE($3,'')<>'' AND ${sqlNome('d.driver_name')}=${sqlNome('$3')} AND ($5::boolean=false OR COALESCE(d.vehicle_plate,'')='')))
+    ORDER BY p.captured_at DESC LIMIT 8000`,[v.created_at,v.vehicle_plate||'',v.driver_name||'',ate,temPlaca]);
+  const pts=pontosConfiaveis(q.rows.reverse());
+  const passo=Math.max(1,Math.ceil(pts.length/1500));
   const linha=pts.filter((_,i)=>i%passo===0||i===pts.length-1).map(p=>[Number(Number(p.latitude).toFixed(5)),Number(Number(p.longitude).toFixed(5))]);
   return{linha,ultimo:pts[pts.length-1]||null}
 }
@@ -409,5 +433,5 @@ async function handle(req,res,u,deps){
   return false
 }
 
-module.exports={ensureSchema,handle,anexarAoMapa,pontoValidoNaViagem,viagemDoAparelho,encerrarPorColeta,esquecerCache,
+module.exports={pontosConfiaveis,ensureSchema,handle,anexarAoMapa,pontoValidoNaViagem,viagemDoAparelho,encerrarPorColeta,esquecerCache,
   lerCoordenadas,cidadeUfDoTexto,montarPonto,noCorredor};

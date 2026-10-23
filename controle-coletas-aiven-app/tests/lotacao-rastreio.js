@@ -31,6 +31,16 @@ const GOIANIA={latitude:-16.6869,longitude:-49.2648},ANAPOLIS={latitude:-16.3281
   check('base do cliente pela sede do município',p&&p.precisao==='cidade'&&Math.abs(p.lat-GOIANIA.latitude)<0.2,p);
   check('cidade inexistente: sem ponto',lr.montarPonto({cidade:'Cidade Que Nao Existe',uf:'GO'})===null);
 
+  console.log('Pontos do GPS para o mapa (sem rede)');
+  {
+    const t0=Date.parse('2026-10-23T12:00:00Z'),pt=(min,lat,lon,acc)=>({latitude:lat,longitude:lon,accuracy_m:acc,captured_at:new Date(t0+min*60000).toISOString()});
+    const bons=lr.pontosConfiaveis([pt(0,-23.0,-46.5,12),pt(1,-23.01,-46.5,2500),pt(2,-23.0,-45.0,10),pt(3,-23.02,-46.49,null),pt(4,-23.03,-46.48,20)]);
+    check('descarta posição imprecisa (2,5 km) e salto impossível (150 km em 2 min)',bons.length===3&&bons.every(p=>p.longitude>-46.6&&p.longitude<-46.4)&&!bons.some(p=>p.accuracy_m===2500),JSON.stringify(bons));
+    check('ponto sem precisão informada continua valendo',bons.some(p=>p.accuracy_m===null));
+    const volta=lr.pontosConfiaveis([pt(0,-10.0,-50.0,10),pt(10,-23.0,-46.5,10),pt(11,-23.01,-46.5,10),pt(12,-23.02,-46.5,10)]);
+    check('primeiro ponto errado não trava o mapa: segue os pontos coerentes depois dele',volta.length===3&&volta[volta.length-1].latitude===-23.02,JSON.stringify(volta));
+  }
+
   console.log('Sem login');
   let r=await call('GET','/api/painel/lotacao-rastreios');check('lista sem login -> 401',r.status===401,'veio '+r.status);
   r=await call('POST','/api/painel/lotacao-rastreios',{body:{}});check('criar sem login -> 401',r.status===401,'veio '+r.status);
@@ -82,6 +92,8 @@ const GOIANIA={latitude:-16.6869,longitude:-49.2648},ANAPOLIS={latitude:-16.3281
 
   console.log('Link público (sem login)');
   r=await call('GET','/rastreio/'+token);check('página pública abre sem login',r.status===200&&/Rastreio da carga/.test(r.text),'veio '+r.status);
+  // Um minuto depois, saindo de Goiânia pela rodovia (os pontos acima pulam Goiânia⇄Anápolis em segundos: o mapa ignora o salto).
+  await call('POST','/api/tracking/points',{bearer:dev,body:{points:[{latitude:-16.6800,longitude:-49.2550,accuracy_m:8,speed_mps:22,captured_at:new Date(Date.now()+60000).toISOString()}]}});
   r=await call('GET','/api/rastreio-publico/'+token);let pj=r.json||{};
   check('link mostra motorista, destino, última posição e o caminho desde a base do cliente',pj.status==='ativo'&&pj.motorista==='João'&&!!pj.posicao&&pj.trilha?.length>=2&&pj.origem?.uf==='GO'&&pj.distancia_destino_km>500,JSON.stringify(pj).slice(0,300));
   check('  ...sem dados internos (token, telefone, nome completo)',!('token' in pj)&&!/Lotação Teste/.test(r.text),r.text.slice(0,200));

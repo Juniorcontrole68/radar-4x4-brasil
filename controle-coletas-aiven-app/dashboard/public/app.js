@@ -3234,6 +3234,24 @@ function trackingMergeGpsRows(...groups){
     return ta-tb
   })
 }
+// Percurso no mapa só com posições confiáveis (mesma regra do link de rastreio em lotacao-rastreio.js):
+// fora a posição imprecisa (pior que 150 m) e o salto impossível (mais de 180 km/h), que desenham
+// zigue-zague quando o motorista tem dois aparelhos ligados ou o celular alterna GPS e antena.
+function trackingGpsConfiavel(rows){
+  const hora=p=>trackingParseDateTime(p.captured_at)?.getTime?.()||0;
+  const plausivel=(a,b)=>{const km=trackingHaversineKm(a,b),h=(hora(b)-hora(a))/3600000;return km<=1||(h>0&&km/h<=180)};
+  const bons=[];let salto=[];
+  for(const p of (Array.isArray(rows)?rows:[])){
+    const acc=p?.accuracy_m==null?null:Number(p.accuracy_m);
+    if(acc!==null&&Number.isFinite(acc)&&acc>150)continue;
+    const ant=bons[bons.length-1];
+    if(!ant||plausivel(ant,p)){bons.push(p);salto=[];continue}
+    // Dois pontos seguidos coerentes depois de um salto: o ponto anterior é que estava errado.
+    if(salto.length&&plausivel(salto[salto.length-1],p)){salto.push(p);if(salto.length>=2){if(bons.length===1)bons.length=0;bons.push(...salto);salto=[]}}
+    else salto=[p]
+  }
+  return bons
+}
 async function trackingDayHistory(date,driver,plate=''){
   if(!date||!driver)return[];
   const key=trackingDayHistoryKey(date,driver,plate),hit=TRACKING_HISTORY_CACHE.get(key);
@@ -3681,7 +3699,7 @@ function renderTrackingMap(rows){
     liveTrail=Array.isArray(liveTrail)?liveTrail:[];
     const cachedHistory=TRACKING_HISTORY_CACHE.get(String(row.session_id||''))?.rows||[];
     const dayHistory=TRACKING_HISTORY_CACHE.get(trackingDayHistoryKey(TRACKING_CURRENT_DATE,row.driver_name,row.vehicle_plate))?.rows||[];
-    const history=trackingMergeGpsRows(dayHistory,cachedHistory,liveTrail);
+    const history=trackingGpsConfiavel(trackingMergeGpsRows(dayHistory,cachedHistory,liveTrail));
     if(liveTrail.length)TRACKING_HISTORY_CACHE.set(String(row.session_id||''),{at:Date.now(),rows:trackingMergeGpsRows(cachedHistory,liveTrail)});
     const realCoords=history.map(p=>[Number(p.latitude),Number(p.longitude)]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1]));
     if(!TRACKING_MAP_ONLY_DRIVERS&&realCoords.length>1){
