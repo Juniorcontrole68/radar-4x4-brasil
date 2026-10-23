@@ -7,6 +7,7 @@ let bills=[];
 let until='';
 // Contas desmarcadas no relatório: ficam na tela, mas não saem na impressão nem no total.
 const semImprimir=new Set();
+const FOLHA_PX=920,FOLHA_FIXO=170,FOLHA_LINHA=31;
 const maisNovaPrimeiro=(a,b)=>String(b.due_date||'').localeCompare(String(a.due_date||''));
 // Contas pessoais x da empresa, pela área da conta (as já lançadas entram pelo que está gravado nelas).
 const AREAS_PESSOAIS=['pessoal','casa','familia'];
@@ -127,7 +128,7 @@ function render(){
    const rec=x.recurrence_group?'<span class="detailItem"><b>Recorrência:</b> '+recurrenceCount(x)+' parcelas</span>':'';
    const docs=[boleto,comp].filter(Boolean).join('<span class="dotSep">•</span>');
    const sel=!semImprimir.has(String(x.id)),fora=sel?'':' naoImprime';
-   return `<tr class="reportMainRow${fora}"><td class="check"><input type="checkbox" class="selPrint noPrint" data-id="${esc(String(x.id))}" title="Imprimir esta conta"${sel?' checked':''}><span class="printOnly">☐</span></td><td><b>${fmt(due)}</b></td><td><b>${esc(tc(x.description))}</b><div class="subInfo">${esc(tc(x.supplier||'-'))}</div></td><td><b>${money(x.amount)}</b></td><td><span class="badge ${cl}">${st}</span></td></tr>
+   return `<tr class="reportMainRow${fora}"><td class="check"><input type="checkbox" class="selPrint noPrint" data-id="${esc(String(x.id))}" title="Imprimir esta conta"${sel?' checked':''}><span class="printOnly">☐</span></td><td><b>${fmt(due)}</b></td><td><b>${esc(tc(x.description))}</b><div class="subInfo">${esc(tc(x.supplier||'-'))}</div><div class="printInfo">${x.supplier?esc(tc(x.supplier))+' • ':''}${esc(tc(x.area||'Geral'))} • ${esc(tc(x.category||'-'))}${p?' • PIX '+esc(x.pix_type||'')+': '+esc(p):''}</div></td><td><b>${money(x.amount)}</b></td><td><span class="badge ${cl}">${st}</span></td></tr>
    <tr class="reportDetailRow${fora}"><td></td><td colspan="4"><div class="detailLine"><span class="detailItem"><b>${esc(tc(x.area||'Geral'))}</b> • ${esc(tc(x.category||'-'))}</span>${pix}${rec}${docs?'<span class="detailItem docLinks">'+docs+'</span>':''}</div></td></tr>`
  }).join('')||'<tr><td colspan="5">Nenhuma conta em aberto para o filtro informado.</td></tr>';
  $('#billsBody').innerHTML=visible.map(x=>{
@@ -188,7 +189,10 @@ $('#untilDate').addEventListener('change',()=>{if(until){until=$('#untilDate').v
 $('#clearFilter').onclick=()=>{until='';$('#untilDate').value='';render();};
 $('#viewReportBtn').onclick=()=>{$('#reportBox').classList.add('screenVisible');$('#reportBox').scrollIntoView({behavior:'smooth',block:'start'});};
 $('#closeReportBtn').onclick=()=>$('#reportBox').classList.remove('screenVisible');
-$('#printBtn').onclick=()=>{if(pendingFiltered().length&&pendingFiltered().every(x=>semImprimir.has(String(x.id))))return alert('Marque ao menos uma conta para imprimir.');window.print();};
+// Uma folha só: a impressão encolhe o relatório conforme o número de contas marcadas (medido em A4 retrato).
+function ajustarFolha(){const n=document.querySelectorAll('#reportBody .reportMainRow:not(.naoImprime)').length;document.documentElement.style.setProperty('--escRel',String(Math.min(1,Math.max(.45,FOLHA_PX/(FOLHA_FIXO+n*FOLHA_LINHA)))))}
+window.addEventListener('beforeprint',ajustarFolha);
+$('#printBtn').onclick=()=>{ajustarFolha();if(pendingFiltered().length&&pendingFiltered().every(x=>semImprimir.has(String(x.id))))return alert('Marque ao menos uma conta para imprimir.');window.print();};
 $('#reportBody').addEventListener('change',e=>{const c=e.target.closest('.selPrint');if(!c)return;c.checked?semImprimir.delete(c.dataset.id):semImprimir.add(c.dataset.id);render();});
 $('#selPrintAll').onchange=e=>{pendingFiltered().forEach(x=>e.target.checked?semImprimir.delete(String(x.id)):semImprimir.add(String(x.id)));render();};
 
