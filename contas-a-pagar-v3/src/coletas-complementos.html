@@ -147,6 +147,7 @@
     const list = byId('lcDestList'); if (!list) return;
     const row = document.createElement('div'); row.className = 'lc-dest';
     row.innerHTML = '<span class="lc-num"></span><div class="lc-campos">' +
+      '<label class="lc-r-cli">Cliente cadastrado<select class="lc-d-cli-sel">' + opcoesClientes() + '</select></label>' +
       '<label>Destinatário<input class="lc-d-nome" placeholder="Nome do destinatário"></label>' +
       '<label>Endereço de entrega<input class="lc-d-end" placeholder="Rua, número, bairro" data-no-titlecase="true"></label>' +
       '<label>Cidade<input class="lc-d-cid" placeholder="Cidade"></label>' +
@@ -161,6 +162,14 @@
     row.querySelector('.lc-d-loc').value = e.localizacao || '';
     row.querySelector('.lc-d-obs').value = e.observacao || '';
     row.querySelector('.lc-d-uf').addEventListener('input', ev => { ev.target.value = ev.target.value.toUpperCase() });
+    row.querySelector('.lc-d-cli-sel').addEventListener('change', ev => {
+      const c = clientePorId(ev.target.value); if (!c) return;
+      row.querySelector('.lc-d-nome').value = c.nome || '';
+      row.querySelector('.lc-d-end').value = enderecoSemCidade(c);
+      row.querySelector('.lc-d-cid').value = c.cidade || '';
+      row.querySelector('.lc-d-uf').value = c.uf || '';
+      row.querySelector('.lc-d-obs').value = obsDoCliente(c);
+    });
     row.querySelector('.lc-del').onclick = () => { row.remove(); renumerar() };
     list.appendChild(row); renumerar();
     return row;
@@ -201,7 +210,7 @@
     row.querySelector('.lc-r-cli-sel').addEventListener('change', ev => {
       const c = clientePorId(ev.target.value); if (!c) return;
       row.querySelector('.lc-r-nome').value = c.nome || '';
-      row.querySelector('.lc-r-end').value = [c.endereco, c.bairro, c.cep ? 'CEP ' + c.cep : ''].filter(Boolean).join(' - ');
+      row.querySelector('.lc-r-end').value = enderecoSemCidade(c);
       row.querySelector('.lc-r-cid').value = c.cidade || '';
       row.querySelector('.lc-r-uf').value = c.uf || '';
       row.querySelector('.lc-r-obs').value = obsDoCliente(c);
@@ -248,13 +257,15 @@
   /* ---------- Cadastro de clientes (nome, endereço completo, referência, observações) ---------- */
   let CLIENTES = [];
   const clientePorId = id => CLIENTES.find(c => String(c.id) === String(id));
+  // Rua, bairro e CEP: cidade e UF ficam nos campos próprios (outros remetentes e destinatários, entrega 1).
+  const enderecoSemCidade = c => [c.endereco, c.bairro, c.cep ? 'CEP ' + c.cep : ''].filter(Boolean).join(' - ');
   const obsDoCliente = c => [c.referencia ? 'Ref.: ' + c.referencia : '', c.observacoes || ''].filter(Boolean).join(' • ').replace(/\s+/g, ' ').slice(0, 200);
   function opcoesClientes() {
     return '<option value="">' + (CLIENTES.length ? 'Escolha um cliente cadastrado…' : 'Nenhum cliente cadastrado') + '</option>' +
       CLIENTES.map(c => '<option value="' + esc(c.id) + '">' + esc(c.nome) + (c.cidade ? ' • ' + esc(c.cidade) + (c.uf ? '/' + esc(c.uf) : '') : '') + '</option>').join('');
   }
   function atualizarSeletores() {
-    document.querySelectorAll('#lcCliSel, .lc-r-cli-sel').forEach(sel => { const v = sel.value; sel.innerHTML = opcoesClientes(); sel.value = clientePorId(v) ? v : '' });
+    document.querySelectorAll('#lcCliSel, #lcCliSelEnt, .lc-r-cli-sel, .lc-d-cli-sel').forEach(sel => { const v = sel.value; sel.innerHTML = opcoesClientes(); sel.value = clientePorId(v) ? v : '' });
   }
   async function carregarClientes() {
     try {
@@ -271,6 +282,15 @@
     set('lc_col_ref', c.referencia);
     set('lc_col_obs', c.observacoes);
     avisoEndereco(c);
+  }
+  // O mesmo cadastro serve para a entrega 1 (destinatário principal).
+  function aplicarClienteNaEntrega(c) {
+    const sel = byId('lcCliSelEnt'); if (sel) sel.value = c.id;
+    const set = (id, v) => { const el = byId(id); if (el) el.value = v || '' };
+    set('destinatario', c.nome);
+    set('endereco_entrega', enderecoSemCidade(c));
+    set('lc_ent_cidade', c.cidade);
+    set('lc_ent_uf', c.uf);
   }
   // O endereço da coleta vem do cliente cadastrado; o endereço fixo antigo não entra mais sozinho.
   const ENDERECO_FIXO = 'Estrada do Pinheirinho, 3107 - Itaquaquecetuba - SP';
@@ -395,6 +415,11 @@
       const after = byId('endereco_entrega')?.closest('label');
       if (after && after.parentElement === entGrid) { after.after(sub); sub.after(list) } else { entGrid.append(sub, list) }
       sub.querySelector('.lc-add').onclick = () => { const r = addDestRow(); r?.querySelector('input')?.focus() };
+      const we = document.createElement('div'); we.className = 'lc-cli-wrap';
+      we.innerHTML = '<label>Cliente cadastrado (destinatário) <select id="lcCliSelEnt" data-no-titlecase="true">' + opcoesClientes() + '</select></label><button type="button" title="Cadastrar ou editar clientes">👥 Cadastro de clientes</button>';
+      entGrid.insertBefore(we, entGrid.firstChild);
+      we.querySelector('button').onclick = abrirClientes;
+      byId('lcCliSelEnt').addEventListener('change', ev => { const c = clientePorId(ev.target.value); if (c) aplicarClienteNaEntrega(c) });
       // Cidade/UF/localização da entrega 1, logo depois do endereço de entrega.
       let ref = byId('endereco_entrega')?.closest('label');
       ENTREGA1.forEach(([id, , label, ph]) => {
@@ -463,9 +488,11 @@
     if (byId('lc_col_ref')) byId('lc_col_ref').value = cp.referencia || '';
     if (byId('lc_col_obs')) byId('lc_col_obs').value = cp.observacao || '';
     if (byId('lcCliSel')) byId('lcCliSel').value = '';
+    if (byId('lcCliSelEnt')) byId('lcCliSelEnt').value = '';
     avisoEndereco(null);
+    const selecionarEntrega = () => { const c = clientePorNome(byId('destinatario')?.value), s = byId('lcCliSelEnt'); if (s) s.value = c ? c.id : '' };
     enderecoDoCliente();
-    carregarClientes().then(enderecoDoCliente);
+    carregarClientes().then(() => { enderecoDoCliente(); selecionarEntrega() });
     preencherBanco(r?.motorista_banco || {}, false);
   }
 
@@ -516,6 +543,9 @@
       // Digitou ou escolheu na lista o nome de um cliente cadastrado: traz o endereço dele.
       const c = clientePorNome(t.value);
       if (c && String(byId('lcCliSel')?.value) !== String(c.id)) aplicarClienteNaColeta(c); else enderecoDoCliente();
+    } else if (t.id === 'destinatario' && e.isTrusted) {
+      const c = clientePorNome(t.value);
+      if (c && String(byId('lcCliSelEnt')?.value) !== String(c.id)) aplicarClienteNaEntrega(c);
     } else if (t.id === 'historico_motorista') {
       setTimeout(() => puxarDadosMotorista(byId('motorista')?.value, true), 0);
     } else if (t.id === 'motorista' && e.isTrusted && !currentId()) {
