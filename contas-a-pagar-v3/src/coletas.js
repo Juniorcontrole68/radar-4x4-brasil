@@ -28,6 +28,44 @@ try{
       trocas.forEach(([de,para])=>{if(!html.includes(de))console.error('Endereço da coleta editável: trecho não encontrado: '+de);html=html.replace(de,para)});
     }
 
+    // Período de apuração do resultado (Financeiro): de/até pela data do carregamento. Vale para os
+    // totais, a tabela e o CSV do Financeiro; a aba operacional continua só com os filtros dela.
+    {
+      const trocas=[
+        ['<span>Os totais respeitam os mesmos filtros usados na aba operacional.</span>',
+         '<div class="periodo-apuracao"><strong>Período de apuração</strong>'+
+         '<label>De <input id="periodoDe" type="date" /></label><label>Até <input id="periodoAte" type="date" /></label>'+
+         '<button type="button" id="periodoMes" class="btn small">Este mês</button><button type="button" id="periodoTodo" class="btn small">Todo o período</button>'+
+         '<span id="periodoInfo"></span></div>'],
+        ['function filtered(){',
+         "function noPeriodo(c){ const de=$('periodoDe').value, ate=$('periodoAte').value, d=String(c.data_carregamento||'').slice(0,10);"+
+         " if(!de&&!ate) return true; if(!d) return false; return (!de||d>=de)&&(!ate||d<=ate); }\n"+
+         "function textoPeriodo(){ const de=$('periodoDe').value, ate=$('periodoAte').value;"+
+         " return de&&ate?`de ${fmtDate(de)} até ${fmtDate(ate)}`:de?`a partir de ${fmtDate(de)}`:ate?`até ${fmtDate(ate)}`:'todo o período'; }\n"+
+         'function filtered(){'],
+        ["  $('tbodyFinanceiro').innerHTML = rows.length ? rows.map(c=>{",
+         "  const finRows=rows.filter(noPeriodo);\n"+
+         "  $('periodoInfo').textContent=`Resultado ${textoPeriodo()} • ${finRows.length} coleta${finRows.length===1?'':'s'} (pela data do carregamento)`;\n"+
+         "  $('tbodyFinanceiro').innerHTML = finRows.length ? finRows.map(c=>{"],
+        ["const cobrado=sum(rows,'frete_cobrado'), pago=sum(rows,'frete_pago'), pedagio=sum(rows,'pedagio'), lucro=sum(rows,'lucro');",
+         "const cobrado=sum(finRows,'frete_cobrado'), pago=sum(finRows,'frete_pago'), pedagio=sum(finRows,'pedagio'), lucro=sum(finRows,'lucro');"],
+        ["const rows=filtered(); const cols=['OS',","const rows=filtered().filter(noPeriodo); const cols=['OS',"],
+        ['a.download=`financeiro-coletas-${new Date().toISOString().slice(0,10)}.csv`',
+         "a.download=`financeiro-coletas-${$('periodoDe').value||'inicio'}-a-${$('periodoAte').value||'hoje'}.csv`"],
+        ["$('limparFiltros').onclick=",
+         "{ const salvar=()=>{try{localStorage.setItem('coletasPeriodoApuracao',JSON.stringify({de:$('periodoDe').value,ate:$('periodoAte').value}))}catch(e){}};"+
+         " try{const p=JSON.parse(localStorage.getItem('coletasPeriodoApuracao')||'{}');$('periodoDe').value=p.de||'';$('periodoAte').value=p.ate||''}catch(e){}"+
+         " $('periodoDe').onchange=$('periodoAte').onchange=()=>{const de=$('periodoDe'),ate=$('periodoAte');if(de.value&&ate.value&&de.value>ate.value)[de.value,ate.value]=[ate.value,de.value];salvar();render();};"+
+         " $('periodoMes').onclick=()=>{const h=today();$('periodoDe').value=h.slice(0,8)+'01';$('periodoAte').value=h;salvar();render();};"+
+         " $('periodoTodo').onclick=()=>{$('periodoDe').value='';$('periodoAte').value='';salvar();render();}; }\n"+
+         "$('limparFiltros').onclick="],
+        ['</head>','<style id="periodo-apuracao-css">.periodo-apuracao{display:flex;gap:8px 12px;flex-wrap:wrap;align-items:center}.periodo-apuracao>strong{font-size:13px}'+
+         '.periodo-apuracao label{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted)}.periodo-apuracao input{padding:7px 9px;border:1px solid var(--line);border-radius:9px;font:inherit;color:var(--ink)}'+
+         '.periodo-apuracao .btn.small{margin:0}#periodoInfo{flex-basis:100%;font-size:12px;color:var(--muted)}</style></head>']
+      ];
+      trocas.forEach(([de,para])=>{if(!html.includes(de))console.error('Período de apuração: trecho não encontrado: '+de);html=html.replace(de,para)});
+    }
+
     html=html.replace(
       'Cliente *<input id="cliente" required placeholder="Nome do cliente" />',
       'Remetente *<input id="cliente" required placeholder="Nome do remetente" />'
@@ -181,6 +219,8 @@ try{
           return m?m[3]+'-'+m[2]+'-'+m[1]:''
         }
         function acharPeriodoFinanceiro(){
+          const de=document.getElementById('periodoDe'),ate=document.getElementById('periodoAte');
+          if(de&&ate)return {ini:de.value,fim:ate.value};
           const inputs=[...document.querySelectorAll('input[type="date"]')].filter(x=>!x.closest('#modal'));
           const tagged=inputs.map(el=>{
             const ctx=(el.id+' '+el.name+' '+(el.closest('label')?.textContent||'')+' '+(el.parentElement?.textContent||'')).toLowerCase();
