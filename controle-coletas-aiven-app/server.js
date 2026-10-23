@@ -31,6 +31,7 @@ const dre = require('./dre');
 const roteirizadorCargas = require('./roteirizador-cargas');
 const { economizarBanda } = require('./compressao');
 const lotacaoRastreio = require('./lotacao-rastreio');
+const lotacaoClientes = require('./lotacao-clientes');
 const entregas = require('./entregas');
 const movitDemo = require('./movit-demo');
 const agendamento = require('./agendamento');
@@ -1883,6 +1884,7 @@ async function start() {
     lerSsw:(cli,alvos)=>agendamentoLerSswInterno(alvos),
     clientes:async()=>{const cq=await pool.query("SELECT id::text FROM movit_clients WHERE lower(slug)='construlog' LIMIT 1").catch(()=>({rows:[]}));return [cq.rows[0]?cq.rows[0].id:null]}});
   await lotacaoRastreio.ensureSchema(pool);
+  await lotacaoClientes.ensureSchema(pool);
   await entregas.ensureSchema(pool);
   // se o esquema do WMS falhar, desliga só o WMS e o resto do servidor sobe normalmente
   if (wms.ATIVO) await wms.ensureSchema(pool).catch(e=>{console.error('[wms] esquema falhou, WMS desligado:',e.message);wms.desligar()});
@@ -3031,6 +3033,8 @@ async function start() {
       if (await roteirizadorCargas.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
       // Rastreio de carga lotação (viagem a partir da base do cliente + link público): ver lotacao-rastreio.js
       if (await lotacaoRastreio.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,sqlNome,sqlPlaca,publicBase:DRIVER_PUBLIC_BASE,testMode:TEST_MODE})) return;
+      // Cadastro de clientes da Lotação (preenche remetente e endereço da coleta): ver lotacao-clientes.js
+      if (await lotacaoClientes.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
       // Comprovante de entrega pelo MOVIT (foto / não entregue) e a tela /entregas da central: ver entregas.js
       if (await entregas.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,movitCompanyLinkFromReq,testMode:TEST_MODE})) return;
 
@@ -5515,13 +5519,17 @@ async function start() {
         const ep = body.entrega_principal && typeof body.entrega_principal === 'object'
           ? JSON.stringify({ cidade: txt(body.entrega_principal.cidade, 80), uf: txt(body.entrega_principal.uf, 2).toUpperCase(), localizacao: txt(body.entrega_principal.localizacao, 300) })
           : null;
-        const params = [JSON.stringify(entregas), JSON.stringify(banco), id, ep, remetentes];
-        const sets = 'entregas_extras=$1::jsonb, motorista_banco=$2::jsonb, entrega_principal=COALESCE($4::jsonb, entrega_principal), remetentes_extras=COALESCE($5::jsonb, remetentes_extras), updated_at=NOW()';
+        // Referência e observações da coleta 1 (cliente cadastrado). Sem o campo no corpo, mantém o gravado.
+        const cp = body.coleta_principal && typeof body.coleta_principal === 'object'
+          ? JSON.stringify({ referencia: txt(body.coleta_principal.referencia, 300), observacao: String(body.coleta_principal.observacao ?? '').replace(/\r/g, '').trim().slice(0, 1000) })
+          : null;
+        const params = [JSON.stringify(entregas), JSON.stringify(banco), id, ep, remetentes, cp];
+        const sets = 'entregas_extras=$1::jsonb, motorista_banco=$2::jsonb, entrega_principal=COALESCE($4::jsonb, entrega_principal), remetentes_extras=COALESCE($5::jsonb, remetentes_extras), coleta_principal=COALESCE($6::jsonb, coleta_principal), updated_at=NOW()';
         const result = user.client_id ? await pool.query(
-          'UPDATE coletas SET ' + sets + ' WHERE id::text=$3 AND client_id=$6 RETURNING id::text AS id, entregas_extras, motorista_banco, entrega_principal, remetentes_extras',
+          'UPDATE coletas SET ' + sets + ' WHERE id::text=$3 AND client_id=$7 RETURNING id::text AS id, entregas_extras, motorista_banco, entrega_principal, remetentes_extras, coleta_principal',
           [...params, user.client_id]
         ) : await pool.query(
-          'UPDATE coletas SET ' + sets + ' WHERE id::text=$3 RETURNING id::text AS id, entregas_extras, motorista_banco, entrega_principal, remetentes_extras',
+          'UPDATE coletas SET ' + sets + ' WHERE id::text=$3 RETURNING id::text AS id, entregas_extras, motorista_banco, entrega_principal, remetentes_extras, coleta_principal',
           params
         );
         if (!result.rowCount) return sendJson(res, 404, { error: 'Coleta não encontrada.' });

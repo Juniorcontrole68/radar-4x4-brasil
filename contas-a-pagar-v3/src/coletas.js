@@ -15,6 +15,19 @@ try{
       html=html.replace(utcToday,"function today(){ return new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}); }");
     }
 
+    // Endereço da coleta editável (antes era sempre o endereço fixo de Itaquaquecetuba): o cliente
+    // cadastrado na Lotação preenche o endereço dele. Coleta nova continua sugerindo o endereço fixo.
+    {
+      const trocas=[
+        ['<input id="endereco_coleta" readonly />','<input id="endereco_coleta" placeholder="Rua, número - bairro - cidade - UF" />'],
+        ["const payload={endereco_coleta:fixedPickup};","const payload={endereco_coleta:$('endereco_coleta').value.trim()||fixedPickup};"],
+        ["['id','os_numero','cliente','transportadora_agregado','endereco_entrega',","['id','os_numero','cliente','transportadora_agregado','endereco_coleta','endereco_entrega',"],
+        ["['Endereço de coleta',fixedPickup]","['Endereço de coleta',c.endereco_coleta||fixedPickup]"],
+        ['*Coleta:* ${fixedPickup}','*Coleta:* ${c.endereco_coleta||fixedPickup}']
+      ];
+      trocas.forEach(([de,para])=>{if(!html.includes(de))console.error('Endereço da coleta editável: trecho não encontrado: '+de);html=html.replace(de,para)});
+    }
+
     html=html.replace(
       'Cliente *<input id="cliente" required placeholder="Nome do cliente" />',
       'Remetente *<input id="cliente" required placeholder="Nome do remetente" />'
@@ -1524,6 +1537,15 @@ try{
     src=src.replace(fm[0],"const FRONTEND_B64='"+newFront+"'");
   }
 
+  // Endereço da coleta gravado como veio da tela (vazio = endereço fixo de sempre).
+  {
+    const trocas=[
+      ['return {...r,endereco_coleta:FIXED_PICKUP,',"return {...r,endereco_coleta:String(r.endereco_coleta||'').trim().slice(0,300)||FIXED_PICKUP,"],
+      ['vals.push(id,FIXED_PICKUP);','vals.push(id,n.endereco_coleta);'],
+      ["['Endereço de coleta',FIXED_PICKUP]","['Endereço de coleta',c.endereco_coleta||FIXED_PICKUP]"]
+    ];
+    trocas.forEach(([de,para])=>{if(!src.includes(de))console.error('Endereço da coleta editável (servidor): trecho não encontrado: '+de);src=src.replace(de,para)});
+  }
   src=src.replaceAll("['Cliente',c.cliente||'-']","['Remetente',c.cliente||'-']");
   src=src.replaceAll("Cliente da entrega","Remetente");
 }catch(e){
