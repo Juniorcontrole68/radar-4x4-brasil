@@ -71,6 +71,7 @@
 .lc-cli-wrap button,.lc-cli-btn{border:1px solid #93c5fd;background:#fff;color:#1d4ed8;border-radius:7px;padding:6px 10px;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap}
 .lc-r-cli{grid-column:1/-1}
 .lc-r-cli select{padding:4px 8px;font-size:13px;min-height:30px;border-radius:7px;border:1px solid #93c5fd;background:#eff6ff}
+#lcCliAviso{display:block;color:#b45309;font-size:11.5px;font-weight:600;margin-top:3px}
 #lcCliDlg{border:0;border-radius:12px;padding:0;width:min(980px,97vw);max-height:92vh;box-shadow:0 28px 80px #0006;overflow:hidden}
 #lcCliDlg::backdrop{background:#0b171cb0}
 #lcCliDlg .lc-bar{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:10px 14px;background:#0f172a;color:#fff}
@@ -264,10 +265,31 @@
   }
   function aplicarClienteNaColeta(c) {
     const set = (id, v) => { const el = byId(id); if (!el) return; el.value = v || ''; try { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })) } catch { } };
+    const sel = byId('lcCliSel'); if (sel) sel.value = c.id;
     set('cliente', c.nome);
     set('endereco_coleta', c.endereco_completo);
     set('lc_col_ref', c.referencia);
     set('lc_col_obs', c.observacoes);
+    avisoEndereco(c);
+  }
+  // O endereço da coleta vem do cliente cadastrado; o endereço fixo antigo não entra mais sozinho.
+  const ENDERECO_FIXO = 'Estrada do Pinheirinho, 3107 - Itaquaquecetuba - SP';
+  const clientePorNome = nome => { const k = norm(nome); return k ? CLIENTES.find(c => norm(c.nome) === k) : null };
+  function avisoEndereco(c) {
+    const a = byId('lcCliAviso'); if (!a) return;
+    a.textContent = c && !String(c.endereco_completo || '').trim() ? 'Este cliente está sem endereço no cadastro: digite o endereço da coleta ou complete o cadastro.' : '';
+  }
+  function enderecoDoCliente() {
+    const end = byId('endereco_coleta'); if (!end) return;
+    end.required = true; end.placeholder = 'Escolha o cliente cadastrado ou digite o endereço';
+    if (norm(end.value) === norm(ENDERECO_FIXO)) end.value = '';
+    const c = clientePorNome(byId('cliente')?.value);
+    const sel = byId('lcCliSel'); if (sel && c) sel.value = c.id;
+    if (!c) return avisoEndereco(null);
+    if (!end.value.trim()) end.value = c.endereco_completo || '';
+    if (byId('lc_col_ref') && !byId('lc_col_ref').value.trim()) byId('lc_col_ref').value = c.referencia || '';
+    if (byId('lc_col_obs') && !byId('lc_col_obs').value.trim()) byId('lc_col_obs').value = c.observacoes || '';
+    avisoEndereco(c);
   }
   const CLI_CAMPOS = [['nome', 'Nome do cliente *', 'w3', 'Razão social ou nome'], ['endereco', 'Endereço (rua, número, complemento)', 'w3', 'Rua, número, complemento'],
     ['bairro', 'Bairro', '', 'Bairro'], ['cidade', 'Cidade', 'w2', 'Cidade'], ['uf', 'UF', '', 'SP'], ['cep', 'CEP', '', '00000-000'],
@@ -313,7 +335,8 @@
       const r = await baseFetch('/api/painel/lotacao-clientes' + (id ? '/' + encodeURIComponent(id) : ''), { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) return msgCli(j.error || 'Não foi possível salvar.', true);
-      await carregarClientes(); editarCliente(j.row); msgCli('Cliente salvo.');
+      // Salvou: o formulário volta limpo para o próximo cadastro.
+      await carregarClientes(); editarCliente(null); msgCli('Cliente "' + (j.row?.nome || body.nome) + '" salvo. Pode cadastrar o próximo.');
     });
     return dlg;
   }
@@ -337,7 +360,7 @@
     box.innerHTML = itens.length ? itens.map(c => '<div class="lc-cli-item' + (String(c.id) === sel ? ' sel' : '') + '" data-id="' + esc(c.id) + '"><b>' + esc(c.nome) + '</b><small>' + esc(c.endereco_completo || 'Sem endereço') + '</small>' + (c.referencia ? '<small>Ref.: ' + esc(c.referencia) + '</small>' : '') + '</div>').join('')
       : '<div class="lc-cli-vazio">' + (CLIENTES.length ? 'Nenhum cliente encontrado.' : 'Nenhum cliente cadastrado ainda.') + '</div>';
   }
-  function abrirClientes() { const d = cliDlg(); renderLista(); if (!byId('lcCli_id').value) editarCliente(null); if (!d.open) d.showModal(); carregarClientes() }
+  function abrirClientes() { const d = cliDlg(); editarCliente(null); renderLista(); msgCli(''); if (!d.open) d.showModal(); carregarClientes() }
   window.abrirCadastroClientes = abrirClientes;
 
   function ensureUI() {
@@ -350,7 +373,7 @@
     const colGrid0 = gridOf('endereco_coleta', 'Coleta');
     if (colGrid0 && !byId('lcCliSel')) {
       const w = document.createElement('div'); w.className = 'lc-cli-wrap';
-      w.innerHTML = '<label>Cliente cadastrado <select id="lcCliSel" data-no-titlecase="true">' + opcoesClientes() + '</select></label><button type="button" title="Cadastrar ou editar clientes">👥 Cadastro de clientes</button>';
+      w.innerHTML = '<label>Cliente cadastrado <select id="lcCliSel" data-no-titlecase="true">' + opcoesClientes() + '</select><small id="lcCliAviso" class="lc-cli-aviso"></small></label><button type="button" title="Cadastrar ou editar clientes">👥 Cadastro de clientes</button>';
       colGrid0.insertBefore(w, colGrid0.firstChild);
       w.querySelector('button').onclick = abrirClientes;
       byId('lcCliSel').addEventListener('change', ev => { const c = clientePorId(ev.target.value); if (c) aplicarClienteNaColeta(c) });
@@ -440,7 +463,9 @@
     if (byId('lc_col_ref')) byId('lc_col_ref').value = cp.referencia || '';
     if (byId('lc_col_obs')) byId('lc_col_obs').value = cp.observacao || '';
     if (byId('lcCliSel')) byId('lcCliSel').value = '';
-    carregarClientes();
+    avisoEndereco(null);
+    enderecoDoCliente();
+    carregarClientes().then(enderecoDoCliente);
     preencherBanco(r?.motorista_banco || {}, false);
   }
 
@@ -487,7 +512,11 @@
   }
   document.addEventListener('change', e => {
     const t = e.target; if (!t || !byId('modal')?.open) return;
-    if (t.id === 'historico_motorista') {
+    if (t.id === 'cliente' && e.isTrusted) {
+      // Digitou ou escolheu na lista o nome de um cliente cadastrado: traz o endereço dele.
+      const c = clientePorNome(t.value);
+      if (c && String(byId('lcCliSel')?.value) !== String(c.id)) aplicarClienteNaColeta(c); else enderecoDoCliente();
+    } else if (t.id === 'historico_motorista') {
       setTimeout(() => puxarDadosMotorista(byId('motorista')?.value, true), 0);
     } else if (t.id === 'motorista' && e.isTrusted && !currentId()) {
       puxarDadosMotorista(t.value, false);
