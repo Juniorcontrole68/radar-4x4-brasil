@@ -5,6 +5,9 @@ const tc=s=>String(s||'').toLocaleLowerCase('pt-BR').replace(/(^|[\s\-\/])([\p{L
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let bills=[];
 let until='';
+// Contas desmarcadas no relatório: ficam na tela, mas não saem na impressão nem no total.
+const semImprimir=new Set();
+const maisNovaPrimeiro=(a,b)=>String(b.due_date||'').localeCompare(String(a.due_date||''));
 // Contas pessoais x da empresa, pela área da conta (as já lançadas entram pelo que está gravado nelas).
 const AREAS_PESSOAIS=['pessoal','casa','familia'];
 const semAc=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
@@ -103,10 +106,11 @@ function render(){
  document.querySelectorAll('.tipoBtn').forEach(b=>b.classList.toggle('on',b.dataset.tipo===tipo));
  const nP=todas.filter(x=>x.status!=='paid'&&tipoDa(x)==='pessoal').length,nE=todas.filter(x=>x.status!=='paid'&&tipoDa(x)==='empresa').length;
  $('#tipoNEmpresa').textContent='('+nE+' em aberto)';$('#tipoNPessoal').textContent='('+nP+' em aberto)';
- const t=today(),cm=t.slice(0,7),pending=bills.filter(x=>x.status!=='paid'),overdue=pending.filter(x=>String(x.due_date).slice(0,10)<t),month=bills.filter(x=>String(x.due_date).slice(0,7)===cm),paidMonth=bills.filter(x=>x.status==='paid'&&x.payment_date&&String(x.payment_date).slice(0,7)===cm),filtered=pendingFiltered(),visible=visibleBills().sort((a,b)=>String(a.due_date||'').localeCompare(String(b.due_date||'')));
+ const t=today(),cm=t.slice(0,7),pending=bills.filter(x=>x.status!=='paid'),overdue=pending.filter(x=>String(x.due_date).slice(0,10)<t),month=bills.filter(x=>String(x.due_date).slice(0,7)===cm),paidMonth=bills.filter(x=>x.status==='paid'&&x.payment_date&&String(x.payment_date).slice(0,7)===cm),filtered=pendingFiltered().sort(maisNovaPrimeiro),visible=visibleBills().sort(maisNovaPrimeiro),marcadas=filtered.filter(x=>!semImprimir.has(String(x.id))),totalMarcadas=money(marcadas.reduce((s,x)=>s+Number(x.amount),0));
  $('#cardPending').textContent=money(pending.reduce((s,x)=>s+Number(x.amount),0));$('#cardOverdue').textContent=money(overdue.reduce((s,x)=>s+Number(x.amount),0));$('#cardMonth').textContent=money(month.reduce((s,x)=>s+Number(x.amount),0));$('#cardPaidMonth').textContent=money(paidMonth.reduce((s,x)=>s+Number(x.amount),0));
  $('#filterLabel').textContent=until?'Em aberto até '+fmt(until):'Todas as contas em aberto';$('#filterTotal').textContent=money(filtered.reduce((s,x)=>s+Number(x.amount),0));$('#filterCount').textContent=filtered.length+' conta(s)';
- $('#printFilterLabel').textContent=(tipo==='todas'?'':(tipo==='pessoal'?'Contas pessoais • ':'Contas da empresa • '))+(until?'Vencimentos até '+fmt(until):'Todas as contas em aberto');$('#printTotal').textContent='Total: '+money(filtered.reduce((s,x)=>s+Number(x.amount),0));
+ $('#printFilterLabel').textContent=(tipo==='todas'?'':(tipo==='pessoal'?'Contas pessoais • ':'Contas da empresa • '))+(until?'Vencimentos até '+fmt(until):'Todas as contas em aberto');$('#printTotal').innerHTML='Valor total: '+totalMarcadas+' <span class="printCount">('+marcadas.length+' conta(s))</span>'+(marcadas.length<filtered.length?'<span class="noPrint printHint"> • '+(filtered.length-marcadas.length)+' desmarcada(s) não sairão na impressão</span>':'');
+ $('#selPrintAll').checked=filtered.length>0&&marcadas.length===filtered.length;$('#selPrintAll').indeterminate=marcadas.length>0&&marcadas.length<filtered.length;
  $('#reportBody').innerHTML=filtered.map(x=>{
    const due=String(x.due_date||'').slice(0,10),ov=x.status!=='paid'&&due<t,st=x.status==='paid'?'Pago':ov?'Vencido':'Pendente',cl=x.status==='paid'?'ok':ov?'late':'wait';
    const p=pixText(x);
@@ -121,8 +125,9 @@ function render(){
      :'';
    const rec=x.recurrence_group?'<span class="detailItem"><b>Recorrência:</b> '+recurrenceCount(x)+' parcelas</span>':'';
    const docs=[boleto,comp].filter(Boolean).join('<span class="dotSep">•</span>');
-   return `<tr class="reportMainRow"><td class="check">☐</td><td><b>${fmt(due)}</b></td><td><b>${esc(tc(x.description))}</b><div class="subInfo">${esc(tc(x.supplier||'-'))}</div></td><td><b>${money(x.amount)}</b></td><td><span class="badge ${cl}">${st}</span></td></tr>
-   <tr class="reportDetailRow"><td></td><td colspan="4"><div class="detailLine"><span class="detailItem"><b>${esc(tc(x.area||'Geral'))}</b> • ${esc(tc(x.category||'-'))}</span>${pix}${rec}${docs?'<span class="detailItem docLinks">'+docs+'</span>':''}</div></td></tr>`
+   const sel=!semImprimir.has(String(x.id)),fora=sel?'':' naoImprime';
+   return `<tr class="reportMainRow${fora}"><td class="check"><input type="checkbox" class="selPrint noPrint" data-id="${esc(String(x.id))}" title="Imprimir esta conta"${sel?' checked':''}><span class="printOnly">☐</span></td><td><b>${fmt(due)}</b></td><td><b>${esc(tc(x.description))}</b><div class="subInfo">${esc(tc(x.supplier||'-'))}</div></td><td><b>${money(x.amount)}</b></td><td><span class="badge ${cl}">${st}</span></td></tr>
+   <tr class="reportDetailRow${fora}"><td></td><td colspan="4"><div class="detailLine"><span class="detailItem"><b>${esc(tc(x.area||'Geral'))}</b> • ${esc(tc(x.category||'-'))}</span>${pix}${rec}${docs?'<span class="detailItem docLinks">'+docs+'</span>':''}</div></td></tr>`
  }).join('')||'<tr><td colspan="5">Nenhuma conta em aberto para o filtro informado.</td></tr>';
  $('#billsBody').innerHTML=visible.map(x=>{
   const due=String(x.due_date).slice(0,10),ov=x.status!=='paid'&&due<t,st=x.status==='paid'?'Pago':ov?'Vencido':'Pendente',cl=x.status==='paid'?'ok':ov?'late':'wait';
@@ -182,7 +187,9 @@ $('#untilDate').addEventListener('change',()=>{if(until){until=$('#untilDate').v
 $('#clearFilter').onclick=()=>{until='';$('#untilDate').value='';render();};
 $('#viewReportBtn').onclick=()=>{$('#reportBox').classList.add('screenVisible');$('#reportBox').scrollIntoView({behavior:'smooth',block:'start'});};
 $('#closeReportBtn').onclick=()=>$('#reportBox').classList.remove('screenVisible');
-$('#printBtn').onclick=()=>window.print();
+$('#printBtn').onclick=()=>{if(pendingFiltered().length&&pendingFiltered().every(x=>semImprimir.has(String(x.id))))return alert('Marque ao menos uma conta para imprimir.');window.print();};
+$('#reportBody').addEventListener('change',e=>{const c=e.target.closest('.selPrint');if(!c)return;c.checked?semImprimir.delete(c.dataset.id):semImprimir.add(c.dataset.id);render();});
+$('#selPrintAll').onchange=e=>{pendingFiltered().forEach(x=>e.target.checked?semImprimir.delete(String(x.id)):semImprimir.add(String(x.id)));render();};
 
 function openEditBill(id){
  const x=bills.find(v=>v.id===id);if(!x)return;
