@@ -32,6 +32,7 @@ const roteirizadorCargas = require('./roteirizador-cargas');
 const { economizarBanda } = require('./compressao');
 const lotacaoRastreio = require('./lotacao-rastreio');
 const lotacaoClientes = require('./lotacao-clientes');
+const compartilhar = require('./compartilhar');
 const entregas = require('./entregas');
 const movitDemo = require('./movit-demo');
 const agendamento = require('./agendamento');
@@ -3033,6 +3034,8 @@ async function start() {
       if (await roteirizadorCargas.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
       // Rastreio de carga lotação (viagem a partir da base do cliente + link público): ver lotacao-rastreio.js
       if (await lotacaoRastreio.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,sqlNome,sqlPlaca,publicBase:DRIVER_PUBLIC_BASE,testMode:TEST_MODE})) return;
+      // Torre Docs: PDF do WhatsApp pelo Compartilhar do Android, para a coleta ou a conta pessoal: ver compartilhar.js
+      if (await compartilhar.handle(req,res,u)) return;
       // Cadastro de clientes da Lotação (preenche remetente e endereço da coleta): ver lotacao-clientes.js
       if (await lotacaoClientes.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
       // Comprovante de entrega pelo MOVIT (foto / não entregue) e a tela /entregas da central: ver entregas.js

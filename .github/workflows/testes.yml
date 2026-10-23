@@ -61,6 +61,7 @@ jobs:
           node --check controle-coletas-aiven-app/roteirizador-cargas.js
           node --check controle-coletas-aiven-app/lotacao-rastreio.js
           node --check controle-coletas-aiven-app/lotacao-clientes.js
+          node --check controle-coletas-aiven-app/compartilhar.js
           node --check controle-coletas-aiven-app/entregas.js
           node --check controle-coletas-aiven-app/compressao.js
           node --check controle-coletas-aiven-app/movit-demo.js
@@ -107,6 +108,8 @@ jobs:
         run: node controle-coletas-aiven-app/tests/lotacao-rastreio.js
       - name: Cadastro de clientes da Lotação (e endereço da coleta do cliente)
         run: node controle-coletas-aiven-app/tests/lotacao-clientes.js
+      - name: Torre Docs (PDF do WhatsApp pelo Compartilhar, para a coleta ou a conta pessoal)
+        run: node controle-coletas-aiven-app/tests/compartilhar.js
       - name: Comprovante de entrega pelo MOVIT (foto, não entregue e tela da central)
         run: node controle-coletas-aiven-app/tests/entregas.js
       - name: Economia de banda (compressão e 304)
