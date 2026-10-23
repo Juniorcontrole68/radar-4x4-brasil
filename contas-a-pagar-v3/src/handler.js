@@ -26,6 +26,7 @@ async function handler(req,res){
   if(u.pathname.startsWith('/coletas')) { const handled=await handleColetas(req,res,u); if(handled)return; }
   if(req.method==='GET'&&u.pathname==='/') return sendFile(res,'index.html','text/html; charset=utf-8');
   if(req.method==='GET'&&u.pathname==='/styles.css') return sendFile(res,'styles.css','text/css; charset=utf-8');
+  if(req.method==='GET'&&u.pathname==='/construlog-logo.png') return sendFile(res,'construlog-logo.png','image/png');
   if(req.method==='GET'&&u.pathname==='/app.js') return sendFile(res,'app.js','application/javascript; charset=utf-8');
   if(req.method==='GET'&&u.pathname==='/health'){await pool.query('SELECT 1');return json(res,200,{ok:true,database:'connected'});}
   if(req.method==='GET'&&u.pathname==='/api/bills') return json(res,200,await getBills());
