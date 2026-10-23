@@ -71,6 +71,8 @@
 .lc-cli-wrap button,.lc-cli-btn{border:1px solid #93c5fd;background:#fff;color:#1d4ed8;border-radius:7px;padding:6px 10px;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap}
 .lc-r-cli{grid-column:1/-1}
 .lc-r-cli select{padding:4px 8px;font-size:13px;min-height:30px;border-radius:7px;border:1px solid #93c5fd;background:#eff6ff}
+/* Remetente e destinatário vêm só do cadastro de clientes: sem as listas de "já utilizado". */
+.history-select-wrap:has(#historico_remetente),.history-select-wrap:has(#historico_destinatario){display:none!important}
 #lcCliAviso{display:block;color:#b45309;font-size:11.5px;font-weight:600;margin-top:3px}
 #lcCliDlg{border:0;border-radius:12px;padding:0;width:min(980px,97vw);max-height:92vh;box-shadow:0 28px 80px #0006;overflow:hidden}
 #lcCliDlg::backdrop{background:#0b171cb0}
@@ -262,7 +264,7 @@
   const obsDoCliente = c => [c.referencia ? 'Ref.: ' + c.referencia : '', c.observacoes || ''].filter(Boolean).join(' • ').replace(/\s+/g, ' ').slice(0, 200);
   function opcoesClientes() {
     return '<option value="">' + (CLIENTES.length ? 'Escolha um cliente cadastrado…' : 'Nenhum cliente cadastrado') + '</option>' +
-      CLIENTES.map(c => '<option value="' + esc(c.id) + '">' + esc(c.nome) + (c.cidade ? ' • ' + esc(c.cidade) + (c.uf ? '/' + esc(c.uf) : '') : '') + '</option>').join('');
+      CLIENTES.map(c => '<option value="' + esc(c.id) + '">' + esc(c.nome) + '</option>').join('');
   }
   function atualizarSeletores() {
     document.querySelectorAll('#lcCliSel, #lcCliSelEnt, .lc-r-cli-sel, .lc-d-cli-sel').forEach(sel => { const v = sel.value; sel.innerHTML = opcoesClientes(); sel.value = clientePorId(v) ? v : '' });
@@ -393,7 +395,7 @@
     const colGrid0 = gridOf('endereco_coleta', 'Coleta');
     if (colGrid0 && !byId('lcCliSel')) {
       const w = document.createElement('div'); w.className = 'lc-cli-wrap';
-      w.innerHTML = '<label>Cliente cadastrado <select id="lcCliSel" data-no-titlecase="true">' + opcoesClientes() + '</select><small id="lcCliAviso" class="lc-cli-aviso"></small></label><button type="button" title="Cadastrar ou editar clientes">👥 Cadastro de clientes</button>';
+      w.innerHTML = '<label>Remetente (cadastro de clientes) <select id="lcCliSel" data-no-titlecase="true">' + opcoesClientes() + '</select><small id="lcCliAviso" class="lc-cli-aviso"></small></label><button type="button" title="Cadastrar ou editar clientes">👥 Cadastro de clientes</button>';
       colGrid0.insertBefore(w, colGrid0.firstChild);
       w.querySelector('button').onclick = abrirClientes;
       byId('lcCliSel').addEventListener('change', ev => { const c = clientePorId(ev.target.value); if (c) aplicarClienteNaColeta(c) });
@@ -416,7 +418,7 @@
       if (after && after.parentElement === entGrid) { after.after(sub); sub.after(list) } else { entGrid.append(sub, list) }
       sub.querySelector('.lc-add').onclick = () => { const r = addDestRow(); r?.querySelector('input')?.focus() };
       const we = document.createElement('div'); we.className = 'lc-cli-wrap';
-      we.innerHTML = '<label>Cliente cadastrado (destinatário) <select id="lcCliSelEnt" data-no-titlecase="true">' + opcoesClientes() + '</select></label><button type="button" title="Cadastrar ou editar clientes">👥 Cadastro de clientes</button>';
+      we.innerHTML = '<label>Destinatário (cadastro de clientes) <select id="lcCliSelEnt" data-no-titlecase="true">' + opcoesClientes() + '</select></label><button type="button" title="Cadastrar ou editar clientes">👥 Cadastro de clientes</button>';
       entGrid.insertBefore(we, entGrid.firstChild);
       we.querySelector('button').onclick = abrirClientes;
       byId('lcCliSelEnt').addEventListener('change', ev => { const c = clientePorId(ev.target.value); if (c) aplicarClienteNaEntrega(c) });
