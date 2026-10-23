@@ -3840,7 +3840,7 @@ function trackingDiagnose(row){
   if(h&&h.gps_on===false)return{level:'warn',group:'warn',title:'Aplicativo ligado, GPS do celular desligado',detail:'O celular está conectado, mas com a Localização (GPS) desligada.',action:'notify',kind:'gps'};
   if(h&&h.service_running===false)return{level:'warn',group:'warn',title:'Aplicativo em modo reduzido',detail:'O Android bloqueou o rastreio em segundo plano neste celular'+(h.perm_background===false?' (a localização não está em "Permitir o tempo todo")':'')+'. Basta o motorista abrir o aplicativo uma vez.',action:'notify',kind:h.perm_background===false?'perm':'abrir'};
   const roms=trackingRomaneiosFor(row.driver_name,row.vehicle_plate);
-  const hasRom=roms.length||(Array.isArray(row.romaneios)&&row.romaneios.length);
+  const hasRom=roms.length||(Array.isArray(row.romaneios)&&row.romaneios.length)||!!row.lotacao;
   if(!hasPos||(Number.isFinite(age)&&age>300)){
     if(!hasRom)return{level:'ok',group:'ok',title:'Aplicativo ligado • aguardando romaneio',detail:'Celular conectado. O GPS começa sozinho quando o romaneio do motorista aparecer.',action:''};
     const fresh=!hasPos&&row.started_at&&(Date.now()-new Date(row.started_at).getTime()<4*60000);
@@ -4365,7 +4365,9 @@ async function refreshTracking(){
       // Todo aparelho ativo vinculado a um motorista da operação do dia permanece
       // associado ao motorista, mesmo sem GPS/heartbeat recente. Assim a tela mostra
       // o celular aprovado e a sessão, em vez de substituir por um placeholder vazio.
-      return !!(r.test_only||inOperation);
+      // Motorista de lotação com viagem ativa (Rastreio de carga lotação) não tem romaneio no
+      // roteirizador, mas também é da operação do dia.
+      return !!(r.test_only||inOperation||r.lotacao);
     }).map(r=>({...r,operation_active:r.test_only?true:true}));
     const currentRows=trackingOnePhonePerDriver(currentRowsAll);
     // Mantém todos os motoristas da operação do dia no mapa. Quem ainda não tiver
