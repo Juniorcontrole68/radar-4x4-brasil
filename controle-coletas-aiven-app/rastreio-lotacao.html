@@ -108,6 +108,9 @@ function render(){
   tb.innerHTML=DADOS.viagens.map(v=>{
     const ativo=v.status==='ativo';
     const wa='https://wa.me/?text='+encodeURIComponent('Acompanhe sua carga ('+v.cliente+') até a entrega: '+v.link);
+    // Link de instalação do CONSTRULOG Motorista (o aplicativo do rastreio) para o motorista da viagem.
+    const nome=String(v.driver_name||'').trim().split(' ')[0]||'motorista';
+    const waMot='https://wa.me/?text='+encodeURIComponent('Olá, '+nome+'! Aqui é da CONSTRULOG.\n\nInstale o aplicativo *CONSTRULOG Motorista* por este link:\n'+location.origin+'/motorista-instalar\n\nDepois de instalar, abra o aplicativo e informe seu nome e a placa do veículo'+(v.vehicle_plate?' ('+v.vehicle_plate+')':'')+'. É só na primeira vez. Se o aplicativo já estiver instalado, basta abri-lo e deixar a localização ligada durante a viagem.\n\nObrigado!');
     return'<tr><td><b>'+esc(v.cliente)+'</b>'+(v.coleta_id?'<div class="muted">coleta #'+esc(v.coleta_id)+'</div>':'')+'</td>'+
       '<td>'+esc(v.driver_name)+'<div class="muted">'+esc(v.vehicle_plate||'')+'</div></td>'+
       '<td>'+esc(v.origem.cidade)+'/'+esc(v.origem.uf)+' → '+(v.destinos||[v.destino]).map((d,i,a)=>(a.length>1?(i+1)+'. ':'')+esc(d.cidade)+'/'+esc(d.uf)+(d.nome?' <span class="muted">('+esc(d.nome)+')</span>':'')).join('<br>')+'</td>'+
@@ -116,6 +119,7 @@ function render(){
         '<button class="btn" data-copiar="'+esc(v.link)+'">Copiar link</button>'+
         '<a class="btn wa" target="_blank" rel="noopener" href="'+esc(wa)+'">WhatsApp</a>'+
         '<a class="btn" target="_blank" rel="noopener" href="'+esc(v.link)+'">Abrir</a>'+
+        '<a class="btn wa" target="_blank" rel="noopener" href="'+esc(waMot)+'" title="Envia ao motorista o link para instalar o aplicativo de rastreio">Link motorista lotação</a>'+
         '<button class="btn primary" data-entregue="'+esc(v.id)+'">Entregue: encerrar</button>'+
         '<button class="btn danger" data-cancelar="'+esc(v.id)+'">Cancelar</button></div>':'<span class="muted">link encerrado</span>')+'</td></tr>'
   }).join('')
