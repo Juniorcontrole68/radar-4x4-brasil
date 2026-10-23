@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Torre Docs • Construlog</title>
+<link rel="manifest" href="/compartilhar/manifest.json">
+<link rel="icon" href="/compartilhar/icone-192.png">
+<link rel="apple-touch-icon" href="/compartilhar/icone-192.png">
+<meta name="theme-color" content="#39586d">
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f3f6f9;color:#1f3444}
+header{background:#fff;border-bottom:3px solid #f5651f;padding:12px 16px;display:flex;align-items:center;gap:12px}
+header img{height:38px;width:auto}
+header b{margin-left:auto;color:#39586d;font-size:15px}
+main{max-width:560px;margin:0 auto;padding:14px 14px 90px}
+.card{background:#fff;border-radius:14px;box-shadow:0 1px 3px rgba(20,40,60,.08);padding:14px;margin-bottom:12px}
+h2{font-size:15px;margin:0 0 10px;color:#39586d}
+.arq{display:flex;align-items:center;gap:12px}
+.arq .ic{width:44px;height:44px;border-radius:10px;background:#fff1e8;color:#f5651f;display:grid;place-items:center;font-weight:800;font-size:12px;flex:none}
+.arq .nm{font-weight:700;word-break:break-all}
+.muted{color:#6b7c8a;font-size:13px}
+.trocar{display:inline-block;margin-top:8px;color:#39586d;font-size:13px;text-decoration:underline;cursor:pointer}
+.tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.tab,.op{border:2px solid #d5dee6;background:#fff;border-radius:12px;padding:12px 8px;font-size:15px;font-weight:700;color:#39586d;cursor:pointer}
+.tab.on,.op.on{border-color:#f5651f;background:#fff4ec;color:#c44a0c}
+.ops{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.ops.dois{grid-template-columns:1fr 1fr}
+.op small{display:block;font-weight:500;font-size:11px;color:#8a5a00;margin-top:2px}
+input[type=search],input[type=text],input[type=number],input[type=date],input[type=password]{width:100%;font-size:16px;padding:11px 12px;border:1px solid #c9d3dc;border-radius:10px;background:#fff}
+label{display:block;font-size:13px;color:#4b6273;margin:8px 0 4px}
+.lista{max-height:46vh;overflow:auto;margin-top:8px;border-top:1px solid #eef2f5}
+.item{padding:10px 6px;border-bottom:1px solid #eef2f5;cursor:pointer;border-radius:8px}
+.item.on{background:#fff4ec;outline:2px solid #f5651f}
+.item b{display:block}
+.vazio{padding:14px 4px;color:#6b7c8a;font-size:14px}
+.btn{display:block;width:100%;border:0;border-radius:12px;padding:14px;font-size:16px;font-weight:800;background:#f5651f;color:#fff;cursor:pointer}
+.btn:disabled{background:#c9d3dc;color:#fff}
+.btn.sec{background:#e8eef3;color:#39586d}
+.rodape{position:fixed;left:0;right:0;bottom:0;background:#fff;padding:10px 14px calc(10px + env(safe-area-inset-bottom));box-shadow:0 -2px 8px rgba(20,40,60,.1)}
+.rodape .btn{max-width:532px;margin:0 auto}
+.msg{border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:14px}
+.msg.erro{background:#fde8e8;color:#9b1c1c}
+.msg.info{background:#e8f1f8;color:#1f4e70}
+.ok{text-align:center;padding:28px 14px}
+.ok .v{font-size:46px}
+.chk{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:14px}
+.chk input{width:20px;height:20px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header><img src="/construlog-logo.png" alt="Construlog"><b>Torre Docs</b></header>
+<main>
+  <div id="msg" class="msg" hidden></div>
+
+  <section id="login" class="card" hidden>
+    <h2>Entrar</h2>
+    <p class="muted">Use o mesmo usuário e senha do painel. Só precisa fazer uma vez neste celular.</p>
+    <label>Usuário<input id="lgUser" type="text" autocomplete="username" autocapitalize="none"></label>
+    <label>Senha<input id="lgPass" type="password" autocomplete="current-password"></label>
+    <p></p><button class="btn" id="lgBtn" type="button">Entrar</button>
+  </section>
+
+  <section id="app" hidden>
+    <div class="card">
+      <h2>Arquivo</h2>
+      <div class="arq" id="arqBox"><div class="ic" id="arqIc">PDF</div><div><div class="nm" id="arqNome">Nenhum arquivo</div><div class="muted" id="arqInfo">No WhatsApp, abra o PDF, toque em Compartilhar e escolha Torre Docs.</div></div></div>
+      <label class="trocar">Escolher um arquivo do celular<input id="arqInput" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" hidden></label>
+    </div>
+
+    <div class="tabs">
+      <button class="tab on" data-dest="coleta" type="button">🚚 Documento da coleta</button>
+      <button class="tab" data-dest="conta" type="button">💳 Conta pessoal</button>
+    </div>
+
+    <div id="destColeta" class="card">
+      <h2>1. Escolha a coleta</h2>
+      <input id="colBusca" type="search" placeholder="Buscar por motorista, placa, cliente ou OS">
+      <div class="lista" id="colLista"><div class="vazio">Carregando coletas…</div></div>
+      <div id="colTipoBox" hidden>
+        <h2 style="margin-top:14px">2. Este documento é do</h2>
+        <div class="ops" id="colTipos">
+          <button class="op" data-tipo="motorista" type="button">👤 Motorista</button>
+          <button class="op" data-tipo="cavalo" type="button">🚛 Cavalo</button>
+          <button class="op" data-tipo="carreta" type="button">🚚 Carreta</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="destConta" class="card" hidden>
+      <h2>1. Escolha a conta pessoal</h2>
+      <input id="ctBusca" type="search" placeholder="Buscar conta ou fornecedor">
+      <div class="lista" id="ctLista"><div class="vazio">Carregando contas…</div></div>
+      <div id="ctNovaBox" hidden>
+        <label>Descrição<input id="nvDesc" type="text" placeholder="Ex.: Conta de luz"></label>
+        <label>Valor (R$)<input id="nvValor" type="number" inputmode="decimal" step="0.01" min="0"></label>
+        <label>Vencimento<input id="nvVenc" type="date"></label>
+      </div>
+      <div id="ctTipoBox" hidden>
+        <h2 style="margin-top:14px">2. Este arquivo é o</h2>
+        <div class="ops dois" id="ctTipos">
+          <button class="op" data-kind="boleto" type="button">🧾 Boleto</button>
+          <button class="op" data-kind="comprovante" type="button">✅ Comprovante</button>
+        </div>
+        <label class="chk" id="ctPagaBox" hidden><input type="checkbox" id="ctPaga" checked> Dar baixa: marcar a conta como paga</label>
+      </div>
+    </div>
+  </section>
+
+  <section id="pronto" class="card ok" hidden>
+    <div class="v">✅</div>
+    <h2 id="prontoTxt">Documento salvo</h2>
+    <p class="muted" id="prontoSub"></p>
+    <button class="btn sec" id="outroBtn" type="button">Enviar outro arquivo</button>
+  </section>
+</main>
+<div class="rodape" id="rodape" hidden><button class="btn" id="enviarBtn" type="button" disabled>Salvar</button></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const semAc=s=>String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().trim();
+const money=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const fmt=d=>{const s=String(d||'').slice(0,10);return /^\d{4}-\d{2}-\d{2}$/.test(s)?s.split('-').reverse().join('/'):'-'};
+// Mesma regra do Contas a Pagar para separar as contas pessoais.
+const AREAS_PESSOAIS=['pessoal','casa','familia'];
+const CACHE='torre-docs-v1',ARQ='/compartilhar/arquivo-recebido',MAX=7*1024*1024;
+const st={arquivo:null,dest:'coleta',coleta:null,tipo:'',conta:null,kind:'',coletas:[],contas:[],docs:{}};
+
+function aviso(t,tipo='erro'){const m=$('#msg');m.textContent=t;m.className='msg '+tipo;m.hidden=!t;if(t)window.scrollTo({top:0,behavior:'smooth'})}
+async function api(url,opt={}){
+  const r=await fetch(url,{credentials:'same-origin',cache:'no-store',...opt});
+  const t=await r.text();let j=null;try{j=JSON.parse(t)}catch{}
+  if(!r.ok){const e=new Error((j&&(j.error||j.message))||t||'Erro '+r.status);e.status=r.status;throw e}
+  return j??t
+}
+function postJson(url,body){return api(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
+function dataUrl(blob){return new Promise((ok,er)=>{const r=new FileReader();r.onload=()=>ok(String(r.result||''));r.onerror=()=>er(new Error('Não foi possível ler o arquivo.'));r.readAsDataURL(blob)})}
+function tipoDoArquivo(a){const t=String(a?.type||'').toLowerCase(),n=String(a?.name||'').toLowerCase();
+  if(t==='application/pdf'||n.endsWith('.pdf'))return 'application/pdf';
+  if(/^image\/(jpeg|jpg|png|webp)$/.test(t))return t==='image/jpg'?'image/jpeg':t;return ''}
+
+function mostrarArquivo(){
+  const a=st.arquivo;
+  if(!a){$('#arqNome').textContent='Nenhum arquivo';$('#arqInfo').textContent='No WhatsApp, abra o PDF, toque em Compartilhar e escolha Torre Docs.';$('#arqIc').textContent='—';return}
+  const kb=a.size/1024;
+  $('#arqNome').textContent=a.name||'documento';
+  $('#arqInfo').textContent=(kb>1024?(kb/1024).toFixed(1)+' MB':Math.max(1,Math.round(kb))+' KB')+(a.size>MAX?' • grande demais (máx. 7 MB)':'');
+  $('#arqIc').textContent=tipoDoArquivo(a)==='application/pdf'?'PDF':'IMG';
+}
+async function lerRecebido(){
+  try{
+    if(!('caches' in window))return;
+    const c=await caches.open(CACHE),r=await c.match(ARQ);if(!r)return;
+    const b=await r.blob();const nome=decodeURIComponent(r.headers.get('X-Nome')||'documento');
+    st.arquivo=new File([b],nome,{type:r.headers.get('Content-Type')||b.type});
+  }catch{}
+}
+async function limparRecebido(){try{const c=await caches.open(CACHE);await c.delete(ARQ)}catch{}}
+
+function pronto(){
+  const okArq=!!st.arquivo&&st.arquivo.size<=MAX&&!!tipoDoArquivo(st.arquivo);
+  let ok=false,txt='Salvar';
+  if(st.dest==='coleta'){ok=okArq&&!!st.coleta&&!!st.tipo;if(st.tipo)txt='Salvar como documento do '+({motorista:'motorista',cavalo:'cavalo',carreta:'carreta'}[st.tipo])}
+  else{
+    const nova=st.conta==='nova',okNova=!nova||($('#nvDesc').value.trim()&&/^\d{4}-\d{2}-\d{2}$/.test($('#nvVenc').value)&&$('#nvValor').value!=='');
+    ok=okArq&&!!st.conta&&!!st.kind&&!!okNova;
+    if(st.kind)txt=(nova?'Criar conta e salvar ':'Salvar ')+(st.kind==='boleto'?'boleto':'comprovante')+(st.kind==='comprovante'&&$('#ctPaga').checked?' e dar baixa':'');
+  }
+  $('#enviarBtn').disabled=!ok;$('#enviarBtn').textContent=txt;
+}
+
+function trocarDestino(d){
+  st.dest=d;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',b.dataset.dest===d));
+  $('#destColeta').hidden=d!=='coleta';$('#destConta').hidden=d!=='conta';aviso('');
+  if(d==='conta'&&!st.contas.length)carregarContas();
+  pronto();
+}
+
+// ---- Coletas ----
+async function carregarColetas(){
+  try{
+    const rows=await api('/coletas/api/coletas');
+    st.coletas=(Array.isArray(rows)?rows:[]).sort((a,b)=>String(b.data_carregamento||'').localeCompare(String(a.data_carregamento||''))||Number(b.id)-Number(a.id));
+  }catch(e){st.coletas=[];$('#colLista').innerHTML='<div class="vazio">'+esc(e.status===403?'Seu usuário não tem acesso às coletas.':e.message)+'</div>';return}
+  listarColetas();
+}
+function listarColetas(){
+  const q=semAc($('#colBusca').value);
+  const rows=st.coletas.filter(c=>!q||semAc([c.os_numero,c.motorista,c.placa,c.placa_carreta,c.cliente,c.destinatario].join(' ')).includes(q)).slice(0,40);
+  $('#colLista').innerHTML=rows.map(c=>'<div class="item'+(String(st.coleta)===String(c.id)?' on':'')+'" data-id="'+esc(c.id)+'"><b>OS '+esc(c.os_numero||c.id)+' • '+esc(fmt(c.data_carregamento))+' • '+esc(c.cliente||'-')+'</b><span class="muted">'+esc(c.motorista||'Sem motorista')+' • '+esc([c.placa,c.placa_carreta].filter(Boolean).join(' / ')||'sem placa')+'</span></div>').join('')
+    ||'<div class="vazio">Nenhuma coleta encontrada.</div>';
+}
+async function escolherColeta(id){
+  st.coleta=id;st.tipo='';listarColetas();$('#colTipoBox').hidden=false;
+  document.querySelectorAll('#colTipos .op').forEach(b=>{b.classList.remove('on');b.querySelector('small')?.remove()});
+  pronto();
+  try{
+    const r=await api('/api/painel/coletas-documentos/'+encodeURIComponent(id));
+    const tem=new Set((r.rows||[]).map(x=>x.tipo));
+    if(String(st.coleta)!==String(id))return;
+    document.querySelectorAll('#colTipos .op').forEach(b=>{if(tem.has(b.dataset.tipo))b.insertAdjacentHTML('beforeend','<small>já tem: substitui</small>')});
+  }catch{}
+  $('#colTipoBox').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+// ---- Contas pessoais ----
+async function carregarContas(){
+  try{
+    const rows=await api('/api/bills');
+    st.contas=(Array.isArray(rows)?rows:[]).filter(x=>x.status!=='paid'&&AREAS_PESSOAIS.includes(semAc(x.area)))
+      .sort((a,b)=>String(a.due_date||'').localeCompare(String(b.due_date||'')));
+  }catch(e){st.contas=[];$('#ctLista').innerHTML='<div class="vazio">'+esc(e.status===403?'Seu usuário não tem acesso ao Contas a Pagar.':e.message)+'</div>';return}
+  listarContas();
+}
+function listarContas(){
+  const q=semAc($('#ctBusca').value);
+  const rows=st.contas.filter(x=>!q||semAc([x.description,x.supplier,x.category].join(' ')).includes(q)).slice(0,60);
+  $('#ctLista').innerHTML='<div class="item'+(st.conta==='nova'?' on':'')+'" data-id="nova"><b>➕ Nova conta pessoal</b><span class="muted">Lançar uma conta nova com este arquivo</span></div>'
+    +(rows.map(x=>'<div class="item'+(st.conta===x.id?' on':'')+'" data-id="'+esc(x.id)+'"><b>'+esc(x.description)+' • '+esc(money(x.amount))+'</b><span class="muted">Vence '+esc(fmt(x.due_date))+(x.supplier?' • '+esc(x.supplier):'')+(x.has_boleto?' • já tem boleto':'')+'</span></div>').join('')
+    ||'<div class="vazio">Nenhuma conta pessoal em aberto.</div>');
+}
+function escolherConta(id){
+  st.conta=id;listarContas();$('#ctNovaBox').hidden=id!=='nova';$('#ctTipoBox').hidden=false;
+  if(id==='nova'&&!st.kind){st.kind='boleto';marcarKind()}
+  pronto();$('#ctTipoBox').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+function marcarKind(){document.querySelectorAll('#ctTipos .op').forEach(b=>b.classList.toggle('on',b.dataset.kind===st.kind));$('#ctPagaBox').hidden=st.kind!=='comprovante'}
+
+// ---- Enviar ----
+async function enviar(){
+  const a=st.arquivo,mime=tipoDoArquivo(a);
+  if(!a||!mime)return aviso('Envie um PDF, JPG, PNG ou WEBP.');
+  if(a.size>MAX)return aviso('O arquivo deve ter no máximo 7 MB.');
+  const btn=$('#enviarBtn');btn.disabled=true;btn.textContent='Salvando…';aviso('');
+  try{
+    const durl=(await dataUrl(a)).replace(/^data:[^;]*;/,'data:'+mime+';');
+    let titulo,sub;
+    if(st.dest==='coleta'){
+      await postJson('/api/painel/coletas-documentos/'+encodeURIComponent(st.coleta),{tipo:st.tipo,arquivo:durl,nome_arquivo:a.name||('documento-'+st.tipo)});
+      const c=st.coletas.find(x=>String(x.id)===String(st.coleta))||{};
+      titulo='Documento do '+st.tipo+' salvo';sub='OS '+(c.os_numero||c.id)+' • '+(c.motorista||'')+' • '+(c.placa||'');
+    }else{
+      let id=st.conta,desc;
+      if(id==='nova'){
+        desc=$('#nvDesc').value.trim();
+        const r=await postJson('/api/bills',{description:desc,amount:Number($('#nvValor').value),dueDate:$('#nvVenc').value,area:'Pessoal',category:'Outros'});
+        id=r.ids&&r.ids[0];if(!id)throw new Error('Não foi possível criar a conta.');
+      }else desc=(st.contas.find(x=>x.id===id)||{}).description||'';
+      await postJson('/api/bills/'+id+'/document/'+st.kind,{fileName:a.name||st.kind,mimeType:mime,dataUrl:durl});
+      const baixa=st.kind==='comprovante'&&$('#ctPaga').checked;
+      if(baixa)await api('/api/bills/'+id+'/pay',{method:'POST'});
+      titulo=(st.kind==='boleto'?'Boleto salvo':'Comprovante salvo')+(baixa?' e conta paga':'');sub=desc;
+    }
+    await limparRecebido();
+    $('#app').hidden=true;$('#rodape').hidden=true;$('#pronto').hidden=false;$('#prontoTxt').textContent=titulo;$('#prontoSub').textContent=sub||'';
+  }catch(e){aviso(e.message||'Não foi possível salvar.');pronto()}
+}
+
+function reiniciar(){
+  Object.assign(st,{arquivo:null,coleta:null,tipo:'',conta:null,kind:'',contas:[]});
+  $('#pronto').hidden=true;$('#app').hidden=false;$('#rodape').hidden=false;$('#colTipoBox').hidden=true;$('#ctTipoBox').hidden=true;$('#ctNovaBox').hidden=true;
+  marcarKind();listarColetas();mostrarArquivo();if(st.dest==='conta')carregarContas();pronto();
+  history.replaceState(null,'','/compartilhar/');
+}
+
+async function iniciarApp(){
+  $('#login').hidden=true;$('#app').hidden=false;$('#rodape').hidden=false;
+  mostrarArquivo();pronto();carregarColetas();
+}
+
+async function entrar(){
+  const btn=$('#lgBtn');btn.disabled=true;aviso('');
+  try{await postJson('/api/auth/login',{username:$('#lgUser').value.trim(),password:$('#lgPass').value});await iniciarApp()}
+  catch(e){aviso(e.status===401?'Usuário ou senha incorretos.':e.message)}
+  finally{btn.disabled=false}
+}
+
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>trocarDestino(b.dataset.dest));
+$('#colBusca').oninput=listarColetas;$('#ctBusca').oninput=listarContas;
+$('#colLista').onclick=e=>{const i=e.target.closest('.item');if(i)escolherColeta(i.dataset.id)};
+$('#ctLista').onclick=e=>{const i=e.target.closest('.item');if(i)escolherConta(i.dataset.id)};
+$('#colTipos').onclick=e=>{const b=e.target.closest('.op');if(!b)return;st.tipo=b.dataset.tipo;document.querySelectorAll('#colTipos .op').forEach(x=>x.classList.toggle('on',x===b));pronto()};
+$('#ctTipos').onclick=e=>{const b=e.target.closest('.op');if(!b)return;st.kind=b.dataset.kind;marcarKind();pronto()};
+['#nvDesc','#nvValor','#nvVenc','#ctPaga'].forEach(s=>$(s).addEventListener('input',pronto));$('#ctPaga').addEventListener('change',pronto);
+$('#arqInput').onchange=()=>{const f=$('#arqInput').files[0];if(f){st.arquivo=f;mostrarArquivo();pronto()}};
+$('#enviarBtn').onclick=enviar;$('#outroBtn').onclick=reiniciar;$('#lgBtn').onclick=entrar;
+$('#lgPass').addEventListener('keydown',e=>{if(e.key==='Enter')entrar()});
+
+(async()=>{
+  if('serviceWorker' in navigator)navigator.serviceWorker.register('/compartilhar/sw.js',{scope:'/compartilhar/'}).catch(()=>{});
+  const q=new URLSearchParams(location.search);
+  await lerRecebido();
+  if(q.has('sem_sw'))aviso('O app acabou de ser instalado. Volte ao WhatsApp e compartilhe o arquivo de novo.','info');
+  else if(q.has('sem_arquivo'))aviso('Nenhum arquivo chegou. Compartilhe um PDF ou foto.','info');
+  try{await api('/api/auth/me');await iniciarApp()}
+  catch{$('#login').hidden=false;mostrarArquivo()}
+})();
+</script>
+</body>
+</html>
