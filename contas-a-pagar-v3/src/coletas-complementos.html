@@ -63,6 +63,42 @@
 .lc-extra-dest b{color:#0f172a}
 .lc-rem .lc-num{background:#f28c00}
 .lc-rem .lc-quando{display:grid;grid-template-columns:1fr 1fr;gap:6px 7px}
+
+/* Cadastro de clientes */
+.lc-cli-wrap{grid-column:1/-1;display:flex;gap:8px;align-items:flex-end;padding:7px 9px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:9px}
+.lc-cli-wrap label{flex:1;display:flex;flex-direction:column;gap:3px;font-size:12px;font-weight:700;color:#1e3a8a}
+.lc-cli-wrap select{min-height:32px;padding:4px 8px;border-radius:7px;border:1px solid #93c5fd;font-size:13.5px;background:#fff}
+.lc-cli-wrap button,.lc-cli-btn{border:1px solid #93c5fd;background:#fff;color:#1d4ed8;border-radius:7px;padding:6px 10px;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap}
+.lc-r-cli{grid-column:1/-1}
+.lc-r-cli select{padding:4px 8px;font-size:13px;min-height:30px;border-radius:7px;border:1px solid #93c5fd;background:#eff6ff}
+#lcCliDlg{border:0;border-radius:12px;padding:0;width:min(980px,97vw);max-height:92vh;box-shadow:0 28px 80px #0006;overflow:hidden}
+#lcCliDlg::backdrop{background:#0b171cb0}
+#lcCliDlg .lc-bar{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:10px 14px;background:#0f172a;color:#fff}
+#lcCliDlg .lc-bar strong{font-size:15px}
+#lcCliDlg .lc-bar button{border:0;border-radius:7px;padding:7px 12px;font-weight:700;font-size:12.5px;cursor:pointer;background:#e2e8f0;color:#0f172a}
+.lc-cli-body{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:14px;padding:14px;max-height:calc(92vh - 52px);overflow:auto}
+@media(max-width:760px){.lc-cli-body{grid-template-columns:1fr}}
+.lc-cli-lista{display:flex;flex-direction:column;gap:6px;min-width:0}
+.lc-cli-lista input[type=search]{padding:7px 9px;border:1px solid #cbd5e1;border-radius:8px;font-size:13.5px}
+.lc-cli-itens{display:flex;flex-direction:column;gap:5px;max-height:60vh;overflow:auto}
+.lc-cli-item{border:1px solid #e2e8f0;border-radius:9px;padding:7px 9px;cursor:pointer;background:#fff}
+.lc-cli-item:hover,.lc-cli-item.sel{border-color:#0057a8;background:#f0f7ff}
+.lc-cli-item b{display:block;font-size:13.5px;color:#0f172a}
+.lc-cli-item small{display:block;color:#64748b;font-size:12px}
+.lc-cli-vazio{color:#64748b;font-size:13px;padding:8px}
+.lc-cli-form{display:grid;grid-template-columns:1fr 1fr 70px;gap:8px 10px;align-content:start;border:1px solid #e2e8f0;border-radius:10px;padding:12px;background:#f8fafc}
+.lc-cli-form h3{grid-column:1/-1;margin:0;font-size:14px;color:#0f172a}
+.lc-cli-form label{display:flex;flex-direction:column;gap:3px;font-size:12px;font-weight:600;color:#475569;min-width:0}
+.lc-cli-form label.w3{grid-column:1/-1}.lc-cli-form label.w2{grid-column:span 2}
+.lc-cli-form input,.lc-cli-form textarea{padding:6px 8px;border:1px solid #cbd5e1;border-radius:7px;font-size:13.5px;font-family:inherit;color:#0f172a;background:#fff}
+.lc-cli-form textarea{min-height:64px;resize:vertical}
+.lc-cli-acoes{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.lc-cli-acoes button{border:1px solid #cbd5e1;background:#fff;color:#0f172a;border-radius:8px;padding:7px 12px;font-weight:700;font-size:13px;cursor:pointer}
+.lc-cli-acoes .pri{background:#0057a8;border-color:#0057a8;color:#fff}
+.lc-cli-acoes .del{color:#b91c1c;border-color:#fecaca;margin-right:auto}
+.lc-cli-msg{grid-column:1/-1;font-size:12.5px;min-height:16px;color:#0f766e}
+.lc-cli-msg.err{color:#b91c1c}
+@media(max-width:520px){.lc-cli-form{grid-template-columns:1fr 70px}.lc-cli-form label.w2{grid-column:1/-1}}
 </style>
 <script id="lotacao-complementos-script">
 (() => {
@@ -143,6 +179,7 @@
     const list = byId('lcRemList'); if (!list) return;
     const row = document.createElement('div'); row.className = 'lc-dest lc-rem';
     row.innerHTML = '<span class="lc-num"></span><div class="lc-campos">' +
+      '<label class="lc-r-cli">Cliente cadastrado<select class="lc-r-cli-sel">' + opcoesClientes() + '</select></label>' +
       '<label>Remetente<input class="lc-r-nome" placeholder="Nome do remetente"></label>' +
       '<label>Endereço da coleta<input class="lc-r-end" placeholder="Rua, número, bairro" data-no-titlecase="true"></label>' +
       '<label>Cidade<input class="lc-r-cid" placeholder="Cidade"></label>' +
@@ -160,6 +197,14 @@
     row.querySelector('.lc-r-loc').value = e.localizacao || '';
     row.querySelector('.lc-r-obs').value = e.observacao || '';
     row.querySelector('.lc-r-uf').addEventListener('input', ev => { ev.target.value = ev.target.value.toUpperCase() });
+    row.querySelector('.lc-r-cli-sel').addEventListener('change', ev => {
+      const c = clientePorId(ev.target.value); if (!c) return;
+      row.querySelector('.lc-r-nome').value = c.nome || '';
+      row.querySelector('.lc-r-end').value = [c.endereco, c.bairro, c.cep ? 'CEP ' + c.cep : ''].filter(Boolean).join(' - ');
+      row.querySelector('.lc-r-cid').value = c.cidade || '';
+      row.querySelector('.lc-r-uf').value = c.uf || '';
+      row.querySelector('.lc-r-obs').value = obsDoCliente(c);
+    });
     row.querySelector('.lc-del').onclick = () => { row.remove(); renumerar() };
     list.appendChild(row); renumerar();
     return row;
@@ -181,6 +226,7 @@
   function lerEntrega1() {
     const o = {}; ENTREGA1.forEach(([id, k]) => { o[k] = String(byId(id)?.value || '').trim() }); o.uf = o.uf.toUpperCase(); return o;
   }
+  function lerColeta1() { return { referencia: String(byId('lc_col_ref')?.value || '').trim(), observacao: String(byId('lc_col_obs')?.value || '').trim() } }
   function preencherEntrega1(e) { e = obj(e); ENTREGA1.forEach(([id, k]) => { const el = byId(id); if (el) el.value = e[k] || '' }) }
 
   /* ---------- Dados bancários e Pix ---------- */
@@ -198,7 +244,126 @@
     });
   }
 
+  /* ---------- Cadastro de clientes (nome, endereço completo, referência, observações) ---------- */
+  let CLIENTES = [];
+  const clientePorId = id => CLIENTES.find(c => String(c.id) === String(id));
+  const obsDoCliente = c => [c.referencia ? 'Ref.: ' + c.referencia : '', c.observacoes || ''].filter(Boolean).join(' • ').replace(/\s+/g, ' ').slice(0, 200);
+  function opcoesClientes() {
+    return '<option value="">' + (CLIENTES.length ? 'Escolha um cliente cadastrado…' : 'Nenhum cliente cadastrado') + '</option>' +
+      CLIENTES.map(c => '<option value="' + esc(c.id) + '">' + esc(c.nome) + (c.cidade ? ' • ' + esc(c.cidade) + (c.uf ? '/' + esc(c.uf) : '') : '') + '</option>').join('');
+  }
+  function atualizarSeletores() {
+    document.querySelectorAll('#lcCliSel, .lc-r-cli-sel').forEach(sel => { const v = sel.value; sel.innerHTML = opcoesClientes(); sel.value = clientePorId(v) ? v : '' });
+  }
+  async function carregarClientes() {
+    try {
+      const r = await baseFetch('/api/painel/lotacao-clientes', { cache: 'no-store' });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && Array.isArray(j.rows)) { CLIENTES = j.rows; atualizarSeletores(); renderLista() }
+    } catch (e) { console.warn('Clientes cadastrados:', e) }
+  }
+  function aplicarClienteNaColeta(c) {
+    const set = (id, v) => { const el = byId(id); if (!el) return; el.value = v || ''; try { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })) } catch { } };
+    set('cliente', c.nome);
+    set('endereco_coleta', c.endereco_completo);
+    set('lc_col_ref', c.referencia);
+    set('lc_col_obs', c.observacoes);
+  }
+  const CLI_CAMPOS = [['nome', 'Nome do cliente *', 'w3', 'Razão social ou nome'], ['endereco', 'Endereço (rua, número, complemento)', 'w3', 'Rua, número, complemento'],
+    ['bairro', 'Bairro', '', 'Bairro'], ['cidade', 'Cidade', 'w2', 'Cidade'], ['uf', 'UF', '', 'SP'], ['cep', 'CEP', '', '00000-000'],
+    ['referencia', 'Ponto de referência', 'w3', 'Ex.: portão azul ao lado do posto'], ['observacoes', 'Observações', 'w3', 'Horário de carregamento, contato, exigências…']];
+  function cliDlg() {
+    let dlg = byId('lcCliDlg'); if (dlg) return dlg;
+    dlg = document.createElement('dialog'); dlg.id = 'lcCliDlg';
+    dlg.innerHTML = '<div class="lc-bar"><strong>Clientes cadastrados</strong><button type="button" data-a="close">Fechar</button></div>' +
+      '<div class="lc-cli-body"><div class="lc-cli-lista"><div style="display:flex;gap:6px"><input type="search" id="lcCliBusca" placeholder="Buscar cliente, cidade…" style="flex:1"><button type="button" class="lc-cli-btn" data-a="novo">+ Novo cliente</button></div>' +
+      '<div class="lc-cli-itens" id="lcCliItens"></div><button type="button" class="lc-cli-btn" data-a="importar" title="Traz os remetentes já usados nas coletas que ainda não estão no cadastro">Importar remetentes já usados nas coletas</button></div>' +
+      '<form class="lc-cli-form" id="lcCliForm" autocomplete="off"><h3 id="lcCliTit">Novo cliente</h3><input type="hidden" id="lcCli_id">' +
+      CLI_CAMPOS.map(([k, l, cls, ph]) => '<label class="' + cls + '">' + esc(l) + (k === 'observacoes'
+        ? '<textarea id="lcCli_' + k + '" placeholder="' + esc(ph) + '" data-no-titlecase="true"></textarea>'
+        : '<input id="lcCli_' + k + '" placeholder="' + esc(ph) + '"' + (k === 'uf' ? ' maxlength="2"' : k === 'cep' ? ' maxlength="9" inputmode="numeric"' : '') + (k === 'nome' || k === 'cidade' || k === 'bairro' ? '' : ' data-no-titlecase="true"') + '>') + '</label>').join('') +
+      '<div class="lc-cli-msg" id="lcCliMsg"></div><div class="lc-cli-acoes"><button type="button" class="del" data-a="excluir" hidden>Excluir</button><button type="button" data-a="usar" hidden>Usar nesta coleta</button><button type="submit" class="pri">Salvar cliente</button></div></form></div>';
+    document.body.appendChild(dlg);
+    byId('lcCli_uf').addEventListener('input', ev => { ev.target.value = ev.target.value.toUpperCase().replace(/[^A-Z]/g, '') });
+    byId('lcCliBusca').addEventListener('input', renderLista);
+    dlg.addEventListener('click', async ev => {
+      const it = ev.target?.closest?.('.lc-cli-item'); if (it) { editarCliente(clientePorId(it.dataset.id)); return }
+      const a = ev.target?.closest?.('button')?.dataset?.a; if (!a) return;
+      if (a === 'close') dlg.close();
+      else if (a === 'novo') editarCliente(null);
+      else if (a === 'usar') { const c = clientePorId(byId('lcCli_id').value); if (c) { aplicarClienteNaColeta(c); const s = byId('lcCliSel'); if (s) s.value = c.id; dlg.close() } }
+      else if (a === 'excluir') {
+        const c = clientePorId(byId('lcCli_id').value); if (!c || !confirm('Excluir o cliente "' + c.nome + '" do cadastro? As coletas já feitas não mudam.')) return;
+        const r = await baseFetch('/api/painel/lotacao-clientes/' + encodeURIComponent(c.id), { method: 'DELETE' });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) return msgCli(j.error || 'Não foi possível excluir.', true);
+        await carregarClientes(); editarCliente(null); msgCli('Cliente excluído.');
+      } else if (a === 'importar') {
+        const r = await baseFetch('/api/painel/lotacao-clientes/importar', { method: 'POST' });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) return msgCli(j.error || 'Não foi possível importar.', true);
+        await carregarClientes(); msgCli(j.importados ? j.importados + ' cliente(s) importado(s). Complete o endereço de cada um.' : 'Nenhum remetente novo para importar.');
+      }
+    });
+    byId('lcCliForm').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      const id = byId('lcCli_id').value, body = {};
+      CLI_CAMPOS.forEach(([k]) => { body[k] = byId('lcCli_' + k).value });
+      if (!String(body.nome).trim()) return msgCli('Informe o nome do cliente.', true);
+      const r = await baseFetch('/api/painel/lotacao-clientes' + (id ? '/' + encodeURIComponent(id) : ''), { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) return msgCli(j.error || 'Não foi possível salvar.', true);
+      await carregarClientes(); editarCliente(j.row); msgCli('Cliente salvo.');
+    });
+    return dlg;
+  }
+  function msgCli(t, erro) { const m = byId('lcCliMsg'); if (m) { m.textContent = t || ''; m.className = 'lc-cli-msg' + (erro ? ' err' : '') } }
+  function editarCliente(c) {
+    cliDlg();
+    byId('lcCli_id').value = c ? c.id : '';
+    CLI_CAMPOS.forEach(([k]) => { byId('lcCli_' + k).value = c ? (c[k] || '') : '' });
+    byId('lcCliTit').textContent = c ? 'Editar cliente' : 'Novo cliente';
+    byId('lcCliForm').querySelector('[data-a="excluir"]').hidden = !c;
+    byId('lcCliForm').querySelector('[data-a="usar"]').hidden = !(c && byId('modal')?.open);
+    msgCli('');
+    document.querySelectorAll('.lc-cli-item').forEach(x => x.classList.toggle('sel', !!c && x.dataset.id === String(c.id)));
+    byId('lcCli_nome').focus();
+  }
+  function renderLista() {
+    const box = byId('lcCliItens'); if (!box) return;
+    const q = norm(byId('lcCliBusca')?.value);
+    const sel = byId('lcCli_id')?.value;
+    const itens = CLIENTES.filter(c => !q || norm([c.nome, c.endereco_completo, c.referencia].join(' ')).includes(q));
+    box.innerHTML = itens.length ? itens.map(c => '<div class="lc-cli-item' + (String(c.id) === sel ? ' sel' : '') + '" data-id="' + esc(c.id) + '"><b>' + esc(c.nome) + '</b><small>' + esc(c.endereco_completo || 'Sem endereço') + '</small>' + (c.referencia ? '<small>Ref.: ' + esc(c.referencia) + '</small>' : '') + '</div>').join('')
+      : '<div class="lc-cli-vazio">' + (CLIENTES.length ? 'Nenhum cliente encontrado.' : 'Nenhum cliente cadastrado ainda.') + '</div>';
+  }
+  function abrirClientes() { const d = cliDlg(); renderLista(); if (!byId('lcCli_id').value) editarCliente(null); if (!d.open) d.showModal(); carregarClientes() }
+  window.abrirCadastroClientes = abrirClientes;
+
   function ensureUI() {
+    const top = document.querySelector('.header-actions');
+    if (top && !byId('lcCliTopo')) {
+      const b = document.createElement('button'); b.type = 'button'; b.id = 'lcCliTopo'; b.className = 'btn'; b.textContent = '👥 Clientes';
+      b.title = 'Cadastro de clientes (nome, endereço, referência e observações)'; b.onclick = abrirClientes;
+      top.insertBefore(b, byId('novoBtn') || null);
+    }
+    const colGrid0 = gridOf('endereco_coleta', 'Coleta');
+    if (colGrid0 && !byId('lcCliSel')) {
+      const w = document.createElement('div'); w.className = 'lc-cli-wrap';
+      w.innerHTML = '<label>Cliente cadastrado <select id="lcCliSel" data-no-titlecase="true">' + opcoesClientes() + '</select></label><button type="button" title="Cadastrar ou editar clientes">👥 Cadastro de clientes</button>';
+      colGrid0.insertBefore(w, colGrid0.firstChild);
+      w.querySelector('button').onclick = abrirClientes;
+      byId('lcCliSel').addEventListener('change', ev => { const c = clientePorId(ev.target.value); if (c) aplicarClienteNaColeta(c) });
+      // Referência e observações da coleta 1, logo depois do endereço da coleta.
+      let ref = byId('endereco_coleta')?.closest('label');
+      [['lc_col_ref', 'Ponto de referência', 'Ex.: portão azul ao lado do posto'], ['lc_col_obs', 'Observações da coleta', 'Horário, contato, exigências do cliente']].forEach(([id, label, ph]) => {
+        const lbl = document.createElement('label'); lbl.className = 'col-2';
+        const sp = document.createElement('span'); sp.textContent = label;
+        const el = document.createElement('input'); el.type = 'text'; el.id = id; el.placeholder = ph; el.dataset.noTitlecase = 'true';
+        lbl.append(sp, el);
+        if (ref && ref.parentElement === colGrid0) { ref.after(lbl); ref = lbl } else colGrid0.appendChild(lbl);
+      });
+    }
     const entGrid = gridOf('endereco_entrega', 'Entrega');
     if (entGrid && !byId('lcDestBox')) {
       const sub = document.createElement('div'); sub.className = 'lc-sub'; sub.id = 'lcDestBox';
@@ -271,6 +436,11 @@
     lista(r?.entregas_extras).forEach(e => addDestRow(e));
     lista(r?.remetentes_extras).forEach(e => addRemRow(e));
     preencherEntrega1(r?.entrega_principal);
+    const cp = obj(r?.coleta_principal);
+    if (byId('lc_col_ref')) byId('lc_col_ref').value = cp.referencia || '';
+    if (byId('lc_col_obs')) byId('lc_col_obs').value = cp.observacao || '';
+    if (byId('lcCliSel')) byId('lcCliSel').value = '';
+    carregarClientes();
     preencherBanco(r?.motorista_banco || {}, false);
   }
 
@@ -339,7 +509,7 @@
         if (data?.id) {
           const r = await baseFetch('/api/painel/coletas-complementos/' + encodeURIComponent(data.id), {
             method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ entregas_extras: lerDestinos(), motorista_banco: lerBanco(), entrega_principal: lerEntrega1(), ...(byId('lcRemList') ? { remetentes_extras: lerRemetentes() } : {}) })
+            body: JSON.stringify({ entregas_extras: lerDestinos(), motorista_banco: lerBanco(), entrega_principal: lerEntrega1(), ...(byId('lcRemList') ? { remetentes_extras: lerRemetentes() } : {}), ...(byId('lc_col_ref') ? { coleta_principal: lerColeta1() } : {}) })
           });
           if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'HTTP ' + r.status) }
         }
@@ -358,6 +528,7 @@
     base.entregas_extras = lerDestinos();
     if (byId('lcRemList')) base.remetentes_extras = lerRemetentes();
     base.entrega_principal = lerEntrega1();
+    if (byId('lc_col_ref')) base.coleta_principal = lerColeta1();
     base.motorista_banco = lerBanco();
     return base;
   }
@@ -375,7 +546,8 @@
     const ep = obj(c.entrega_principal);
     const entregas = [{ destinatario: c.destinatario, endereco_entrega: c.endereco_entrega, cidade: ep.cidade, uf: ep.uf, observacao: '' }, ...lista(c.entregas_extras)]
       .filter(e => String(e.destinatario || '').trim() || String(e.endereco_entrega || '').trim());
-    const coletasLista = [{ remetente: c.cliente, endereco_coleta: c.endereco_coleta, data_coleta: c.data_carregamento, hora_coleta: c.hora_carregamento, observacao: '' }, ...lista(c.remetentes_extras)]
+    const cp = obj(c.coleta_principal);
+    const coletasLista = [{ remetente: c.cliente, endereco_coleta: c.endereco_coleta, data_coleta: c.data_carregamento, hora_coleta: c.hora_carregamento, observacao: [cp.referencia ? 'Ref.: ' + cp.referencia : '', cp.observacao || ''].filter(Boolean).join(' • ') }, ...lista(c.remetentes_extras)]
       .filter(e => String(e.remetente || '').trim() || String(e.endereco_coleta || '').trim());
     const frete = n(c.frete_pago), pct = n(c.percentual_adiantamento), adiant = frete * pct / 100;
     const temCarreta = String(c.placa_carreta || '').trim() || String(c.capacidade_carga_carreta || '').trim() || String(c.eixos_carreta ?? '').trim();
@@ -422,7 +594,7 @@
           const nota = [quando ? 'Coleta: ' + quando : '', e.observacao || ''].filter(Boolean).join(' • ');
           return '<div class="ent"><span class="nn" style="background:#f28c00">' + (i + 1) + '</span><div><b>' + esc(e.remetente || '—') + '</b><div>' + esc(e.endereco_coleta || '—') + (e.cidade ? ' • ' + esc(e.cidade) + (e.uf ? '/' + esc(e.uf) : '') : '') + '</div>' + (nota ? '<small>' + esc(nota) + '</small>' : '') + '</div></div>';
         }).join('') + '</div>'
-        : '<div class="sec"><h2>Coleta</h2><div class="g">' + campo('Remetente', c.cliente, 'w2') + campo('Data / hora', (dt(c.data_carregamento) || '') + (hr(c.hora_carregamento) ? ' ' + hr(c.hora_carregamento) : '')) + campo('Endereço da coleta', c.endereco_coleta, 'w3') + '</div></div>') +
+        : '<div class="sec"><h2>Coleta</h2><div class="g">' + campo('Remetente', c.cliente, 'w2') + campo('Data / hora', (dt(c.data_carregamento) || '') + (hr(c.hora_carregamento) ? ' ' + hr(c.hora_carregamento) : '')) + campo('Endereço da coleta', c.endereco_coleta, 'w3') + (cp.referencia ? campo('Ponto de referência', cp.referencia, 'w3') : '') + (cp.observacao ? campo('Observações da coleta', cp.observacao, 'w3') : '') + '</div></div>') +
       '<div class="sec"><h2>Entrega' + (entregas.length > 1 ? 's (' + entregas.length + ' destinatários)' : '') + '</h2>' +
       (entregas.length ? entregas.map((e, i) => '<div class="ent"><span class="nn">' + (i + 1) + '</span><div><b>' + esc(e.destinatario || '—') + '</b><div>' + esc(e.endereco_entrega || '—') + (e.cidade ? ' • ' + esc(e.cidade) + (e.uf ? '/' + esc(e.uf) : '') : '') + '</div>' + (e.observacao ? '<small>' + esc(e.observacao) + '</small>' : '') + '</div></div>').join('') : '<div class="obs">—</div>') +
       '</div>' +
@@ -504,6 +676,7 @@
 
   document.addEventListener('DOMContentLoaded', () => {
     [120, 450, 1000].forEach(ms => setTimeout(ensureUI, ms));
+    carregarClientes();
     const modal = byId('modal');
     if (modal) new MutationObserver(() => { if (modal.open) setTimeout(carregarNoFormulario, 60) }).observe(modal, { attributes: true, attributeFilter: ['open'] });
     const tbody = byId('tbodyOperacional');
