@@ -160,6 +160,7 @@ jobs:
           DATABASE_URL: postgresql://teste:teste@127.0.0.1:5432/movit_demo_teste
           MOVIT_DEMO: '1'
           MOVIT_CHAVE_SSW: chave-de-teste-com-mais-de-32-caracteres
+          MOVIT_CONVITE_TOKEN: token-de-teste-do-convite-com-32-caracteres-ou-mais
         run: |
           pkill -f "node server.js" || true
           pkill -f "dashboard/server.js" || true

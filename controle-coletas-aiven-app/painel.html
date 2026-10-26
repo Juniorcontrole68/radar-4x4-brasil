@@ -23,6 +23,7 @@
 .tab{appearance:none;border:1px solid #d7dee7;background:#fff;color:#334155;padding:9px 13px;border-radius:9px;font-weight:650;cursor:pointer;box-shadow:0 1px 3px #0f172a0a;transition:.16s ease;font-size:12px}
 .tab:hover{transform:translateY(-1px);border-color:#93c5fd;box-shadow:0 5px 13px #0f172a18}
 .tab.active{background:#0f5fb8;color:#fff;border-color:#0f5fb8;box-shadow:0 5px 14px #0f5fb833}
+.tab.locked{opacity:.62}.tab.locked::after{content:" 🔒";font-size:11px}
 .tabs .tab.module-card{border:1px solid #ffffff28;background:#ffffff10;color:#fff;box-shadow:none;padding:10px 18px}
 .tabs .tab.module-card:hover{background:#ffffff1c;border-color:#ffffff55}
 
@@ -221,10 +222,22 @@ function moduleAllowed(mod){
   if(mod==='pdf-unificador')return !!AUTH;
   return false
 }
+// Teste da demonstração: todos os módulos aparecem; os que a MOVIT não liberou abrem com o aviso de bloqueado.
+function moduleVisible(mod){
+  if(AUTH&&AUTH.demo)return mod!=='movit-central'&&mod!=='pdf-unificador';
+  return moduleAllowed(mod)
+}
+function moduloBloqueado(btn){
+  frame.removeAttribute('src');
+  frame.srcdoc='<div style="font-family:Segoe UI,Arial;padding:40px;color:#334155;max-width:560px"><div style="font-size:40px">🔒</div><h2 style="margin:8px 0;color:#0f172a">'+String(btn.dataset.name||'Módulo').replace(/[<>&]/g,'')+' não está liberado neste teste</h2><p style="line-height:1.5">Este módulo faz parte da Torre de Controle MOVIT, mas ainda não foi liberado para a sua empresa. Fale com a MOVIT para liberar o acesso.</p></div>';
+  moduleName.textContent=btn.dataset.name;
+  moduleLoading.classList.remove('show');
+  duplicateBtn.style.display='none';deleteBtn.style.display='none';
+}
 function applyModulePermissions(){
-  document.querySelectorAll('.tab').forEach(btn=>btn.style.display=moduleAllowed(btn.dataset.module)?'':'none');
+  document.querySelectorAll('.tab').forEach(btn=>{btn.style.display=moduleVisible(btn.dataset.module)?'':'none';btn.classList.toggle('locked',!!(AUTH&&AUTH.demo)&&!moduleAllowed(btn.dataset.module))});
   // card de cima (Operação, Financeiro, R.H.) aparece quando algum card de baixo dele está liberado
-  document.querySelectorAll('.group-card').forEach(g=>g.style.setProperty('display',[...document.querySelectorAll('.subtabs[data-group-panel="'+g.dataset.group+'"] .tab')].some(b=>moduleAllowed(b.dataset.module))?'flex':'none'));
+  document.querySelectorAll('.group-card').forEach(g=>g.style.setProperty('display',[...document.querySelectorAll('.subtabs[data-group-panel="'+g.dataset.group+'"] .tab')].some(b=>moduleVisible(b.dataset.module))?'flex':'none'));
   const company=AUTH?.client?.name?(' • '+AUTH.client.name):'';
   if(typeof window.guiaAplicar==='function')window.guiaAplicar();
   // Empresa cliente da MOVIT (demonstração ou contratada): logo e nome dela no lugar da CONSTRULOG.
@@ -278,9 +291,16 @@ async function dashboardAdminToken(){
   return j.token
 }
 async function abrirModulo(btn){
-  if(!btn||!moduleAllowed(btn.dataset.module))return;
+  if(!btn)return;
+  if(!moduleAllowed(btn.dataset.module)){
+    if(!moduleVisible(btn.dataset.module))return;
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    btn.classList.add('active');
+    return moduloBloqueado(btn);
+  }
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   btn.classList.add('active');
+  frame.removeAttribute('srcdoc');
   const mod=btn.dataset.module||'coletas';
   frame.dataset.module=mod;
   moduleLoading.classList.add('show');
@@ -321,7 +341,8 @@ document.querySelectorAll('.group-card').forEach(btn=>{
   btn.addEventListener('click',e=>{
     e.preventDefault();
     selectModuleGroup(btn.dataset.group);
-    const first=[...document.querySelectorAll('.subtabs[data-group-panel="'+btn.dataset.group+'"] .tab')].find(x=>moduleAllowed(x.dataset.module));
+    const doGrupo=[...document.querySelectorAll('.subtabs[data-group-panel="'+btn.dataset.group+'"] .tab')];
+    const first=doGrupo.find(x=>moduleAllowed(x.dataset.module))||doGrupo.find(x=>moduleVisible(x.dataset.module));
     if(first)abrirModulo(first);
   });
 });

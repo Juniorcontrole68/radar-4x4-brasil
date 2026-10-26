@@ -70,6 +70,21 @@ input,select,textarea{width:100%;padding:10px 11px;border:1px solid #cbd5e1;bord
     </div>
   </div>
 
+  <div class="card" id="conviteCard" style="margin-top:14px;display:none">
+    <h2>📲 Enviar teste por WhatsApp</h2>
+    <div class="meta" style="margin:-6px 0 12px">O cliente recebe um link pessoal. Com o login do SSW ele vê os dados da transportadora dele; sem o SSW, entra numa empresa de exemplo com números fictícios. Todos os módulos aparecem para ele, mas só abrem os que você marcar aqui.</div>
+    <div class="form">
+      <label>Nome do contato<input id="cNome" maxlength="120"></label>
+      <label>Transportadora<input id="cEmpresa" maxlength="120"></label>
+      <label>WhatsApp (com DDD)<input id="cZap" inputmode="tel" placeholder="19 99999-0000"></label>
+      <label>E-mail (opcional)<input id="cEmail" type="email"></label>
+    </div>
+    <div class="actions" style="justify-content:space-between;margin:14px 0 8px"><b style="font-size:13px">Módulos liberados no teste</b><span class="actions"><button class="btn secondary" type="button" id="cTodos">Marcar todos</button><button class="btn secondary" type="button" id="cNenhum">Desmarcar todos</button></span></div>
+    <div id="cMods" class="modules"></div>
+    <div class="actions" style="margin-top:14px"><button class="btn primary" type="button" id="cGo">Criar link do teste</button></div>
+    <div id="cMsg" class="msg"></div>
+  </div>
+
   <div class="card" style="margin-top:14px">
     <div class="actions" style="justify-content:space-between;margin-bottom:12px"><h2 style="margin:0">Preços</h2><button id="savePrices" class="btn primary" type="button">Salvar preços</button></div>
     <div class="prices"><label>Implantação (entrada) R$<input id="pInst" inputmode="decimal"></label><label>Dias de teste grátis<input id="pDias" type="number" min="1" max="60"></label></div>
@@ -232,5 +247,26 @@ $('savePrices').onclick=async()=>{
   }catch(e){$('pMsg').style.color='#b91c1c';$('pMsg').textContent=e.message}
 };
 load().catch(e=>{$('clients').innerHTML='<div class="empty">'+e.message+'</div>'});
+// Envio do link de teste (só no serviço de demonstração, onde /api/demo/info responde).
+fetch('/api/demo/info',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(j=>{
+  if(!j||!j.demo)return;
+  $('conviteCard').style.display='';
+  $('cMods').innerHTML=(j.modulos||[]).map(m=>'<label class="mod"><input type="checkbox" class="cmod" value="'+esc(m.key)+'" checked><span><b>'+esc(m.name)+'</b><small>'+esc(m.category||'')+'</small></span></label>').join('');
+}).catch(()=>{});
+$('cTodos').onclick=()=>document.querySelectorAll('.cmod').forEach(i=>i.checked=true);
+$('cNenhum').onclick=()=>document.querySelectorAll('.cmod').forEach(i=>i.checked=false);
+$('cGo').onclick=async()=>{
+  const body={nome:$('cNome').value.trim(),empresa:$('cEmpresa').value.trim(),whatsapp:$('cZap').value.trim(),email:$('cEmail').value.trim(),modulos:[...document.querySelectorAll('.cmod:checked')].map(x=>x.value)};
+  $('cMsg').style.color='#475569';$('cMsg').textContent='Criando o teste…';
+  try{
+    const r=await fetch('/api/demo/convites',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao criar o teste.');
+    $('cMsg').style.color='#15803d';
+    $('cMsg').innerHTML='✓ Teste criado para '+esc(body.empresa)+'.<div class="cred">'+esc(j.link)+'</div><div class="actions" style="margin-top:8px"><a class="btn primary" style="text-decoration:none" target="_blank" rel="noopener" href="'+esc(j.whatsapp_url)+'">Enviar no WhatsApp</a><button class="btn secondary" type="button" id="cCopy">Copiar mensagem</button></div>';
+    $('cCopy').onclick=()=>navigator.clipboard&&navigator.clipboard.writeText(j.mensagem);
+    ['cNome','cEmpresa','cZap','cEmail'].forEach(k=>$(k).value='');
+    await load();
+  }catch(e){$('cMsg').style.color='#b91c1c';$('cMsg').textContent=e.message}
+};
 </script>
 </body></html>
