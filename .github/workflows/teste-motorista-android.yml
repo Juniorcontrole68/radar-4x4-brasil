@@ -14,7 +14,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # write só para publicar o AAB e as capturas na branch play-store-motorista (abaixo).
+  contents: write
 
 jobs:
   emulador:
@@ -109,6 +110,20 @@ jobs:
           path: play-store/
           if-no-files-found: ignore
           retention-days: 30
+      # Cópia na branch play-store-motorista (substituída a cada execução), para baixar o AAB e as
+      # capturas pelo git. Não mexe na produção.
+      - name: Publicar AAB e capturas na branch play-store-motorista
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -d play-store ] || exit 0
+          cd play-store
+          echo "Gerado de ${GITHUB_SHA} (branch ${GITHUB_REF_NAME}) em $(date -u +%FT%TZ)" > ORIGEM.txt
+          git init -q -b play-store-motorista
+          git -c user.name="CONSTRULOG Build" -c user.email="actions@users.noreply.github.com" add -A
+          git -c user.name="CONSTRULOG Build" -c user.email="actions@users.noreply.github.com" commit -qm "AAB e capturas da Play Store (${GITHUB_SHA::7}) [skip ci]"
+          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:play-store-motorista
       - name: Log do servidor
         if: always()
         run: |
