@@ -6,8 +6,8 @@
     "notes": "Correção do GPS em segundo plano, reinício automático e rastreamento por romaneio."
   },
   "teste": {
-    "versionCode": 12,
-    "versionName": "1.1.1-teste",
+    "versionCode": 13,
+    "versionName": "1.2.0-teste",
     "url": "/downloads/CONSTRULOG-Motorista-TESTE.apk",
     "notes": "Religa sozinho, diagnóstico para a central, fila de posições sem internet, tela de um passo só e botão da rota do dia.",
     "assinaturaFixa": false
