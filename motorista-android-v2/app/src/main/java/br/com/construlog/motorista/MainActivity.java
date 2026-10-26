@@ -2,6 +2,7 @@ package br.com.construlog.motorista;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -16,6 +17,7 @@ import android.provider.Settings;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
+import android.view.WindowInsetsController;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -55,6 +57,7 @@ public class MainActivity extends Activity {
         super.onCreate(b);
         Notifier.channels(this);
         buildUi();
+        lightBars();
         driver.setText(Prefs.driver(this));
         plate.setText(Prefs.plate(this));
         testHooks(getIntent());
@@ -175,6 +178,21 @@ public class MainActivity extends Activity {
         setContentView(scroll);
     }
 
+    /** Barras do sistema claras, com ícones escuros (a tela ocupa até a borda no Android 15+). */
+    private void lightBars(){
+        try{
+            int bg=Color.rgb(245,247,250);
+            if(Build.VERSION.SDK_INT<35){getWindow().setStatusBarColor(bg);getWindow().setNavigationBarColor(bg);}
+            if(Build.VERSION.SDK_INT>=30){
+                WindowInsetsController c=getWindow().getInsetsController();
+                int light=WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                if(c!=null)c.setSystemBarsAppearance(light,light);
+            }else{
+                getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+            }
+        }catch(Exception ignored){}
+    }
+
     private List<Step> missing(){
         List<Step> out=new ArrayList<>();
         if(!Health.permLocation(this))
@@ -184,7 +202,9 @@ public class MainActivity extends Activity {
         if(!Health.permNotifications(this))
             out.add(new Step("notif","Permita as notificações. É o aviso fixo que mantém o rastreio ligado.","PERMITIR NOTIFICAÇÕES",this::askNotifications));
         if(!Health.batteryUnrestricted(this))
-            out.add(new Step("bat","Libere o aplicativo para funcionar com a tela apagada (toque em \"Permitir\").","LIBERAR COM A TELA APAGADA",this::askBattery));
+            out.add(new Step("bat",BuildConfig.PLAY_STORE
+                ?"Libere o aplicativo para funcionar com a tela apagada: na lista que vai abrir, escolha \"Todos os apps\", toque em CONSTRULOG Motorista e marque \"Não otimizar\" (ou \"Sem restrições\")."
+                :"Libere o aplicativo para funcionar com a tela apagada (toque em \"Permitir\").","LIBERAR COM A TELA APAGADA",this::askBattery));
         if(!Health.gpsOn(this))
             out.add(new Step("gps","A Localização (GPS) do celular está desligada.","LIGAR A LOCALIZAÇÃO",this::askGps));
         return out;
@@ -241,7 +261,7 @@ public class MainActivity extends Activity {
         }
 
         route.setVisibility(hasToken&&!lost?View.VISIBLE:View.GONE);
-        boolean newer=Prefs.latestCode(this)>BuildConfig.VERSION_CODE;
+        boolean newer=!BuildConfig.PLAY_STORE&&Prefs.latestCode(this)>BuildConfig.VERSION_CODE;
         update.setVisibility(newer?View.VISIBLE:View.GONE);
         String who=Prefs.driver(this),pl=Prefs.plate(this);
         foot.setText((who.isEmpty()?"":who+(pl.isEmpty()?"":" • "+pl)+"\n")+"Versão "+BuildConfig.VERSION_NAME);
@@ -259,11 +279,32 @@ public class MainActivity extends Activity {
         if(!Health.batteryUnrestricted(this))askBattery();
     }
 
+    /**
+     * Aviso antes de pedir a localização: diz o que é coletado, para quê e que continua com o
+     * aplicativo fechado. A Google Play exige este aviso antes da pergunta do Android.
+     */
+    private void withDisclosure(Runnable next){
+        if(Prefs.disclosureAccepted(this)){next.run();return;}
+        new AlertDialog.Builder(this)
+            .setTitle("Uso da sua localização")
+            .setMessage("O CONSTRULOG Motorista coleta a localização do celular para mostrar à central da transportadora "
+                +"onde está o veículo durante as entregas do romaneio, inclusive quando o aplicativo está fechado ou "
+                +"não está em uso.\n\n"
+                +"A localização só é enviada nos dias em que há romaneio associado à sua placa. Também são enviados "
+                +"seu nome, a placa, o modelo do celular e o nível da bateria, para a central saber se o rastreio "
+                +"está funcionando.\n\n"
+                +"Os dados não são vendidos nem usados para propaganda. Política de privacidade: "
+                +Api.BASE+"/motorista/privacidade")
+            .setCancelable(false)
+            .setPositiveButton("CONCORDO",(d,w)->{Prefs.setDisclosureAccepted(this);next.run();})
+            .setNegativeButton("AGORA NÃO",(d,w)->{guiding=false;refresh();})
+            .show();
+    }
     private void askLocation(){
-        requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION,Manifest.permission.ACCESS_COARSE_LOCATION},RQ_LOCATION);
+        withDisclosure(()->requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION,Manifest.permission.ACCESS_COARSE_LOCATION},RQ_LOCATION));
     }
     private void askBackground(){
-        if(Build.VERSION.SDK_INT>=29)requestPermissions(new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION},RQ_BACKGROUND);
+        if(Build.VERSION.SDK_INT>=29)withDisclosure(()->requestPermissions(new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION},RQ_BACKGROUND));
     }
     private void askNotifications(){
         if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){
@@ -275,6 +316,11 @@ public class MainActivity extends Activity {
         }catch(Exception e){openAppSettings();}
     }
     private void askBattery(){
+        if(BuildConfig.PLAY_STORE){
+            try{startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));}
+            catch(Exception e){openAppSettings();}
+            return;
+        }
         try{
             startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,Uri.parse("package:"+getPackageName())));
         }catch(Exception e){
@@ -336,7 +382,8 @@ public class MainActivity extends Activity {
                     startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(fa)));
                 }catch(Exception notInstalled){
                     Toast.makeText(this,"Instale o aplicativo MOVIT para ver a rota. Depois toque de novo neste botão.",Toast.LENGTH_LONG).show();
-                    if(!fd.isEmpty())openUrl(fd);
+                    // Na versão da Play Store, só leva a outra loja da Play (nunca a um APK de fora).
+                    if(!fd.isEmpty()&&(!BuildConfig.PLAY_STORE||fd.startsWith("https://play.google.com/")))openUrl(fd);
                 }
             });
         });

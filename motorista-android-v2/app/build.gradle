@@ -9,19 +9,25 @@ def testHooks = (project.findProperty('testHooks') ?: 'false').toString() == 'tr
 // Assinatura fixa: o arquivo da chave é preparado pelo GitHub Actions quando o segredo
 // MOTORISTA_CHAVE existe. Sem ele, o APK sai com a assinatura de depuração da máquina.
 def ksPath = System.getenv('MOTORISTA_KEYSTORE_PATH')
+// Versão da Play Store (tipo de build "play"): chave de upload própria, preparada fora do
+// repositório. Sem ela o AAB sai sem assinatura, para ser assinado depois com jarsigner.
+// -PassinarDebug=true assina com a chave de depuração, só para instalar no emulador.
+def playKsPath = System.getenv('MOTORISTA_PLAY_KEYSTORE_PATH')
+def playDebugSign = (project.findProperty('assinarDebug') ?: 'false').toString() == 'true'
 
 android {
     namespace 'br.com.construlog.motorista'
-    compileSdk 35
+    compileSdk 36
 
     defaultConfig {
         applicationId 'br.com.construlog.motorista'
         minSdk 26
-        targetSdk 35
-        versionCode 12
-        versionName '1.1.1'
+        targetSdk 36
+        versionCode 13
+        versionName '1.2.0'
         buildConfigField 'String', 'API_BASE', '"' + apiBase + '"'
         buildConfigField 'boolean', 'TEST_HOOKS', testHooks.toString()
+        buildConfigField 'boolean', 'PLAY_STORE', 'false'
         manifestPlaceholders = [cleartext: testHooks.toString()]
     }
 
@@ -39,6 +45,15 @@ android {
                 keyPassword System.getenv('MOTORISTA_KEYSTORE_PASSWORD')
             }
         }
+        loja {
+            if (playKsPath) {
+                storeFile file(playKsPath)
+                storeType 'pkcs12'
+                storePassword System.getenv('MOTORISTA_PLAY_KEYSTORE_PASSWORD')
+                keyAlias 'construlog-motorista-upload'
+                keyPassword System.getenv('MOTORISTA_PLAY_KEYSTORE_PASSWORD')
+            }
+        }
     }
 
     buildTypes {
@@ -50,6 +65,14 @@ android {
             applicationIdSuffix ''
             versionNameSuffix ''
             if (ksPath) signingConfig signingConfigs.fixa
+        }
+        // Versão da Play Store: sem auto-atualização pelo site, sem alarme exato, sem pedido
+        // direto de liberar a bateria e sem o serviço "uso especial" (ver src/play/AndroidManifest.xml).
+        play {
+            initWith release
+            matchingFallbacks = ['release']
+            buildConfigField 'boolean', 'PLAY_STORE', 'true'
+            signingConfig playKsPath ? signingConfigs.loja : (playDebugSign ? signingConfigs.debug : null)
         }
     }
 

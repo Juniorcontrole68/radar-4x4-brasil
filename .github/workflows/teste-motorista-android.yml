@@ -9,6 +9,7 @@ on:
       - 'motorista-android-v2/**'
       - 'roteirizador-v02-android/**'
       - 'controle-coletas-aiven-app/tests/app-emulador.js'
+      - 'controle-coletas-aiven-app/tests/app-capturas.js'
       - '.github/workflows/teste-motorista-android.yml'
   workflow_dispatch:
 
@@ -55,6 +56,15 @@ jobs:
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0"
+      - name: Pacote da Play Store (AAB, servidor de produção)
+        run: |
+          # Sai sem assinatura: a chave de upload da Play não fica no GitHub. Assinar com jarsigner
+          # antes de enviar ao Play Console (ver motorista-android-v2/PLAY-STORE.md).
+          gradle -p motorista-android-v2 :app:bundlePlay --no-daemon
+          mkdir -p play-store
+          cp motorista-android-v2/app/build/outputs/bundle/play/app-play.aab play-store/CONSTRULOG-Motorista-play-sem-assinatura.aab
+      - name: Compilar a versão da Play Store para as capturas de tela
+        run: gradle -p motorista-android-v2 :app:assemblePlay --no-daemon -PapiBase=http://10.0.2.2:10000 -PtestHooks=true -PassinarDebug=true
       - name: Compilar o aplicativo apontando para o servidor de teste
         run: |
           gradle -p motorista-android-v2 :app:assembleDebug --no-daemon -PapiBase=http://10.0.2.2:10000 -PtestHooks=true 2> erros-compilacao.txt || {
@@ -88,7 +98,17 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
-          script: node controle-coletas-aiven-app/tests/app-emulador.js
+          script: |
+            APK=motorista-android-v2/app/build/outputs/apk/play/app-play.apk SAIDA=play-store/capturas node controle-coletas-aiven-app/tests/app-capturas.js || echo "capturas incompletas"
+            node controle-coletas-aiven-app/tests/app-emulador.js
+      - name: Guardar AAB e capturas da Play Store
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: construlog-motorista-play-store
+          path: play-store/
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Log do servidor
         if: always()
         run: |

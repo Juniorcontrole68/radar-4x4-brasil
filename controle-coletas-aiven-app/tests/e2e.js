@@ -25,6 +25,7 @@ async function call(method,path,{body,cookie,bearer,headers}={}){
   }
   let r=await call('GET','/api/painel/carregamentos-finais',{headers:{'X-Internal-Key':'chave-errada'}}); check('chave interna errada -> 401',r.status===401,'veio '+r.status);
   r=await call('GET','/'); check('página inicial abre e mostra a faixa de teste',r.status===200&&r.text.includes('AMBIENTE DE TESTE'));
+  r=await call('GET','/motorista/privacidade'); check('política de privacidade do app do motorista abre sem login (link da Google Play)',r.status===200&&r.text.includes('CONSTRULOG Motorista')&&r.text.includes('segundo plano')&&r.text.includes('id="exclusao"'),'veio '+r.status);
   r=await call('GET','/demo'); check('sem MOVIT_DEMO a entrada da demonstração não existe',!r.text.includes('Entrar com o login do SSW'),'veio '+r.status);
   r=await call('POST','/api/demo/entrar',{body:{empresa:'X',dominio:'ABC',cpf:'12345678901',usuario:'u',senha:'s'}}); check('sem MOVIT_DEMO /api/demo/entrar não cria nada',r.status===401||r.status===404,'veio '+r.status+' '+r.text.slice(0,80));
 

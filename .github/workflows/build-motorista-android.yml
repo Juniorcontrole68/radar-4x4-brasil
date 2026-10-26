@@ -33,7 +33,12 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: '8.13'
+
+      - name: Garantir Android SDK 36
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0"
 
       # Assinatura fixa: permite atualizar o aplicativo por cima, sem desinstalar e sem refazer
       # o cadastro. A chave fica no repositório CRIPTOGRAFADA com a frase do segredo
