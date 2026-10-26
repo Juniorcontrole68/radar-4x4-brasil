@@ -315,6 +315,12 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   check('...vendo só os módulos marcados',JSON.stringify(r.json?.user?.client_modules)==='["lotacao","roteirizador","frota"]',JSON.stringify(r.json?.user?.client_modules));
   const rowEx=(await db.query('SELECT s.exemplo,s.dominio,c.trial_ends_at FROM movit_client_ssw s JOIN movit_clients c ON c.id=s.client_id WHERE s.client_id=$1',[cliEx])).rows[0];
   check('...marcada como exemplo e com o teste grátis contando a partir de agora',rowEx?.exemplo===true&&rowEx.dominio==='EX-'+cliEx&&!!rowEx.trial_ends_at,JSON.stringify(rowEx));
+  r=await call('GET','/coletas/api/coletas',{cookie:cookieEx});
+  check('empresa de exemplo já abre a Lotação com coletas fictícias',r.status===200&&Array.isArray(r.json)&&r.json.length===8&&r.json.some(c=>c.status==='Em trânsito'),r.status+' '+r.text.slice(0,200));
+  r=await call('GET','/api/painel/frota-state',{cookie:cookieEx});
+  check('...a Frota com veículos, abastecimentos e motoristas',r.status===200&&(r.json?.data?.vehicles||[]).length===7&&(r.json.data.fuel||[]).length===21&&(r.json.data.people||[]).length===7,r.status+' '+r.text.slice(0,200));
+  check('...e as contas a pagar e as despesas do DRE no esquema dela',(await db.query('SELECT count(*)::int n FROM t'+cliEx+'.bills')).rows[0].n===8&&(await db.query('SELECT count(*)::int n FROM t'+cliEx+'.dre_lancamentos')).rows[0].n===27);
+  r=await call('GET','/coletas/api/coletas',{cookie:cookieA});check('os números de exemplo não aparecem para a empresa A',r.status===200&&!(r.json||[]).some(c=>/ATACADO NOVA ERA/.test(c.destinatario||'')),r.text.slice(0,200));
   r=await call('GET','/api/programacao-entregas/disponiveis',{cookie:cookieEx});
   const ctrcsEx=(r.json?.rows||[]).map(x=>x.ctrc);
   check('telas do SSW da empresa de exemplo mostram números fictícios do SSW de exemplo',r.status===200&&ctrcsEx.length>0&&ctrcsEx.every(c=>/^(MTZ|FIL)0[56]\d{4}-\d$/.test(c)),r.status+' '+r.text.slice(0,240));
@@ -329,6 +335,8 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   r=await call('POST','/api/demo/convite/'+tokEx+'/entrar',{body:{ssw:{dominio:'EXC',cpf:'111.222.333-44',usuario:'Ana',senha:'segredo-exc',unidades:'MTZ'}},ip:IPL});const cookieExS=r.cookie;
   const rowExS=(await db.query('SELECT exemplo,dominio,usuario,senha_cifrada FROM movit_client_ssw WHERE client_id=$1',[cliEx])).rows[0];
   check('com o login do SSW, a mesma empresa passa a ler o SSW real dela',r.status===200&&r.json?.modo==='ssw'&&rowExS?.exemplo===false&&rowExS.dominio==='EXC'&&rowExS.usuario==='ana'&&!rowExS.senha_cifrada.includes('segredo'),r.status+' '+JSON.stringify(rowExS||{}).slice(0,200));
+  r=await call('GET','/coletas/api/coletas',{cookie:cookieExS});
+  check('...e começa sem os números de exemplo, para lançar os dados dela',r.status===200&&Array.isArray(r.json)&&r.json.length===0,r.status+' '+r.text.slice(0,200));
   const sE2=await stats();
   r=await call('GET','/api/ssw/conexao',{cookie:cookieExS});const sE3=await stats();
   check('...entrando no SSW com o login dela',r.json?.conectado===true&&sE3.logins===sE2.logins+1&&sE3.ultimoLogin?.dominio==='EXC',r.text.slice(0,160)+' '+JSON.stringify(sE3.ultimoLogin));

@@ -84,6 +84,13 @@ function garantir(clientId) {
   return p;
 }
 
+// Apaga os dados da empresa (o esquema volta vazio no próximo uso).
+async function limpar(clientId) {
+  const esquema = nomeEsquema(clientId);
+  prontos.delete(String(clientId));
+  await original.query('DROP SCHEMA IF EXISTS ' + esquema + ' CASCADE');
+}
+
 // Roda fn com as consultas no esquema da empresa.
 async function rodar(clientId, fn) {
   const esquema = await garantir(clientId);
@@ -91,4 +98,4 @@ async function rodar(clientId, fn) {
 }
 function atual() { const st = als.getStore(); return st ? st.clientId : null; }
 
-module.exports = { TABELAS, instalar, garantir, rodar, atual, nomeEsquema };
+module.exports = { TABELAS, instalar, garantir, limpar, rodar, atual, nomeEsquema };

@@ -37,6 +37,7 @@ const entregas = require('./entregas');
 const movitDemo = require('./movit-demo');
 const sswExemplo = require('./ssw-exemplo');
 const esquemasDemo = require('./esquemas-demo');
+const exemploDados = require('./exemplo-dados');
 const agendamento = require('./agendamento');
 const movitGuia = require('./movit-guia');
 const veic = require('./veic');
@@ -1216,6 +1217,8 @@ async function demoRotas(req,res,u){
             bi2_sigla=EXCLUDED.bi2_sigla,bi2_pasta=EXCLUDED.bi2_pasta,bi2_senha_cifrada=EXCLUDED.bi2_senha_cifrada,exemplo=FALSE,validado_em=NOW(),updated_at=NOW()`,
           [clientId,d.dominio,d.cpf,d.usuario,movitDemo.cifrar(d.senha),d.unidades.join(','),cv.nome,bi2?.sigla||null,bi2?.pasta||null,bi2?movitDemo.cifrar(bi2.senha):null]);
         movitDemo.encerrar(clientId);
+        // Saindo do exemplo: os números fictícios saem e a empresa começa vazia, para lançar os dela.
+        if(modo==='exemplo')await esquemasDemo.limpar(clientId);
         modo='ssw';
       }else if(!modo){
         // Sem o SSW: empresa de exemplo, que lê o SSW de exemplo (números fictícios).
@@ -1223,6 +1226,7 @@ async function demoRotas(req,res,u){
           VALUES($1,$2,'00000000000','exemplo',$3,$4,$5,'exemplo','cliente',$3,TRUE) ON CONFLICT(client_id) DO NOTHING`,
           [clientId,'EX-'+clientId,movitDemo.cifrar('exemplo'),sswExemplo.UNIDADES.join(','),cv.nome]);
         modo='exemplo';
+        await esquemasDemo.rodar(clientId,()=>exemploDados.preencher(pool,clientId));
       }
       await pool.query("UPDATE movit_demo_convites SET modo=$2,primeiro_acesso=COALESCE(primeiro_acesso,NOW()),ultimo_acesso=NOW(),entradas=entradas+1 WHERE client_id=$1",[clientId,modo]);
       // O prazo do teste grátis começa no primeiro acesso.
