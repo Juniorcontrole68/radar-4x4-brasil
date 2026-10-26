@@ -20,6 +20,7 @@ const crypto = require('crypto');
 const http = require('http');
 const path = require('path');
 const { spawn } = require('child_process');
+const sswExemplo = require('./ssw-exemplo.js');
 
 const ATIVA = /^(1|true|sim|yes)$/i.test(String(process.env.MOVIT_DEMO || '').trim());
 const SSW_BASE = 'https://sistema.ssw.inf.br';
@@ -193,6 +194,25 @@ async function initDb(pool) {
   await pool.query('ALTER TABLE movit_client_ssw ADD COLUMN IF NOT EXISTS bi2_sigla TEXT, ADD COLUMN IF NOT EXISTS bi2_pasta TEXT, ADD COLUMN IF NOT EXISTS bi2_senha_cifrada TEXT');
   // Uso da demo, para a MOVIT Central: quantas vezes a empresa entrou e quando usou por último.
   await pool.query('ALTER TABLE movit_client_ssw ADD COLUMN IF NOT EXISTS entradas INTEGER NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS ultimo_acesso TIMESTAMPTZ');
+  // Empresa de exemplo (entrou pelo link de teste sem o login do SSW): o processo de leitura dela
+  // lê o SSW de exemplo (ssw-exemplo.js), com números fictícios, em vez do SSW real.
+  await pool.query('ALTER TABLE movit_client_ssw ADD COLUMN IF NOT EXISTS exemplo BOOLEAN NOT NULL DEFAULT FALSE');
+  // Links de teste enviados pela MOVIT (MOVIT Central ou o painel da Torre MOVIT): um por cliente,
+  // com os módulos escolhidos no envio. O token só existe no link; aqui fica o hash.
+  await pool.query(`CREATE TABLE IF NOT EXISTS movit_demo_convites (
+    token_hash TEXT PRIMARY KEY,
+    client_id BIGINT NOT NULL UNIQUE REFERENCES movit_clients(id) ON DELETE CASCADE,
+    nome TEXT NOT NULL,
+    whatsapp TEXT,
+    email TEXT,
+    origem TEXT NOT NULL DEFAULT 'central',
+    modo TEXT,
+    criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expira_em TIMESTAMPTZ NOT NULL,
+    primeiro_acesso TIMESTAMPTZ,
+    ultimo_acesso TIMESTAMPTZ,
+    entradas INTEGER NOT NULL DEFAULT 0
+  )`);
   // Parceiros de cada empresa: login do SSW que a empresa criou para o parceiro (ou o do domínio
   // do próprio parceiro) e as unidades onde saem os romaneios dele.
   await pool.query(`CREATE TABLE IF NOT EXISTS movit_parceiros (
@@ -264,8 +284,8 @@ async function processoDaEmpresa(pool, clientId, portalUrl) {
   const id = String(clientId);
   const p = PROCESSOS.get(id);
   if (p) { p.usado = Date.now(); await p.pronto; return p; }
-  const q = await pool.query('SELECT dominio,cpf,usuario,senha_cifrada,unidades,bi2_sigla,bi2_pasta,bi2_senha_cifrada FROM movit_client_ssw WHERE client_id=$1', [id]);
-  if (!q.rowCount) { const e = new Error('Esta empresa ainda não conectou o SSW.'); e.status = 403; throw e; }
+  const q = await pool.query('SELECT dominio,cpf,usuario,senha_cifrada,unidades,bi2_sigla,bi2_pasta,bi2_senha_cifrada,exemplo FROM movit_client_ssw WHERE client_id=$1', [id]);
+  if (!q.rowCount) { const e = new Error('Esta empresa ainda não conectou o SSW. Abra de novo o link do teste para conectar.'); e.status = 403; throw e; }
   return iniciarProcesso(id, id, q.rows[0], portalUrl);
 }
 // Processo de leitura de um parceiro da empresa: o mesmo leitor, com o login do SSW do parceiro.
@@ -299,6 +319,11 @@ async function iniciarProcesso(id, clientId, c, portalUrl) {
   });
   // Acesso ao BI2 da empresa, quando informado (sem BI2_HOST: só a WebAPI, nada de SFTP).
   if (c.bi2_sigla && c.bi2_senha_cifrada) Object.assign(env, { BI2_COMPANY: c.bi2_sigla, BI2_USERNAME: c.bi2_sigla, BI2_PASSWORD: decifrar(c.bi2_senha_cifrada), BI2_FOLDER: c.bi2_pasta || 'cliente' });
+  // Empresa de exemplo: todas as chamadas ao SSW e ao BI2 deste processo vão para o SSW de exemplo.
+  if (c.exemplo) {
+    env.SSW_EXEMPLO_URL = await sswExemplo.iniciar();
+    env.NODE_OPTIONS = ((env.NODE_OPTIONS || '') + ' --require ' + JSON.stringify(path.join(__dirname, 'ssw-exemplo-desvio.js'))).trim();
+  }
   const proc = spawn(process.execPath, [path.join(DASHBOARD_DIR, 'server.js')], { cwd: DASHBOARD_DIR, env, stdio: ['ignore', 'inherit', 'inherit'] });
   const p = { proc, porta, chaveInterna, usado: Date.now(), pronto: null };
   p.pronto = aguardarSaude(porta).catch(e => { encerrar(id); throw e; });
@@ -342,8 +367,9 @@ function consultar(porta, alvo, headers) {
 
 // ------------------------------------------------------------------ regras de acesso do cliente da demo
 // Cliente da demo = usuário de uma empresa que entrou pelo SSW (não CONSTRULOG, não administrador MOVIT).
+// Inclui a empresa que recebeu o link de teste (client.convite), com ou sem o SSW conectado.
 function clienteDemo(user) {
-  return !!(ATIVA && user && !user.internal && !user.is_platform_admin && user.client && user.client.ssw && String(user.client.slug || '').toLowerCase() !== 'construlog');
+  return !!(ATIVA && user && !user.internal && !user.is_platform_admin && user.client && (user.client.ssw || user.client.convite) && String(user.client.slug || '').toLowerCase() !== 'construlog');
 }
 function modulosLiberados(user) {
   const contratados = new Set((user && user.client_modules) || []);
@@ -366,7 +392,40 @@ function rotaLiberada(user, pathname, onde) {
   return modulosLiberados(user).some(m => (MODULOS[m][onde] || []).some(re => re.test(pathname)));
 }
 
+// ------------------------------------------------------------------ links de teste (convites)
+// A MOVIT cria o teste de um cliente com os módulos escolhidos e manda o link pelo WhatsApp. Quem
+// abre o link entra na empresa dele: com o login do SSW, a empresa lê o SSW real e começa sem
+// lançamentos; sem o SSW, é uma empresa de exemplo com números fictícios.
+const CONVITE_DIAS = 7;   // prazo para o primeiro acesso; depois disso vale o prazo do teste grátis
+function tokenConvite() { return crypto.randomBytes(24).toString('base64url'); }
+function hashConvite(token) { return crypto.createHash('sha256').update('movit-convite:' + String(token || '')).digest('hex'); }
+function normalizarConvite(body) {
+  const b = body || {};
+  const nome = String(b.nome || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  const empresa = String(b.empresa || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  let whatsapp = String(b.whatsapp || '').replace(/\D/g, '');
+  if (whatsapp.length === 10 || whatsapp.length === 11) whatsapp = '55' + whatsapp;   // número brasileiro sem o DDI
+  const email = String(b.email || '').trim().slice(0, 180);
+  const modulos = Array.isArray(b.modulos) ? [...new Set(b.modulos.map(x => String(x).trim()).filter(x => /^[a-z_]{2,40}$/.test(x)))] : null;
+  const erros = [];
+  if (nome.length < 2) erros.push('Informe o nome do contato.');
+  if (empresa.length < 2) erros.push('Informe o nome da transportadora.');
+  if (whatsapp && !/^\d{12,15}$/.test(whatsapp)) erros.push('WhatsApp inválido. Use DDD e número, por exemplo 19 99999-0000.');
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) erros.push('E-mail inválido.');
+  if (modulos && !modulos.length) erros.push('Escolha pelo menos um módulo.');
+  return { nome, empresa, whatsapp, email, modulos, erros };
+}
+function mensagemConvite(nome, link) {
+  const primeiro = String(nome || '').split(' ')[0];
+  return 'Olá' + (primeiro ? ', ' + primeiro : '') + '! Aqui está o seu acesso de teste à Torre de Controle MOVIT: ' + link +
+    '\nEntre com o login do SSW para ver os dados da sua transportadora, ou entre sem ele para conhecer o sistema com números de exemplo.';
+}
+function linkWhatsapp(whatsapp, texto) {
+  return 'https://wa.me/' + (whatsapp ? String(whatsapp).replace(/\D/g, '') : '') + '?text=' + encodeURIComponent(texto);
+}
+
 module.exports = {
+  CONVITE_DIAS, tokenConvite, hashConvite, normalizarConvite, mensagemConvite, linkWhatsapp,
   ATIVA, MODULOS, modulosProntos, cifrar, decifrar, normalizarEntrada, testarLoginSsw, testarBi2, bi2Automatico, initDb,
   processoDaEmpresa, processoDoParceiro, normalizarParceiro, consultar, encerrar, encerrarTodos, repassar, clienteDemo, comBi2, modulosLiberados, telasLiberadas, permsLiberadas, rotaLiberada
 };

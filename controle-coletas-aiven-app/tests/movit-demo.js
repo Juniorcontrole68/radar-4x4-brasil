@@ -9,8 +9,8 @@ const path=require('path');
 const {Pool}=require(path.join(__dirname,'..','node_modules','pg'));
 let pass=0,fail=0;
 function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}else{fail++;console.log('  FALHA',name,extra);if(process.env.GITHUB_ACTIONS)console.log('::error title=Teste falhou::'+String(name+' '+extra).replace(/\r?\n/g,' ').slice(0,900))}}
-async function call(method,p,{body,cookie,ip}={}){
-  const h={};if(body!==undefined)h['Content-Type']='application/json';if(cookie)h.Cookie=cookie;if(ip)h['X-Forwarded-For']=ip;   // ip: outro visitante (limite de entradas por IP)
+async function call(method,p,{body,cookie,ip,auth}={}){
+  const h={};if(body!==undefined)h['Content-Type']='application/json';if(cookie)h.Cookie=cookie;if(ip)h['X-Forwarded-For']=ip;if(auth)h.Authorization=auth;   // ip: outro visitante (limite de entradas por IP)
   const r=await fetch(B+p,{method,headers:h,body:body!==undefined?JSON.stringify(body):undefined,redirect:'manual'});
   const text=await r.text();let json=null;try{json=JSON.parse(text)}catch{}
   return{status:r.status,json,text,location:r.headers.get('location')||'',cookie:((r.headers.get('set-cookie')||'').match(/cl_session=[^;]+/)||[''])[0]};
@@ -265,6 +265,55 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
     const adm=(await db.query('SELECT is_platform_admin FROM dashboard_users WHERE lower(username)=lower($1)',[ADMIN_USER])).rows[0];
     check('administrador MOVIT continua administrador MOVIT',adm?.is_platform_admin===true);
   }finally{try{process.kill(-srv2.pid,'SIGTERM')}catch{}}
+
+  console.log('L. Link de teste enviado pela MOVIT (com e sem o SSW)');
+  const IPL='10.9.9.9',TOKEN_API=process.env.MOVIT_CONVITE_TOKEN||'';
+  r=await call('POST','/api/demo/convites',{body:{nome:'Ana',empresa:'Expresso Convite',whatsapp:'19999990000'},ip:IPL});
+  check('sem login MOVIT e sem token, não cria teste',r.status===401||r.status===403,'veio '+r.status);
+  r=await call('POST','/api/demo/convites',{cookie:cookieA,body:{nome:'Ana',empresa:'Expresso Convite'},ip:IPL});
+  check('cliente da demo não cria teste',r.status===403,'veio '+r.status);
+  r=await call('POST','/api/demo/convites',{cookie:cookieAdm,body:{nome:'Ana Souza',empresa:'Expresso Convite',whatsapp:'(19) 99999-0000',modulos:['roteirizador','lotacao','frota']},ip:IPL});
+  const linkEx=r.json?.link||'',tokEx=linkEx.split('/').pop(),cliEx=r.json?.cliente_id;
+  check('MOVIT Central cria o teste com os módulos escolhidos e devolve o link e o WhatsApp',r.status===201&&/\/demo\/convite\/[A-Za-z0-9_-]{20,}$/.test(linkEx)&&/^https:\/\/wa\.me\/5519999990000\?text=/.test(r.json?.whatsapp_url||'')&&decodeURIComponent(r.json.whatsapp_url).includes(linkEx),r.status+' '+r.text.slice(0,300));
+  const modsEx=(await db.query('SELECT module_key FROM movit_client_modules WHERE client_id=$1 AND enabled ORDER BY 1',[cliEx])).rows.map(x=>x.module_key);
+  check('...só com os módulos marcados',JSON.stringify(modsEx)==='["frota","lotacao","roteirizador"]',JSON.stringify(modsEx));
+  check('...e o token do link não fica guardado no banco',!(await db.query('SELECT 1 FROM movit_demo_convites WHERE token_hash=$1',[tokEx])).rowCount);
+  r=await call('POST','/api/demo/convites',{cookie:cookieAdm,body:{nome:'Ana',empresa:'X',modulos:['nao_existe']},ip:IPL});
+  check('módulo desconhecido -> 400',r.status===400,r.status+' '+r.text.slice(0,120));
+  r=await call('GET','/demo/convite/'+tokEx);check('link abre a página do teste',r.status===200&&r.text.includes('Entrar sem o SSW'));
+  r=await call('GET','/api/demo/convite/'+tokEx);
+  check('página mostra a empresa e os módulos liberados, ainda sem modo',r.status===200&&r.json?.empresa==='Expresso Convite'&&r.json.modo===null&&(r.json.modulos||[]).includes('Frota'),r.text.slice(0,200));
+  r=await call('GET','/api/demo/convite/'+'x'.repeat(32));check('link inválido -> 404',r.status===404,'veio '+r.status);
+  const sE0=await stats();
+  r=await call('POST','/api/demo/convite/'+tokEx+'/entrar',{body:{},ip:IPL});const cookieEx=r.cookie;
+  check('sem o SSW, entra na empresa de exemplo',r.status===200&&!!cookieEx&&r.json?.modo==='exemplo'&&r.json?.user?.demo===true,r.status+' '+r.text.slice(0,200));
+  check('...vendo só os módulos marcados que já estão prontos',JSON.stringify(r.json?.user?.client_modules)==='["roteirizador"]',JSON.stringify(r.json?.user?.client_modules));
+  const rowEx=(await db.query('SELECT s.exemplo,s.dominio,c.trial_ends_at FROM movit_client_ssw s JOIN movit_clients c ON c.id=s.client_id WHERE s.client_id=$1',[cliEx])).rows[0];
+  check('...marcada como exemplo e com o teste grátis contando a partir de agora',rowEx?.exemplo===true&&rowEx.dominio==='EX-'+cliEx&&!!rowEx.trial_ends_at,JSON.stringify(rowEx));
+  r=await call('GET','/api/programacao-entregas/disponiveis',{cookie:cookieEx});
+  const ctrcsEx=(r.json?.rows||[]).map(x=>x.ctrc);
+  check('telas do SSW da empresa de exemplo mostram números fictícios do SSW de exemplo',r.status===200&&ctrcsEx.length>0&&ctrcsEx.every(c=>/^(MTZ|FIL)0[56]\d{4}-\d$/.test(c)),r.status+' '+r.text.slice(0,240));
+  const sE1=await stats();
+  check('...sem nenhum login no SSW (nem no de teste)',sE1.logins===sE0.logins,JSON.stringify({antes:sE0.logins,depois:sE1.logins}));
+  r=await call('GET','/api/lancamentos',{cookie:cookieEx});check('módulo ainda não pronto continua fechado (Lançamentos -> 403)',r.status===403,'veio '+r.status);
+  r=await call('GET','/api/demo/convite/'+tokEx);check('abrindo o link de novo, a página sabe que está no exemplo',r.json?.modo==='exemplo',r.text.slice(0,160));
+  r=await call('POST','/api/demo/convite/'+tokEx+'/entrar',{body:{ssw:{dominio:'tst',cpf:'12345678901',usuario:'joao',senha:'x'}},ip:IPL});
+  check('domínio do SSW de outro teste -> 409',r.status===409,r.status+' '+r.text.slice(0,160));
+  r=await call('POST','/api/demo/convite/'+tokEx+'/entrar',{body:{ssw:{dominio:'EXC',cpf:'11122233344',usuario:'ana',senha:'senha-errada'}},ip:IPL});
+  check('senha do SSW recusada -> 401 e continua no exemplo',r.status===401&&(await db.query('SELECT exemplo FROM movit_client_ssw WHERE client_id=$1',[cliEx])).rows[0]?.exemplo===true,r.status+' '+r.text.slice(0,160));
+  r=await call('POST','/api/demo/convite/'+tokEx+'/entrar',{body:{ssw:{dominio:'EXC',cpf:'111.222.333-44',usuario:'Ana',senha:'segredo-exc',unidades:'MTZ'}},ip:IPL});const cookieExS=r.cookie;
+  const rowExS=(await db.query('SELECT exemplo,dominio,usuario,senha_cifrada FROM movit_client_ssw WHERE client_id=$1',[cliEx])).rows[0];
+  check('com o login do SSW, a mesma empresa passa a ler o SSW real dela',r.status===200&&r.json?.modo==='ssw'&&rowExS?.exemplo===false&&rowExS.dominio==='EXC'&&rowExS.usuario==='ana'&&!rowExS.senha_cifrada.includes('segredo'),r.status+' '+JSON.stringify(rowExS||{}).slice(0,200));
+  const sE2=await stats();
+  r=await call('GET','/api/ssw/conexao',{cookie:cookieExS});const sE3=await stats();
+  check('...entrando no SSW com o login dela',r.json?.conectado===true&&sE3.logins===sE2.logins+1&&sE3.ultimoLogin?.dominio==='EXC',r.text.slice(0,160)+' '+JSON.stringify(sE3.ultimoLogin));
+  if(TOKEN_API){
+    r=await call('POST','/api/demo/convites',{body:{nome:'Bruno',empresa:'Pedido Pelo Site',whatsapp:'5511988887777'},ip:IPL,auth:'Bearer '+TOKEN_API});
+    const cvT=r.json?.cliente_id&&(await db.query('SELECT origem FROM movit_demo_convites WHERE client_id=$1',[r.json.cliente_id])).rows[0];
+    check('painel da Torre MOVIT cria o teste com o token (todos os módulos)',r.status===201&&cvT?.origem==='torre'&&(r.json.modulos||[]).length>=10,r.status+' '+r.text.slice(0,200));
+    r=await call('POST','/api/demo/convites',{body:{nome:'Bruno',empresa:'X'},ip:IPL,auth:'Bearer '+'y'.repeat(TOKEN_API.length)});
+    check('token errado -> 401',r.status===401,'veio '+r.status);
+  }
 
   await db.end();
   console.log('\nResultado demo: '+pass+' OK, '+fail+' falha(s)');process.exit(fail?1:0);
