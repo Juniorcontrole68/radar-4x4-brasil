@@ -47,6 +47,7 @@ public final class Notifier {
 
     /** Avisa uma vez por versão que há atualização publicada. */
     static void maybeUpdate(Context c){
+        if(BuildConfig.PLAY_STORE)return;   // instalado pela Play Store: ela mesma atualiza
         int latest=Prefs.latestCode(c);
         if(latest<=BuildConfig.VERSION_CODE||Prefs.updateNotified(c)>=latest)return;
         try{
@@ -64,6 +65,7 @@ public final class Notifier {
     }
 
     static String updateUrl(){
+        if(BuildConfig.PLAY_STORE)return "https://play.google.com/store/apps/details?id="+BuildConfig.APPLICATION_ID;
         return Api.BASE+"/motorista-instalar?atualizar=1";
     }
 }

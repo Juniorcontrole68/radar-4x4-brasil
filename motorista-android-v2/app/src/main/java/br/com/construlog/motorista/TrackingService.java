@@ -102,7 +102,8 @@ public class TrackingService extends Service implements LocationListener {
             Prefs.setLastError(this,"servico_localizacao:"+e.getClass().getSimpleName());
             // Android 14+: sem "Permitir o tempo todo" o serviço de localização não sobe em segundo
             // plano. Sobe no modo reduzido para a central ao menos saber o que falta no celular.
-            if(Build.VERSION.SDK_INT>=34){
+            // A versão da Play Store não declara o "uso especial": lá o vigia faz esse papel.
+            if(Build.VERSION.SDK_INT>=34&&!BuildConfig.PLAY_STORE){
                 try{
                     startForeground(Notifier.ID_TRACKING,Notifier.tracking(this,text),ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
                     return true;

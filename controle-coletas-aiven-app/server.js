@@ -2521,6 +2521,44 @@ async function start() {
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao iniciar teste MOVIT/CONSTRULOG.'})}
       }
 
+      if (req.method === 'GET' && (u.pathname === '/motorista/privacidade' || u.pathname === '/motorista/privacidade/')) {
+        // Página pública exigida pela Google Play para o aplicativo CONSTRULOG Motorista.
+        const html=`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Política de Privacidade - CONSTRULOG Motorista</title><style>body{font-family:system-ui,-apple-system,sans-serif;max-width:820px;margin:0 auto;padding:28px;color:#1f2937;line-height:1.6}h1{color:#0057a8}h2{color:#0057a8;margin-top:28px}a{color:#0057a8}.box{background:#f5f7fa;border:1px solid #e5e7eb;border-radius:14px;padding:16px}li{margin:4px 0}</style></head><body>
+        <h1>Política de Privacidade do CONSTRULOG Motorista</h1>
+        <p>Última atualização: 26 de outubro de 2026.</p>
+        <p>O CONSTRULOG Motorista é o aplicativo usado pelos motoristas que fazem entregas para a CONSTRULOG. Ele envia à central de operação a posição do veículo durante as entregas do romaneio, para acompanhar a rota, informar o cliente e organizar a operação. Esta política explica quais dados o aplicativo trata, para quê e como pedir a exclusão.</p>
+        <h2>Dados coletados</h2>
+        <ul>
+          <li><b>Localização precisa e aproximada do celular</b>, inclusive com o aplicativo fechado ou fora de uso, somente nos dias em que há romaneio associado à placa do motorista.</li>
+          <li><b>Nome do motorista e placa do veículo</b>, informados no primeiro cadastro.</li>
+          <li><b>Modelo do celular</b>, para a central identificar o aparelho liberado.</li>
+          <li><b>Dados técnicos do rastreio</b>: nível da bateria, se o GPS e as permissões estão ligados, tipo de conexão, versão do aplicativo e erros do rastreamento. Servem para a central saber por que o rastreio parou.</li>
+        </ul>
+        <p>O aplicativo não acessa contatos, fotos, arquivos, microfone, câmera nem mensagens.</p>
+        <h2>Localização em segundo plano</h2>
+        <p>Antes de pedir a permissão, o aplicativo mostra um aviso explicando o uso da localização. A permissão "Permitir o tempo todo" é necessária porque o motorista dirige com o celular bloqueado: sem ela o rastreio pararia quando a tela apaga. Enquanto o rastreio está ligado, o Android mostra uma notificação fixa do CONSTRULOG Motorista. O motorista pode retirar a permissão a qualquer momento nas configurações do celular.</p>
+        <h2>Finalidades</h2>
+        <ul>
+          <li>Mostrar à central a posição do veículo e o andamento das entregas do dia.</li>
+          <li>Gerar o link de rastreio da entrega para o cliente da carga, quando a operação usa esse recurso.</li>
+          <li>Registrar o histórico do trajeto da entrega para conferência da operação.</li>
+          <li>Diagnosticar falhas do rastreamento no celular.</li>
+        </ul>
+        <p>Os dados não são vendidos, não são usados para publicidade e não são compartilhados com anunciantes.</p>
+        <h2>Compartilhamento</h2>
+        <p>Os dados ficam nos servidores do sistema da CONSTRULOG e são acessados pela equipe da central de operação. A posição da entrega pode ser exibida ao cliente da carga pelo link de rastreio daquela entrega. Os servidores são contratados de provedores de nuvem que tratam os dados em nome da CONSTRULOG. Todo o envio de dados é feito por conexão criptografada (HTTPS).</p>
+        <h2>Retenção</h2>
+        <p>As posições e os dados técnicos são mantidos enquanto necessários para a operação, a conferência das entregas e as obrigações legais. O cadastro do celular pode ser desativado pela central a qualquer momento.</p>
+        <h2 id="exclusao">Seus direitos e exclusão dos dados</h2>
+        <p>Pela Lei Geral de Proteção de Dados (LGPD), o motorista pode pedir acesso, correção ou exclusão dos seus dados. Para pedir a exclusão do cadastro do aplicativo e das posições registradas, envie um e-mail para o contato abaixo com o seu nome e a placa do veículo. O pedido é atendido em até 15 dias. Dados que a lei obriga a guardar podem ser mantidos pelo prazo exigido.</p>
+        <p>Desinstalar o aplicativo apaga do celular o cadastro e a fila de posições ainda não enviadas.</p>
+        <h2>Contato</h2>
+        <div class="box">CONSTRULOG • Central de operação<br>E-mail: <a href="mailto:junior.controle68@gmail.com">junior.controle68@gmail.com</a></div>
+        </body></html>`;
+        res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'public, max-age=300'});
+        return res.end(html);
+      }
+
       if (req.method === 'GET' && u.pathname === '/movit/privacidade') {
         const html=`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Política de Privacidade - MOVIT</title><style>body{font-family:system-ui,-apple-system,sans-serif;max-width:820px;margin:0 auto;padding:28px;color:#18142f;line-height:1.55}h1,h2{color:#18142f}a{color:#2f73e8}.box{background:#f7f9fc;border:1px solid #e5e7eb;border-radius:14px;padding:16px}</style></head><body>
         <h1>Política de Privacidade do MOVIT</h1>

@@ -9,11 +9,13 @@ on:
       - 'motorista-android-v2/**'
       - 'roteirizador-v02-android/**'
       - 'controle-coletas-aiven-app/tests/app-emulador.js'
+      - 'controle-coletas-aiven-app/tests/app-capturas.js'
       - '.github/workflows/teste-motorista-android.yml'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # write só para publicar o AAB e as capturas na branch play-store-motorista (abaixo).
+  contents: write
 
 jobs:
   emulador:
@@ -55,6 +57,15 @@ jobs:
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0"
+      - name: Pacote da Play Store (AAB, servidor de produção)
+        run: |
+          # Sai sem assinatura: a chave de upload da Play não fica no GitHub. Assinar com jarsigner
+          # antes de enviar ao Play Console (ver motorista-android-v2/PLAY-STORE.md).
+          gradle -p motorista-android-v2 :app:bundlePlay --no-daemon
+          mkdir -p play-store
+          cp motorista-android-v2/app/build/outputs/bundle/play/app-play.aab play-store/CONSTRULOG-Motorista-play-sem-assinatura.aab
+      - name: Compilar a versão da Play Store para as capturas de tela
+        run: gradle -p motorista-android-v2 :app:assemblePlay --no-daemon -PapiBase=http://10.0.2.2:10000 -PtestHooks=true -PassinarDebug=true
       - name: Compilar o aplicativo apontando para o servidor de teste
         run: |
           gradle -p motorista-android-v2 :app:assembleDebug --no-daemon -PapiBase=http://10.0.2.2:10000 -PtestHooks=true 2> erros-compilacao.txt || {
@@ -88,7 +99,31 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
-          script: node controle-coletas-aiven-app/tests/app-emulador.js
+          script: |
+            APK=motorista-android-v2/app/build/outputs/apk/play/app-play.apk SAIDA=play-store/capturas node controle-coletas-aiven-app/tests/app-capturas.js || echo "capturas incompletas"
+            node controle-coletas-aiven-app/tests/app-emulador.js
+      - name: Guardar AAB e capturas da Play Store
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: construlog-motorista-play-store
+          path: play-store/
+          if-no-files-found: ignore
+          retention-days: 30
+      # Cópia na branch play-store-motorista (substituída a cada execução), para baixar o AAB e as
+      # capturas pelo git. Não mexe na produção.
+      - name: Publicar AAB e capturas na branch play-store-motorista
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -d play-store ] || exit 0
+          cd play-store
+          echo "Gerado de ${GITHUB_SHA} (branch ${GITHUB_REF_NAME}) em $(date -u +%FT%TZ)" > ORIGEM.txt
+          git init -q -b play-store-motorista
+          git -c user.name="CONSTRULOG Build" -c user.email="actions@users.noreply.github.com" add -A
+          git -c user.name="CONSTRULOG Build" -c user.email="actions@users.noreply.github.com" commit -qm "AAB e capturas da Play Store (${GITHUB_SHA::7}) [skip ci]"
+          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:play-store-motorista
       - name: Log do servidor
         if: always()
         run: |

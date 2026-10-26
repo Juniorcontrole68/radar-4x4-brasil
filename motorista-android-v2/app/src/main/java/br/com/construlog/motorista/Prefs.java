@@ -39,6 +39,8 @@ public final class Prefs {
     public static void setUpdateNotified(Context c,int code){p(c).edit().putInt("update_notified",code).apply();}
 
     // Primeira abertura: guia as permissões em sequência uma única vez.
+    public static boolean disclosureAccepted(Context c){return p(c).getBoolean("disclosure_ok",false);}
+    public static void setDisclosureAccepted(Context c){p(c).edit().putBoolean("disclosure_ok",true).apply();}
     public static boolean guided(Context c){return p(c).getBoolean("guided",false);}
     public static void setGuided(Context c){p(c).edit().putBoolean("guided",true).apply();}
 }

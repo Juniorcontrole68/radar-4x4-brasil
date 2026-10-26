@@ -1,0 +1,28 @@
+<!-- Ícone: marcador de localização sobre um caminhão, nas cores da CONSTRULOG. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,22a15,15 0,0 1,15 15c0,11 -15,24 -15,24s-15,-13 -15,-24a15,15 0,0 1,15 -15z"/>
+    <path
+        android:fillColor="#F28C00"
+        android:pathData="M54,37m-6.5,0a6.5,6.5 0,1 1,13 0a6.5,6.5 0,1 1,-13 0"/>
+    <path
+        android:fillColor="#F28C00"
+        android:pathData="M31,64h29a2,2 0,0 1,2 2v12h-33v-12a2,2 0,0 1,2 -2z"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M64,68h8l6,6v4h-14z"/>
+    <path
+        android:fillColor="#0057A8"
+        android:pathData="M67,70h4.5l3.5,4h-8z"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M39,80m-4.5,0a4.5,4.5 0,1 1,9 0a4.5,4.5 0,1 1,-9 0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M71,80m-4.5,0a4.5,4.5 0,1 1,9 0a4.5,4.5 0,1 1,-9 0"/>
+</vector>
