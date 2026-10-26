@@ -34,7 +34,7 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   r=await call('POST','/api/demo/entrar',{body:EMPRESA_A});
   const cookieA=r.cookie;
   check('login aceito, sessão criada',r.status===200&&!!cookieA,r.status+' '+r.text.slice(0,200));
-  check('usuário marcado como cliente da demo, só com os módulos prontos',r.json?.user?.demo===true&&JSON.stringify(r.json?.user?.client_modules)==='["roteirizador","agendamento","usuarios","dashboards"]',JSON.stringify(r.json?.user||{}).slice(0,300));
+  check('usuário marcado como cliente da demo, com todos os módulos contratados',r.json?.user?.demo===true&&JSON.stringify(r.json?.user?.client_modules)==='["lotacao","coletas","financeiro_lotacao","operacao","visao_geral","dashboards","agendamento","programacao","roteirizador","rastreio","financeiro_operacoes","frota","contas_pagar","usuarios","app_movit"]',JSON.stringify(r.json?.user||{}).slice(0,300));
   const row=(await db.query("SELECT s.*,c.name,c.status FROM movit_client_ssw s JOIN movit_clients c ON c.id=s.client_id WHERE dominio='TST'")).rows[0];
   check('empresa criada em teste grátis com domínio e unidades normalizados',row&&row.name==='Transportes Teste A'&&row.status==='trial'&&row.unidades==='MTZ,CPS'&&row.cpf==='12345678901'&&row.usuario==='joao',JSON.stringify(row||{}).slice(0,300));
   check('senha do SSW guardada criptografada (nunca em texto)',row&&/^v1:/.test(row.senha_cifrada)&&!row.senha_cifrada.includes('segredo')&&!JSON.stringify(row).includes('segredo-a-1'));
@@ -66,17 +66,17 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   check('Agendadas lista o agendamento gravado',r.status===200&&(r.json?.rows||[]).length===1&&r.json.rows[0].nf==='30101',r.status+' '+r.text.slice(0,200));
 
   r=await call('GET','/api/auth/me',{cookie:cookieA});
-  check('Dashboards liberado na demo só com os cards do SSW da empresa',(r.json?.user?.demo_telas||[]).includes('dashboards')&&JSON.stringify((r.json?.user?.demo_perms||[]).slice().sort())===JSON.stringify(['agendamentos','evolucao','roteirizador','ssw_saidas']),JSON.stringify(r.json?.user||{}).slice(0,400));
+  check('Dashboards liberado na demo com os cards do SSW da empresa (sem os do BI2)',(r.json?.user?.demo_telas||[]).includes('dashboards')&&['coletas','frota','evolucao','ssw_saidas','lancamentos','contas_pagar'].every(x=>(r.json?.user?.demo_perms||[]).includes(x))&&!(r.json?.user?.demo_perms||[]).includes('ssw_atrasos'),JSON.stringify(r.json?.user||{}).slice(0,400));
   r=await call('GET','/api/evolucao-motoristas',{cookie:cookieA});
   const motsA=(r.json?.motoristas38||[]).map(x=>x.motorista).sort();
   check('Evolução por Motorista lê a opção 38 nas unidades da empresa A (MTZ e CPS)',r.status===200&&JSON.stringify(motsA)===JSON.stringify(['CARLOS DEMO MTZ','PAULO DEMO CPS']),r.status+' '+r.text.slice(0,300));
   r=await call('GET','/api/bi2/saidas-baixas',{cookie:cookieA});
   check('Saídas x Baixas responde com os romaneios das unidades da empresa A',r.status===200&&/CARLOS DEMO MTZ/.test(r.text)&&/PAULO DEMO CPS/.test(r.text)&&!/JAILSON|ROGER TESTE/.test(r.text),r.status+' '+r.text.slice(0,300));
 
-  console.log('C. O que ainda não está pronto fica fechado para o cliente da demo');
-  for(const p of ['/api/roteirizador/lista','/api/ssw/sessoes','/api/lancamentos','/api/tracking/live','/api/sheet/base','/api/bi2/receita','/api/bi2/atrasos','/api/sheet/agendamentos','/api/ssw/cidades-mapa'])
-  {r=await call('GET',p,{cookie:cookieA});check('GET '+p+' -> 403',r.status===403,'veio '+r.status+' '+r.text.slice(0,120))}
-  for(const p of ['/coletas/api/coletas','/api/bills','/api/painel/carregamentos-finais','/api/painel/nf-materiais','/api/painel/frota-state','/api/movit-central/clients','/api/painel/tracking/live'])
+  console.log('C. Módulos da operação abrem para o cliente da demo; administração MOVIT, planilhas e BI2 (sem acesso) não');
+  for(const p of ['/api/lancamentos','/coletas/api/coletas','/api/bills','/api/painel/carregamentos-finais','/api/painel/nf-materiais','/api/painel/frota-state'])
+  {r=await call('GET',p,{cookie:cookieA});check('GET '+p+' -> 200',r.status===200,'veio '+r.status+' '+r.text.slice(0,120))}
+  for(const p of ['/api/sheet/base','/api/sheet/agendamentos','/api/bi2/receita','/api/bi2/atrasos','/api/ssw/cidades-mapa','/api/movit-central/clients'])
   {r=await call('GET',p,{cookie:cookieA});check('GET '+p+' -> 403',r.status===403,'veio '+r.status+' '+r.text.slice(0,120))}
   r=await call('GET','/api/rc/eu',{cookie:cookieA});check('Roteirizador de Cargas abre (dados separados por empresa)',r.status===200,'veio '+r.status+' '+r.text.slice(0,160));
   r=await call('GET','/api/painel/auth/users',{cookie:cookieA});
@@ -127,7 +127,7 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   r=await call('POST','/api/demo/entrar',{body:EMPRESA_A});const cookieG=r.cookie;
   r=await call('GET','/api/guia',{cookie:cookieG});
   const passosIds=(r.json?.passos||[]).map(p=>p.id);
-  check('passo a passo da demo: conexão SSW primeiro, depois só os módulos liberados',r.status===200&&passosIds[0]==="ssw"&&passosIds.includes("usuarios")&&passosIds.includes("roteirizador")&&!passosIds.includes("coletas")&&!passosIds.includes("frota"),JSON.stringify(passosIds));
+  check('passo a passo da demo: conexão SSW primeiro, depois os módulos liberados',r.status===200&&passosIds[0]==="ssw"&&["usuarios","roteirizador","coletas","frota"].every(x=>passosIds.includes(x)),JSON.stringify(passosIds));
   check('sem arquivo de vídeo, nenhum passo mostra vídeo',(r.json?.passos||[]).every(p=>!p.video));
   r=await call('POST','/api/guia/feito',{cookie:cookieG,body:{id:'usuarios'}});
   check('marca passo concluído',r.status===200,r.text.slice(0,120));
@@ -202,8 +202,8 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   check('Clientes remetentes vêm do BI2 da empresa A',r.status===200&&/REMETENTE DEMO A/.test(r.text)&&/OUTRO REMETENTE A/.test(r.text),r.status+' '+r.text.slice(0,300));
   r=await call('GET','/api/ssw/cidades-mapa',{cookie:cookieBi2});
   check('Mapa de cidades abre com o BI2 da empresa A',r.status===200,r.status+' '+r.text.slice(0,300));
-  for(const p of ['/api/bi2/receita','/api/bi2/sla-clientes','/api/sheet/lancamentos'])
-  {r=await call('GET',p,{cookie:cookieBi2});check('com BI2, GET '+p+' continua 403',r.status===403,'veio '+r.status+' '+r.text.slice(0,120))}
+  r=await call('GET','/api/bi2/receita',{cookie:cookieBi2});check('com BI2, a receita vem do BI2 da empresa A',r.status===200,'veio '+r.status+' '+r.text.slice(0,120));
+  r=await call('GET','/api/sheet/lancamentos',{cookie:cookieBi2});check('com BI2, as planilhas da CONSTRULOG continuam fechadas',r.status===403,'veio '+r.status+' '+r.text.slice(0,120));
   const pedidos=await (await fetch(M+'/__mock/bi2')).json();
   check('cada empresa só consulta o BI2 da sua sigla',Object.keys(pedidos).every(k=>['tsta','tst','xyz','lgc'].includes(k)),JSON.stringify(pedidos));
   r=await call('GET','/api/auth/me',{cookie:cookieC});
@@ -259,12 +259,37 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
     const adms=(await db.query("SELECT username FROM dashboard_users WHERE is_platform_admin=TRUE AND client_id IN (SELECT client_id FROM movit_client_ssw)")).rows.map(x=>x.username);
     check('nenhum usuário de empresa da demo fica administrador MOVIT depois do reinício',adms.length===0,JSON.stringify(adms));
     const x=await fetch('http://127.0.0.1:'+P2+'/api/auth/me',{headers:{Cookie:cookieG}});const me=(await x.json()).user||{};
-    check('...e continua cliente da demo, só com os módulos prontos',me.demo===true&&me.is_platform_admin===false&&me.is_admin===true&&JSON.stringify(me.client_modules)==='["roteirizador","agendamento","usuarios","dashboards"]',JSON.stringify(me).slice(0,300));
-    const y=await fetch('http://127.0.0.1:'+P2+'/api/lancamentos',{headers:{Cookie:cookieG}});
-    check('...e o que não está pronto continua fechado (Lançamentos -> 403)',y.status===403,'veio '+y.status);
+    check('...e continua cliente da demo, com os módulos contratados',me.demo===true&&me.is_platform_admin===false&&me.is_admin===true&&JSON.stringify(me.client_modules)==='["lotacao","coletas","financeiro_lotacao","operacao","visao_geral","dashboards","agendamento","programacao","roteirizador","rastreio","financeiro_operacoes","frota","contas_pagar","usuarios","app_movit"]',JSON.stringify(me).slice(0,300));
+    const y=await fetch('http://127.0.0.1:'+P2+'/api/movit-central/clients',{headers:{Cookie:cookieG}});
+    check('...e a administração MOVIT continua fechada para ele',y.status===403,'veio '+y.status);
     const adm=(await db.query('SELECT is_platform_admin FROM dashboard_users WHERE lower(username)=lower($1)',[ADMIN_USER])).rows[0];
     check('administrador MOVIT continua administrador MOVIT',adm?.is_platform_admin===true);
   }finally{try{process.kill(-srv2.pid,'SIGTERM')}catch{}}
+
+  console.log('M. Dados dos módulos separados por empresa (esquema próprio de cada uma)');
+  const venc=new Date(Date.now()+5*864e5).toISOString().slice(0,10);
+  r=await call('POST','/api/bills',{cookie:cookieA,body:{description:'Conta da empresa A',supplier:'Fornecedor A',amount:123.45,dueDate:venc}});
+  check('empresa A lança uma conta a pagar',r.status===200||r.status===201,r.status+' '+r.text.slice(0,200));
+  r=await call('GET','/api/bills',{cookie:cookieA});check('...e vê a conta dela',r.status===200&&JSON.stringify(r.json).toLowerCase().includes('conta da empresa a'),r.text.slice(0,200));
+  r=await call('GET','/api/bills',{cookie:cookieB});check('empresa B não vê a conta da empresa A',r.status===200&&!JSON.stringify(r.json).toLowerCase().includes('conta da empresa a'),r.text.slice(0,200));
+  const idA=(await db.query("SELECT client_id::text AS id FROM movit_client_ssw WHERE dominio='TST'")).rows[0].id;
+  check('a conta fica no esquema da empresa A, não no public',(await db.query('SELECT count(*)::int n FROM t'+idA+'.bills')).rows[0].n===1&&(await db.query("SELECT count(*)::int n FROM public.bills WHERE lower(description)='conta da empresa a'")).rows[0].n===0);
+  r=await call('GET','/api/painel/frota-state',{cookie:cookieA});
+  const frotaA=r.json?.data||{};frotaA.vehicles=[{id:'v1',placa:'AAA1A11',modelo:'Caminhão da A'}];
+  r=await call('PUT','/api/painel/frota-state',{cookie:cookieA,body:{data:frotaA}});
+  check('empresa A grava a frota dela',r.status===200,r.status+' '+r.text.slice(0,200));
+  r=await call('GET','/api/painel/frota-state',{cookie:cookieB});
+  check('empresa B continua com a frota vazia',r.status===200&&!JSON.stringify(r.json).includes('AAA1A11')&&Array.isArray(r.json?.data?.vehicles),r.text.slice(0,200));
+  r=await call('GET','/api/painel/frota-state',{cookie:cookieA});check('...e a empresa A vê o caminhão dela',JSON.stringify(r.json).includes('AAA1A11'),r.text.slice(0,200));
+  r=await call('POST','/coletas/api/coletas',{cookie:cookieA,body:{cliente:'REMETENTE DA EMPRESA A',endereco_entrega:'Rua de Teste, 100 - Campinas - SP',frete_cobrado:1500,frete_pago:900,data_carregamento:new Date().toISOString().slice(0,10),motorista:'MOTORISTA A',placa:'ABC1D23',tipo_caminhao:'Truck',implemento:'Baú'}});
+  check('empresa A lança uma coleta na Lotação',r.status===200||r.status===201,r.status+' '+r.text.slice(0,200));
+  r=await call('GET','/coletas/api/coletas',{cookie:cookieA});check('...e vê a coleta dela',(r.json||[]).some(c=>/REMETENTE DA EMPRESA A/i.test(c.cliente||'')),r.text.slice(0,200));
+  const colA=(await db.query('SELECT client_id::text AS c FROM t'+idA+'.coletas')).rows;
+  check('...gravada no esquema dela, com a empresa certa',colA.length===1&&colA[0].c===idA,JSON.stringify(colA));
+  r=await call('GET','/coletas/api/coletas',{cookie:cookieB});check('empresa B não vê a coleta da empresa A',r.status===200&&Array.isArray(r.json)&&!r.json.length,r.text.slice(0,200));
+  r=await call('GET','/api/painel/coletas-resumo',{cookie:cookieA});check('resumo da Lotação da empresa A traz a coleta dela',r.status===200&&JSON.stringify(r.json).includes('MOTORISTA A'),r.status+' '+r.text.slice(0,200));
+  r=await call('POST','/api/auth/login',{body:{username:ADMIN_USER,password:ADMIN_PASS}});
+  r=await call('GET','/api/bills',{cookie:r.cookie});check('administração MOVIT (public) não vê a conta da empresa A',r.status===200&&!JSON.stringify(r.json).toLowerCase().includes('conta da empresa a'),r.status+' '+r.text.slice(0,120));
 
   console.log('L. Link de teste enviado pela MOVIT (com e sem o SSW)');
   const IPL='10.9.9.9',TOKEN_API=process.env.MOVIT_CONVITE_TOKEN||'';
@@ -287,15 +312,21 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   const sE0=await stats();
   r=await call('POST','/api/demo/convite/'+tokEx+'/entrar',{body:{},ip:IPL});const cookieEx=r.cookie;
   check('sem o SSW, entra na empresa de exemplo',r.status===200&&!!cookieEx&&r.json?.modo==='exemplo'&&r.json?.user?.demo===true,r.status+' '+r.text.slice(0,200));
-  check('...vendo só os módulos marcados que já estão prontos',JSON.stringify(r.json?.user?.client_modules)==='["roteirizador"]',JSON.stringify(r.json?.user?.client_modules));
+  check('...vendo só os módulos marcados',JSON.stringify(r.json?.user?.client_modules)==='["lotacao","roteirizador","frota"]',JSON.stringify(r.json?.user?.client_modules));
   const rowEx=(await db.query('SELECT s.exemplo,s.dominio,c.trial_ends_at FROM movit_client_ssw s JOIN movit_clients c ON c.id=s.client_id WHERE s.client_id=$1',[cliEx])).rows[0];
   check('...marcada como exemplo e com o teste grátis contando a partir de agora',rowEx?.exemplo===true&&rowEx.dominio==='EX-'+cliEx&&!!rowEx.trial_ends_at,JSON.stringify(rowEx));
+  r=await call('GET','/coletas/api/coletas',{cookie:cookieEx});
+  check('empresa de exemplo já abre a Lotação com coletas fictícias',r.status===200&&Array.isArray(r.json)&&r.json.length===8&&r.json.some(c=>c.status==='Em trânsito'),r.status+' '+r.text.slice(0,200));
+  r=await call('GET','/api/painel/frota-state',{cookie:cookieEx});
+  check('...a Frota com veículos, abastecimentos e motoristas',r.status===200&&(r.json?.data?.vehicles||[]).length===7&&(r.json.data.fuel||[]).length===21&&(r.json.data.people||[]).length===7,r.status+' '+r.text.slice(0,200));
+  check('...e as contas a pagar e as despesas do DRE no esquema dela',(await db.query('SELECT count(*)::int n FROM t'+cliEx+'.bills')).rows[0].n===8&&(await db.query('SELECT count(*)::int n FROM t'+cliEx+'.dre_lancamentos')).rows[0].n===27);
+  r=await call('GET','/coletas/api/coletas',{cookie:cookieA});check('os números de exemplo não aparecem para a empresa A',r.status===200&&!(r.json||[]).some(c=>/ATACADO NOVA ERA/.test(c.destinatario||'')),r.text.slice(0,200));
   r=await call('GET','/api/programacao-entregas/disponiveis',{cookie:cookieEx});
   const ctrcsEx=(r.json?.rows||[]).map(x=>x.ctrc);
   check('telas do SSW da empresa de exemplo mostram números fictícios do SSW de exemplo',r.status===200&&ctrcsEx.length>0&&ctrcsEx.every(c=>/^(MTZ|FIL)0[56]\d{4}-\d$/.test(c)),r.status+' '+r.text.slice(0,240));
   const sE1=await stats();
   check('...sem nenhum login no SSW (nem no de teste)',sE1.logins===sE0.logins,JSON.stringify({antes:sE0.logins,depois:sE1.logins}));
-  r=await call('GET','/api/lancamentos',{cookie:cookieEx});check('módulo ainda não pronto continua fechado (Lançamentos -> 403)',r.status===403,'veio '+r.status);
+  r=await call('GET','/api/lancamentos',{cookie:cookieEx});check('módulo não liberado fica fechado (Lançamentos -> 403)',r.status===403,'veio '+r.status);
   r=await call('GET','/api/demo/convite/'+tokEx);check('abrindo o link de novo, a página sabe que está no exemplo',r.json?.modo==='exemplo',r.text.slice(0,160));
   r=await call('POST','/api/demo/convite/'+tokEx+'/entrar',{body:{ssw:{dominio:'tst',cpf:'12345678901',usuario:'joao',senha:'x'}},ip:IPL});
   check('domínio do SSW de outro teste -> 409',r.status===409,r.status+' '+r.text.slice(0,160));
@@ -304,6 +335,8 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   r=await call('POST','/api/demo/convite/'+tokEx+'/entrar',{body:{ssw:{dominio:'EXC',cpf:'111.222.333-44',usuario:'Ana',senha:'segredo-exc',unidades:'MTZ'}},ip:IPL});const cookieExS=r.cookie;
   const rowExS=(await db.query('SELECT exemplo,dominio,usuario,senha_cifrada FROM movit_client_ssw WHERE client_id=$1',[cliEx])).rows[0];
   check('com o login do SSW, a mesma empresa passa a ler o SSW real dela',r.status===200&&r.json?.modo==='ssw'&&rowExS?.exemplo===false&&rowExS.dominio==='EXC'&&rowExS.usuario==='ana'&&!rowExS.senha_cifrada.includes('segredo'),r.status+' '+JSON.stringify(rowExS||{}).slice(0,200));
+  r=await call('GET','/coletas/api/coletas',{cookie:cookieExS});
+  check('...e começa sem os números de exemplo, para lançar os dados dela',r.status===200&&Array.isArray(r.json)&&r.json.length===0,r.status+' '+r.text.slice(0,200));
   const sE2=await stats();
   r=await call('GET','/api/ssw/conexao',{cookie:cookieExS});const sE3=await stats();
   check('...entrando no SSW com o login dela',r.json?.conectado===true&&sE3.logins===sE2.logins+1&&sE3.ultimoLogin?.dominio==='EXC',r.text.slice(0,160)+' '+JSON.stringify(sE3.ultimoLogin));

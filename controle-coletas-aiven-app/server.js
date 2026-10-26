@@ -36,6 +36,8 @@ const compartilhar = require('./compartilhar');
 const entregas = require('./entregas');
 const movitDemo = require('./movit-demo');
 const sswExemplo = require('./ssw-exemplo');
+const esquemasDemo = require('./esquemas-demo');
+const exemploDados = require('./exemplo-dados');
 const agendamento = require('./agendamento');
 const movitGuia = require('./movit-guia');
 const veic = require('./veic');
@@ -1075,6 +1077,16 @@ async function demoRepassarApi(req,res,u){
   return true;
 }
 const DEMO_ENTRADAS=new Map();
+// Empresa em teste dona da sessão desta requisição (cliente da demo), para as consultas rodarem no
+// esquema dela. Sem sessão, administração MOVIT ou CONSTRULOG: null (esquema public).
+async function empresaDemoDaRequisicao(req){
+  const token=dashboardBearer(req);
+  if(!token)return null;
+  const r=await pool.query(`SELECT u.client_id::text AS client_id FROM dashboard_sessions s JOIN dashboard_users u ON u.id=s.user_id JOIN movit_clients c ON c.id=u.client_id
+    WHERE s.token_hash=$1 AND s.expires_at>NOW() AND u.active=TRUE AND u.is_platform_admin=FALSE AND lower(c.slug)<>'construlog'
+      AND (EXISTS(SELECT 1 FROM movit_client_ssw x WHERE x.client_id=u.client_id) OR EXISTS(SELECT 1 FROM movit_demo_convites v WHERE v.client_id=u.client_id)) LIMIT 1`,[dashboardTokenHash(token)]);
+  return r.rows[0]?.client_id||null;
+}
 async function demoRotas(req,res,u){
   // Sem sessão, a página inicial da demo é a entrada com o SSW. "/?login=1" continua abrindo o
   // login normal (administração MOVIT).
@@ -1205,6 +1217,8 @@ async function demoRotas(req,res,u){
             bi2_sigla=EXCLUDED.bi2_sigla,bi2_pasta=EXCLUDED.bi2_pasta,bi2_senha_cifrada=EXCLUDED.bi2_senha_cifrada,exemplo=FALSE,validado_em=NOW(),updated_at=NOW()`,
           [clientId,d.dominio,d.cpf,d.usuario,movitDemo.cifrar(d.senha),d.unidades.join(','),cv.nome,bi2?.sigla||null,bi2?.pasta||null,bi2?movitDemo.cifrar(bi2.senha):null]);
         movitDemo.encerrar(clientId);
+        // Saindo do exemplo: os números fictícios saem e a empresa começa vazia, para lançar os dela.
+        if(modo==='exemplo')await esquemasDemo.limpar(clientId);
         modo='ssw';
       }else if(!modo){
         // Sem o SSW: empresa de exemplo, que lê o SSW de exemplo (números fictícios).
@@ -1212,6 +1226,7 @@ async function demoRotas(req,res,u){
           VALUES($1,$2,'00000000000','exemplo',$3,$4,$5,'exemplo','cliente',$3,TRUE) ON CONFLICT(client_id) DO NOTHING`,
           [clientId,'EX-'+clientId,movitDemo.cifrar('exemplo'),sswExemplo.UNIDADES.join(','),cv.nome]);
         modo='exemplo';
+        await esquemasDemo.rodar(clientId,()=>exemploDados.preencher(pool,clientId));
       }
       await pool.query("UPDATE movit_demo_convites SET modo=$2,primeiro_acesso=COALESCE(primeiro_acesso,NOW()),ultimo_acesso=NOW(),entradas=entradas+1 WHERE client_id=$1",[clientId,modo]);
       // O prazo do teste grátis começa no primeiro acesso.
@@ -2164,9 +2179,16 @@ async function start() {
   if (!TEST_MODE && !movitDemo.ATIVA) await migrateLegacyBillsIfNeeded();
   else console.log('TEST_MODE: importação do sistema antigo de contas desativada.');
   startUnifiedDashboardChild();
-  
+  // Demonstração: dados dos módulos de cada empresa em teste num esquema próprio (esquemas-demo.js).
+  if (movitDemo.ATIVA) esquemasDemo.instalar(pool);
 
-  http.createServer(async (req, res) => {
+  http.createServer(async function atender(req, res) {
+    if (movitDemo.ATIVA && !req.esquemaVisto) {
+      req.esquemaVisto = true;
+      let clientId = null;
+      try { clientId = await empresaDemoDaRequisicao(req); } catch (e) { console.error('DEMO esquema:', e.message); }
+      if (clientId) return esquemasDemo.rodar(clientId, () => atender(req, res)).catch(e => { console.error('DEMO esquema:', e.message); if (!res.headersSent) sendJson(res, 503, { ok: false, error: 'Não foi possível abrir os dados da empresa agora.' }); });
+    }
     try {
       economizarBanda(req,res);
       const u = new URL(req.url, 'http://localhost');

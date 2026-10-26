@@ -26,48 +26,44 @@ const ATIVA = /^(1|true|sim|yes)$/i.test(String(process.env.MOVIT_DEMO || '').tr
 const SSW_BASE = 'https://sistema.ssw.inf.br';
 const SSW_UA = 'Mozilla/5.0 Chrome/120 Safari/537.36';
 
-// Módulos da plataforma (chaves de movit_modules) que já funcionam separados por empresa na demo,
-// com as rotas que o cliente pode chamar. Rotas fora desta lista respondem 403 para o cliente da demo.
-//   painel: rotas atendidas pelo servidor principal
-//   ssw:    rotas atendidas pelo processo de leitura do SSW da própria empresa
-//   telas:  abas do painel (data-module em painel.html) que o módulo mostra
+// Módulos da plataforma (chaves de movit_modules) liberados para o cliente da demo. Os dados de cada
+// empresa ficam separados: as tabelas da operação num esquema próprio (esquemas-demo.js), os
+// agendamentos, o roteirizador e os parceiros por client_id, e a leitura do SSW num processo com o
+// login da própria empresa (ou com o SSW de exemplo).
+//   telas: abas do painel (data-module em painel.html) que o módulo mostra
+//   perms: permissões internas que o módulo libera (as mesmas usadas pelo painel e pelas APIs)
 const MODULOS = {
-  roteirizador: {
-    painel: [/^\/api\/rc(\/|$)/],
-    // "Buscar no SSW" do Roteirizador: CTRCs disponíveis nas unidades da empresa, situação das notas e endereços dos CT-es
-    ssw: [/^\/api\/programacao-entregas\/(disponiveis|status-nfs)$/, /^\/api\/roteirizador\/(enderecos-ctrc|localizar-enderecos)$/],
-    telas: ['roteirizador-cargas']
-  },
-  agendamento: {
-    // agendamentos gravados por empresa (client_id) no servidor principal
-    painel: [/^\/api\/painel\/agendamentos(\/|$)/],
-    // busca da NF no SSW da própria empresa (opções 38 e 101); a varredura chama o processo da empresa direto
-    ssw: [/^\/api\/agendamentos\/nf$/],
-    telas: ['agendamento-entregas']
-  },
-  usuarios: { painel: [], ssw: [], telas: ['usuarios'] },
+  lotacao: { telas: ['lotacao', 'coletas'], perms: ['lotacao', 'coletas'] },
+  coletas: { telas: ['coletas'], perms: ['coletas'] },
+  financeiro_lotacao: { telas: ['financeiro-lotacao', 'financeiro'], perms: ['financeiro'] },
+  operacao: { telas: ['lancamentos'], perms: ['lancamentos', 'final_carregamento', 'ajudantes', 'operacional'] },
+  visao_geral: { telas: ['dashboard'], perms: ['dashboard'] },
   // Dashboards: os cards que leem a opção 38 do SSW com o login da empresa. Os cards do BI2 (lista
-  // BI2 abaixo) entram só para a empresa que informou o acesso ao BI2 na entrada.
+  // BI2 abaixo) entram só para a empresa que tem acesso ao BI2.
   // Parceiros (transportadoras que entregam pela empresa em outras regiões): cadastro com o login
   // do SSW de cada parceiro e a evolução de todos, na tela Parceiros.
-  dashboards: {
-    painel: [/^\/api\/painel\/parceiros(\/\d+|\/evolucao)?$/],
-    ssw: [/^\/api\/evolucao-motoristas$/, /^\/api\/bi2\/saidas-baixas$/],
-    telas: ['dashboards', 'parceiros']
-  }
+  dashboards: { telas: ['dashboards', 'parceiros'], perms: ['evolucao', 'ssw_saidas', 'ocorrencias', 'motoristas', 'filiais', 'rotas'] },
+  agendamento: { telas: ['agendamento-entregas'], perms: ['agendamentos', 'agendamentos_copia'] },
+  programacao: { telas: ['programacao'], perms: ['programacao'] },
+  roteirizador: { telas: ['roteirizador-cargas', 'carga'], perms: ['roteirizador', 'montar_carga'] },
+  rastreio: { telas: ['tracking', 'entregas'], perms: ['tracking'] },
+  financeiro_operacoes: { telas: ['fin-op', 'despesas', 'faturas', 'holerites'], perms: ['financeiro'] },
+  frota: { telas: ['frota'], perms: ['frota'] },
+  contas_pagar: { telas: ['contas'], perms: ['contas_pagar'] },
+  usuarios: { telas: ['usuarios'], perms: [] },
+  app_movit: { telas: [], perms: [] }
 };
-// Cards dos Dashboards que leem a WebAPI do BI2 da empresa: rotas do processo de leitura e permissões.
-// Os cards que dependem das planilhas ou do banco da CONSTRULOG (Ocorrências e SLA, Receita) ficam fora.
+// Cards dos Dashboards que leem a WebAPI do BI2 da empresa.
+// Sem BI2, essas rotas do processo de leitura respondem 403.
 const BI2 = {
   modulo: 'dashboards',
-  ssw: [/^\/api\/bi2\/atrasos$/, /^\/api\/bi2\/remetentes$/, /^\/api\/ssw\/cidades-mapa$/],
-  perms: ['ssw_atrasos', 'remetentes', 'remetentes_comparativo', 'cidade_destino']
+  perms: ['ssw_atrasos', 'remetentes', 'remetentes_comparativo', 'cidade_destino', 'receita_ssw'],
+  telas: ['remetentes', 'receita-ssw'],
+  ssw: [/^\/api\/bi2\/(?!saidas-baixas$|baixas$)/, /^\/api\/ssw\/cidades-mapa$/]
 };
-// Rotas que todo cliente da demo usa (login, sessão, usuários da própria empresa, guia e vídeos,
-// e a conferência da conexão com o SSW da empresa).
-const ROTAS_BASE = { painel: [/^\/api\/empresa\/logo$/, /^\/api\/auth\//, /^\/api\/painel\/auth\//, /^\/api\/demo\//, /^\/api\/guia(\/|$)/], ssw: [/^\/api\/ssw\/conexao$/] };
-// Permissões internas que cada módulo libera (as mesmas usadas pelo painel).
-const PERMS_POR_MODULO = { roteirizador: ['roteirizador'], agendamento: ['agendamentos'], usuarios: [], dashboards: ['evolucao', 'ssw_saidas'] };
+// Rotas que o cliente da demo nunca chama: administração MOVIT e as planilhas da CONSTRULOG.
+const ROTAS_FECHADAS = [/^\/api\/movit-central(\/|$)/, /^\/api\/demo\/convites$/, /^\/api\/sheet\//];
+const PERMS_POR_MODULO = Object.fromEntries(Object.entries(MODULOS).map(([k, m]) => [k, m.perms]));
 
 function modulosProntos() { return Object.keys(MODULOS); }
 
@@ -376,7 +372,9 @@ function modulosLiberados(user) {
   return modulosProntos().filter(m => contratados.has(m));
 }
 function telasLiberadas(user) {
-  return modulosLiberados(user).flatMap(m => MODULOS[m].telas || []);
+  const telas = modulosLiberados(user).flatMap(m => MODULOS[m].telas || []);
+  if (comBi2(user)) telas.push(...BI2.telas);
+  return [...new Set(telas)];
 }
 function comBi2(user) {
   return !!(user && user.client && user.client.bi2 && modulosLiberados(user).includes(BI2.modulo));
@@ -386,10 +384,12 @@ function permsLiberadas(user) {
   if (comBi2(user)) perms.push(...BI2.perms);
   return new Set(perms);
 }
+// As APIs de cada módulo conferem a permissão (permsLiberadas) e os dados ficam separados por
+// empresa; só a administração MOVIT fica fechada para o cliente da demo.
 function rotaLiberada(user, pathname, onde) {
-  if ((ROTAS_BASE[onde] || []).some(re => re.test(pathname))) return true;
-  if (onde === 'ssw' && comBi2(user) && BI2.ssw.some(re => re.test(pathname))) return true;
-  return modulosLiberados(user).some(m => (MODULOS[m][onde] || []).some(re => re.test(pathname)));
+  if (ROTAS_FECHADAS.some(re => re.test(pathname))) return false;
+  if (onde === 'ssw' && !comBi2(user) && BI2.ssw.some(re => re.test(pathname))) return false;
+  return true;
 }
 
 // ------------------------------------------------------------------ links de teste (convites)
