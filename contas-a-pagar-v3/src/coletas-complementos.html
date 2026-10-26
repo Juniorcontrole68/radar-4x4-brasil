@@ -584,7 +584,7 @@
   function dadosDoFormulario() {
     const base = currentId() ? { ...(rowById(currentId()) || {}) } : {};
     ['os_numero', 'cliente', 'endereco_coleta', 'data_carregamento', 'hora_carregamento', 'destinatario', 'endereco_entrega', 'previsao_entrega', 'data_descarga', 'status',
-      'motorista', 'telefone_motorista', 'transportadora_agregado', ...CNH_CAMPOS, ...CAMINHAO_CAMPOS, 'quantidade_paletes', 'peso_total', 'observacoes', 'frete_pago', 'percentual_adiantamento'
+      'motorista', 'telefone_motorista', 'transportadora_agregado', ...CNH_CAMPOS, ...CAMINHAO_CAMPOS, 'quantidade_paletes', 'peso_total', 'observacoes', 'frete_cobrado', 'frete_pago', 'pedagio', 'percentual_adiantamento'
     ].forEach(k => { if (byId(k)) base[k] = val(k) });
     base.entregas_extras = lerDestinos();
     if (byId('lcRemList')) base.remetentes_extras = lerRemetentes();
@@ -611,6 +611,8 @@
     const coletasLista = [{ remetente: c.cliente, endereco_coleta: c.endereco_coleta, data_coleta: c.data_carregamento, hora_coleta: c.hora_carregamento, observacao: [cp.referencia ? 'Ref.: ' + cp.referencia : '', cp.observacao || ''].filter(Boolean).join(' • ') }, ...lista(c.remetentes_extras)]
       .filter(e => String(e.remetente || '').trim() || String(e.endereco_coleta || '').trim());
     const frete = n(c.frete_pago), pct = n(c.percentual_adiantamento), adiant = frete * pct / 100;
+    // Lucro como o servidor calcula ao salvar: valor cobrado do cliente - (frete do motorista + pedágio)
+    const cobrado = n(c.frete_cobrado), pedagio = n(c.pedagio), lucro = cobrado - (frete + pedagio);
     const temCarreta = String(c.placa_carreta || '').trim() || String(c.capacidade_carga_carreta || '').trim() || String(c.eixos_carreta ?? '').trim();
     const emitido = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' });
     const pix = banco.pix_chave ? '<div class="pix"><span>Chave Pix' + (banco.pix_tipo ? ' (' + esc(banco.pix_tipo) + ')' : '') + '</span><b>' + esc(banco.pix_chave) + '</b></div>' : '';
@@ -633,7 +635,7 @@
       '.ent .nn{flex:0 0 24px;height:24px;border-radius:50%;background:#0057a8;color:#fff;display:grid;place-items:center;font-weight:700;font-size:12px}' +
       '.ent b{display:block;font-size:13px}.ent div div{color:#334155}.ent small{color:#64748b}' +
       '.pix{margin:0 11px 10px;padding:8px 11px;border-radius:8px;background:#ecfdf5;border:1px solid #6ee7b7}.pix span{display:block;font-size:10.5px;color:#047857;text-transform:uppercase}.pix b{font-size:15px;color:#065f46;word-break:break-all}' +
-      '.tot{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:9px 11px}.tot div{background:#f8fafc;border-radius:8px;padding:7px 9px}.tot span{display:block;font-size:10.5px;color:#64748b;text-transform:uppercase}.tot b{font-size:15px}.tot .hl{background:#fff7ed}.tot .hl b{color:#c2410c}' +
+      '.tot{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:9px 11px}.tot div{background:#f8fafc;border-radius:8px;padding:7px 9px}.tot span{display:block;font-size:10.5px;color:#64748b;text-transform:uppercase}.tot b{font-size:15px}.tot .hl{background:#fff7ed}.tot .hl b{color:#c2410c}.tot .lp{background:#ecfdf5}.tot .lp b{color:#047857}.tot .ln{background:#fef2f2}.tot .ln b{color:#b91c1c}' +
       '.obs{padding:9px 11px;white-space:pre-wrap;color:#334155}' +
       '.ass{display:grid;grid-template-columns:1fr 1fr;gap:40px;padding:30px 22px 12px}.ass div{border-top:1px solid #475569;padding-top:5px;text-align:center;font-size:11.5px;color:#475569}' +
       '.ft{padding:8px 22px 14px;font-size:10.5px;color:#94a3b8;text-align:center}' +
@@ -671,6 +673,7 @@
       '<div class="sec"><h2>Carga</h2><div class="g">' + campo('Quantidade de paletes', c.quantidade_paletes) + campo('Peso total', n(c.peso_total) ? new Intl.NumberFormat('pt-BR').format(n(c.peso_total)) + ' kg' : '') + campo('Data da descarga', dt(c.data_descarga)) + '</div>' +
       (String(c.observacoes || '').trim() ? '<div class="obs"><b>Observações:</b> ' + esc(c.observacoes) + '</div>' : '') + '</div>' +
       '<div class="sec"><h2>Frete do motorista</h2><div class="tot"><div><span>Valor do frete</span><b>' + brl(frete) + '</b></div><div><span>Adiantamento (' + esc(new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(pct)) + '%)</span><b>' + brl(adiant) + '</b></div><div class="hl"><span>Saldo na entrega</span><b>' + brl(frete - adiant) + '</b></div></div></div>' +
+      '<div class="sec"><h2>Valores da coleta</h2><div class="tot"><div><span>Valor cobrado</span><b>' + brl(cobrado) + '</b></div><div><span>Pedágio</span><b>' + brl(pedagio) + '</b></div><div class="' + (lucro < 0 ? 'ln' : 'lp') + '"><span>Lucro</span><b>' + brl(lucro) + '</b></div></div></div>' +
       '</div>' +
       '<div class="ass"><div>Motorista<br>' + esc(c.motorista || '') + '</div><div>Responsável pela expedição</div></div>' +
       '<div class="ft">Documento gerado pela Torre de Controle MOVIT • Confira os dados antes do carregamento.</div>' +
