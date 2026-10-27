@@ -20,6 +20,8 @@ input,select,textarea{width:100%;padding:10px 11px;border:1px solid #cbd5e1;bord
 .prices{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}.fee-hint{font-size:11px;color:var(--muted);font-weight:600}.fee-hint a{color:var(--brand);cursor:pointer;text-decoration:underline}
 .modules{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.mod{border:1px solid var(--line);border-radius:10px;padding:10px;background:#fafafa;display:flex;gap:9px;align-items:flex-start}.mod input{width:auto;margin-top:3px}.mod b{font-size:13px}.mod small{display:block;color:var(--muted);margin-top:2px}.modw{display:flex;flex-direction:column;gap:3px}.modw label.vid{font-size:11.5px;color:var(--muted);padding-left:12px;cursor:pointer}.modw label.vid input{width:auto;margin:0 4px 0 0;vertical-align:-2px}
 .msg{min-height:20px;font-size:13px;font-weight:700;margin-top:10px}.empty{padding:20px;text-align:center;color:var(--muted)}
+.convite{border:2px solid var(--brand);margin-bottom:16px}.passo{display:flex;align-items:center;gap:9px;font-weight:800;font-size:14px;margin:16px 0 10px}.passo>span:first-child{background:var(--brand);color:#fff;border-radius:50%;width:24px;height:24px;display:inline-grid;place-items:center;font-size:13px}.cmods{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}.cmods label{display:flex;flex-direction:row;align-items:center;gap:8px;border:1px solid var(--line);border-radius:9px;padding:9px 10px;font-size:13px;color:var(--text);cursor:pointer;background:#fafafa}.cmods label input{width:auto;margin:0}.cmods label:has(input:checked){border-color:var(--brand);background:#f0fdfa}
+body.demo #clientForm .form>label:not(:first-child),body.demo .modw label.vid,body.demo #modules small,body.demo #newClient,body.demo #reset{display:none}body.demo.semCliente #clientForm{display:none}#semClienteDica{display:none}body.demo.semCliente #semClienteDica{display:block}
 @media(max-width:900px){.kpis{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}.form,.modules{grid-template-columns:1fr}}
 </style>
 </head>
@@ -29,7 +31,23 @@ input,select,textarea{width:100%;padding:10px 11px;border:1px solid #cbd5e1;bord
   <a class="back" href="/">Voltar à CONSTRULOG</a>
 </div>
 <div class="wrap">
-  <div class="kpis">
+  <div class="card convite" id="conviteCard" style="display:none">
+    <h2>📲 Enviar teste para um cliente</h2>
+    <div class="meta" style="margin:-6px 0 14px">O cliente recebe pelo WhatsApp um link pessoal. Todos os módulos aparecem para ele, mas só abrem os que você marcar no passo 2.</div>
+    <div class="passo"><span>1</span>Dados do cliente</div>
+    <div class="form">
+      <label>Nome do contato<input id="cNome" maxlength="120"></label>
+      <label>Transportadora<input id="cEmpresa" maxlength="120"></label>
+      <label>WhatsApp (com DDD)<input id="cZap" inputmode="tel" placeholder="19 99999-0000"></label>
+      <label>E-mail (opcional)<input id="cEmail" type="email"></label>
+    </div>
+    <div class="passo"><span>2</span>Módulos que ele pode abrir<span class="actions" style="margin-left:auto"><button class="btn secondary" type="button" id="cTodos">Marcar todos</button><button class="btn secondary" type="button" id="cNenhum">Desmarcar todos</button></span></div>
+    <div id="cMods" class="cmods"></div>
+    <div class="passo"><span>3</span>Gerar o link</div>
+    <div class="actions"><button class="btn primary" type="button" id="cGo" style="padding:12px 18px;font-size:15px">Gerar link do teste</button></div>
+    <div id="cMsg" class="msg"></div>
+  </div>
+  <div class="kpis" id="kpis">
     <div class="kpi"><span>Clientes</span><b id="kClients">—</b></div>
     <div class="kpi"><span>Ativos / Piloto</span><b id="kActive">—</b></div>
     <div class="kpi"><span>Receita mensal ativa</span><b id="kMrr">—</b></div>
@@ -37,12 +55,13 @@ input,select,textarea{width:100%;padding:10px 11px;border:1px solid #cbd5e1;bord
   </div>
   <div class="grid">
     <div class="card">
-      <div class="actions" style="justify-content:space-between;margin-bottom:12px"><h2 style="margin:0">Clientes</h2><div class="actions"><button id="newTrial" class="btn secondary" type="button">🎁 Teste grátis</button><button id="newClient" class="btn primary">+ Novo cliente</button></div></div>
+      <div class="actions" style="justify-content:space-between;margin-bottom:12px"><h2 style="margin:0" id="clientsTitle">Clientes</h2><div class="actions"><button id="newTrial" class="btn secondary" type="button">🎁 Teste grátis</button><button id="newClient" class="btn primary">+ Novo cliente</button></div></div>
       <div id="trialBox" class="trialbox" style="display:none"><b style="font-size:13px">Liberar teste grátis</b><div class="meta" style="margin-bottom:8px">Cria a empresa em teste por <span id="trialDias">7</span> dias com o Roteirizador e um usuário administrador.</div><div class="form"><label>Transportadora<input id="tName"></label><label>CNPJ<input id="tDoc"></label><label>E-mail<input id="tEmail" type="email"></label><label>WhatsApp<input id="tPhone"></label></div><div class="actions" style="margin-top:10px"><button id="tGo" class="btn primary" type="button">Criar acesso de teste</button><button id="tClose" class="btn secondary" type="button">Fechar</button></div><div id="tMsg" class="msg"></div></div>
       <div id="clients" class="clients"><div class="empty">Carregando…</div></div>
     </div>
     <div class="card">
       <h2 id="formTitle">Cadastro do cliente</h2>
+      <div id="semClienteDica" class="empty">Clique num cliente da lista ao lado para mudar os módulos que ele pode abrir.</div>
       <form id="clientForm">
         <input id="clientId" type="hidden">
         <div class="form">
@@ -60,6 +79,7 @@ input,select,textarea{width:100%;padding:10px 11px;border:1px solid #cbd5e1;bord
           <label class="full">Observações<textarea id="notes" rows="2"></textarea></label>
         </div>
         <h2 style="margin-top:18px">Módulos contratados</h2>
+        <div id="modsDica" class="meta" style="margin:-6px 0 10px;display:none">Marque ou desmarque os módulos e clique em Salvar cliente. O que ficar desmarcado aparece com 🔒 para ele.</div>
         <div id="modules" class="modules"></div>
         <div class="actions" style="margin-top:14px">
           <button class="btn primary" type="submit">Salvar cliente</button>
@@ -70,22 +90,7 @@ input,select,textarea{width:100%;padding:10px 11px;border:1px solid #cbd5e1;bord
     </div>
   </div>
 
-  <div class="card" id="conviteCard" style="margin-top:14px;display:none">
-    <h2>📲 Enviar teste por WhatsApp</h2>
-    <div class="meta" style="margin:-6px 0 12px">O cliente recebe um link pessoal. Com o login do SSW ele vê os dados da transportadora dele; sem o SSW, entra numa empresa de exemplo com números fictícios. Todos os módulos aparecem para ele, mas só abrem os que você marcar aqui.</div>
-    <div class="form">
-      <label>Nome do contato<input id="cNome" maxlength="120"></label>
-      <label>Transportadora<input id="cEmpresa" maxlength="120"></label>
-      <label>WhatsApp (com DDD)<input id="cZap" inputmode="tel" placeholder="19 99999-0000"></label>
-      <label>E-mail (opcional)<input id="cEmail" type="email"></label>
-    </div>
-    <div class="actions" style="justify-content:space-between;margin:14px 0 8px"><b style="font-size:13px">Módulos liberados no teste</b><span class="actions"><button class="btn secondary" type="button" id="cTodos">Marcar todos</button><button class="btn secondary" type="button" id="cNenhum">Desmarcar todos</button></span></div>
-    <div id="cMods" class="modules"></div>
-    <div class="actions" style="margin-top:14px"><button class="btn primary" type="button" id="cGo">Criar link do teste</button></div>
-    <div id="cMsg" class="msg"></div>
-  </div>
-
-  <div class="card" style="margin-top:14px">
+  <div class="card" id="precosCard" style="margin-top:14px">
     <div class="actions" style="justify-content:space-between;margin-bottom:12px"><h2 style="margin:0">Preços</h2><button id="savePrices" class="btn primary" type="button">Salvar preços</button></div>
     <div class="prices"><label>Implantação (entrada) R$<input id="pInst" inputmode="decimal"></label><label>Dias de teste grátis<input id="pDias" type="number" min="1" max="60"></label></div>
     <div class="meta" style="margin:12px 0 6px">Mensalidade por módulo (a mensalidade do cliente é a soma dos módulos marcados)</div>
@@ -93,7 +98,7 @@ input,select,textarea{width:100%;padding:10px 11px;border:1px solid #cbd5e1;bord
     <div id="pMsg" class="msg"></div>
   </div>
 
-  <div class="card" style="margin-top:14px">
+  <div class="card" id="mensalCard" style="margin-top:14px">
     <div class="actions" style="justify-content:space-between;margin-bottom:12px">
       <h2 style="margin:0">Mensalidades</h2>
       <div class="actions">
@@ -175,12 +180,12 @@ function renderClients(){
   document.querySelectorAll('.client').forEach(el=>el.onclick=()=>editClient(el.dataset.id));
 }
 function resetForm(){
-  $('clientId').value='';HTMLFormElement.prototype.reset.call($('clientForm'));$('dueDay').value='10';$('status').value='pilot';$('plan').value='Personalizado';$('installFee').value=Number(PRICES.instalacao||0).toFixed(2).replace('.',',');$('trialEnds').value='';$('formTitle').textContent='Novo cliente';renderModules([]);$('msg').textContent='';
+  $('clientId').value='';HTMLFormElement.prototype.reset.call($('clientForm'));$('dueDay').value='10';$('status').value='pilot';$('plan').value='Personalizado';$('installFee').value=Number(PRICES.instalacao||0).toFixed(2).replace('.',',');$('trialEnds').value='';$('formTitle').textContent=document.body.classList.contains('demo')?'Módulos do cliente':'Novo cliente';document.body.classList.add('semCliente');renderModules([]);$('msg').textContent='';
   document.querySelectorAll('.client').forEach(x=>x.classList.remove('active'));
 }
 function editClient(id){
   const c=CLIENTS.find(x=>String(x.id)===String(id));if(!c)return;
-  $('clientId').value=c.id;$('name').value=c.name||'';$('slug').value=c.slug||'';$('document').value=c.document||'';$('email').value=c.email||'';$('phone').value=c.phone||'';$('plan').value=c.plan||'Personalizado';$('monthlyFee').value=Number(c.monthly_fee||0).toFixed(2).replace('.',',');$('dueDay').value=c.due_day||10;$('status').value=c.status||'active';$('notes').value=c.notes||'';$('installFee').value=Number(c.installation_fee||0).toFixed(2).replace('.',',');$('trialEnds').value=c.trial_ends_at?new Date(c.trial_ends_at).toLocaleDateString('sv-SE',{timeZone:'America/Sao_Paulo'}):'';$('formTitle').textContent='Editar • '+c.name;renderModules(c.modules||[],c.videos||[]);
+  $('clientId').value=c.id;$('name').value=c.name||'';$('slug').value=c.slug||'';$('document').value=c.document||'';$('email').value=c.email||'';$('phone').value=c.phone||'';$('plan').value=c.plan||'Personalizado';$('monthlyFee').value=Number(c.monthly_fee||0).toFixed(2).replace('.',',');$('dueDay').value=c.due_day||10;$('status').value=c.status||'active';$('notes').value=c.notes||'';$('installFee').value=Number(c.installation_fee||0).toFixed(2).replace('.',',');$('trialEnds').value=c.trial_ends_at?new Date(c.trial_ends_at).toLocaleDateString('sv-SE',{timeZone:'America/Sao_Paulo'}):'';$('formTitle').textContent='Editar • '+c.name;document.body.classList.remove('semCliente');renderModules(c.modules||[],c.videos||[]);
   document.querySelectorAll('.client').forEach(x=>x.classList.toggle('active',x.dataset.id===String(id)));
 }
 async function load(){
@@ -250,21 +255,27 @@ load().catch(e=>{$('clients').innerHTML='<div class="empty">'+e.message+'</div>'
 // Envio do link de teste (só no serviço de demonstração, onde /api/demo/info responde).
 fetch('/api/demo/info',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(j=>{
   if(!j||!j.demo)return;
+  // Na demonstração, a tela fica só com o envio do teste e a lista de quem está testando.
   $('conviteCard').style.display='';
-  $('cMods').innerHTML=(j.modulos||[]).map(m=>'<label class="mod"><input type="checkbox" class="cmod" value="'+esc(m.key)+'" checked><span><b>'+esc(m.name)+'</b><small>'+esc(m.category||'')+'</small></span></label>').join('');
+  ['kpis','precosCard','mensalCard','newTrial','trialBox'].forEach(k=>{const el=$(k);if(el)el.style.display='none'});
+  document.body.classList.add('demo');if(!$('clientId').value){document.body.classList.add('semCliente');$('formTitle').textContent='Módulos do cliente'}
+  $('clientsTitle').textContent='Clientes em teste';$('modsDica').style.display='';
+  $('cMods').innerHTML=(j.modulos||[]).map(m=>'<label><input type="checkbox" class="cmod" value="'+esc(m.key)+'">'+esc(m.name)+'</label>').join('');
 }).catch(()=>{});
 $('cTodos').onclick=()=>document.querySelectorAll('.cmod').forEach(i=>i.checked=true);
 $('cNenhum').onclick=()=>document.querySelectorAll('.cmod').forEach(i=>i.checked=false);
 $('cGo').onclick=async()=>{
   const body={nome:$('cNome').value.trim(),empresa:$('cEmpresa').value.trim(),whatsapp:$('cZap').value.trim(),email:$('cEmail').value.trim(),modulos:[...document.querySelectorAll('.cmod:checked')].map(x=>x.value)};
+  if(!body.empresa||!body.whatsapp){$('cMsg').style.color='#b91c1c';$('cMsg').textContent='Preencha a transportadora e o WhatsApp do cliente.';return}
+  if(!body.modulos.length){$('cMsg').style.color='#b91c1c';$('cMsg').textContent='Marque pelo menos um módulo no passo 2.';return}
   $('cMsg').style.color='#475569';$('cMsg').textContent='Criando o teste…';
   try{
     const r=await fetch('/api/demo/convites',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao criar o teste.');
     $('cMsg').style.color='#15803d';
-    $('cMsg').innerHTML='✓ Teste criado para '+esc(body.empresa)+'.<div class="cred">'+esc(j.link)+'</div><div class="actions" style="margin-top:8px"><a class="btn primary" style="text-decoration:none" target="_blank" rel="noopener" href="'+esc(j.whatsapp_url)+'">Enviar no WhatsApp</a><button class="btn secondary" type="button" id="cCopy">Copiar mensagem</button></div>';
+    $('cMsg').innerHTML='✓ Teste criado para '+esc(body.empresa)+'. Agora clique em Enviar no WhatsApp.<div class="cred">'+esc(j.link)+'</div><div class="actions" style="margin-top:8px"><a class="btn primary" style="text-decoration:none;background:#16a34a;padding:12px 18px;font-size:15px" target="_blank" rel="noopener" href="'+esc(j.whatsapp_url)+'">Enviar no WhatsApp</a><button class="btn secondary" type="button" id="cCopy">Copiar mensagem</button></div>';
     $('cCopy').onclick=()=>navigator.clipboard&&navigator.clipboard.writeText(j.mensagem);
-    ['cNome','cEmpresa','cZap','cEmail'].forEach(k=>$(k).value='');
+    ['cNome','cEmpresa','cZap','cEmail'].forEach(k=>$(k).value='');document.querySelectorAll('.cmod').forEach(i=>i.checked=false);
     await load();
   }catch(e){$('cMsg').style.color='#b91c1c';$('cMsg').textContent=e.message}
 };
