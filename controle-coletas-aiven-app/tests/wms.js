@@ -493,6 +493,63 @@ function nfe({chave,itens}){
     }
   }
 
+  console.log('Cobrança da armazenagem: formas de cobrar por cliente, mês fechado e mês corrente');
+  {
+    const {Client}=require('pg');
+    const db=new Client({connectionString:process.env.DATABASE_URL||'postgresql://teste:teste@127.0.0.1:5432/construlog_teste'});await db.connect();
+    try{
+      r=await call('POST','/api/wms/clientes',{cookie:gest,body:{nome:'Cliente Faturamento',cnpj:'11444777000161'}});
+      check('cria o cliente da cobrança',r.status===201,r.json);
+      const cf=r.json.id;
+      const ant=(await db.query("SELECT to_char(((NOW() AT TIME ZONE 'America/Sao_Paulo')::date-INTERVAL '1 month'),'YYYY-MM') AS m")).rows[0].m;
+      const ndias=(await db.query("SELECT EXTRACT(DAY FROM ($1::date+INTERVAL '1 month'-INTERVAL '1 day'))::int AS n",[ant+'-01'])).rows[0].n;
+      // fotos do mês passado: dia 1 com 10 paletes, dia 11 cai para 4, dia 21 esvazia (dias sem foto repetem a anterior)
+      for(const [d,pal,pos,m3,kg] of [['01',10,4,2,1000],['11',4,2,1,0],['21',0,0,0,0]])
+        await db.query('INSERT INTO wms_ocupacao_diaria(data,empresa,cliente_id,armazem_id,paletes,posicoes,unidades,kg,m3) VALUES($1,0,$2,$3,$4,$5,0,$6,$7)',[ant+'-'+d,cf,arm,pal,pos,kg,m3]);
+      await db.query(`INSERT INTO wms_recebimentos(empresa,armazem_id,cliente_id,nf_numero,status,finalizado_em,xml) VALUES(0,$1,$2,'777','finalizado',$3::date+INTERVAL '5 days 12 hours',
+        '<nfeProc><NFe><infNFe><total><ICMSTot><vProd>1000.00</vProd><vNF>1234.56</vNF></ICMSTot></total></infNFe></NFe></nfeProc>')`,[arm,cf,ant+'-01']);
+      r=await call('GET','/api/wms/faturamento?mes='+ant,{cookie:op});
+      check('operador não vê a cobrança',r.status===403);
+      r=await call('GET','/api/wms/faturamento?mes=2026-13',{cookie:gest});
+      check('mês inválido: 400',r.status===400,r.json);
+      r=await call('PUT','/api/wms/tarifas/'+cf,{cookie:op,body:{palete_dia:1}});
+      check('operador não muda preço',r.status===403);
+      r=await call('PUT','/api/wms/tarifas/'+cf,{cookie:gest,body:{ad_valorem:150}});
+      check('ad valorem acima de 100% é recusado',r.status===400,r.json);
+      r=await call('PUT','/api/wms/tarifas/'+cf,{cookie:gest,body:{palete_dia:1.5,m3_dia:2,ton_dia:10,palete_pico:3,nf_entrada:20,ad_valorem:0.5,mensalidade:100,minimo_mensal:600}});
+      check('grava a tabela de preços do cliente',r.status===200&&r.json.tarifa.palete_dia===1.5&&r.json.tarifa.posicao_dia===0,r.json);
+      r=await call('GET','/api/wms/faturamento?mes='+ant+'&cliente_id='+cf,{cookie:gest});
+      const f=r.json.rows?.[0]||{},m=f.medidas||{},L=Object.fromEntries((f.linhas||[]).map(l=>[l.metodo,l]));
+      check('mês fechado conta todos os dias e lista as formas de cobrar',r.status===200&&f.dias===ndias&&r.json.metodos?.length>=19,{dias:f.dias,ndias});
+      check('palete/dia repete a última foto: 10×10 + 4×10 + 0',m.palete_dias===140&&m.pico_paletes===10,m);
+      check('posição/dia, m³/dia e tonelada/dia',m.posicao_dias===60&&m.m3_dias===30&&m.ton_dias===10,m);
+      check('valor das notas de entrada vem do XML (vNF)',m.valor_nf_entrada===1234.56&&m.nf_entrada===1,m);
+      check('só cobra o que tem preço',!L.posicao_dia&&!L.entrada_un&&L.palete_dia?.valor===210&&L.m3_dia?.valor===60&&L.ton_dia?.valor===100&&L.palete_pico?.valor===30,f.linhas);
+      check('nota de entrada, ad valorem e mensalidade',L.nf_entrada?.valor===20&&L.ad_valorem?.valor===6.17&&L.mensalidade?.valor===100,f.linhas);
+      check('subtotal 526,17 abaixo do mínimo: completa até 600',f.subtotal===526.17&&f.ajuste_minimo===73.83&&f.total===600,f);
+      const csv=await fetch(B+'/api/wms/faturamento?formato=csv&mes='+ant+'&cliente_id='+cf,{headers:{Cookie:gest}});
+      const tx=await csv.text();
+      check('planilha CSV com itens, mínimo e total',csv.status===200&&/text\/csv/.test(csv.headers.get('content-type'))&&tx.includes('"Palete por dia";140,00')&&tx.includes('0,50%')&&tx.includes('Complemento do mínimo mensal')&&tx.includes('600,00'),tx.slice(0,500));
+      const hoje=(await db.query("SELECT paletes FROM wms_ocupacao_diaria WHERE cliente_id=$1 AND data=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date",[cf])).rows[0];
+      check('cliente que esvaziou ganha foto zerada hoje',hoje&&hoje.paletes===0,hoje);
+      // mês corrente do cliente principal: entrada e saída batem com os movimentos do banco
+      r=await call('PUT','/api/wms/tarifas/'+cli,{cookie:gest,body:{entrada_un:0.1,entrada_cx:0.5,entrada_palete:2,saida_un:0.2,nf_saida:3,linha_separada:0.25}});
+      check('preços por quantidade de entrada e saída',r.status===200,r.json);
+      const mes=(await db.query("SELECT to_char((NOW() AT TIME ZONE 'America/Sao_Paulo')::date,'YYYY-MM') AS m")).rows[0].m;
+      r=await call('GET','/api/wms/faturamento?mes='+mes,{cookie:gest});
+      const g=(r.json.rows||[]).find(x=>x.cliente_id===String(cli))||{},gm=g.medidas||{},GL=Object.fromEntries((g.linhas||[]).map(l=>[l.metodo,l]));
+      const bd=(await db.query(`SELECT SUM(qtd) FILTER (WHERE tipo='entrada')::float AS e,COUNT(DISTINCT lpn_id) FILTER (WHERE tipo='entrada')::int AS ep,SUM(qtd) FILTER (WHERE tipo='saida')::float AS s
+        FROM wms_movimentos WHERE cliente_id=$1 AND date_trunc('month',criado_em AT TIME ZONE 'America/Sao_Paulo')=date_trunc('month',NOW() AT TIME ZONE 'America/Sao_Paulo')`,[cli])).rows[0];
+      const sp=(await db.query(`SELECT COUNT(*)::int AS n FROM wms_expedicao_separacao s JOIN wms_expedicoes x ON x.id=s.expedicao_id WHERE x.cliente_id=$1 AND x.status='expedida' AND s.status='separada'`,[cli])).rows[0].n;
+      check('quantidade de entrada no período bate com o estoque',bd.e>0&&gm.entrada_un===bd.e&&gm.entrada_paletes===bd.ep&&GL.entrada_un?.valor===Math.round(bd.e*0.1*100)/100,{gm,bd});
+      check('saída: unidades, notas e linhas separadas',gm.saida_un===(bd.s||0)&&gm.nf_saida>=1&&gm.linhas_separadas===sp&&GL.linha_separada?.qtd===sp,{gm,bd,sp});
+      check('caixas recebidas arredondam para cima',gm.entrada_cx>0&&Number.isInteger(gm.entrada_cx),gm);
+      check('total geral soma os clientes',Math.abs(r.json.total-r.json.rows.reduce((a,x)=>a+x.total,0))<0.01,r.json.total);
+      r=await call('GET','/api/wms/auditoria',{cookie:sup});
+      check('mudança de preço fica na auditoria',r.json.rows.some(x=>x.acao==='tarifa'),r.json.rows?.slice(0,3));
+    }finally{await db.end()}
+  }
+
   console.log(`\n${pass} OK, ${fail} falha(s)`);
   process.exit(fail?1:0);
 })().catch(e=>{console.error(e);process.exit(1)});
