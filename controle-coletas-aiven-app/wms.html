@@ -169,7 +169,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}dialog form,dialog .in{padding:18
         </form>
       </div>
     </div>
-    <div class="card"><div class="bar" style="justify-content:space-between"><h2>Endereços</h2><div class="bar"><label>Zona<select id="endZona"><option value="">Todas</option></select></label><button class="btn" id="endEtq">🏷 Etiquetas da zona</button></div></div><div class="tw" id="endLista"></div></div>
+    <div class="card"><div class="bar" style="justify-content:space-between"><h2>Endereços</h2><div class="bar"><label>Zona<select id="endZona"><option value="">Todas</option></select></label><button class="btn" id="endEtq">🏷 Etiquetas da zona</button><button class="btn d" id="endApagar" data-gest>🗑 Apagar endereços</button></div></div><div class="tw" id="endLista"></div></div>
   </section>
 
   <section data-sec="auditoria" hidden>
@@ -621,6 +621,11 @@ function listarEnd(){
 }
 $('#endZona').onchange=listarEnd;
 $('#endEtq').onclick=()=>{if(!ST.arm)return;open('/wms/etiquetas?tipo=endereco&armazem_id='+ST.arm+($('#endZona').value?'&zona_id='+$('#endZona').value:''),'_blank','noopener')};
+$('#endApagar').onclick=tenta(async()=>{
+  if(!ST.arm)return;const z=$('#endZona'),nome=z.value?'da zona '+z.options[z.selectedIndex].text:'de todas as zonas deste armazém';
+  if(!confirm('Apagar os endereços '+nome+'?\n\nOs que têm estoque ou movimentação ficam; os demais saem do cadastro.'))return;
+  const j=await api('DELETE','/api/wms/enderecos?armazem_id='+ST.arm+(z.value?'&zona_id='+z.value:''));
+  aviso(j.apagados+' endereço(s) apagado(s)'+(j.mantidos?'. Ficaram '+j.mantidos+' com estoque ou movimentação'+(j.com_saldo?' ('+j.com_saldo+' com saldo; retire o saldo pelo ajuste)':''):'')+'.',true);carregarEnderecos()});
 $('#armNovo').onclick=()=>{
   abrir('<h2>Novo armazém</h2><form id="fArm"><div class="cols"><label>Código<input name="codigo" maxlength="20" required placeholder="CD01"></label><label>Nome<input name="nome" required placeholder="CD Indaiatuba"></label></div><label>Endereço<input name="endereco"></label><p class="muted">O armazém já nasce com as zonas Docas, Quarentena, Avarias e Pulmão. Depois gere os endereços de cada zona.</p><div class="bar"><button class="btn p">Criar</button><button class="btn" type="button" data-fechar>Cancelar</button></div></form>');
   $('#fArm').onsubmit=tenta(async e=>{e.preventDefault();const j=await api('POST','/api/wms/armazens',Object.fromEntries(new FormData(e.target)));ST.arm=j.id;try{localStorage.setItem('wmsArm',j.id)}catch{};fechar();aviso('Armazém criado.',true);carregarEnderecos()});
