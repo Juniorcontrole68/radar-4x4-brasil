@@ -37,6 +37,20 @@ function nfe({chave,itens}){
   }
   console.log('Regras sem servidor (wms.js)');
   {
+    {
+      // certificado A1: Secret File do Render (arquivo .pfx) ou texto colado; texto errado ganha aviso claro
+      const sz=require('../sefaz-nfe.js'),fs=require('fs'),path=require('path');
+      const F=path.join(__dirname,'fixtures','sefaz','a1-teste-legado.pfx'),antes={...process.env};
+      const st=env=>{for(const k of['WMS_NFE_CERT_PFX_FILE','WMS_NFE_CERT_PFX_BASE64','WMS_NFE_CERT_SENHA'])delete process.env[k];Object.assign(process.env,env);sz._limparCache();return sz.status()};
+      let s=st({WMS_NFE_CERT_PFX_FILE:F,WMS_NFE_CERT_SENHA:'senha-a1'});
+      check('A1 lido do arquivo .pfx (Secret File)',s.cnpj==='11222333000181'&&!s.erro,s);
+      s=st({WMS_NFE_CERT_PFX_BASE64:'"'+fs.readFileSync(F).toString('base64').replace(/(.{76})/g,'$1\r\n')+'"',WMS_NFE_CERT_SENHA:'senha-a1'});
+      check('A1 colado com aspas e quebras de linha',s.cnpj==='11222333000181'&&!s.erro,s);
+      s=st({WMS_NFE_CERT_PFX_BASE64:'[Convert]::ToBase64String([IO.File]::ReadAllBytes("cert.pfx"))',WMS_NFE_CERT_SENHA:'x'});
+      check('texto que não é o certificado: aviso explica',/não é o certificado A1/.test(s.erro||''),s);
+      for(const k of['WMS_NFE_CERT_PFX_FILE','WMS_NFE_CERT_PFX_BASE64','WMS_NFE_CERT_SENHA'])if(antes[k]===undefined)delete process.env[k];else process.env[k]=antes[k];
+      sz._limparCache();
+    }
     const x=nfe({chave:'3'.repeat(44),itens:[{cod:'F-1',ean:'7891234567895',desc:'Argamassa',q:300,lotes:[{lote:'L1',q:200,val:'2027-04-30'},{lote:'L2',q:100,val:'2027-06-30'}]},{cod:'F-2',desc:'Rejunte',q:40}]});
     const n=lib.lerNfe(x);
     check('NF-e: chave, número, emitente, destinatário e itens com lote/validade',n.chave==='3'.repeat(44)&&n.numero==='4812'&&n.emitente.cnpj===CNPJ_FORN&&n.destinatario.cnpj===CNPJ_CLI&&n.itens.length===3&&n.itens[0].lote==='L1'&&n.itens[0].qtd===200&&n.itens[1].validade==='2027-06-30'&&n.itens[2].ean===''&&n.itens[0].descricao==='Argamassa & cia',n);
