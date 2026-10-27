@@ -262,13 +262,24 @@ async function ensureSchema(pool){
      await q('ALTER TABLE wms_movimentos DROP CONSTRAINT IF EXISTS wms_movimentos_tipo_check');
      await q("ALTER TABLE wms_movimentos ADD CONSTRAINT wms_movimentos_tipo_check CHECK (tipo IN ('entrada','armazenagem','transferencia','bloqueio','desbloqueio','ajuste','saida','reserva','separacao'))");
    }}
+  await q(`CREATE TABLE IF NOT EXISTS wms_tarifas (cliente_id BIGINT PRIMARY KEY REFERENCES wms_clientes(id), empresa BIGINT NOT NULL DEFAULT 0,
+    atualizado_por TEXT NOT NULL DEFAULT '', atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+  for(const k of CAMPOS_TARIFA)await q(`ALTER TABLE wms_tarifas ADD COLUMN IF NOT EXISTS ${k} NUMERIC NOT NULL DEFAULT 0 CHECK (${k}>=0)`);
+  await q(`CREATE TABLE IF NOT EXISTS wms_ocupacao_diaria (data DATE NOT NULL, empresa BIGINT NOT NULL DEFAULT 0, cliente_id BIGINT NOT NULL REFERENCES wms_clientes(id),
+    armazem_id BIGINT NOT NULL REFERENCES wms_armazens(id), paletes INT NOT NULL DEFAULT 0, posicoes INT NOT NULL DEFAULT 0, unidades NUMERIC NOT NULL DEFAULT 0, kg NUMERIC NOT NULL DEFAULT 0, m3 NUMERIC NOT NULL DEFAULT 0,
+    atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (data,cliente_id,armazem_id))`);
+  await q('ALTER TABLE wms_ocupacao_diaria ADD COLUMN IF NOT EXISTS posicoes INT NOT NULL DEFAULT 0');
   await q(`CREATE OR REPLACE FUNCTION wms_imutavel() RETURNS trigger LANGUAGE plpgsql AS $f$
     BEGIN RAISE EXCEPTION 'registro do WMS não pode ser alterado nem apagado (%).', TG_TABLE_NAME USING ERRCODE='42501'; END $f$`);
   for(const t of['wms_movimentos','wms_auditoria']){
     await q(`DROP TRIGGER IF EXISTS ${t}_imutavel ON ${t}`);
     await q(`CREATE TRIGGER ${t}_imutavel BEFORE UPDATE OR DELETE ON ${t} FOR EACH ROW EXECUTE FUNCTION wms_imutavel()`);
   }
+  // foto da ocupação para o faturamento: na subida e a cada hora (guarda o maior valor do dia)
+  const foto=()=>fotografarOcupacao(pool).catch(e=>console.error('[wms] foto da ocupação falhou:',e.message));
+  foto();if(!fotoTimer){fotoTimer=setInterval(foto,3600e3);fotoTimer.unref?.()}
 }
+let fotoTimer=null;
 
 async function tx(pool,fn){
   for(let t=0;;t++){
@@ -913,6 +924,107 @@ async function cancelarExpedicao(c,ctx,id,b){
   await auditar(c,ctx,'cancelar','expedicao',x.id,{motivo:limpo(b.motivo,300)});
   return{ok:true,status:'cancelada'};
 }
+// ---------------------------------------------------------------- faturamento da armazenagem
+// Foto diária da ocupação por cliente (paletes = LPNs + endereços com saldo solto), guardando o maior valor do dia.
+// Cada cliente tem a sua tabela de preços: só entram na conta as formas de cobrança com preço maior que zero.
+// Na armazenagem, o dia sem foto repete a última foto anterior; entrada e saída contam o que aconteceu no período.
+const METODOS_COBRANCA=[
+  {k:'palete_dia',grupo:'Armazenagem',item:'Palete por dia',un:'palete-dia',m:'palete_dias'},
+  {k:'posicao_dia',grupo:'Armazenagem',item:'Posição (endereço) por dia',un:'posição-dia',m:'posicao_dias'},
+  {k:'m3_dia',grupo:'Armazenagem',item:'m³ por dia',un:'m³-dia',m:'m3_dias'},
+  {k:'ton_dia',grupo:'Armazenagem',item:'Tonelada por dia',un:'t-dia',m:'ton_dias'},
+  {k:'palete_pico',grupo:'Armazenagem',item:'Pico de paletes no mês',un:'palete',m:'pico_paletes'},
+  {k:'entrada_un',grupo:'Entrada',item:'Unidades recebidas',un:'un',m:'entrada_un'},
+  {k:'entrada_cx',grupo:'Entrada',item:'Caixas recebidas',un:'cx',m:'entrada_cx'},
+  {k:'entrada_palete',grupo:'Entrada',item:'Paletes recebidos',un:'palete',m:'entrada_paletes'},
+  {k:'entrada_ton',grupo:'Entrada',item:'Toneladas recebidas',un:'t',m:'entrada_ton'},
+  {k:'nf_entrada',grupo:'Entrada',item:'Notas de entrada',un:'NF',m:'nf_entrada'},
+  {k:'ad_valorem',grupo:'Entrada',item:'Ad valorem sobre o valor das notas de entrada',un:'R$',m:'valor_nf_entrada',pct:true},
+  {k:'saida_un',grupo:'Saída',item:'Unidades expedidas',un:'un',m:'saida_un'},
+  {k:'saida_cx',grupo:'Saída',item:'Caixas expedidas',un:'cx',m:'saida_cx'},
+  {k:'saida_palete',grupo:'Saída',item:'Paletes separados',un:'palete',m:'saida_paletes'},
+  {k:'saida_ton',grupo:'Saída',item:'Toneladas expedidas',un:'t',m:'saida_ton'},
+  {k:'nf_saida',grupo:'Saída',item:'Notas de saída',un:'NF',m:'nf_saida'},
+  {k:'linha_separada',grupo:'Saída',item:'Linhas separadas (picking)',un:'linha',m:'linhas_separadas'},
+  {k:'mensalidade',grupo:'Fixo',item:'Mensalidade fixa',un:'mês',m:'um'},
+  {k:'minimo_mensal',grupo:'Fixo',item:'Mínimo mensal',un:'mês',minimo:true},
+];
+const CAMPOS_TARIFA=METODOS_COBRANCA.map(x=>x.k);
+async function fotografarOcupacao(c){
+  const hoje="(NOW() AT TIME ZONE 'America/Sao_Paulo')::date";
+  await c.query(`INSERT INTO wms_ocupacao_diaria(data,empresa,cliente_id,armazem_id,paletes,posicoes,unidades,kg,m3)
+    SELECT ${hoje},s.empresa,s.cliente_id,s.armazem_id,
+      COUNT(DISTINCT s.lpn_id)+COUNT(DISTINCT s.endereco_id) FILTER (WHERE s.lpn_id IS NULL),COUNT(DISTINCT s.endereco_id),SUM(s.qtd),SUM(s.qtd*p.peso_bruto_kg),SUM(s.qtd*${SQL_M3})
+    FROM wms_saldos s JOIN wms_produtos p ON p.id=s.produto_id WHERE s.qtd>0 GROUP BY s.empresa,s.cliente_id,s.armazem_id
+    ON CONFLICT (data,cliente_id,armazem_id) DO UPDATE SET paletes=GREATEST(wms_ocupacao_diaria.paletes,EXCLUDED.paletes),
+      posicoes=GREATEST(wms_ocupacao_diaria.posicoes,EXCLUDED.posicoes),unidades=GREATEST(wms_ocupacao_diaria.unidades,EXCLUDED.unidades),
+      kg=GREATEST(wms_ocupacao_diaria.kg,EXCLUDED.kg),m3=GREATEST(wms_ocupacao_diaria.m3,EXCLUDED.m3),atualizado_em=NOW()`);
+  // quem esvaziou o estoque ganha uma foto zerada, senão o dia seguinte repetiria a última foto com saldo
+  await c.query(`INSERT INTO wms_ocupacao_diaria(data,empresa,cliente_id,armazem_id)
+    SELECT DISTINCT ${hoje},o.empresa,o.cliente_id,o.armazem_id FROM wms_ocupacao_diaria o WHERE o.data>=${hoje}-60 AND o.data<${hoje}
+    ON CONFLICT (data,cliente_id,armazem_id) DO NOTHING`);
+}
+const mesOk=m=>/^\d{4}-(0[1-9]|1[0-2])$/.test(String(m||''));
+const r2=v=>Math.round(v*100)/100,r3=v=>Math.round(v*1000)/1000;
+async function faturamento(pool,ctx,mes,clienteId){
+  if(!mesOk(mes))throw erro(400,'Informe o mês (AAAA-MM).');
+  await fotografarOcupacao(pool);
+  const noPeriodo=col=>`(${col} AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN lim.ini AND lim.fim`;
+  // dias do mês até hoje (mês corrente) ou até o fim (mês fechado)
+  const r=await pool.query(`WITH lim AS (SELECT $2::date AS ini,LEAST(($2::date+INTERVAL '1 month'-INTERVAL '1 day')::date,(NOW() AT TIME ZONE 'America/Sao_Paulo')::date) AS fim),
+      dias AS (SELECT generate_series(lim.ini,lim.fim,INTERVAL '1 day')::date AS d FROM lim WHERE lim.fim>=lim.ini),
+      cli AS (SELECT c.* FROM wms_clientes c WHERE c.empresa=$1 AND ($3::bigint IS NULL OR c.id=$3)),
+      ocup AS (SELECT cli.id AS cliente_id,dias.d,COALESCE(o.paletes,0) AS paletes,COALESCE(o.posicoes,0) AS posicoes,COALESCE(o.m3,0) AS m3,COALESCE(o.kg,0) AS kg
+        FROM cli CROSS JOIN dias LEFT JOIN LATERAL (SELECT SUM(o.paletes) AS paletes,SUM(o.posicoes) AS posicoes,SUM(o.m3) AS m3,SUM(o.kg) AS kg FROM wms_ocupacao_diaria o
+          WHERE o.cliente_id=cli.id AND o.data=(SELECT MAX(o2.data) FROM wms_ocupacao_diaria o2 WHERE o2.cliente_id=cli.id AND o2.data<=dias.d)) o ON TRUE),
+      arm AS (SELECT cliente_id,SUM(paletes) AS palete_dias,SUM(posicoes) AS posicao_dias,SUM(m3) AS m3_dias,SUM(kg)/1000 AS ton_dias,MAX(paletes) AS pico_paletes
+        FROM ocup GROUP BY cliente_id),
+      mov AS (SELECT m.cliente_id,
+          SUM(m.qtd) FILTER (WHERE m.tipo='entrada') AS entrada_un,CEIL(SUM(CASE WHEN p.un_por_caixa>0 THEN m.qtd/p.un_por_caixa ELSE m.qtd END) FILTER (WHERE m.tipo='entrada')) AS entrada_cx,
+          COUNT(DISTINCT m.lpn_id) FILTER (WHERE m.tipo='entrada') AS entrada_paletes,SUM(m.qtd*p.peso_bruto_kg) FILTER (WHERE m.tipo='entrada')/1000 AS entrada_ton,
+          SUM(m.qtd) FILTER (WHERE m.tipo='saida') AS saida_un,CEIL(SUM(CASE WHEN p.un_por_caixa>0 THEN m.qtd/p.un_por_caixa ELSE m.qtd END) FILTER (WHERE m.tipo='saida')) AS saida_cx,
+          SUM(m.qtd*p.peso_bruto_kg) FILTER (WHERE m.tipo='saida')/1000 AS saida_ton
+        FROM wms_movimentos m JOIN wms_produtos p ON p.id=m.produto_id,lim WHERE m.empresa=$1 AND m.tipo IN ('entrada','saida') AND ${noPeriodo('m.criado_em')} GROUP BY m.cliente_id),
+      nfe AS (SELECT r.cliente_id,COUNT(*) AS n,SUM(COALESCE(NULLIF(substring(r.xml from '<(?:[A-Za-z0-9]+:)?vNF>([0-9.]+)<'),'')::numeric,0)) AS valor
+        FROM wms_recebimentos r,lim WHERE r.empresa=$1 AND r.status='finalizado' AND ${noPeriodo('r.finalizado_em')} GROUP BY r.cliente_id),
+      nfs AS (SELECT x.cliente_id,COUNT(*) AS n FROM wms_expedicoes x,lim WHERE x.empresa=$1 AND x.status='expedida' AND ${noPeriodo('x.expedida_em')} GROUP BY x.cliente_id),
+      sep AS (SELECT x.cliente_id,COUNT(*) AS linhas,COUNT(DISTINCT s.lpn_id) AS paletes FROM wms_expedicao_separacao s JOIN wms_expedicoes x ON x.id=s.expedicao_id,lim
+        WHERE x.empresa=$1 AND x.status='expedida' AND s.status='separada' AND ${noPeriodo('x.expedida_em')} GROUP BY x.cliente_id)
+    SELECT cli.id::text,cli.nome,cli.cnpj,(SELECT COUNT(*) FROM dias)::int AS dias,
+      COALESCE(arm.palete_dias,0)::float AS palete_dias,COALESCE(arm.posicao_dias,0)::float AS posicao_dias,COALESCE(arm.m3_dias,0)::float AS m3_dias,
+      COALESCE(arm.ton_dias,0)::float AS ton_dias,COALESCE(arm.pico_paletes,0)::float AS pico_paletes,
+      COALESCE(mov.entrada_un,0)::float AS entrada_un,COALESCE(mov.entrada_cx,0)::float AS entrada_cx,COALESCE(mov.entrada_paletes,0)::float AS entrada_paletes,
+      COALESCE(mov.entrada_ton,0)::float AS entrada_ton,COALESCE(nfe.n,0)::float AS nf_entrada,COALESCE(nfe.valor,0)::float AS valor_nf_entrada,
+      COALESCE(mov.saida_un,0)::float AS saida_un,COALESCE(mov.saida_cx,0)::float AS saida_cx,COALESCE(sep.paletes,0)::float AS saida_paletes,
+      COALESCE(mov.saida_ton,0)::float AS saida_ton,COALESCE(nfs.n,0)::float AS nf_saida,COALESCE(sep.linhas,0)::float AS linhas_separadas,
+      1::float AS um,row_to_json(t) AS tarifa
+    FROM cli LEFT JOIN arm ON arm.cliente_id=cli.id LEFT JOIN mov ON mov.cliente_id=cli.id LEFT JOIN nfe ON nfe.cliente_id=cli.id
+      LEFT JOIN nfs ON nfs.cliente_id=cli.id LEFT JOIN sep ON sep.cliente_id=cli.id LEFT JOIN wms_tarifas t ON t.cliente_id=cli.id
+    ORDER BY cli.nome`,[ctx.emp,mes+'-01',clienteId||null]);
+  const rs=r.rows.map(x=>{
+    const t=Object.fromEntries(CAMPOS_TARIFA.map(k=>[k,+(x.tarifa?.[k]||0)]));
+    const medidas=Object.fromEntries(METODOS_COBRANCA.filter(d=>d.m&&d.m!=='um').map(d=>[d.m,r3(x[d.m])]));
+    const linhas=METODOS_COBRANCA.filter(d=>!d.minimo&&t[d.k]>0).map(d=>{
+      const qtd=r3(x[d.m]);
+      return{metodo:d.k,grupo:d.grupo,item:d.item,un:d.un,qtd,preco:t[d.k],pct:!!d.pct,valor:r2(d.pct?qtd*t[d.k]/100:qtd*t[d.k])};
+    });
+    const soma=r2(linhas.reduce((a,l)=>a+l.valor,0));
+    const total=Math.max(soma,t.minimo_mensal);
+    return{cliente_id:x.id,cliente:x.nome,cnpj:x.cnpj,dias:x.dias,pico_paletes:x.pico_paletes,medidas,tarifa:t,tem_tarifa:!!x.tarifa,linhas,subtotal:soma,
+      minimo:t.minimo_mensal,ajuste_minimo:r2(total-soma),total};
+  });
+  return{ok:true,mes,metodos:METODOS_COBRANCA,rows:rs,total:r2(rs.reduce((a,x)=>a+x.total,0))};
+}
+function faturamentoCsv(f){
+  const br=(v,d=2)=>Number(v||0).toFixed(d).replace('.',','),q=s=>'"'+String(s??'').replace(/"/g,'""')+'"';
+  const out=['Cliente;CNPJ;Item;Quantidade;Unidade;Preço unitário;Valor'];
+  for(const x of f.rows){
+    for(const l of x.linhas)out.push([q(x.cliente),q(x.cnpj),q(l.item),br(l.qtd,l.un==='t'||l.un==='t-dia'||/m³/.test(l.un)?3:2),q(l.un),l.pct?br(l.preco)+'%':br(l.preco,4),br(l.valor)].join(';'));
+    if(x.ajuste_minimo>0)out.push([q(x.cliente),q(x.cnpj),q('Complemento do mínimo mensal'),'1',q('mês'),br(x.ajuste_minimo),br(x.ajuste_minimo)].join(';'));
+    out.push([q(x.cliente),q(x.cnpj),q('TOTAL '+f.mes),'','','',br(x.total)].join(';'));
+  }
+  return '﻿'+out.join('\r\n')+'\r\n';
+}
 async function mudarEstado(pool,ctx,b,bloquear){
   const motivo=limpo(b.motivo,300);
   if(!motivo)throw erro(400,'Informe o motivo.');
@@ -1275,6 +1387,30 @@ async function handle(req,res,u,deps){
       const nota=await nfePelaChave(pool,ctx,chave);
       if(nota.pendente)return json(202,nota.pendente);
       return json(201,{...(await importarXml(pool,ctx,b,nota.xml)),origem:'sefaz'});
+    }
+    // faturamento da armazenagem (gestão)
+    if(p==='/api/wms/faturamento'&&M==='GET'){
+      const ctx=await contexto(deps,req,'gestao');
+      const f=await faturamento(pool,ctx,u.searchParams.get('mes'),/^\d+$/.test(u.searchParams.get('cliente_id')||'')?u.searchParams.get('cliente_id'):null);
+      if(u.searchParams.get('formato')==='csv'){
+        res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="armazenagem-'+f.mes+'.csv"','Cache-Control':'no-store'});
+        res.end(faturamentoCsv(f));return true;
+      }
+      return json(200,f);
+    }
+    m=p.match(/^\/api\/wms\/tarifas\/(\d+)$/);
+    if(m&&M==='PUT'){
+      const ctx=await contexto(deps,req,'gestao'),b=await corpo();
+      const cli=await doEmpresa(pool,ctx,'wms_clientes',m[1],'Cliente não encontrado.');
+      const v={};
+      for(const k of CAMPOS_TARIFA){const x=b[k]===undefined||b[k]===''||b[k]===null?0:num(b[k]);if(x===null||x<0||x>(k==='ad_valorem'?100:1e7))throw erro(400,'Valor inválido em '+k+'.');v[k]=x}
+      await tx(pool,async c=>{
+        await c.query(`INSERT INTO wms_tarifas(cliente_id,empresa,${CAMPOS_TARIFA.join(',')},atualizado_por) VALUES($1,$2,${CAMPOS_TARIFA.map((_,i)=>'$'+(i+3)).join(',')},$${CAMPOS_TARIFA.length+3})
+          ON CONFLICT (cliente_id) DO UPDATE SET ${CAMPOS_TARIFA.map(k=>k+'=EXCLUDED.'+k).join(',')},atualizado_por=EXCLUDED.atualizado_por,atualizado_em=NOW()`,
+          [cli.id,ctx.emp,...CAMPOS_TARIFA.map(k=>v[k]),ctx.usuario]);
+        await auditar(c,ctx,'tarifa','cliente',cli.id,v);
+      });
+      return json(200,{ok:true,tarifa:v});
     }
     // expedição
     if(p==='/api/wms/expedicoes'&&M==='GET'){

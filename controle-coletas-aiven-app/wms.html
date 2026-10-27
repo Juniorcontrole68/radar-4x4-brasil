@@ -63,6 +63,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}dialog form,dialog .in{padding:18
     <button role="tab" data-aba="tarefas">Armazenagem</button>
     <button role="tab" data-aba="expedicao">Expedição</button>
     <button role="tab" data-aba="estoque">Estoque</button>
+    <button role="tab" data-aba="cobranca" data-gest>Cobrança</button>
     <button role="tab" data-aba="produtos">Produtos</button>
     <button role="tab" data-aba="clientes">Clientes</button>
     <button role="tab" data-aba="enderecos">Armazéns e endereços</button>
@@ -99,6 +100,17 @@ dialog::backdrop{background:rgba(15,23,42,.55)}dialog form,dialog .in{padding:18
       <div class="tw" id="expLista"></div>
     </div>
     <div class="card" id="expDet" hidden></div>
+  </section>
+  <section data-sec="cobranca" hidden>
+    <div class="card">
+      <div class="bar" style="justify-content:space-between">
+        <div class="bar"><label>Mês<input type="month" id="fatMes"></label><label>Cliente<select id="fatCli"></select></label></div>
+        <button class="btn" id="fatCsv">⬇ Baixar planilha (CSV)</button>
+      </div>
+      <p class="muted">Cada cliente tem a sua tabela de preços: armazenagem (palete, posição, m³ ou tonelada por dia, ou pico de paletes do mês), quantidade de entrada e de saída no período (unidades, caixas, paletes, toneladas, notas, linhas separadas), ad valorem sobre o valor das notas de entrada, mensalidade fixa e mínimo mensal. Só entra na conta o que tem preço. A ocupação é fotografada a cada hora; o dia sem foto repete a anterior.</p>
+      <div class="grid" id="fatTot"></div>
+    </div>
+    <div id="fatLista"></div>
   </section>
   <section data-sec="recebimentos" hidden>
     <div class="card">
@@ -202,7 +214,7 @@ try{const t=localStorage.getItem('wmsTema');if(t)document.documentElement.datase
 $('#btnTema').onclick=()=>{const atual=document.documentElement.dataset.tema||(matchMedia('(prefers-color-scheme: dark)').matches?'escuro':'claro');const t=atual==='escuro'?'claro':'escuro';document.documentElement.dataset.tema=t;try{localStorage.setItem('wmsTema',t)}catch{}};
 
 // abas
-const CARREGA={painel:carregarPainel,mapa:carregarMapa,recebimentos:carregarRecebimentos,tarefas:carregarTarefas,expedicao:carregarExpedicoes,estoque:carregarEstoque,produtos:carregarProdutos,clientes:carregarClientes,enderecos:carregarEnderecos,auditoria:carregarAuditoria};
+const CARREGA={painel:carregarPainel,mapa:carregarMapa,recebimentos:carregarRecebimentos,tarefas:carregarTarefas,expedicao:carregarExpedicoes,estoque:carregarEstoque,cobranca:carregarCobranca,produtos:carregarProdutos,clientes:carregarClientes,enderecos:carregarEnderecos,auditoria:carregarAuditoria};
 function irAba(a){$$('#abas button').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.aba===a)));$$('section[data-sec]').forEach(s=>s.hidden=s.dataset.sec!==a);try{sessionStorage.setItem('wmsAba',a)}catch{};tenta(CARREGA[a])()}
 $('#abas').addEventListener('click',e=>{const b=e.target.closest('button[data-aba]');if(b)irAba(b.dataset.aba)});
 
@@ -210,9 +222,11 @@ async function iniciar(){
   ST.status=await api('GET','/api/wms/status');
   if(!ST.status.supervisor)$$('[data-sup]').forEach(x=>x.hidden=true);
   if(!ST.status.ajuste)$$('[data-aj]').forEach(x=>x.hidden=true);
+  if(!ST.status.gestao)$$('[data-gest]').forEach(x=>x.hidden=true);
   await carregarArmazens();
   await carregarListaClientes();
   let a='painel';try{a=sessionStorage.getItem('wmsAba')||a}catch{}
+  if(a==='cobranca'&&!ST.status.gestao)a='painel';
   if(!ST.arms.length)a='enderecos';
   irAba(a);
 }
@@ -228,7 +242,7 @@ const armAtual=()=>ST.arms.find(a=>a.id===ST.arm);
 async function carregarListaClientes(){
   ST.clientes=(await api('GET','/api/wms/clientes')).rows;
   const op='<option value="">Todos</option>'+ST.clientes.map(c=>'<option value="'+c.id+'">'+esc(c.nome)+'</option>').join('');
-  $('#estCli').innerHTML=op;$('#prodCli').innerHTML=op;
+  $('#estCli').innerHTML=op;$('#prodCli').innerHTML=op;$('#fatCli').innerHTML=op;
 }
 
 // ---------------- painel
@@ -410,6 +424,36 @@ function lerChaveNf(url,titulo,depois){return tenta(async()=>{
   });
 })}
 $('#btnRecChave').onclick=lerChaveNf('/api/wms/recebimentos/chave','Ler código de barras da NF de entrada',j=>{aviso('NF '+(j.chave||'').slice(25,34).replace(/^0+/,'')+' importada da SEFAZ: recebimento '+j.id+' com '+j.itens+' item(ns)'+(j.sem_produto?', '+j.sem_produto+' sem produto vinculado':'')+'.',!j.sem_produto);carregarRecebimentos()});
+// ---------------------------------------------------------------- cobrança da armazenagem
+const brl=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const mesHoje=()=>new Date().toLocaleDateString('sv-SE',{timeZone:'America/Sao_Paulo'}).slice(0,7);
+const urlFat=csv=>'/api/wms/faturamento?mes='+encodeURIComponent($('#fatMes').value||mesHoje())+($('#fatCli').value?'&cliente_id='+$('#fatCli').value:'')+(csv?'&formato=csv':'');
+async function carregarCobranca(){
+  if(!$('#fatMes').value)$('#fatMes').value=mesHoje();
+  const j=await api('GET',urlFat());
+  ST.fat=j;
+  $('#fatTot').innerHTML='<div class="card kpi" style="margin:0"><span class="muted">Total do mês</span><b>'+brl(j.total)+'</b></div><div class="card kpi" style="margin:0"><span class="muted">Clientes com preço</span><b>'+j.rows.filter(x=>x.tem_tarifa).length+' de '+j.rows.length+'</b></div>';
+  const med=x=>[['Paletes (pico)',x.medidas.pico_paletes],['Palete-dia',x.medidas.palete_dias],['Entrada (un)',x.medidas.entrada_un],['Paletes recebidos',x.medidas.entrada_paletes],['NF entrada',x.medidas.nf_entrada],['Saída (un)',x.medidas.saida_un],['NF saída',x.medidas.nf_saida],['Linhas separadas',x.medidas.linhas_separadas]]
+    .map(([k,v])=>'<span class="chip">'+k+': <b>'+n(v)+'</b></span>').join(' ');
+  $('#fatLista').innerHTML=j.rows.length?j.rows.map(x=>'<div class="card"><div class="bar" style="justify-content:space-between"><div><h2>'+esc(x.cliente)+'</h2><div class="muted">'+esc(x.cnpj||'')+' · '+x.dias+' dia(s) no período</div></div><div class="bar"><b style="font-size:20px">'+brl(x.total)+'</b><button class="btn" data-tar="'+x.cliente_id+'">Preços</button></div></div>'+
+    '<div class="bar" style="flex-wrap:wrap;margin:8px 0">'+med(x)+'</div>'+
+    (x.linhas.length?'<div class="tw">'+tabela([['Item',l=>esc(l.item)],['Quantidade',l=>(l.pct?brl(l.qtd):n(l.qtd)+' '+esc(l.un))],['Preço',l=>l.pct?n(l.preco)+'%':brl(l.preco)],['Valor',l=>'<b>'+brl(l.valor)+'</b>']],
+      x.linhas.concat(x.ajuste_minimo>0?[{item:'Complemento do mínimo mensal ('+brl(x.minimo)+')',qtd:1,un:'mês',preco:x.ajuste_minimo,valor:x.ajuste_minimo}]:[]))+'</div>'
+      :'<div class="vazio">'+(x.tem_tarifa?'Nenhum preço maior que zero.':'Sem tabela de preços. Clique em Preços para definir como cobrar este cliente.')+'</div>')+'</div>').join('')
+    :'<div class="card vazio">Nenhum cliente cadastrado.</div>';
+}
+function formTarifa(id){
+  const x=ST.fat.rows.find(r=>r.cliente_id===id);if(!x)return;
+  const grupos=[...new Set(ST.fat.metodos.map(m=>m.grupo))];
+  abrir('<h2>Preços · '+esc(x.cliente)+'</h2><p class="muted">Deixe zero no que não cobra. Valores em R$ por unidade de medida; ad valorem em % do valor das notas de entrada.</p><form id="fTar">'+
+    grupos.map(g=>'<h3>'+esc(g)+'</h3><div class="cols">'+ST.fat.metodos.filter(m=>m.grupo===g).map(m=>'<label>'+esc(m.item)+' <span class="muted">('+(m.pct?'%':'R$/'+esc(m.un))+')</span><input name="'+m.k+'" type="number" min="0" step="any" inputmode="decimal" value="'+(x.tarifa[m.k]||0)+'"></label>').join('')+'</div>').join('')+
+    '<div class="bar"><button class="btn p">Salvar</button><button class="btn" type="button" data-fechar>Cancelar</button></div></form>');
+  $('#fTar').onsubmit=tenta(async e=>{e.preventDefault();const b=Object.fromEntries([...new FormData(e.target)].map(([k,v])=>[k,String(v).replace(',','.')||0]));
+    await api('PUT','/api/wms/tarifas/'+id,b);fechar();aviso('Preços de '+x.cliente+' salvos.',true);carregarCobranca()});
+}
+$('#fatMes').onchange=tenta(carregarCobranca);$('#fatCli').onchange=tenta(carregarCobranca);
+$('#fatCsv').onclick=()=>{location.href=urlFat(true)};
+$('#fatLista').addEventListener('click',e=>{const b=e.target.closest('[data-tar]');if(b)formTarifa(b.dataset.tar)});
 // ---------------------------------------------------------------- expedição
 async function carregarExpedicoes(){
   const j=await api('GET','/api/wms/expedicoes?status='+$('#expFiltro').value);
