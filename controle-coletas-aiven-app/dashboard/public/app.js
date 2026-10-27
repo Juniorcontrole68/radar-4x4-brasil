@@ -103,7 +103,8 @@ const PERMISSION_OPTIONS=[
   ['bi2','SSW / BI2'],
   ['wms','Armazém (WMS) • gestão, cadastros e recebimento'],
   ['wms_operador','Armazém (WMS) • aplicativo do operador'],
-  ['wms_supervisor','Armazém (WMS) • supervisor: divergências, bloqueios e exceções']
+  ['wms_supervisor','Armazém (WMS) • supervisor: divergências, bloqueios e exceções'],
+  ['wms_ajuste','Armazém (WMS) • estoque inicial e ajuste de saldo']
 ];
 let CITY_BUBBLE_DATA=null,CITY_BUBBLE_MAP=null,CITY_BUBBLE_LAYER=null;
 let AUTH=null;

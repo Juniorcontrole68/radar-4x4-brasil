@@ -13,7 +13,7 @@
 //    teste grátis não chegam aqui (SANDBOX_API do server.js não libera /api/wms).
 //  - O módulo só liga com WMS_ATIVO=1. Sem isso nenhuma rota responde e o card fica escondido.
 // Permissões: wms (gestão), wms_operador (aplicativo), wms_supervisor (divergências, bloqueios,
-// armazenar fora da sugestão). Administrador pode tudo. Testado em tests/wms.js.
+// armazenar fora da sugestão), wms_ajuste (estoque inicial e ajuste de saldo). Administrador pode tudo. Testado em tests/wms.js.
 
 const fs=require('fs');
 const path=require('path');
@@ -354,10 +354,11 @@ async function contexto(deps,req,nivel){
   const casa=!user.client_id||String(user.client?.slug||'').toLowerCase()==='construlog';
   const has=p=>!!(user.is_admin||deps.dashboardHas(user,p));
   const ctx={user,emp:casa?0:Number(user.client_id),usuario:String(user.username||''),
-    gestao:has('wms'),operador:has('wms')||has('wms_operador'),supervisor:has('wms_supervisor'),admin:!!user.is_admin};
+    gestao:has('wms'),operador:has('wms')||has('wms_operador'),supervisor:has('wms_supervisor'),ajuste:has('wms_ajuste'),admin:!!user.is_admin};
   if(nivel==='gestao'&&!ctx.gestao)throw erro(403,'Seu usuário não tem acesso à gestão do WMS. Peça a liberação a um administrador.');
   if(nivel==='operador'&&!ctx.operador)throw erro(403,'Seu usuário não tem acesso ao WMS. Peça a liberação a um administrador.');
   if(nivel==='supervisor'&&!ctx.supervisor)throw erro(403,'Esta ação é do supervisor do WMS.','SEM_PERMISSAO');
+  if(nivel==='ajuste'&&!ctx.ajuste)throw erro(403,'Seu usuário não tem a permissão de estoque inicial e ajuste do WMS. Peça a liberação a um administrador.','SEM_PERMISSAO');
   return ctx;
 }
 async function doEmpresa(c,ctx,tabela,id,msg){
@@ -666,6 +667,38 @@ async function movimentar(pool,ctx,b){
     return{ok:true,origem:origem.codigo,destino:dest.codigo,qtd:linhas.reduce((a,l)=>a+l.q,0),lpn:lpn?.codigo||''};
   });
 }
+// Estoque inicial e ajuste: põe saldo direto num endereço (sem recebimento) ou tira dele, com motivo.
+// Só quem tem a permissão wms_ajuste. Fica no histórico como movimento "ajuste" e na auditoria.
+async function ajustar(pool,ctx,b){
+  return operacao(pool,ctx,b.uuid,'ajuste',async(c,op)=>{
+    const arm=await doEmpresa(c,ctx,'wms_armazens',b.armazem_id,'Escolha o armazém.');
+    const end=await enderecoPorCodigo(c,ctx,arm.id,b.endereco);
+    if(end.status!=='ativo')throw erro(409,'Endereço '+end.codigo+' está '+end.status+'.','ENDERECO_INVALIDO');
+    const prod=await produtoPorCodigo(c,ctx,b.cliente_id||null,b.produto);
+    const q=Number(String(b.qtd??'').replace(',','.')),sentido=b.sentido==='retirar'?'retirar':'adicionar',motivo=limpo(b.motivo,300);
+    if(!(q>0))throw erro(400,'Informe a quantidade.');
+    if(motivo.length<3)throw erro(400,'Informe o motivo (ex.: estoque inicial, inventário).');
+    if(prod.controla_lote&&!limpo(b.lote,40)&&sentido==='adicionar')throw erro(400,'Este produto controla lote: informe o lote.');
+    const val=/^\d{4}-\d{2}-\d{2}$/.test(String(b.validade||''))?b.validade:null;
+    if(prod.controla_validade&&!val&&sentido==='adicionar')throw erro(400,'Este produto controla validade: informe a validade.');
+    const loteId=await lotePara(c,prod,b.lote,val,null);
+    const base={operacao:op,tipo:'ajuste',armazem_id:arm.id,produto_id:prod.id,cliente_id:prod.cliente_id,lote_id:loteId,motivo,documento:sentido==='adicionar'?'Estoque inicial / ajuste +':'Ajuste −'};
+    if(sentido==='adicionar'){
+      await mover(c,ctx,{...base,qtd:q,para:{endereco_id:end.id,estado:'disponivel',lpn_id:null}});
+    }else{
+      // tira do saldo disponível do endereço (soltos primeiro, depois os paletes)
+      const r=await c.query(`SELECT lpn_id,qtd::float AS qtd FROM wms_saldos WHERE endereco_id=$1 AND produto_id=$2 AND COALESCE(lote_id,0)=COALESCE($3::bigint,0) AND estado='disponivel'
+        ORDER BY lpn_id NULLS FIRST,id`,[end.id,prod.id,loteId]);
+      const tem=r.rows.reduce((a,x)=>a+x.qtd,0);
+      if(tem+1e-9<q)throw erro(409,'Estoque insuficiente em '+end.codigo+': há '+fmt(tem,3).replace(/,?0+$/,'')+' disponível.','ESTOQUE_INSUFICIENTE');
+      let falta=q;
+      for(const x of r.rows){if(falta<=1e-9)break;const t=Math.min(falta,x.qtd);falta-=t;
+        await mover(c,ctx,{...base,qtd:t,de:{endereco_id:end.id,estado:'disponivel',lpn_id:x.lpn_id}})}
+    }
+    await auditar(c,ctx,'ajuste_estoque','produto',prod.id,{sentido,sku:prod.sku,endereco:end.codigo,qtd:q,lote:limpo(b.lote,40)||null,motivo});
+    return{ok:true,sentido,sku:prod.sku,descricao:prod.descricao,endereco:end.codigo,qtd:q};
+  });
+}
 async function mudarEstado(pool,ctx,b,bloquear){
   const motivo=limpo(b.motivo,300);
   if(!motivo)throw erro(400,'Informe o motivo.');
@@ -836,7 +869,7 @@ async function handle(req,res,u,deps){
     // ---------- API
     if(M==='GET'&&p==='/api/wms/status'){
       const ctx=await contexto(deps,req);
-      return json(200,{ok:true,ativo:true,usuario:ctx.usuario,gestao:ctx.gestao,operador:ctx.operador,supervisor:ctx.supervisor||ctx.admin});
+      return json(200,{ok:true,ativo:true,usuario:ctx.usuario,gestao:ctx.gestao,operador:ctx.operador,supervisor:ctx.supervisor||ctx.admin,ajuste:ctx.ajuste});
     }
     // armazéns e zonas
     if(p==='/api/wms/armazens'&&M==='GET'){
@@ -1163,6 +1196,10 @@ async function handle(req,res,u,deps){
     if(p==='/api/wms/movimentar'&&M==='POST'){
       const ctx=await contexto(deps,req,'operador'),b=await corpo();
       return json(200,await movimentar(pool,ctx,b));
+    }
+    if(p==='/api/wms/ajuste'&&M==='POST'){
+      const ctx=await contexto(deps,req,'ajuste'),b=await corpo();
+      return json(200,await ajustar(pool,ctx,b));
     }
     if((p==='/api/wms/bloquear'||p==='/api/wms/desbloquear')&&M==='POST'){
       const ctx=await contexto(deps,req,'supervisor'),b=await corpo();
