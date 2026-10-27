@@ -70,6 +70,8 @@
 .lc-cli-wrap select{min-height:32px;padding:4px 8px;border-radius:7px;border:1px solid #93c5fd;font-size:13.5px;background:#fff}
 .lc-cli-wrap button,.lc-cli-btn{border:1px solid #93c5fd;background:#fff;color:#1d4ed8;border-radius:7px;padding:6px 10px;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap}
 .lc-r-cli{grid-column:1/-1}
+.lc-busca-linha{display:flex;gap:6px;flex-wrap:wrap}.lc-busca-linha select{flex:1 1 220px;min-width:0}
+.lc-cli-busca{flex:1 1 200px;min-width:0;min-height:32px;padding:4px 8px;border-radius:7px;border:1px solid #93c5fd;font-size:13px;background:#fff;font-weight:400}
 .lc-r-cli select{padding:4px 8px;font-size:13px;min-height:30px;border-radius:7px;border:1px solid #93c5fd;background:#eff6ff}
 /* Remetente e destinatário vêm só do cadastro de clientes: sem as listas de "já utilizado". */
 .history-select-wrap:has(#historico_remetente),.history-select-wrap:has(#historico_destinatario){display:none!important}
@@ -173,7 +175,7 @@
       row.querySelector('.lc-d-obs').value = obsDoCliente(c);
     });
     row.querySelector('.lc-del').onclick = () => { row.remove(); renumerar() };
-    list.appendChild(row); renumerar();
+    list.appendChild(row); renumerar(); ligarBusca(row.querySelector('.lc-d-cli-sel'));
     return row;
   }
   function lerDestinos() {
@@ -218,7 +220,7 @@
       row.querySelector('.lc-r-obs').value = obsDoCliente(c);
     });
     row.querySelector('.lc-del').onclick = () => { row.remove(); renumerar() };
-    list.appendChild(row); renumerar();
+    list.appendChild(row); renumerar(); ligarBusca(row.querySelector('.lc-r-cli-sel'));
     return row;
   }
   function lerRemetentes() {
@@ -262,13 +264,32 @@
   // Rua, bairro e CEP: cidade e UF ficam nos campos próprios (outros remetentes e destinatários, entrega 1).
   const enderecoSemCidade = c => [c.endereco, c.bairro, c.cep ? 'CEP ' + c.cep : ''].filter(Boolean).join(' - ');
   const obsDoCliente = c => [c.referencia ? 'Ref.: ' + c.referencia : '', c.observacoes || ''].filter(Boolean).join(' • ').replace(/\s+/g, ' ').slice(0, 200);
-  function opcoesClientes() {
-    return '<option value="">' + (CLIENTES.length ? 'Escolha um cliente cadastrado…' : 'Nenhum cliente cadastrado') + '</option>' +
-      CLIENTES.map(c => '<option value="' + esc(c.id) + '">' + esc(c.nome) + '</option>').join('');
+  // Procurar: o texto digitado ao lado do seletor filtra os clientes por nome, cidade, UF, endereço ou CNPJ.
+  const textoCliente = c => norm([c.nome, c.cidade, c.uf, c.endereco, c.bairro, c.cep, c.cnpj, c.documento].filter(Boolean).join(' '));
+  const clientesFiltrados = q => { const t = norm(q); return t ? CLIENTES.filter(c => t.split(' ').every(p => textoCliente(c).includes(p))) : CLIENTES };
+  function opcoesClientes(q) {
+    const lista = clientesFiltrados(q);
+    return '<option value="">' + (!CLIENTES.length ? 'Nenhum cliente cadastrado' : q && norm(q) ? (lista.length ? lista.length + ' encontrado(s): escolha…' : 'Nenhum cliente encontrado') : 'Escolha um cliente cadastrado…') + '</option>' +
+      lista.map(c => '<option value="' + esc(c.id) + '">' + esc(c.nome) + '</option>').join('');
   }
   function atualizarSeletores() {
-    document.querySelectorAll('#lcCliSel, #lcCliSelEnt, .lc-r-cli-sel, .lc-d-cli-sel').forEach(sel => { const v = sel.value; sel.innerHTML = opcoesClientes(); sel.value = clientePorId(v) ? v : '' });
+    document.querySelectorAll(SELETORES_CLI).forEach(sel => { const v = sel.value; sel.innerHTML = opcoesClientes(sel.dataset.q); sel.value = clientePorId(v) ? v : ''; ligarBusca(sel) });
   }
+  const SELETORES_CLI = '#lcCliSel, #lcCliSelEnt, .lc-r-cli-sel, .lc-d-cli-sel';
+  function ligarBusca(sel) {
+    if (!sel || sel.dataset.busca) return;
+    sel.dataset.busca = '1';
+    const inp = document.createElement('input'); inp.type = 'search'; inp.className = 'lc-cli-busca'; inp.placeholder = '🔎 Procurar por nome, cidade ou CNPJ'; inp.dataset.noTitlecase = 'true'; inp.autocomplete = 'off';
+    const linha = document.createElement('span'); linha.className = 'lc-busca-linha'; sel.before(linha); linha.append(inp, sel);
+    const escolher = id => { if (id && String(sel.value) !== String(id)) { sel.value = id; sel.dispatchEvent(new Event('change', { bubbles: true })) } };
+    inp.addEventListener('input', () => {
+      sel.dataset.q = inp.value; const v = sel.value;
+      sel.innerHTML = opcoesClientes(inp.value); sel.value = clientePorId(v) && clientesFiltrados(inp.value).some(c => String(c.id) === String(v)) ? v : '';
+      const lista = clientesFiltrados(inp.value); if (norm(inp.value) && lista.length === 1) escolher(lista[0].id);
+    });
+    inp.addEventListener('keydown', ev => { if (ev.key !== 'Enter') return; ev.preventDefault(); const l = clientesFiltrados(inp.value); if (l.length) escolher(l[0].id) });
+  }
+  function ligarBuscas() { document.querySelectorAll(SELETORES_CLI).forEach(ligarBusca) }
   async function carregarClientes() {
     try {
       const r = await baseFetch('/api/painel/lotacao-clientes', { cache: 'no-store' });
@@ -475,6 +496,7 @@
       b.onclick = () => abrirOrdem(dadosDoFormulario());
       actions.insertBefore(b, actions.firstChild);
     }
+    ligarBuscas();
   }
 
   function carregarNoFormulario() {
@@ -491,6 +513,7 @@
     if (byId('lc_col_obs')) byId('lc_col_obs').value = cp.observacao || '';
     if (byId('lcCliSel')) byId('lcCliSel').value = '';
     if (byId('lcCliSelEnt')) byId('lcCliSelEnt').value = '';
+    document.querySelectorAll('.lc-cli-busca').forEach(i => { if (!i.value) return; i.value = ''; const sel = i.parentElement.querySelector('select'); if (sel) { sel.dataset.q = ''; sel.innerHTML = opcoesClientes() } });
     avisoEndereco(null);
     const selecionarEntrega = () => { const c = clientePorNome(byId('destinatario')?.value), s = byId('lcCliSelEnt'); if (s) s.value = c ? c.id : '' };
     enderecoDoCliente();
@@ -602,7 +625,7 @@
     return '<div class="f' + (cls ? ' ' + cls : '') + '"><span>' + esc(rotulo) + '</span><b>' + (v ? esc(v) : '<i>—</i>') + '</b></div>';
   }
   // Vias da ordem: a do motorista não mostra o valor cobrado do cliente nem o lucro; a do cliente
-  // não mostra o frete do motorista, os dados bancários dele nem o lucro.
+  // não mostra nenhum valor nem os dados bancários do motorista.
   const VIAS = { motorista: 'Via do motorista', cliente: 'Via do cliente', interna: 'Uso interno (completa)' };
   function ordemHtml(c, via) {
     via = VIAS[via] ? via : 'motorista';
@@ -679,7 +702,6 @@
       (String(c.observacoes || '').trim() ? '<div class="obs"><b>Observações:</b> ' + esc(c.observacoes) + '</div>' : '') + '</div>' +
       (verMot ? '<div class="sec"><h2>Frete do motorista</h2><div class="tot"><div><span>Valor do frete</span><b>' + brl(frete) + '</b></div><div><span>Adiantamento (' + esc(new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(pct)) + '%)</span><b>' + brl(adiant) + '</b></div><div class="hl"><span>Saldo na entrega</span><b>' + brl(frete - adiant) + '</b></div></div></div>' : '') +
       (via === 'interna' ? '<div class="sec"><h2>Valores da coleta</h2><div class="tot"><div><span>Valor cobrado</span><b>' + brl(cobrado) + '</b></div><div><span>Pedágio</span><b>' + brl(pedagio) + '</b></div><div class="' + (lucro < 0 ? 'ln' : 'lp') + '"><span>Lucro</span><b>' + brl(lucro) + '</b></div></div></div>' : '') +
-      (via === 'cliente' ? '<div class="sec"><h2>Valor do frete</h2><div class="tot"><div class="hl"><span>Valor do frete</span><b>' + brl(cobrado) + '</b></div></div></div>' : '') +
       '</div>' +
       '<div class="ass"><div>Motorista<br>' + esc(c.motorista || '') + '</div><div>Responsável pela expedição</div></div>' +
       '<div class="ft">Documento gerado pela Torre de Controle MOVIT • Confira os dados antes do carregamento.</div>' +
@@ -688,7 +710,59 @@
       'function voltar(){document.documentElement.classList.remove("imp");document.querySelector(".pg").style.zoom=""}' +
       'addEventListener("beforeprint",caber);addEventListener("afterprint",voltar)})()</scr' + 'ipt></bo' + 'dy></html>';
   }
-  function nomeArquivo(c, via) { return 'ordem-coleta-' + String(c.os_numero || c.id || 'nova').replace(/[^a-zA-Z0-9_-]/g, '-') + (via === 'interna' ? '' : '-' + via) + '.html' }
+  function nomeArquivo(c, via, ext) { return 'ordem-coleta-' + String(c.os_numero || c.id || 'nova').replace(/[^a-zA-Z0-9_-]/g, '-') + (via === 'interna' ? '' : '-' + via) + '.' + (ext || 'html') }
+  // PDF da ordem (A4) gerado no navegador: a página é desenhada num quadro escondido e vira imagem no PDF.
+  const scriptsPdf = {};
+  function carregarScript(url) {
+    return scriptsPdf[url] || (scriptsPdf[url] = new Promise((ok, falha) => { const sc = document.createElement('script'); sc.src = url; sc.onload = ok; sc.onerror = () => { delete scriptsPdf[url]; falha(new Error('Não foi possível carregar o gerador de PDF. Confira a internet.')) }; document.head.appendChild(sc) }));
+  }
+  async function gerarPdf(c, via) {
+    await Promise.all([carregarScript('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'), carregarScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js')]);
+    const fr = document.createElement('iframe'); fr.setAttribute('aria-hidden', 'true');
+    fr.style.cssText = 'position:fixed;left:-10000px;top:0;width:820px;height:1200px;border:0;visibility:hidden';
+    document.body.appendChild(fr);
+    try {
+      await new Promise(ok => { fr.onload = ok; fr.srcdoc = ordemHtml(c, via) });
+      const d = fr.contentDocument; d.documentElement.classList.add('imp'); d.body.style.background = '#fff';
+      const pg = d.querySelector('.pg'); pg.style.margin = '0'; pg.style.boxShadow = 'none'; pg.style.borderRadius = '0';
+      const canvas = await window.html2canvas(pg, { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false });
+      const pdf = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+      const W = 210, H = 297, m = 8, larg = W - 2 * m, alt = canvas.height * larg / canvas.width, util = H - 2 * m;
+      if (alt <= util * 1.15) {
+        // Cabe numa folha (reduzindo um pouco, se precisar).
+        const k = Math.min(1, util / alt);
+        pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', m + (larg - larg * k) / 2, m, larg * k, alt * k);
+      } else {
+        const pxPorPag = Math.floor(canvas.width * util / larg);
+        for (let y = 0, i = 0; y < canvas.height; y += pxPorPag, i++) {
+          const h = Math.min(pxPorPag, canvas.height - y), parte = document.createElement('canvas');
+          parte.width = canvas.width; parte.height = h; parte.getContext('2d').drawImage(canvas, 0, y, canvas.width, h, 0, 0, canvas.width, h);
+          if (i) pdf.addPage();
+          pdf.addImage(parte.toDataURL('image/jpeg', 0.92), 'JPEG', m, m, larg, h * larg / canvas.width);
+        }
+      }
+      return new File([pdf.output('blob')], nomeArquivo(c, via, 'pdf'), { type: 'application/pdf' });
+    } finally { fr.remove() }
+  }
+  function baixarArquivo(f) { const u = URL.createObjectURL(f); const l = document.createElement('a'); l.href = u; l.download = f.name; document.body.appendChild(l); l.click(); l.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000) }
+  function foneWhats(c) { let t = String(c.telefone_motorista || '').replace(/\D/g, ''); if (t && !t.startsWith('55')) t = '55' + t; return t }
+  // WhatsApp com o PDF: no celular (e no Chrome/Edge do Windows) abre o compartilhar com o arquivo anexado;
+  // onde não dá para anexar, baixa o PDF e abre a conversa para anexar o arquivo baixado.
+  async function enviarWhatsPdf(c, via, botao) {
+    const txt = botao ? botao.textContent : ''; if (botao) { botao.disabled = true; botao.textContent = 'Gerando PDF…' }
+    try {
+      const f = await gerarPdf(c, via), os = c.os_numero || c.id || '';
+      const msg = 'Ordem de coleta ' + os + (c.cliente ? ' • ' + c.cliente : '');
+      if (navigator.canShare && navigator.canShare({ files: [f] })) {
+        try { await navigator.share({ title: msg, text: msg, files: [f] }); return } catch (e) { if (e && e.name === 'AbortError') return }
+      }
+      baixarArquivo(f);
+      const fone = via === 'motorista' ? foneWhats(c) : '';
+      window.open('https://wa.me/' + fone + '?text=' + encodeURIComponent(msg + ' (PDF em anexo)'), '_blank');
+      alert('O PDF ' + f.name + ' foi baixado. Na conversa do WhatsApp que abriu, clique no clipe e anexe esse arquivo.');
+    } catch (e) { alert(e.message || 'Não foi possível gerar o PDF.') }
+    finally { if (botao) { botao.disabled = false; botao.textContent = txt } }
+  }
   function abrirOrdem(c, via) {
     if (!c) return;
     let dlg = byId('lcOrdemDlg');
@@ -699,8 +773,8 @@
       dlg.innerHTML = '<div class="lc-bar"><strong id="lcOrdemTit"></strong><div>' +
         '<label style="display:inline-flex;gap:6px;align-items:center;font-weight:600">Para<select id="lcOrdemVia">' + Object.keys(VIAS).map(k => '<option value="' + k + '">' + VIAS[k] + '</option>').join('') + '</select></label>' +
         '<button type="button" class="pri" data-a="print">🖨️ Imprimir / Salvar PDF</button>' +
-        '<button type="button" data-a="down">⬇️ Baixar arquivo</button>' +
-        '<button type="button" data-a="share" hidden>📤 Compartilhar</button>' +
+        '<button type="button" data-a="whats">📲 WhatsApp (PDF)</button>' +
+        '<button type="button" data-a="down">⬇️ Baixar PDF</button>' +
         '<button type="button" data-a="close">Fechar</button></div></div><iframe title="Ordem de coleta"></iframe>';
       document.body.appendChild(dlg);
       byId('lcOrdemVia').onchange = ev => { if (dlg._row) abrirOrdem(dlg._row, ev.target.value) };
@@ -709,17 +783,18 @@
         const cur = dlg._ordem; if (!cur) return;
         if (a === 'close') dlg.close();
         else if (a === 'print') { try { dlg.querySelector('iframe').contentWindow.focus(); dlg.querySelector('iframe').contentWindow.print() } catch { alert('Não foi possível abrir a impressão.') } }
-        else if (a === 'down') { const u = URL.createObjectURL(new Blob([cur.html], { type: 'text/html;charset=utf-8' })); const l = document.createElement('a'); l.href = u; l.download = cur.nome; document.body.appendChild(l); l.click(); l.remove(); setTimeout(() => URL.revokeObjectURL(u), 2000) }
-        else if (a === 'share') { const f = new File([cur.html], cur.nome, { type: 'text/html' }); navigator.share({ title: 'Ordem de coleta', files: [f] }).catch(() => { }) }
+        else if (a === 'whats') enviarWhatsPdf(dlg._row, dlg._via, ev.target.closest('button'));
+        else if (a === 'down') { const b = ev.target.closest('button'), t = b.textContent; b.disabled = true; b.textContent = 'Gerando PDF…'; gerarPdf(dlg._row, dlg._via).then(baixarArquivo).catch(e => alert(e.message)).finally(() => { b.disabled = false; b.textContent = t }) }
       });
     }
     dlg._ordem = { html, nome: nomeArquivo(c, via) }; dlg._row = c; dlg._via = via; byId('lcOrdemVia').value = via;
     byId('lcOrdemTit').textContent = 'Ordem de coleta ' + (c.os_numero || c.id || '(nova)');
-    try { const f = new File([html], 'x.html', { type: 'text/html' }); dlg.querySelector('[data-a="share"]').hidden = !(navigator.canShare && navigator.canShare({ files: [f] })) } catch { }
     dlg.querySelector('iframe').srcdoc = html;
     if (!dlg.open) dlg.showModal();
   }
   window.exportarOrdemColeta = id => abrirOrdem(rowById(id));
+  // Botão WhatsApp da lista: manda a ordem em PDF (via do motorista) no lugar do texto.
+  window.whatsapp = id => { const r = rowById(id); if (r) enviarWhatsPdf(r, 'motorista') };
 
   /* ---------- Lista: botão da ordem e destinatários extras ---------- */
   function decorarLista() {
