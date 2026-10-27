@@ -424,8 +424,25 @@ function linkWhatsapp(whatsapp, texto) {
   return 'https://wa.me/' + (whatsapp ? String(whatsapp).replace(/\D/g, '') : '') + '?text=' + encodeURIComponent(texto);
 }
 
+// Processo de leitura padrão da demonstração (o do administrador MOVIT): nunca lê o SSW real.
+// Troca as credenciais do SSW e do BI2 pelas da empresa de exemplo e desvia as chamadas para o
+// SSW de exemplo, igual ao processo de uma empresa de exemplo.
+async function envProcessoPadrao(base) {
+  const env = { ...base };
+  for (const k of Object.keys(env)) if (/^(SSW_|BI2_)/.test(k)) delete env[k];
+  Object.assign(env, {
+    MOVIT_DEMO: '1',
+    SSW_INTERNAL_DOMINIO: 'EXE', SSW_INTERNAL_CPF: '00000000000', SSW_INTERNAL_USUARIO: 'exemplo', SSW_INTERNAL_SENHA: 'exemplo',
+    SSW_UNIDADES: sswExemplo.UNIDADES.join(','),
+    BI2_COMPANY: 'exemplo', BI2_USERNAME: 'exemplo', BI2_PASSWORD: 'exemplo', BI2_FOLDER: 'cliente',
+    SSW_EXEMPLO_URL: await sswExemplo.iniciar()
+  });
+  env.NODE_OPTIONS = ((env.NODE_OPTIONS || '') + ' --require ' + JSON.stringify(path.join(__dirname, 'ssw-exemplo-desvio.js'))).trim();
+  return env;
+}
+
 module.exports = {
   CONVITE_DIAS, tokenConvite, hashConvite, normalizarConvite, mensagemConvite, linkWhatsapp,
   ATIVA, MODULOS, modulosProntos, cifrar, decifrar, normalizarEntrada, testarLoginSsw, testarBi2, bi2Automatico, initDb,
-  processoDaEmpresa, processoDoParceiro, normalizarParceiro, consultar, encerrar, encerrarTodos, repassar, clienteDemo, comBi2, modulosLiberados, telasLiberadas, permsLiberadas, rotaLiberada
+  processoDaEmpresa, processoDoParceiro, envProcessoPadrao, normalizarParceiro, consultar, encerrar, encerrarTodos, repassar, clienteDemo, comBi2, modulosLiberados, telasLiberadas, permsLiberadas, rotaLiberada
 };

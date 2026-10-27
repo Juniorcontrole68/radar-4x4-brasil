@@ -98,7 +98,8 @@ async function handle(req, res, u, ctx) {
     if (p === '/api/rc/versao' && req.method === 'GET') return sendJson(res, 200, { ok: true, versao: versaoPagina() }), true;
 
     if (p === '/api/rc/eu' && req.method === 'GET') {
-      await semear(pool, cliente, user.client && String(user.client.slug || '').toLowerCase() === 'demo', !user.client || String(user.client.slug || '').toLowerCase() === 'construlog');
+      // na demonstração MOVIT ninguém recebe as notas reais da CONSTRULOG
+      await semear(pool, cliente, user.client && String(user.client.slug || '').toLowerCase() === 'demo', process.env.MOVIT_DEMO !== '1' && (!user.client || String(user.client.slug || '').toLowerCase() === 'construlog'));
       return sendJson(res, 200, { ok: true, id: 'u' + user.id, username: user.username, admin: !!user.is_admin, permissions: user.permissions || [], sandbox: !!user.sandbox, demo: !!(user.client && String(user.client.slug || '').toLowerCase() === 'demo'), cliente: user.client ? user.client.name : '', testeAte: user.client && user.client.status === 'trial' ? user.client.trial_ends_at : null }), true;
     }
 
