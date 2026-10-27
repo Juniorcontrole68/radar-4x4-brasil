@@ -137,14 +137,20 @@ function proxyDashboard(req,res,targetPath){
   });
   req.pipe(pr)
 }
+// Na demo MOVIT, o processo padrão lê o SSW de exemplo (movitDemo.envProcessoPadrao), nunca o real.
+let DEMO_ENV_PADRAO=null;
 function startUnifiedDashboardChild(){
   if(DASH_CHILD&&!DASH_CHILD.killed)return;
   const childPath=path.join(DASHBOARD_DIR,'server.js');
   if(!fs.existsSync(childPath)){console.warn('Dashboard interno não encontrado:',childPath);return}
+  if(movitDemo.ATIVA&&!DEMO_ENV_PADRAO){
+    movitDemo.envProcessoPadrao(process.env).then(env=>{DEMO_ENV_PADRAO=env;startUnifiedDashboardChild()},e=>console.error('Demo: SSW de exemplo indisponível',e));
+    return;
+  }
   DASH_CHILD=spawn(process.execPath,[childPath],{
     cwd:DASHBOARD_DIR,
     env:{
-      ...process.env,
+      ...(DEMO_ENV_PADRAO||process.env),
       PORT:String(DASH_INTERNAL_PORT),
       COLETAS_PORTAL_URL:'http://127.0.0.1:'+String(PORT),
       DASH_INTERNAL_KEY:INTERNAL_KEY
@@ -1985,8 +1991,14 @@ async function start() {
   }});
   if(!TEST_MODE)veic.iniciarImportacaoAutomatica(pool);
   await roteirizadorCargas.ensureSchema(pool);
+  // Demo MOVIT: o Roteirizador do administrador (chave da CONSTRULOG) volta a cada início só com as
+  // cidades e os ajustes; some o que veio do SSW real (notas, cargas, veículos e motoristas).
+  if(movitDemo.ATIVA){
+    const ap=await pool.query("DELETE FROM rc_docs WHERE path NOT LIKE 'cad/main/cidades/%' AND path<>'cad/main' AND (cliente='construlog' OR cliente IN (SELECT 'c'||id FROM movit_clients WHERE lower(slug)='construlog'))").catch(e=>({rowCount:'erro: '+e.message}));
+    if(ap.rowCount)console.log('MOVIT_DEMO: Roteirizador do administrador sem dados da CONSTRULOG ('+ap.rowCount+')');
+  }
   // sobras em galpão: de hora em hora, das 05:00 às 20:00, confere no SSW o que já foi entregue e tira da lista (o painel lê o SSW)
-  if(!TEST_MODE&&process.env.SOBRAS_SSW_AUTO!=='0')roteirizadorCargas.iniciarConferenciaSobras({pool,
+  if(!TEST_MODE&&!movitDemo.ATIVA&&process.env.SOBRAS_SSW_AUTO!=='0')roteirizadorCargas.iniciarConferenciaSobras({pool,
     statusNfs:async(nfs,desde)=>{
       const r=await fetch('http://'+DASH_INTERNAL_HOST+':'+DASH_INTERNAL_PORT+'/api/programacao-entregas/status-nfs?'+new URLSearchParams({nfs:nfs.join(','),desde}),{headers:{'X-Internal-Key':INTERNAL_KEY,'Accept':'application/json'},signal:AbortSignal.timeout(10*60*1000)});
       const j=await r.json().catch(()=>null);

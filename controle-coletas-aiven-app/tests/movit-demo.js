@@ -324,6 +324,9 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   r=await call('GET','/api/programacao-entregas/disponiveis',{cookie:cookieEx});
   const ctrcsEx=(r.json?.rows||[]).map(x=>x.ctrc);
   check('telas do SSW da empresa de exemplo mostram números fictícios do SSW de exemplo',r.status===200&&ctrcsEx.length>0&&ctrcsEx.every(c=>/^(MTZ|FIL)0[56]\d{4}-\d$/.test(c)),r.status+' '+r.text.slice(0,240));
+  r=await call('GET','/api/programacao-entregas/disponiveis',{cookie:cookieAdm});
+  const ctrcsAdm=(r.json?.rows||[]).map(x=>x.ctrc);
+  check('administrador MOVIT na demo também vê só o SSW de exemplo (nada da CONSTRULOG)',r.status===200&&ctrcsAdm.length>0&&ctrcsAdm.every(c=>/^(MTZ|FIL)0[56]\d{4}-\d$/.test(c)),r.status+' '+r.text.slice(0,240));
   const sE1=await stats();
   check('...sem nenhum login no SSW (nem no de teste)',sE1.logins===sE0.logins,JSON.stringify({antes:sE0.logins,depois:sE1.logins}));
   r=await call('GET','/api/lancamentos',{cookie:cookieEx});check('módulo não liberado fica fechado (Lançamentos -> 403)',r.status===403,'veio '+r.status);
