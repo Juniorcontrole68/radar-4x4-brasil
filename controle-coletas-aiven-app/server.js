@@ -894,6 +894,34 @@ const FROTA_SEM_ACESSO='Seu usuário não tem acesso ao módulo Frota. Peça a l
 // dados separados por empresa. O resto do sistema lê o SSW e as planilhas da CONSTRULOG e fica fechado.
 const SANDBOX_PERMS=new Set(['roteirizador']);
 const DEMO_RATE=new Map();
+// Chamadas entre serviços para a versão de teste: o site/painel da Torre (MOVIT_CONVITE_TOKEN) e a
+// MOVIT Central da Construlog (MOVIT_CENTRAL_TOKEN). Devolve a origem ou null.
+function tokenDemo(req){
+  const dado=(String(req.headers.authorization||'').match(/^Bearer\s+(.+)$/i)||[])[1]||'';
+  if(!dado)return null;
+  for(const [env,origem] of [['MOVIT_CONVITE_TOKEN','torre'],['MOVIT_CENTRAL_TOKEN','central']]){
+    const t=String(process.env[env]||'');
+    if(t.length>=32&&dado.length===t.length&&crypto.timingSafeEqual(Buffer.from(dado),Buffer.from(t)))return origem;
+  }
+  return null;
+}
+// MOVIT Central da Construlog -> versão de teste (MOVIT_DEMO_URL). Enquanto o servidor gratuito
+// acorda, o Render devolve 502/503/429 ou HTML: tenta de novo a cada 5 s por até 90 s.
+async function chamarDemo(metodo,caminho,corpo){
+  const base=String(process.env.MOVIT_DEMO_URL||'').replace(/\/+$/,''),token=String(process.env.MOVIT_CENTRAL_TOKEN||'');
+  if(!base||token.length<32){const e=new Error('Versão de teste não ligada a esta MOVIT Central.');e.status=503;throw e}
+  const fim=Date.now()+Number(process.env.MOVIT_DEMO_ESPERA_MS||90000);
+  for(;;){
+    let r=null,j=null;
+    try{
+      r=await fetch(base+caminho,{method:metodo,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:corpo===undefined?undefined:JSON.stringify(corpo),signal:AbortSignal.timeout(30000)});
+      if(/json/.test(r.headers.get('content-type')||''))j=await r.json().catch(()=>null);
+    }catch{}
+    if(r&&j&&![429,502,503,504].includes(r.status))return {status:r.status,json:j};
+    if(Date.now()>=fim){const e=new Error('A versão de teste não respondeu. Tente de novo em 1 minuto.');e.status=503;throw e}
+    await new Promise(ok=>setTimeout(ok,Number(process.env.MOVIT_DEMO_INTERVALO_MS||5000)));
+  }
+}
 const SANDBOX_API=[/^\/api\/empresa\/logo$/,/^\/api\/rc\//,/^\/api\/rc$/,/^\/api\/auth\//,/^\/api\/painel\/auth\//,/^\/api\/guia(\/|$)/];
 function tenantSandbox(user){return !!(user&&!user.internal&&!user.is_platform_admin&&user.client&&String(user.client.slug||'').toLowerCase()!=='construlog'&&!movitDemo.clienteDemo(user))}
 function clienteBloqueado(user){
@@ -1155,7 +1183,7 @@ async function demoRotas(req,res,u){
   // ---- módulos de quem pede o teste pelo site (sem passar pela MOVIT Central): lista na movit_config.
   if(u.pathname==='/api/demo/modulos-site'&&(req.method==='GET'||req.method==='PUT')){
     try{
-      await dashboardPlatformSession(req);
+      if(!tokenDemo(req))await dashboardPlatformSession(req);
       const todos=(await pool.query('SELECT key FROM movit_modules WHERE active=TRUE')).rows.map(x=>x.key);
       if(req.method==='PUT'){
         const b=await readJsonBodyLimited(req,16*1024);
@@ -1172,12 +1200,21 @@ async function demoRotas(req,res,u){
   // ---- links de teste (convites): a MOVIT cria o teste do cliente com os módulos escolhidos e
   // manda o link pelo WhatsApp. Criação pela MOVIT Central (administração MOVIT) ou pelo painel da
   // Torre MOVIT (token MOVIT_CONVITE_TOKEN no cabeçalho Authorization).
+  // Testes enviados (para a MOVIT Central da Construlog mostrar sem sair da tela).
+  if(req.method==='GET'&&u.pathname==='/api/demo/convites'){
+    try{
+      if(!tokenDemo(req))await dashboardPlatformSession(req);
+      const q=await pool.query(`SELECT c.id::text AS cliente_id,c.name AS empresa,v.nome,v.whatsapp,v.origem,v.modo,v.criado_em,v.primeiro_acesso,v.ultimo_acesso,v.entradas,c.trial_ends_at,
+          (SELECT count(*)::int FROM movit_client_modules m WHERE m.client_id=c.id AND m.enabled) AS modulos
+        FROM movit_demo_convites v JOIN movit_clients c ON c.id=v.client_id ORDER BY v.criado_em DESC LIMIT 100`);
+      sendJson(res,200,{ok:true,testes:q.rows});
+    }catch(e){sendJson(res,e.status||500,{ok:false,error:e.status?e.message:'Não foi possível listar os testes.'})}
+    return true;
+  }
   if(req.method==='POST'&&u.pathname==='/api/demo/convites'){
     try{
-      const tokenApi=String(process.env.MOVIT_CONVITE_TOKEN||''),dado=(String(req.headers.authorization||'').match(/^Bearer\s+(.+)$/i)||[])[1]||'';
-      let origem='central';
-      if(tokenApi.length>=32&&dado&&dado.length===tokenApi.length&&crypto.timingSafeEqual(Buffer.from(dado),Buffer.from(tokenApi)))origem='torre';
-      else await dashboardPlatformSession(req);
+      const tk=tokenDemo(req),origem=tk||'central';
+      if(!tk)await dashboardPlatformSession(req);
       const d=movitDemo.normalizarConvite(await readJsonBodyLimited(req,32*1024));
       if(d.erros.length){sendJson(res,400,{ok:false,error:d.erros[0],erros:d.erros});return true}
       const todos=(await pool.query('SELECT key FROM movit_modules WHERE active=TRUE')).rows.map(x=>x.key);
@@ -3739,6 +3776,20 @@ async function start() {
           const msg=e.code==='23505'?'Já existe um cliente com esse identificador.':(e.message||'Falha ao criar cliente.');
           return sendJson(res,e.code==='23505'?409:(e.status||500),{ok:false,error:msg})
         }
+      }
+
+      // Versão de teste dentro da MOVIT Central: envio do link e lista de testes, criados na versão
+      // de teste (banco próprio, sem os dados da Construlog).
+      const tst=u.pathname.match(/^\/api\/movit-central\/teste\/(info|convites|modulos-site)$/);
+      if (tst) {
+        try{
+          await dashboardPlatformSession(req);
+          const ok={info:['GET'],convites:['GET','POST'],'modulos-site':['GET','PUT']}[tst[1]];
+          if(!ok.includes(req.method))return sendJson(res,405,{ok:false,error:'Método não suportado.'});
+          const corpo=req.method==='GET'?undefined:await readJsonBodyLimited(req,32*1024);
+          const r=await chamarDemo(req.method,'/api/demo/'+tst[1],corpo);
+          return sendJson(res,r.status,r.json);
+        }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.status?e.message:'Não foi possível falar com a versão de teste.'})}
       }
 
       // Preços: taxa de implantação padrão, dias de teste e mensalidade de cada módulo
