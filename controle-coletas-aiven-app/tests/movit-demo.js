@@ -333,6 +333,12 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   r=await call('GET','/api/demo/convite/'+tokEx);check('abrindo o link de novo, a página sabe que está no exemplo',r.json?.modo==='exemplo',r.text.slice(0,160));
   r=await call('POST','/api/demo/convite/'+tokEx+'/entrar',{body:{ssw:{dominio:'tst',cpf:'12345678901',usuario:'joao',senha:'x'}},ip:IPL});
   check('domínio do SSW de outro teste -> 409',r.status===409,r.status+' '+r.text.slice(0,160));
+  if(process.env.MOVIT_SSW_BLOQUEADOS){
+    const sB0=await stats();
+    r=await call('POST','/api/demo/convite/'+tokEx+'/entrar',{body:{ssw:{dominio:process.env.MOVIT_SSW_BLOQUEADOS.split(',')[0].toLowerCase(),cpf:'12345678901',usuario:'joao',senha:'x'}},ip:IPL});
+    const sB1=await stats();
+    check('login do SSW bloqueado (o da CONSTRULOG) é recusado sem ir ao SSW -> 400',r.status===400&&/não pode ser usado/.test(r.json?.error||'')&&sB1.logins===sB0.logins,r.status+' '+r.text.slice(0,160));
+  }
   r=await call('POST','/api/demo/convite/'+tokEx+'/entrar',{body:{ssw:{dominio:'EXC',cpf:'11122233344',usuario:'ana',senha:'senha-errada'}},ip:IPL});
   check('senha do SSW recusada -> 401 e continua no exemplo',r.status===401&&(await db.query('SELECT exemplo FROM movit_client_ssw WHERE client_id=$1',[cliEx])).rows[0]?.exemplo===true,r.status+' '+r.text.slice(0,160));
   r=await call('POST','/api/demo/convite/'+tokEx+'/entrar',{body:{ssw:{dominio:'EXC',cpf:'111.222.333-44',usuario:'Ana',senha:'segredo-exc',unidades:'MTZ'}},ip:IPL});const cookieExS=r.cookie;
@@ -349,6 +355,12 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
     check('painel da Torre MOVIT cria o teste com o token (todos os módulos)',r.status===201&&cvT?.origem==='torre'&&(r.json.modulos||[]).length>=10,r.status+' '+r.text.slice(0,200));
     r=await call('POST','/api/demo/convites',{body:{nome:'Bruno',empresa:'X'},ip:IPL,auth:'Bearer '+'y'.repeat(TOKEN_API.length)});
     check('token errado -> 401',r.status===401,'veio '+r.status);
+    r=await call('PUT','/api/demo/modulos-site',{body:{modulos:['lotacao','frota']},cookie:cookieEx});
+    check('cliente em teste não muda os módulos do site',r.status===401||r.status===403,'veio '+r.status);
+    r=await call('PUT','/api/demo/modulos-site',{body:{modulos:['lotacao','frota']},cookie:cookieAdm});
+    check('MOVIT Central guarda os módulos de quem pede pelo site',r.status===200&&JSON.stringify(r.json?.modulos)==='["lotacao","frota"]',r.status+' '+r.text.slice(0,160));
+    r=await call('POST','/api/demo/convites',{body:{nome:'Carla',empresa:'Outro Pedido do Site',whatsapp:'5511977776666'},ip:IPL,auth:'Bearer '+TOKEN_API});
+    check('...e o pedido pelo site já sai com esses módulos',r.status===201&&JSON.stringify(r.json?.modulos)==='["lotacao","frota"]'&&/\/demo\/convite\//.test(r.json?.link||''),r.status+' '+r.text.slice(0,200));
   }
 
   await db.end();

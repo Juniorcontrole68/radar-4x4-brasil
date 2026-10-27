@@ -1152,6 +1152,23 @@ async function demoRotas(req,res,u){
       sendJson(res,405,{ok:false,error:'Método não suportado.'});return true;
     }catch(e){sendJson(res,e.status||500,{ok:false,error:e.status?e.message:'Não foi possível concluir agora.'});return true}
   }
+  // ---- módulos de quem pede o teste pelo site (sem passar pela MOVIT Central): lista na movit_config.
+  if(u.pathname==='/api/demo/modulos-site'&&(req.method==='GET'||req.method==='PUT')){
+    try{
+      await dashboardPlatformSession(req);
+      const todos=(await pool.query('SELECT key FROM movit_modules WHERE active=TRUE')).rows.map(x=>x.key);
+      if(req.method==='PUT'){
+        const b=await readJsonBodyLimited(req,16*1024);
+        const lista=Array.isArray(b&&b.modulos)?[...new Set(b.modulos.map(String))]:null;
+        if(!lista||!lista.length){sendJson(res,400,{ok:false,error:'Marque pelo menos um módulo.'});return true}
+        const inv=lista.filter(k=>!todos.includes(k));
+        if(inv.length){sendJson(res,400,{ok:false,error:'Módulo desconhecido: '+inv.join(', ')});return true}
+        await pool.query("INSERT INTO movit_config(chave,valor,updated_at) VALUES('site_modulos',$1::jsonb,NOW()) ON CONFLICT(chave) DO UPDATE SET valor=EXCLUDED.valor,updated_at=NOW()",[JSON.stringify(lista)]);
+      }
+      const v=(await pool.query("SELECT valor FROM movit_config WHERE chave='site_modulos'")).rows[0]?.valor;
+      sendJson(res,200,{ok:true,modulos:Array.isArray(v)?v.filter(k=>todos.includes(k)):todos,definido:Array.isArray(v)});return true;
+    }catch(e){sendJson(res,e.status||500,{ok:false,error:e.status?e.message:'Não foi possível concluir agora.'});return true}
+  }
   // ---- links de teste (convites): a MOVIT cria o teste do cliente com os módulos escolhidos e
   // manda o link pelo WhatsApp. Criação pela MOVIT Central (administração MOVIT) ou pelo painel da
   // Torre MOVIT (token MOVIT_CONVITE_TOKEN no cabeçalho Authorization).
@@ -1164,7 +1181,9 @@ async function demoRotas(req,res,u){
       const d=movitDemo.normalizarConvite(await readJsonBodyLimited(req,32*1024));
       if(d.erros.length){sendJson(res,400,{ok:false,error:d.erros[0],erros:d.erros});return true}
       const todos=(await pool.query('SELECT key FROM movit_modules WHERE active=TRUE')).rows.map(x=>x.key);
-      const mods=d.modulos||todos,invalidos=mods.filter(k=>!todos.includes(k));
+      // Pedido pelo site sem módulos: vale a lista "Quem pede pelo site" da MOVIT Central (ou todos).
+      const doSite=origem==='torre'&&!d.modulos?(await pool.query("SELECT valor FROM movit_config WHERE chave='site_modulos'")).rows[0]?.valor:null;
+      const mods=d.modulos||(Array.isArray(doSite)?doSite.map(String).filter(k=>todos.includes(k)):todos),invalidos=mods.filter(k=>!todos.includes(k));
       if(invalidos.length){sendJson(res,400,{ok:false,error:'Módulo desconhecido: '+invalidos.join(', ')});return true}
       const base=d.empresa.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,40)||'empresa';
       const rand=crypto.randomBytes(3).toString('hex');
@@ -2187,6 +2206,17 @@ async function start() {
     // Conserta quem a migração antiga promoveu: usuário de empresa da demo nunca é administrador MOVIT.
     const r=await pool.query('UPDATE dashboard_users SET is_platform_admin=FALSE WHERE is_platform_admin=TRUE AND client_id IN (SELECT client_id FROM movit_client_ssw)');
     if(r.rowCount)console.log('MOVIT_DEMO: '+r.rowCount+' usuário(s) de empresa da demo deixaram de ser administradores MOVIT.');
+    // Empresa de teste ligada a um login do SSW bloqueado (o da CONSTRULOG): desconecta e apaga o que veio dele.
+    // Ao abrir o link de novo, ela escolhe outro login ou os números de exemplo.
+    const bl=movitDemo.dominiosBloqueados();
+    const desl=bl.length?(await pool.query('DELETE FROM movit_client_ssw WHERE upper(dominio)=ANY($1::text[]) RETURNING client_id',[bl])).rows:[];
+    for(const {client_id:cid} of desl){
+      await pool.query('DROP SCHEMA IF EXISTS '+esquemasDemo.nomeEsquema(cid)+' CASCADE').catch(()=>{});
+      await pool.query('DELETE FROM rc_docs WHERE cliente=$1',['c'+cid]).catch(()=>{});
+      await pool.query('DELETE FROM rc_docs_removidos WHERE cliente=$1',['c'+cid]).catch(()=>{});
+      for(const t of ['ag_eventos','ag_agendamentos','ag_sincronizacoes','ag_notas'])await pool.query('DELETE FROM '+t+' WHERE client_id=$1',[cid]).catch(e=>console.error('MOVIT_DEMO: limpeza de '+t+' falhou:',e.message));
+      console.log('MOVIT_DEMO: empresa '+cid+' desconectada do SSW bloqueado.');
+    }
   }
   if (!TEST_MODE && !movitDemo.ATIVA) await migrateLegacyBillsIfNeeded();
   else console.log('TEST_MODE: importação do sistema antigo de contas desativada.');
