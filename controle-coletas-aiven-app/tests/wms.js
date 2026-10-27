@@ -582,6 +582,57 @@ function nfe({chave,itens}){
     check('armazém inteiro: apaga os livres e mantém os com estoque ou histórico',r.status===200&&r.json.apagados>0&&r.json.com_saldo>0&&r.json.mantidos===depois.length&&antes===r.json.apagados+depois.length&&depois.some(e=>e.codigo==='B-05-01-01'),r.json);
   }
 
+  console.log('DANFE em PDF e nota só pela chave (quando a SEFAZ não libera o XML)');
+  {
+    // texto do pdftotext -layout: descrição que quebra em duas linhas e lote/validade na descrição
+    const txt=['RECEBEMOS DE ACME INDUSTRIA LTDA OS PRODUTOS/SERVIÇOS CONSTANTES DA NOTA FISCAL','CHAVE DE ACESSO','   3526 1009 1663 4400 0220 5500 1000 3213 4916 2548 1649',
+      'DESTINATÁRIO / REMETENTE','NOME / RAZÃO SOCIAL                         CNPJ / CPF          DATA DA EMISSÃO','CLIENTE TESTE LTDA                          12.345.678/0001-99  27/10/2026',
+      'DADOS DO PRODUTO / SERVIÇO','CÓDIGO  DESCRIÇÃO   NCM/SH   CST  CFOP  UN.  QTD.  V.UNIT.',
+      'A-1     PRODUTO UM COM NOME                     39231090   000   5949   UN   1.250,0000   12,5000   15.625,00',
+      '        COMPRIDO QUE QUEBRA','B-2     PRODUTO DOIS LOTE: L-9 VAL: 31/12/2027  3923.50.00  0/00  5.949  CX   37,5   4,20   157,50','','DADOS ADICIONAIS'].join('\n');
+    const d=lib.lerDanfe(txt);
+    check('DANFE: chave, número, série, emitente e destinatário',d.chave==='35261009166344000220550010003213491625481649'&&d.numero==='321349'&&d.serie==='1'&&d.emitente.cnpj==='09166344000220'&&d.emitente.nome==='ACME INDUSTRIA LTDA'&&d.destinatario.cnpj===CNPJ_CLI&&d.destinatario.nome==='CLIENTE TESTE LTDA',d);
+    check('DANFE: itens com descrição em duas linhas, unidade, quantidade, lote e validade',d.itens.length===2&&d.itens[0].descricao==='PRODUTO UM COM NOME COMPRIDO QUE QUEBRA'&&d.itens[0].qtd===1250&&d.itens[1].unidade==='CX'&&d.itens[1].qtd===37.5&&d.itens[1].lote==='L-9'&&d.itens[1].validade==='2027-12-31',d.itens);
+    let e=null;try{lib.lerDanfe('   \n  ')}catch(x){e=x}
+    check('PDF sem texto (digitalizado) dá aviso claro',e?.code==='PDF_SEM_TEXTO');
+    e=null;try{lib.lerDanfe('CHAVE 3526 1009 1663 4400 0220 5500 1000 3213 4916 2548 1640')}catch(x){e=x}
+    check('chave com dígito errado é recusada',e?.code==='DANFE_INVALIDO');
+
+    r=await call('POST','/api/wms/nfe/previa',{cookie:op,body:{tipo:'saida',chave:'35261009166344000220550010003213491625481649'}});
+    check('operador não lança nota sem XML',r.status===403);
+    r=await call('POST','/api/wms/nfe/previa',{cookie:gest,body:{tipo:'saida',chave:'35261009166344000220550010003213491625481640'}});
+    check('prévia pela chave: dígito errado é recusado',r.status===400);
+    r=await call('POST','/api/wms/nfe/previa',{cookie:gest,body:{tipo:'saida',chave:'35261009166344000220550010003213491625481649'}});
+    check('prévia pela chave: número, série e emitente saem da chave, sem itens',r.status===200&&r.json.nfe.numero==='321349'&&r.json.nfe.serie==='1'&&r.json.nfe.emitente.cnpj==='09166344000220'&&r.json.nfe.itens.length===0&&r.json.cliente_id===null&&r.json.ja===null,r.json);
+    r=await call('POST','/api/wms/nfe/previa',{cookie:gest,body:{tipo:'entrada',pdf:Buffer.from('nao e pdf de verdade, so texto qualquer para passar do tamanho minimo de cem bytes do arquivo enviado').toString('base64')}});
+    check('arquivo que não é PDF é recusado',r.status===400&&r.json.code==='PDF_INVALIDO',r.json);
+
+    const temPdf=!require('child_process').spawnSync('pdftotext',['-v']).error;
+    if(!temPdf)console.log('  (pulado: sem pdftotext neste ambiente)');
+    else{
+      const pdf=require('fs').readFileSync(require('path').join(__dirname,'fixtures','danfe','danfe-teste.pdf')).toString('base64');
+      r=await call('POST','/api/wms/nfe/previa',{cookie:gest,body:{tipo:'entrada',pdf}});
+      const pv=r.json;
+      check('DANFE em PDF: lê a nota e acha o cliente pelo destinatário',r.status===200&&pv.nfe.origem==='danfe'&&pv.nfe.numero==='321349'&&pv.cliente_id===cli&&pv.nfe.itens.length===3,pv);
+      check('DANFE em PDF: quantidades e lote',pv.nfe?.itens?.[0]?.qtd===1250&&pv.nfe.itens[1].qtd===48&&/QUATRO ENTRADAS$/.test(pv.nfe.itens[1].descricao)&&pv.nfe.itens[2].unidade==='CX'&&pv.nfe.itens[2].qtd===37.5&&pv.nfe.itens[2].lote==='T-77'&&pv.nfe.itens[2].validade==='2027-04-30',pv.nfe?.itens);
+      const itens=pv.nfe.itens.map((i,k)=>k===0?{...i,qtd:'1.200,5'}:i);
+      // número e emitente saem sempre da chave, mesmo que o navegador mande outros; o cliente vem do destinatário
+      r=await call('POST','/api/wms/recebimentos/danfe',{cookie:gest,body:{armazem_id:arm,nfe:{...pv.nfe,itens,numero:'999',emitente:{cnpj:'11111111111111',nome:pv.nfe.emitente.nome}}}});
+      check('recebimento lançado pelo DANFE',r.status===201&&r.json.itens===3&&r.json.origem==='danfe',r.json);
+      const det=r.status===201&&(await call('GET','/api/wms/recebimentos/'+r.json.id,{cookie:gest})).json.recebimento;
+      check('recebimento pelo DANFE: número e emitente da chave, itens corrigidos na prévia',det&&det.nf_numero==='321349'&&det.emitente_cnpj==='09166344000220'&&det.cliente.id===cli&&det.itens.length===3&&det.itens[0].qtd_nf===1200.5&&det.itens[2].lote==='T-77',det);
+      const rec={id:det?.id};
+      r=await call('POST','/api/wms/recebimentos/danfe',{cookie:gest,body:{armazem_id:arm,nfe:{...pv.nfe,itens}}});
+      check('a mesma nota não entra duas vezes no recebimento',r.status===409&&r.json.code==='NFE_DUPLICADA',r.json);
+      r=await call('POST','/api/wms/nfe/previa',{cookie:gest,body:{tipo:'entrada',pdf}});
+      check('prévia avisa que a nota já foi lançada',r.json.ja===rec?.id,r.json);
+      r=await call('POST','/api/wms/expedicoes/danfe',{cookie:gest,body:{armazem_id:arm,cliente_id:cli,nfe:{chave:pv.nfe.chave,itens:[{codigo:'A-1',descricao:'x',unidade:'UN',qtd:'2'}]}}});
+      check('saída lançada só com a chave e um item digitado',r.status===201&&r.json.itens===1&&r.json.origem==='danfe',r.json);
+      r=await call('POST','/api/wms/expedicoes/danfe',{cookie:gest,body:{armazem_id:arm,cliente_id:cli,nfe:{chave:pv.nfe.chave,itens:[{codigo:'A-1',qtd:'0'}]}}});
+      check('saída: a mesma nota não entra duas vezes',r.status===409,r.json);
+    }
+  }
+
   console.log(`\n${pass} OK, ${fail} falha(s)`);
   process.exit(fail?1:0);
 })().catch(e=>{console.error(e);process.exit(1)});

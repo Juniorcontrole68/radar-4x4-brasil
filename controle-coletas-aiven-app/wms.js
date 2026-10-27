@@ -80,6 +80,75 @@ function lerNfe(xml){
     destinatario:{cnpj:so(xmlTexto(tag(dest,'CNPJ'))||xmlTexto(tag(dest,'CPF'))),nome:xmlTexto(tag(dest,'xNome')).slice(0,160)},itens};
 }
 
+// ---------------------------------------------------------------- DANFE (PDF)
+// Quando a SEFAZ não libera o XML (a casa não é emitente, destinatária, transportadora nem autXML),
+// o DANFE em PDF traz o mesmo conteúdo: chave, emitente, destinatário e a tabela de produtos.
+// Lê o texto do pdftotext -layout; cada item é a linha que tem NCM, CST, CFOP, unidade e quantidade.
+const RE_ITEM_DANFE=/^\s*(\S+)\s+(.+?)\s+(\d{8}|\d{4}\.\d{2}\.\d{2})\s+(\d{1,4}(?:\/\d{1,3})?)\s+(\d\.?\d{3})\s+([A-Za-zÀ-ú]{1,6}\d{0,2})\s+(\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:,\d+)?)(?=\s|$)/;
+const RE_DOC=/\b(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2})\b/;
+function textoPdf(buf){
+  return new Promise((resolve,reject)=>{
+    const {spawn}=require('child_process');
+    let p;try{p=spawn('pdftotext',['-layout','-enc','UTF-8','-','-'])}catch(e){return reject(e)}
+    const out=[],err=[];let fim=false;
+    const tm=setTimeout(()=>{if(fim)return;fim=true;p.kill('SIGKILL');reject(new Error('pdftotext demorou demais'))},20000);
+    p.on('error',e=>{if(fim)return;fim=true;clearTimeout(tm);reject(e)});
+    p.stdout.on('data',d=>out.push(d));p.stderr.on('data',d=>err.push(d));
+    p.on('close',code=>{if(fim)return;fim=true;clearTimeout(tm);
+      if(code!==0)return reject(new Error(Buffer.concat(err).toString().slice(0,200)||('pdftotext '+code)));
+      resolve(Buffer.concat(out).toString('utf8'))});
+    p.stdin.on('error',()=>{});p.stdin.end(buf)
+  })
+}
+async function lerDanfePdf(base64){
+  const buf=Buffer.from(String(base64||'').replace(/^data:[^,]*,/,''),'base64');
+  if(buf.length<100||buf.slice(0,5).toString()!=='%PDF-')throw erro(400,'O arquivo não é um PDF.','PDF_INVALIDO');
+  let txt;
+  try{txt=await textoPdf(buf)}
+  catch(e){throw erro(e.code==='ENOENT'?503:400,e.code==='ENOENT'?'Leitor de PDF indisponível no servidor.':'Não foi possível ler o PDF: '+limpo(e.message,160),'PDF_INVALIDO')}
+  return lerDanfe(txt);
+}
+function lerDanfe(texto){
+  const t=String(texto||'').replace(/\r/g,'');
+  if(!t.replace(/\s/g,''))throw erro(400,'O PDF não tem texto (parece uma foto ou digitalização). Use o DANFE original em PDF ou lance os itens à mão.','PDF_SEM_TEXTO');
+  let chave='';
+  for(const m of t.matchAll(/\d{4}(?:[ .]?\d{4}){10}/g)){const c=so(m[0]);if(sefaz.chaveValida(c)){chave=c;break}}
+  if(!chave)throw erro(400,'Não achei a chave de acesso no PDF. Confira se é um DANFE de NF-e.','DANFE_INVALIDO');
+  const linhas=t.split('\n');
+  const emitNome=limpo((t.match(/RECEBEMOS\s+DE\s+(.+?)\s+OS\s+PRODUTOS/i)||[])[1],160);
+  // destinatário: primeira linha com documento depois do quadro "DESTINATÁRIO / REMETENTE"
+  let dest={cnpj:'',nome:''};
+  const iq=linhas.findIndex(l=>/DESTINAT[AÁ]RIO\s*\/\s*REMETENTE/i.test(l));
+  if(iq>=0)for(let i=iq+1;i<Math.min(linhas.length,iq+6);i++){
+    const m=linhas[i].match(RE_DOC);
+    if(m){dest={cnpj:so(m[1]),nome:limpo(linhas[i].slice(0,m.index).split(/\s{2,}/).filter(Boolean)[0],160)};break}
+  }
+  if(!dest.cnpj){const m=t.match(/DESTINAT[AÁ]RIO\s*:\s*(.+?)\s+-\s+.*?(?:CNPJ|CPF)\s*:?\s*([\d./-]{14,18})/i);if(m)dest={cnpj:so(m[2]),nome:limpo(m[1],160)}}
+  const itens=[];let ult=null,cont=0;
+  for(const l of linhas){
+    const m=l.match(RE_ITEM_DANFE);
+    if(m){
+      const qtd=num(m[7]);
+      ult={n_item:itens.length+1,codigo:limpo(m[1],60),ean:'',descricao:limpo(m[2],200),unidade:codigo(m[6],10),qtd,lote:'',fabricacao:null,validade:null};
+      itens.push(ult);cont=0;continue;
+    }
+    // descrição que quebrou em mais linhas: texto recuado logo abaixo do item
+    if(ult&&cont<4&&/^\s+\S/.test(l)&&!/^\s*(DADOS|C[AÁ]LCULO|INFORMA[CÇ])/i.test(l)&&!/\d+,\d{2}\s+\d+,\d{2}/.test(l)){ult.descricao=limpo(ult.descricao+' '+l,200);cont++;continue}
+    ult=null;
+  }
+  for(const it of itens){
+    const lote=it.descricao.match(/\bLOTE\s*(?:N[º°O.]?\s*)?[:.\-]?\s*([A-Z0-9][A-Z0-9./-]{0,39})/i);
+    if(lote)it.lote=lote[1].replace(/[.,;]$/,'');
+    const val=it.descricao.match(/\b(?:VAL(?:IDADE)?|VENC(?:IMENTO)?|DVAL)\s*[:.\-]?\s*(\d{1,2}\/\d{1,2}\/\d{4}|\d{1,2}\/\d{4})/i);
+    if(val)it.validade=dataIso(val[1]);
+    const fab=it.descricao.match(/\b(?:FAB(?:RICA[CÇ][AÃ]O)?|DFAB)\s*[:.\-]?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i);
+    if(fab)it.fabricacao=dataIso(fab[1]);
+  }
+  if(!itens.length||itens.some(i=>!qtdOk(i.qtd)))throw erro(400,'Não consegui ler os produtos deste DANFE. Lance os itens à mão (a chave já foi lida).','DANFE_SEM_ITENS');
+  return{chave,numero:String(+chave.slice(25,34)),serie:String(+chave.slice(22,25)),
+    emitente:{cnpj:chave.slice(6,20),nome:emitNome},destinatario:dest,itens,origem:'danfe'};
+}
+
 // ---------------------------------------------------------------- etiquetas: Code 128 (conjunto B)
 const C128=['212222','222122','222221','121223','121322','131222','122213','122312','132212','221213','221312','231212','112232','122132','122231','113222','123122','123221','223211','221132','221231','213212','223112','312131','311222','321122','321221','312212','322112','322211','212123','212321','232121','111323','131123','131321','112313','132113','132311','211313','231113','231311','112133','112331','132131','113123','113321','133121','313121','211331','231131','213113','213311','213131','311123','311321','331121','312113','312311','332111','314111','221411','431111','111224','111422','121124','121421','141122','141221','112214','112412','122114','122411','142112','142211','241211','221114','413111','241112','134111','111242','121142','121241','114212','124112','124211','411212','421112','421211','212141','214121','412121','111143','111341','131141','114113','114311','411113','411311','113141','114131','311141','411131','211412','211214','211232','2331112'];
 function code128(texto){
@@ -479,7 +548,7 @@ async function lerRecebimento(c,ctx,id,{cega=false}={}){
 }
 // NF-e (XML) vira recebimento; o cliente vem do CNPJ do destinatário ou do emitente quando não é informado
 async function importarXml(pool,ctx,b,xml){
-  const nfe=lerNfe(xml);
+  const nfe=typeof xml==='object'&&xml?xml:lerNfe(xml);
   let clienteId=b.cliente_id||null;
   if(!clienteId){
     const r=await pool.query('SELECT id::text,cnpj FROM wms_clientes WHERE empresa=$1 AND ativo AND cnpj=ANY($2::text[])',[ctx.emp,[nfe.destinatario.cnpj,nfe.emitente.cnpj].filter(Boolean)]);
@@ -488,7 +557,7 @@ async function importarXml(pool,ctx,b,xml){
     clienteId=d.id;
   }
   const r=await tx(pool,c=>criarRecebimento(c,ctx,{armazem_id:b.armazem_id,cliente_id:clienteId,nf_numero:nfe.numero,nf_serie:nfe.serie,nf_chave:nfe.chave,
-    emitente_cnpj:nfe.emitente.cnpj,emitente_nome:nfe.emitente.nome,previsto_para:b.previsto_para,xml:String(xml),
+    emitente_cnpj:nfe.emitente.cnpj,emitente_nome:nfe.emitente.nome,previsto_para:b.previsto_para,xml:typeof xml==='string'?xml:null,
     itens:nfe.itens.map(i=>({n_item:i.n_item,codigo:i.codigo,ean:i.ean,descricao:i.descricao,unidade:i.unidade,qtd:i.qtd,lote:i.lote,validade:i.validade,fabricacao:i.fabricacao}))}));
   return{ok:true,...r,chave:nfe.chave,itens:nfe.itens.length};
 }
@@ -786,7 +855,7 @@ async function criarExpedicao(c,ctx,b){
 }
 // NF de saída: o cliente do armazém normalmente é o emitente (vende o que está guardado); depois tenta o destinatário
 async function importarSaida(pool,ctx,b,xml){
-  const nfe=lerNfe(xml);
+  const nfe=typeof xml==='object'&&xml?xml:lerNfe(xml);
   let clienteId=b.cliente_id||null;
   if(!clienteId){
     const r=await pool.query('SELECT id::text,cnpj FROM wms_clientes WHERE empresa=$1 AND ativo AND cnpj=ANY($2::text[])',[ctx.emp,[nfe.emitente.cnpj,nfe.destinatario.cnpj].filter(Boolean)]);
@@ -796,9 +865,38 @@ async function importarSaida(pool,ctx,b,xml){
   }
   // na saída o lote da nota é o pedido do cliente; sem lote, a reserva escolhe pelo vencimento (FEFO)
   const r=await tx(pool,c=>criarExpedicao(c,ctx,{armazem_id:b.armazem_id,cliente_id:clienteId,nf_numero:nfe.numero,nf_serie:nfe.serie,nf_chave:nfe.chave,
-    destinatario_cnpj:nfe.destinatario.cnpj,destinatario_nome:nfe.destinatario.nome,xml:String(xml),
+    destinatario_cnpj:nfe.destinatario.cnpj,destinatario_nome:nfe.destinatario.nome,xml:typeof xml==='string'?xml:null,
     itens:nfe.itens.map(i=>({n_item:i.n_item,codigo:i.codigo,ean:i.ean,descricao:i.descricao,unidade:i.unidade,qtd:i.qtd,lote:i.lote}))}));
   return{ok:true,...r,chave:nfe.chave,itens:nfe.itens.length};
+}
+// Nota sem XML: só a chave (número, série e CNPJ do emitente estão nela) ou o DANFE em PDF; a prévia sugere o cliente
+function nfeDaChave(chave){
+  return{chave,numero:String(+chave.slice(25,34)),serie:String(+chave.slice(22,25)),emitente:{cnpj:chave.slice(6,20),nome:''},destinatario:{cnpj:'',nome:''},itens:[],origem:'chave'};
+}
+async function previaNota(pool,ctx,b){
+  const saida=b.tipo==='saida';
+  let nfe;
+  if(b.pdf)nfe=await lerDanfePdf(b.pdf);
+  else{const ch=so(b.chave);if(!sefaz.chaveValida(ch))throw erro(400,'Chave de acesso inválida (44 dígitos).','CHAVE_INVALIDA');nfe=nfeDaChave(ch)}
+  const docs=(saida?[nfe.emitente.cnpj,nfe.destinatario.cnpj]:[nfe.destinatario.cnpj,nfe.emitente.cnpj]).filter(Boolean);
+  const r=await pool.query('SELECT id::text,nome,cnpj FROM wms_clientes WHERE empresa=$1 AND ativo AND cnpj=ANY($2::text[])',[ctx.emp,docs]);
+  const cli=docs.map(d=>r.rows.find(x=>x.cnpj===d)).find(Boolean)||null;
+  const ja=(await pool.query(saida?"SELECT id::text FROM wms_expedicoes WHERE empresa=$1 AND nf_chave=$2 AND status<>'cancelada' LIMIT 1"
+    :"SELECT id::text FROM wms_recebimentos WHERE empresa=$1 AND nf_chave=$2 AND status<>'cancelado' LIMIT 1",[ctx.emp,nfe.chave])).rows[0];
+  return{ok:true,nfe,cliente_id:cli?.id||null,cliente_nome:cli?.nome||null,ja:ja?.id||null};
+}
+// a nota conferida na prévia volta do navegador: número, série e emitente saem sempre da chave
+function nfeDoCorpo(x){
+  x=x||{};
+  const chave=so(x.chave);
+  if(!sefaz.chaveValida(chave))throw erro(400,'Chave de acesso inválida (44 dígitos).','CHAVE_INVALIDA');
+  const nfe=nfeDaChave(chave);
+  nfe.emitente.nome=limpo(x.emitente?.nome,160);
+  nfe.destinatario={cnpj:so(x.destinatario?.cnpj).slice(0,14),nome:limpo(x.destinatario?.nome,160)};
+  nfe.itens=(Array.isArray(x.itens)?x.itens:[]).slice(0,501).map((i,k)=>({n_item:k+1,codigo:limpo(i.codigo,60),ean:so(i.ean).slice(0,14),descricao:limpo(i.descricao,200),
+    unidade:codigo(i.unidade,10),qtd:num(i.qtd),lote:limpo(i.lote,40),fabricacao:dataIso(i.fabricacao),validade:dataIso(i.validade)}));
+  nfe.itens.forEach((i,k)=>{if(!i.descricao&&!i.codigo)throw erro(400,'Item '+(k+1)+': informe o código ou a descrição.')});
+  return nfe;
 }
 // baixa o XML pela chave; devolve {xml} ou a resposta "pendente" (só resumo: Ciência da Operação registrada)
 async function nfePelaChave(pool,ctx,chave){
@@ -1396,6 +1494,15 @@ async function handle(req,res,u,deps){
       const ctx=await contexto(deps,req,'gestao'),b=await corpo(3*1024*1024);
       return json(201,await importarXml(pool,ctx,b,b.xml));
     }
+    // DANFE em PDF ou só a chave: prévia para conferir antes de lançar
+    if(p==='/api/wms/nfe/previa'&&M==='POST'){
+      const ctx=await contexto(deps,req,'gestao'),b=await corpo(8*1024*1024);
+      return json(200,await previaNota(pool,ctx,b));
+    }
+    if(p==='/api/wms/recebimentos/danfe'&&M==='POST'){
+      const ctx=await contexto(deps,req,'gestao'),b=await corpo(1024*1024);
+      return json(201,{...(await importarXml(pool,ctx,b,nfeDoCorpo(b.nfe))),origem:'danfe'});
+    }
     // leitura do código de barras do DANFE: baixa o XML na SEFAZ com o A1 da casa e cria o recebimento
     if(p==='/api/wms/recebimentos/chave'&&M==='POST'){
       const ctx=await contexto(deps,req,'gestao'),b=await corpo();
@@ -1451,6 +1558,10 @@ async function handle(req,res,u,deps){
     if(p==='/api/wms/expedicoes/xml'&&M==='POST'){
       const ctx=await contexto(deps,req,'gestao'),b=await corpo(3*1024*1024);
       return json(201,await importarSaida(pool,ctx,b,b.xml));
+    }
+    if(p==='/api/wms/expedicoes/danfe'&&M==='POST'){
+      const ctx=await contexto(deps,req,'gestao'),b=await corpo(1024*1024);
+      return json(201,{...(await importarSaida(pool,ctx,b,nfeDoCorpo(b.nfe))),origem:'danfe'});
     }
     if(p==='/api/wms/expedicoes/chave'&&M==='POST'){
       const ctx=await contexto(deps,req,'gestao'),b=await corpo();
@@ -1670,4 +1781,4 @@ async function handle(req,res,u,deps){
   }
 }
 
-module.exports={get ATIVO(){return ativo},desligar(){ativo=false},ensureSchema,handle,lerNfe,code128,code128Svg,ranquearEnderecos,cabe,gerarEnderecos,dataIso,num};
+module.exports={get ATIVO(){return ativo},desligar(){ativo=false},ensureSchema,handle,lerNfe,code128,code128Svg,ranquearEnderecos,cabe,gerarEnderecos,dataIso,num,lerDanfe,lerDanfePdf};
