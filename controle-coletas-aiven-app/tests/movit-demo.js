@@ -361,6 +361,14 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
     check('MOVIT Central guarda os módulos de quem pede pelo site',r.status===200&&JSON.stringify(r.json?.modulos)==='["lotacao","frota"]',r.status+' '+r.text.slice(0,160));
     r=await call('POST','/api/demo/convites',{body:{nome:'Carla',empresa:'Outro Pedido do Site',whatsapp:'5511977776666'},ip:IPL,auth:'Bearer '+TOKEN_API});
     check('...e o pedido pelo site já sai com esses módulos',r.status===201&&JSON.stringify(r.json?.modulos)==='["lotacao","frota"]'&&/\/demo\/convite\//.test(r.json?.link||''),r.status+' '+r.text.slice(0,200));
+    r=await call('POST','/api/demo/convites',{body:{nome:'Davi',empresa:'Teste de Doze Dias',whatsapp:'5511966665555',dias:12},ip:IPL,auth:'Bearer '+TOKEN_API});
+    const tokD=(r.json?.link||'').split('/').pop(),cliD=r.json?.cliente_id;
+    check('pedido com dias de teste -> 201 com os dias',r.status===201&&r.json?.dias===12,r.status+' '+r.text.slice(0,160));
+    r=await call('POST','/api/demo/convite/'+tokD+'/entrar',{body:{},ip:IPL});
+    const diasD=(await db.query("SELECT EXTRACT(EPOCH FROM trial_ends_at-NOW())/86400 AS d FROM movit_clients WHERE id=$1",[cliD])).rows[0]?.d;
+    check('...e o teste dura esses dias a partir do primeiro acesso',r.status===200&&Number(diasD)>11.9&&Number(diasD)<=12,r.status+' dias='+diasD);
+    r=await call('POST','/api/demo/convites',{body:{nome:'Davi',empresa:'Dias Errados',dias:90},ip:IPL,auth:'Bearer '+TOKEN_API});
+    check('dias de teste fora de 1 a 60 -> 400',r.status===400&&/Dias de teste/.test(r.json?.error||''),r.status+' '+r.text.slice(0,160));
   }
 
   await db.end();

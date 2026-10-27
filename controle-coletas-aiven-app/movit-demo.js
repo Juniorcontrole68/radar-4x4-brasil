@@ -216,6 +216,8 @@ async function initDb(pool) {
     ultimo_acesso TIMESTAMPTZ,
     entradas INTEGER NOT NULL DEFAULT 0
   )`);
+  // Dias de teste escolhidos no envio (MOVIT Central ou Torre); sem valor, vale o padrão dos preços.
+  await pool.query('ALTER TABLE movit_demo_convites ADD COLUMN IF NOT EXISTS dias INTEGER');
   // Parceiros de cada empresa: login do SSW que a empresa criou para o parceiro (ou o do domínio
   // do próprio parceiro) e as unidades onde saem os romaneios dele.
   await pool.query(`CREATE TABLE IF NOT EXISTS movit_parceiros (
@@ -415,12 +417,17 @@ function normalizarConvite(body) {
   const email = String(b.email || '').trim().slice(0, 180);
   const modulos = Array.isArray(b.modulos) ? [...new Set(b.modulos.map(x => String(x).trim()).filter(x => /^[a-z_]{2,40}$/.test(x)))] : null;
   const erros = [];
+  let dias = null;
+  if (b.dias !== undefined && b.dias !== null && b.dias !== '') {
+    dias = Number(b.dias);
+    if (!Number.isInteger(dias) || dias < 1 || dias > 60) { erros.push('Dias de teste: use um número de 1 a 60.'); dias = null; }
+  }
   if (nome.length < 2) erros.push('Informe o nome do contato.');
   if (empresa.length < 2) erros.push('Informe o nome da transportadora.');
   if (whatsapp && !/^\d{12,15}$/.test(whatsapp)) erros.push('WhatsApp inválido. Use DDD e número, por exemplo 19 99999-0000.');
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) erros.push('E-mail inválido.');
   if (modulos && !modulos.length) erros.push('Escolha pelo menos um módulo.');
-  return { nome, empresa, whatsapp, email, modulos, erros };
+  return { nome, empresa, whatsapp, email, modulos, dias, erros };
 }
 function mensagemConvite(nome, link) {
   const primeiro = String(nome || '').split(' ')[0];

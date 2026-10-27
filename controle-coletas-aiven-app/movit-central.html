@@ -40,6 +40,7 @@ body.demo #clientForm .form>label:not(:first-child),body.demo .modw label.vid,bo
       <label>Transportadora<input id="cEmpresa" maxlength="120"></label>
       <label>WhatsApp (com DDD)<input id="cZap" inputmode="tel" placeholder="19 99999-0000"></label>
       <label>E-mail (opcional)<input id="cEmail" type="email"></label>
+      <label>Dias de teste<input id="cDias" type="number" min="1" max="60" step="1" value="7" inputmode="numeric"></label>
     </div>
     <div class="passo"><span>2</span>Módulos que ele pode abrir<span class="actions" style="margin-left:auto"><button class="btn secondary" type="button" id="cTodos">Marcar todos</button><button class="btn secondary" type="button" id="cNenhum">Desmarcar todos</button></span></div>
     <div id="cMods" class="cmods"></div>
@@ -136,7 +137,7 @@ function renderModules(selected=[],videos=null){
 }
 async function loadPrices(){
   const r=await fetch('/api/movit-central/precos',{cache:'no-store'});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar preços.');
-  PRICES=j;$('pInst').value=Number(j.instalacao||0).toFixed(2).replace('.',',');$('pDias').value=j.teste_dias||7;$('trialDias').textContent=j.teste_dias||7;
+  PRICES=j;$('pInst').value=Number(j.instalacao||0).toFixed(2).replace('.',',');$('pDias').value=j.teste_dias||7;$('trialDias').textContent=j.teste_dias||7;if($('cDias'))$('cDias').value=j.teste_dias||7;
   $('pMods').innerHTML=(j.modulos||[]).map(m=>'<label>'+m.name+'<input data-pm="'+m.key+'" inputmode="decimal" value="'+Number(m.price_monthly||0).toFixed(2).replace('.',',')+'"></label>').join('');
 }
 function renderBilling(){
@@ -283,7 +284,7 @@ $('sSalvar').onclick=async()=>{
 $('cTodos').onclick=()=>document.querySelectorAll('.cmod').forEach(i=>i.checked=true);
 $('cNenhum').onclick=()=>document.querySelectorAll('.cmod').forEach(i=>i.checked=false);
 $('cGo').onclick=async()=>{
-  const body={nome:$('cNome').value.trim(),empresa:$('cEmpresa').value.trim(),whatsapp:$('cZap').value.trim(),email:$('cEmail').value.trim(),modulos:[...document.querySelectorAll('.cmod:checked')].map(x=>x.value)};
+  const body={nome:$('cNome').value.trim(),empresa:$('cEmpresa').value.trim(),whatsapp:$('cZap').value.trim(),email:$('cEmail').value.trim(),dias:Number($('cDias').value)||undefined,modulos:[...document.querySelectorAll('.cmod:checked')].map(x=>x.value)};
   if(!body.empresa||!body.whatsapp){$('cMsg').style.color='#b91c1c';$('cMsg').textContent='Preencha a transportadora e o WhatsApp do cliente.';return}
   if(!body.modulos.length){$('cMsg').style.color='#b91c1c';$('cMsg').textContent='Marque pelo menos um módulo no passo 2.';return}
   $('cMsg').style.color='#475569';$('cMsg').textContent='Criando o teste…';
