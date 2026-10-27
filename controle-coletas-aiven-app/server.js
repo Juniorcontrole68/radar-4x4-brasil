@@ -2236,6 +2236,18 @@ async function start() {
       // sem esperar o próximo reinício para a migração acima marcá-lo.
       await pool.query("UPDATE dashboard_users SET is_platform_admin=TRUE,client_id=COALESCE(client_id,(SELECT id FROM movit_clients WHERE lower(slug)='construlog' LIMIT 1)) WHERE lower(username)=lower($1)",[adminUser]);
       console.log('Administrador inicial do dashboard criado: '+adminUser);
+    }else{
+      // Senha esquecida: com DASHBOARD_RESET_ADMIN_PASSWORD (qualquer valor novo, ex.: a data) no Render,
+      // o próximo início regrava a senha do administrador inicial com DASHBOARD_INITIAL_ADMIN_PASSWORD.
+      // Vale uma vez por valor; os reinícios seguintes não mexem mais na senha.
+      const pedido=String(process.env.DASHBOARD_RESET_ADMIN_PASSWORD||'').trim();
+      const feito=pedido?(await pool.query("SELECT valor FROM movit_config WHERE chave='admin_reset'")).rows[0]?.valor:null;
+      if(pedido&&feito!==pedido){
+        const ph=dashboardHashPassword(adminPass);
+        await pool.query('UPDATE dashboard_users SET password_salt=$2,password_hash=$3,active=TRUE WHERE id=$1',[existing.rows[0].id,ph.salt,ph.hash]);
+        await pool.query("INSERT INTO movit_config(chave,valor,updated_at) VALUES('admin_reset',to_jsonb($1::text),NOW()) ON CONFLICT(chave) DO UPDATE SET valor=EXCLUDED.valor,updated_at=NOW()",[pedido]);
+        console.log('Senha do administrador inicial regravada: '+adminUser);
+      }
     }
   }
   // No modo teste não importa nada do sistema antigo (traria contas reais para o banco de teste).
