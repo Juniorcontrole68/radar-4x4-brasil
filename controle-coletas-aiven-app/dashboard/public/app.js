@@ -1020,24 +1020,30 @@ function driverPerfAggregate(rows){
   const map=new Map();
   for(const o of rows||[]){
     const motorista=String(g(o,'Motorista')||'Sem motorista').trim()||'Sem motorista';
-    if(!map.has(motorista))map.set(motorista,{motorista,veiculos:new Set(),entregas:0,realizadas:0,receive:0,paid:0});
-    const x=map.get(motorista),ent=num(g(o,'Entregas')),rawReal=String(g(o,'Realizadas')??'').trim(),ret=num(g(o,'Retorno'));
-    const real=rawReal!==''?num(rawReal):Math.max(0,ent-ret);
+    if(!map.has(motorista))map.set(motorista,{motorista,veiculos:new Set(),entregas:0,realizadas:0,abertas:0,receive:0,paid:0});
+    const x=map.get(motorista),ent=num(g(o,'Entregas')),rawReal=String(g(o,'Realizadas')??'').trim();
     const veic=String(g(o,'Veiculo','Veículo')||'').trim();if(veic)x.veiculos.add(veic);
-    x.entregas+=ent;x.realizadas+=Math.min(ent,Math.max(0,real));x.receive+=financeReceive(o);x.paid+=financePaid(o)
+    // Realizadas em branco = dia ainda sem fechamento: as entregas estão em rota e não contam na performance.
+    if(rawReal===''){x.abertas+=ent}else{x.entregas+=ent;x.realizadas+=Math.min(ent,Math.max(0,num(rawReal)))}
+    x.receive+=financeReceive(o);x.paid+=financePaid(o)
   }
   return[...map.values()].map(x=>({
-    motorista:x.motorista,veiculo:[...x.veiculos].join('/')||'—',entregas:x.entregas,realizadas:x.realizadas,
+    motorista:x.motorista,veiculo:[...x.veiculos].join('/')||'—',entregas:x.entregas,realizadas:x.realizadas,abertas:x.abertas,
     performance:x.entregas?x.realizadas/x.entregas*100:0,receive:x.receive,paid:x.paid,profit:x.receive-x.paid
   }))
 }
 function driverPerformanceBars(id,rows){
   if(!rows.length)return empty(id);
-  const sorted=rows.slice().sort((a,b)=>b.performance-a.performance||b.realizadas-a.realizadas).slice(0,14);
+  const sorted=rows.slice().sort((a,b)=>(b.entregas>0)-(a.entregas>0)||b.performance-a.performance||b.realizadas-a.realizadas).slice(0,14);
   const{x,w,h}=cv(id),p={l:42,r:12,t:28,b:82},cw=w-p.l-p.r,ch=h-p.t-p.b,m=100,bw=Math.max(13,Math.min(38,cw/sorted.length*.62));
   x.strokeStyle='#e2e8f0';x.strokeRect(p.l,p.t,cw,ch);
   sorted.forEach((r,i)=>{
     const px=p.l+(i+.5)*cw/sorted.length,bh=Math.max(0,Math.min(100,r.performance))/m*ch,barY=h-p.b-bh;
+    if(!r.entregas){
+      // só entregas em rota (sem fechamento): coluna tracejada com "em rota", sem porcentagem
+      x.save();x.setLineDash([4,3]);x.strokeStyle='#94a3b8';x.strokeRect(px-bw/2,p.t+ch*.35,bw,ch*.65);x.restore();
+      x.save();x.fillStyle='#64748b';x.textAlign='center';x.textBaseline='middle';x.font='700 10px Segoe UI';x.translate(px,p.t+ch*.675);x.rotate(-Math.PI/2);x.fillText('em rota • '+nf(r.abertas),0,0);x.restore()
+    }
     x.fillStyle='#0f766e';x.fillRect(px-bw/2,barY,bw,bh);
     if(bh>0){
       x.save();x.fillStyle=bh>=18?'#fff':'#172033';x.textAlign='center';x.textBaseline='middle';x.font='700 10px Segoe UI';
@@ -1067,12 +1073,13 @@ function driverFinancialBars(id,rows){
 function renderDriverPerformanceDashboard(){
   if(!$('#driverPerformanceChart'))return;
   const from=$('#driverPerfFrom')?.value||'',to=$('#driverPerfTo')?.value||'',rows=driverPerfRowsBetween(from,to),agg=driverPerfAggregate(rows);
-  driverPerformanceBars('#driverPerformanceChart',agg.filter(x=>x.entregas>0));
+  driverPerformanceBars('#driverPerformanceChart',agg.filter(x=>x.entregas>0||x.abertas>0));
   driverFinancialBars('#driverFinancialResultChart',agg.filter(x=>x.receive!==0||x.paid!==0));
   const info=$('#driverPerfInfo');
   if(info){
     const best=agg.filter(x=>x.entregas>0).sort((a,b)=>b.performance-a.performance)[0];
-    info.textContent=nf(rows.length)+' lançamento(s) • '+nf(agg.length)+' motorista(s) • '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje')+(best?' • melhor performance: '+best.motorista+' '+best.performance.toFixed(1).replace('.',',')+'%':'')
+    const emRota=agg.filter(x=>x.abertas>0).length;
+    info.textContent=nf(rows.length)+' lançamento(s) • '+nf(agg.length)+' motorista(s) • '+(from?from.split('-').reverse().join('/'):'início')+' a '+(to?to.split('-').reverse().join('/'):'hoje')+(best?' • melhor performance: '+best.motorista+' '+best.performance.toFixed(1).replace('.',',')+'%':'')+(emRota?' • '+nf(emRota)+' motorista(s) em rota, sem fechamento do dia':'')
   }
 }
 function driverPerfSetToday(){
@@ -1126,15 +1133,17 @@ function checkerValueAggregate(rows){
 }
 async function refreshCheckerCarsLoaded(){
   const el=$('#checkerCarsLoaded');if(!el)return;
-  const date=$('#checkerValueTo')?.value||iso(new Date());
-  el.textContent='…';
+  const date=$('#checkerValueTo')?.value||iso(new Date()),un=$('#checkerUnloads'),cl=$('#checkerUnloadClients');
+  el.textContent='…';if(un)un.textContent='…';
   try{
     const r=await fetch('/api/carregamentos-count?data='+encodeURIComponent(date)+'',{cache:'no-cache'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao consultar carregamentos.');
-    el.textContent=nf(Number(j.total||0))
+    el.textContent=nf(Number(j.total||0));
+    if(un)un.textContent=nf(Number(j.descargas||0));
+    if(cl){const cs=Array.isArray(j.clientes)?j.clientes:[];cl.textContent=cs.length?cs.map(c=>c.cliente+(c.descargas>1?' ('+c.descargas+')':'')).join(' • '):'nenhuma descarga';cl.title=cl.textContent}
   }catch(e){
-    el.textContent='—';
+    el.textContent='—';if(un)un.textContent='—';
     console.warn('Total de carros carregados:',e)
   }
 }
@@ -1851,6 +1860,7 @@ if(document.querySelector('#fatGo')){document.querySelector('#fatGo').onclick=()
 function cargoTypeLabel(v){return String(v||'carregamento').toLowerCase()==='descarga'?'Descarga':'Carregamento'}
 function renderLoadingRecords(rows){
   const box=$('#loadRecords');clearLoadingPhotoUrls();
+  const cdl=$('#unloadClientList');if(cdl){const cs=[...new Set(rows.map(r=>String(r.cliente||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));cdl.innerHTML=cs.map(c=>'<option value="'+safe(c)+'">').join('')}
   if(box){
     if(!rows.length)box.innerHTML='<div class="muted">Nenhum registro de carga ou descarga encontrado.</div>';
     else{
@@ -1864,7 +1874,7 @@ function renderLoadingRecords(rows){
           const damageCount=Math.max(0,Math.min(10,Number(r.avaria_count||0)));
           for(let n=1;n<=damageCount;n++)extras.push('<a href="/api/carregamentos-finais/'+encodeURIComponent(r.id)+'/avaria/'+n+'" target="_blank" class="secondary" style="padding:4px 7px;font-size:10px">Avaria '+n+'</a>')
         }
-        const returnChecker=(String(r.tipo||'').toLowerCase()==='carregamento'&&r.conferente_coleta_devolucao)?'<br>Conferente coleta/devolução: <b>'+safe(r.conferente_coleta_devolucao)+'</b>':'';
+        const returnChecker=(String(r.tipo||'').toLowerCase()==='carregamento'&&r.conferente_coleta_devolucao)?'<br>Conferente coleta/devolução: <b>'+safe(r.conferente_coleta_devolucao)+'</b>':(String(r.tipo||'').toLowerCase()==='descarga'&&r.cliente?'<br>Cliente: <b>'+safe(r.cliente)+'</b>':'');
         const editColeta=String(r.tipo||'').toLowerCase()==='carregamento'
           ?'<button type="button" class="secondary" data-edit-coleta-dev="'+safe(r.id)+'" data-checker="'+safe(r.conferente_coleta_devolucao||'')+'" style="padding:4px 7px;font-size:10px">✏️ Coleta e Devolução</button>'
           :'';
@@ -2021,6 +2031,7 @@ function setupCargoOperationForm(cfg){
     if(msg){msg.style.color='#475569';msg.textContent='Salvando '+cfg.label.toLowerCase()+'…'}
     try{
       const payload={tipo:cfg.tipo,conferente,motorista,quantidade_entregas:quantidade,capturada_em:state.captured||new Date().toISOString(),foto:state.photos[0]};
+      if(cfg.client)payload.cliente=$(cfg.client)?.value?.trim()||'';
       if(cfg.returnChecker){
         const rc=$(cfg.returnChecker)?.value?.trim()||'';
         if(rc)payload.conferente_coleta_devolucao=rc
@@ -2047,7 +2058,7 @@ function setupCargoOperationForm(cfg){
 function setupLoadingForm(){
   const refresh=$('#loadRefresh'),search=$('#loadSearch'),clear=$('#loadClear');
   setupCargoOperationForm({tipo:'carregamento',label:'Carregamento',form:'#loadFinalForm',photos:['#loadPhoto','#loadPhoto2','#loadPhoto3','#loadPhoto4'],photoLabels:['Carregamento','Carregamento','Carregamento','Coleta e Devolução'],returnChecker:'#loadReturnChecker',msg:'#loadMsg',save:'#loadSave',checker:'#loadChecker',driver:'#loadDriver',qty:'#loadQty',preview:'#loadPreview',previewImgs:'#loadPreviewImgs',photoTime:'#loadPhotoTime'});
-  setupCargoOperationForm({tipo:'descarga',label:'Descarga',form:'#unloadFinalForm',photos:['#unloadPhoto','#unloadPhoto2','#unloadPhoto3','#unloadPhoto4'],photoLabels:['Descarga','Descarga','Coletas e Devoluções','Lacre'],damageBox:'#unloadDamagePhotos',damageAdd:'#unloadAddDamagePhoto',damagePreview:'#unloadDamagePreview',damagePreviewImgs:'#unloadDamagePreviewImgs',msg:'#unloadMsg',save:'#unloadSave',checker:'#unloadChecker',driver:'#unloadDriver',qty:'#unloadQty',preview:'#unloadPreview',previewImgs:'#unloadPreviewImgs',photoTime:'#unloadPhotoTime'});
+  setupCargoOperationForm({tipo:'descarga',label:'Descarga',form:'#unloadFinalForm',photos:['#unloadPhoto','#unloadPhoto2','#unloadPhoto3','#unloadPhoto4'],photoLabels:['Descarga','Descarga','Coletas e Devoluções','Lacre'],damageBox:'#unloadDamagePhotos',damageAdd:'#unloadAddDamagePhoto',damagePreview:'#unloadDamagePreview',damagePreviewImgs:'#unloadDamagePreviewImgs',msg:'#unloadMsg',save:'#unloadSave',client:'#unloadClient',checker:'#unloadChecker',driver:'#unloadDriver',qty:'#unloadQty',preview:'#unloadPreview',previewImgs:'#unloadPreviewImgs',photoTime:'#unloadPhotoTime'});
   if(refresh)refresh.onclick=()=>refreshLoadingRecords(true);
   if(search)search.onclick=()=>refreshLoadingRecords(true);
   if(clear)clear.onclick=()=>{

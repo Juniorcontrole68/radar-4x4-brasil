@@ -1892,6 +1892,7 @@ async function start() {
   await pool.query("ALTER TABLE carregamentos_finais ADD COLUMN IF NOT EXISTS tipo TEXT NOT NULL DEFAULT 'carregamento'");
   await pool.query("UPDATE carregamentos_finais SET tipo='carregamento' WHERE tipo IS NULL OR trim(tipo)=''");
   await pool.query("ALTER TABLE carregamentos_finais ADD COLUMN IF NOT EXISTS conferente_coleta_devolucao TEXT");
+  await pool.query("ALTER TABLE carregamentos_finais ADD COLUMN IF NOT EXISTS cliente TEXT");
   await pool.query(`
     CREATE TABLE IF NOT EXISTS carregamentos_avarias (
       id BIGSERIAL PRIMARY KEY,
@@ -5652,7 +5653,7 @@ async function start() {
           params.push(limit);
           const sql =
             'SELECT id::text AS id, tipo, conferente, motorista, quantidade_entregas, ' +
-            'capturada_em, criado_em, foto_mime, foto_bytes, foto2_bytes, foto3_bytes, foto4_bytes, conferente_coleta_devolucao, ' +
+            'capturada_em, criado_em, foto_mime, foto_bytes, foto2_bytes, foto3_bytes, foto4_bytes, conferente_coleta_devolucao, cliente, ' +
             '(SELECT COUNT(*)::int FROM carregamentos_avarias a WHERE a.carregamento_id=carregamentos_finais.id) AS avaria_count ' +
             'FROM carregamentos_finais ' +
             (where.length ? 'WHERE ' + where.join(' AND ') + ' ' : '') +
@@ -5741,6 +5742,8 @@ async function start() {
           const conferente = String(body.conferente || '').trim();
           const motorista = String(body.motorista || '').trim();
           const conferenteColetaDevolucao = String(body.conferente_coleta_devolucao || '').trim();
+          // Descarga: cliente que descarregou.
+          const cliente = String(body.cliente || '').trim().slice(0, 160);
           const quantidade = Number(body.quantidade_entregas);
           const captured = new Date(body.capturada_em || Date.now());
 
@@ -5764,17 +5767,18 @@ async function start() {
             INSERT INTO carregamentos_finais
               (tipo, conferente, motorista, quantidade_entregas, foto, foto_mime, foto_bytes,
                foto2, foto2_mime, foto2_bytes, foto3, foto3_mime, foto3_bytes, foto4, foto4_mime, foto4_bytes,
-               conferente_coleta_devolucao, capturada_em)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+               conferente_coleta_devolucao, capturada_em, cliente)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
             RETURNING id::text AS id, tipo, conferente, motorista, quantidade_entregas, capturada_em, criado_em,
-              foto_bytes, foto2_bytes, foto3_bytes, foto4_bytes, conferente_coleta_devolucao
+              foto_bytes, foto2_bytes, foto3_bytes, foto4_bytes, conferente_coleta_devolucao, cliente
           `, [
             tipo, conferente, motorista, quantidade, photo.buffer, photo.mime, photo.buffer.length,
             extras[0]?.buffer||null,extras[0]?.mime||null,extras[0]?.buffer?.length||0,
             extras[1]?.buffer||null,extras[1]?.mime||null,extras[1]?.buffer?.length||0,
             extras[2]?.buffer||null,extras[2]?.mime||null,extras[2]?.buffer?.length||0,
             tipo==='carregamento'?(conferenteColetaDevolucao||null):null,
-            captured.toISOString()
+            captured.toISOString(),
+            tipo==='descarga'?(cliente||null):null
           ]);
           const registroId=r.rows[0].id;
           for(const av of avarias){

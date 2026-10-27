@@ -6041,14 +6041,16 @@ if(u.pathname==='/api/lotacao'&&req.method==='GET'){try{
 if(u.pathname==='/api/coletas/status'){try{if(!dashboardHasAny(authUser,['dashboard','operacional']))return dashboardDeny(res);const x=await fetchColetasStatus(u.searchParams.get('from')||'',u.searchParams.get('to')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/carregamentos-count'&&req.method==='GET'){try{
   if(!dashboardHasAny(authUser,['dashboard','ajudantes','final_carregamento']))return dashboardDeny(res);
   const data=String(u.searchParams.get('data')||'').trim();
-  const q=new URLSearchParams({limit:'100',tipo:'carregamento'});
-  if(data)q.set('data',data);
-  const x=await portalJson('/api/painel/carregamentos-finais?'+q.toString());
-  const rows=Array.isArray(x.rows)?x.rows:[];
-  const unique=new Set(rows.map(r=>String(r.vehicle_plate||r.placa||r.veiculo||r.motorista||r.id||'').trim()).filter(Boolean));
+  // Carregamentos e descargas contados em separado; nas descargas, os clientes que descarregaram.
+  const buscar=async tipo=>{const q=new URLSearchParams({limit:'100',tipo});if(data)q.set('data',data);const x=await portalJson('/api/painel/carregamentos-finais?'+q.toString());return Array.isArray(x.rows)?x.rows:[]};
+  const [rows,desc]=await Promise.all([buscar('carregamento'),buscar('descarga')]);
+  const unique=new Set(rows.map(r=>String(r.vehicle_plate||r.placa||r.veiculo||r.motorista||r.id||'').trim().toUpperCase()).filter(Boolean));
   const total=unique.size||rows.length;
+  const porCliente=new Map();
+  for(const r of desc){const c=String(r.cliente||'').trim()||'Cliente não informado',k=c.toUpperCase();if(!porCliente.has(k))porCliente.set(k,{cliente:c,descargas:0});porCliente.get(k).descargas++}
+  const clientes=[...porCliente.values()].sort((a,b)=>b.descargas-a.descargas||a.cliente.localeCompare(b.cliente,'pt-BR'));
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
-  return res.end(JSON.stringify({ok:true,total,rows:rows.length}))
+  return res.end(JSON.stringify({ok:true,total,rows:rows.length,descargas:desc.length,clientes}))
 }catch(e){
   res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
