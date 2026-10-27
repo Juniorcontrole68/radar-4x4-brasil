@@ -2,7 +2,8 @@
 // SEFAZ (Ambiente Nacional): baixa o XML da NF-e pela chave com o certificado A1 da casa.
 //
 // Configuração (variáveis secretas do Render; sem elas a leitura pela chave fica desligada):
-//   WMS_NFE_CERT_PFX_BASE64  arquivo .pfx do A1 em base64
+//   WMS_NFE_CERT_PFX_BASE64  arquivo .pfx do A1 em base64, ou então o próprio arquivo .pfx como Secret File do
+//                            Render (fica em /etc/secrets/<nome>.pfx; WMS_NFE_CERT_PFX_FILE escolhe outro caminho)
 //   WMS_NFE_CERT_SENHA       senha do .pfx
 //   WMS_NFE_CNPJ             (opcional) CNPJ do interessado; padrão: o CNPJ que está no certificado
 //   WMS_NFE_UF               (opcional) código IBGE da UF da empresa (35 = SP); padrão: a UF da chave
@@ -17,6 +18,8 @@
 const https=require('https');
 const zlib=require('zlib');
 const crypto=require('crypto');
+const fs=require('fs');
+const path=require('path');
 
 const NS='http://www.portalfiscal.inf.br/nfe';
 const URLS={
@@ -38,18 +41,38 @@ function chaveValida(ch){
   return dv===Number(ch[43]);
 }
 
+// o .pfx vem do arquivo (Secret File do Render ou WMS_NFE_CERT_PFX_FILE) ou do texto em base64
+function arquivoPfx(){
+  const f=String(process.env.WMS_NFE_CERT_PFX_FILE||'').trim();
+  if(f)return f;
+  try{const n=fs.readdirSync('/etc/secrets').filter(x=>/\.(pfx|p12)$/i.test(x)).sort()[0];return n?path.join('/etc/secrets',n):''}catch{return ''}
+}
+function lerPfx(){
+  const f=arquivoPfx();
+  if(f){
+    try{return{der:fs.readFileSync(f),origem:'o arquivo '+path.basename(f)}}
+    catch(e){throw erro(503,'Não foi possível abrir o arquivo do certificado A1 ('+path.basename(f)+').','CERTIFICADO_INVALIDO')}
+  }
+  // tolera o que costuma vir junto ao colar: quebras de linha, aspas e o prefixo data:...;base64,
+  const b64=String(process.env.WMS_NFE_CERT_PFX_BASE64||'').replace(/\s+/g,'').replace(/^["']+|["']+$/g,'').replace(/^data:[^,]*,/,'');
+  if(!b64)return null;
+  const der=Buffer.from(b64,'base64');
+  if(!/^[A-Za-z0-9+/_-]+=*$/.test(b64)||der[0]!==0x30)
+    throw erro(503,'O texto em WMS_NFE_CERT_PFX_BASE64 não é o certificado A1 ('+b64.length+' caracteres; o certificado em texto começa com MII). Cole de novo o texto gerado do arquivo .pfx ou envie o arquivo como Secret File no Render.','CERTIFICADO_INVALIDO');
+  return{der,origem:'WMS_NFE_CERT_PFX_BASE64, '+b64.length+' caracteres'};
+}
 let cache=null;
 function certificado(){
-  const b64=String(process.env.WMS_NFE_CERT_PFX_BASE64||'').replace(/\s+/g,'');
-  if(!b64)return null;
+  const pfx=lerPfx();
+  if(!pfx)return null;
   const senha=String(process.env.WMS_NFE_CERT_SENHA||'');
-  const chaveCache=crypto.createHash('sha256').update(b64+'\0'+senha).digest('hex');
+  const chaveCache=crypto.createHash('sha256').update(pfx.der).update('\0'+senha).digest('hex');
   if(cache&&cache.id===chaveCache)return cache;
   // node-forge lê também .pfx antigos (RC2/3DES) que o OpenSSL 3 do Node recusa
   const forge=require('node-forge');
   let p12;
-  try{p12=forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(forge.util.decode64(b64)),senha)}
-  catch(e){throw erro(503,/mac|password|invalid/i.test(e.message)?'A senha do certificado A1 não confere (WMS_NFE_CERT_SENHA).':'Não foi possível ler o certificado A1 (WMS_NFE_CERT_PFX_BASE64): '+e.message,'CERTIFICADO_INVALIDO')}
+  try{p12=forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(pfx.der.toString('binary')),senha)}
+  catch(e){throw erro(503,/mac|password|invalid/i.test(e.message)?'A senha do certificado A1 não confere (WMS_NFE_CERT_SENHA).':'Não foi possível ler o certificado A1 ('+pfx.origem+'): '+e.message,'CERTIFICADO_INVALIDO')}
   const chaves=[...(p12.getBags({bagType:forge.pki.oids.pkcs8ShroudedKeyBag})[forge.pki.oids.pkcs8ShroudedKeyBag]||[]),...(p12.getBags({bagType:forge.pki.oids.keyBag})[forge.pki.oids.keyBag]||[])];
   const certs=p12.getBags({bagType:forge.pki.oids.certBag})[forge.pki.oids.certBag]||[];
   if(!chaves.length||!certs.length)throw erro(503,'O arquivo do certificado A1 não tem a chave privada ou o certificado.','CERTIFICADO_INVALIDO');
@@ -68,7 +91,7 @@ function certificado(){
   return cache;
 }
 
-function configurado(){return !!String(process.env.WMS_NFE_CERT_PFX_BASE64||'').trim()}
+function configurado(){return !!(arquivoPfx()||String(process.env.WMS_NFE_CERT_PFX_BASE64||'').trim())}
 function ambiente(){return String(process.env.WMS_NFE_AMBIENTE||'1')==='2'?2:1}
 function interessado(){
   const cert=certificado();
