@@ -315,6 +315,10 @@ async function ensureSchema(pool){
     status TEXT NOT NULL DEFAULT 'aberta' CHECK (status IN ('aberta','separando','separada','expedida','cancelada')),
     doca_id BIGINT REFERENCES wms_enderecos(id), placa TEXT NOT NULL DEFAULT '', criado_por TEXT NOT NULL DEFAULT '', criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     separada_em TIMESTAMPTZ, expedida_em TIMESTAMPTZ, expedida_por TEXT NOT NULL DEFAULT '', xml TEXT)`);
+  // destinatários das notas de saída (cadastro prévio para lançar a expedição à mão)
+  await q(`CREATE TABLE IF NOT EXISTS wms_destinatarios (id BIGSERIAL PRIMARY KEY, empresa BIGINT NOT NULL DEFAULT 0, nome TEXT NOT NULL, cnpj TEXT NOT NULL DEFAULT '',
+    cidade TEXT NOT NULL DEFAULT '', uf TEXT NOT NULL DEFAULT '', ativo BOOLEAN NOT NULL DEFAULT TRUE, criado_por TEXT NOT NULL DEFAULT '', criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+  await q("CREATE UNIQUE INDEX IF NOT EXISTS uq_wms_destinatarios_cnpj ON wms_destinatarios (empresa,cnpj) WHERE cnpj<>'' AND ativo");
   await q("CREATE UNIQUE INDEX IF NOT EXISTS uq_wms_expedicoes_chave ON wms_expedicoes (empresa,nf_chave) WHERE nf_chave<>'' AND status<>'cancelada'");
   await q(`CREATE TABLE IF NOT EXISTS wms_expedicao_itens (id BIGSERIAL PRIMARY KEY, expedicao_id BIGINT NOT NULL REFERENCES wms_expedicoes(id) ON DELETE CASCADE,
     n_item INT NOT NULL DEFAULT 0, produto_id BIGINT REFERENCES wms_produtos(id), codigo TEXT NOT NULL DEFAULT '', ean TEXT NOT NULL DEFAULT '', descricao TEXT NOT NULL DEFAULT '',
@@ -1405,6 +1409,34 @@ async function handle(req,res,u,deps){
       const r=await pool.query('INSERT INTO wms_clientes(empresa,nome,cnpj,regras) VALUES($1,$2,$3,$4::jsonb) RETURNING id::text',[ctx.emp,nome,cnpj,JSON.stringify(regras)]).catch(e=>{if(e.code==='23505')throw erro(409,'Já existe cliente com este CNPJ.');throw e});
       return json(201,{ok:true,id:r.rows[0].id});
     }
+    // destinatários (clientes de saída)
+    if(p==='/api/wms/destinatarios'&&M==='GET'){
+      const ctx=await contexto(deps,req,'operador');
+      const r=await pool.query('SELECT id::text,nome,cnpj,cidade,uf FROM wms_destinatarios WHERE empresa=$1 AND ativo ORDER BY nome',[ctx.emp]);
+      return json(200,{ok:true,rows:r.rows});
+    }
+    if(p==='/api/wms/destinatarios'&&M==='POST'){
+      const ctx=await contexto(deps,req,'gestao'),b=await corpo();
+      const nome=limpo(b.nome,160),cnpj=so(b.cnpj);
+      if(!nome)throw erro(400,'Informe o nome do destinatário.');
+      if(cnpj&&![11,14].includes(cnpj.length))throw erro(400,'CNPJ/CPF inválido.');
+      const r=await pool.query('INSERT INTO wms_destinatarios(empresa,nome,cnpj,cidade,uf,criado_por) VALUES($1,$2,$3,$4,$5,$6) RETURNING id::text',
+        [ctx.emp,nome,cnpj,limpo(b.cidade,80),codigo(b.uf,2),ctx.usuario]).catch(e=>{if(e.code==='23505')throw erro(409,'Já existe destinatário com este CNPJ.');throw e});
+      return json(201,{ok:true,id:r.rows[0].id});
+    }
+    m=p.match(/^\/api\/wms\/destinatarios\/(\d+)$/);
+    if(m&&(M==='PATCH'||M==='DELETE')){
+      const ctx=await contexto(deps,req,'gestao'),b=M==='PATCH'?await corpo():{};
+      const d=(await pool.query('SELECT * FROM wms_destinatarios WHERE id=$1 AND empresa=$2 AND ativo',[m[1],ctx.emp])).rows[0];
+      if(!d)throw erro(404,'Destinatário não encontrado.');
+      if(M==='DELETE'){await pool.query('UPDATE wms_destinatarios SET ativo=FALSE WHERE id=$1',[d.id]);return json(200,{ok:true})}
+      const nome=b.nome===undefined?d.nome:limpo(b.nome,160),cnpj=b.cnpj===undefined?d.cnpj:so(b.cnpj);
+      if(!nome)throw erro(400,'Informe o nome do destinatário.');
+      if(cnpj&&![11,14].includes(cnpj.length))throw erro(400,'CNPJ/CPF inválido.');
+      await pool.query('UPDATE wms_destinatarios SET nome=$2,cnpj=$3,cidade=$4,uf=$5 WHERE id=$1',[d.id,nome,cnpj,b.cidade===undefined?d.cidade:limpo(b.cidade,80),b.uf===undefined?d.uf:codigo(b.uf,2)])
+        .catch(e=>{if(e.code==='23505')throw erro(409,'Já existe destinatário com este CNPJ.');throw e});
+      return json(200,{ok:true});
+    }
     m=p.match(/^\/api\/wms\/clientes\/(\d+)$/);
     if(m&&M==='PATCH'){
       const ctx=await contexto(deps,req,'gestao'),b=await corpo();
@@ -1553,6 +1585,11 @@ async function handle(req,res,u,deps){
     }
     if(p==='/api/wms/expedicoes'&&M==='POST'){
       const ctx=await contexto(deps,req,'gestao'),b=await corpo();
+      if(b.destinatario_id){
+        const d=(await pool.query('SELECT nome,cnpj FROM wms_destinatarios WHERE id=$1 AND empresa=$2 AND ativo',[/^\d+$/.test(String(b.destinatario_id))?b.destinatario_id:0,ctx.emp])).rows[0];
+        if(!d)throw erro(400,'Destinatário não encontrado.');
+        b.destinatario_nome=d.nome;b.destinatario_cnpj=d.cnpj;
+      }
       return json(201,{ok:true,...(await tx(pool,c=>criarExpedicao(c,ctx,{...b,xml:null})))});
     }
     if(p==='/api/wms/expedicoes/xml'&&M==='POST'){

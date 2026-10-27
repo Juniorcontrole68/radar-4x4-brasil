@@ -633,6 +633,32 @@ function nfe({chave,itens}){
     }
   }
 
+  console.log('Destinatários e expedição lançada à mão');
+  {
+    r=await call('POST','/api/wms/destinatarios',{cookie:op,body:{nome:'Mercado X'}});
+    check('operador não cadastra destinatário',r.status===403);
+    r=await call('POST','/api/wms/destinatarios',{cookie:gest,body:{nome:'',cnpj:''}});
+    check('destinatário sem nome é recusado',r.status===400);
+    r=await call('POST','/api/wms/destinatarios',{cookie:gest,body:{nome:'Supermercado Bom Preço',cnpj:'11.222.333/0001-81',cidade:'Sorocaba',uf:'sp'}});
+    check('cadastra destinatário',r.status===201,r.json);
+    const dest=r.json.id;
+    r=await call('POST','/api/wms/destinatarios',{cookie:gest,body:{nome:'Outro',cnpj:'11222333000181'}});
+    check('CNPJ de destinatário não repete',r.status===409);
+    r=await call('PATCH','/api/wms/destinatarios/'+dest,{cookie:gest,body:{cidade:'Sorocaba Centro'}});
+    r=await call('GET','/api/wms/destinatarios',{cookie:op});
+    check('lista destinatários (operador vê)',r.status===200&&r.json.rows.some(d=>d.id===dest&&d.uf==='SP'&&d.cidade==='Sorocaba Centro'),r.json);
+    const prod=(await call('GET','/api/wms/produtos?cliente_id='+cli,{cookie:gest})).json.rows[0];
+    r=await call('POST','/api/wms/expedicoes',{cookie:gest,body:{armazem_id:arm,cliente_id:cli,destinatario_id:'999999',nf_numero:'5001',itens:[{produto_id:prod.id,qtd:1}]}});
+    check('destinatário inexistente é recusado',r.status===400);
+    r=await call('POST','/api/wms/expedicoes',{cookie:gest,body:{armazem_id:arm,cliente_id:cli,destinatario_id:dest,nf_numero:'5001',nf_serie:'1',itens:[{produto_id:prod.id,qtd:2}]}});
+    check('expedição manual com destinatário do cadastro',r.status===201,r.json);
+    const x=r.status===201&&(await call('GET','/api/wms/expedicoes/'+r.json.id,{cookie:gest})).json.expedicao;
+    check('expedição manual: destinatário, NF e produto com SKU e descrição',x&&x.destinatario_nome==='Supermercado Bom Preço'&&x.destinatario_cnpj==='11222333000181'&&x.nf_numero==='5001'&&x.itens.length===1&&x.itens[0].produto_id===prod.id&&x.itens[0].codigo===prod.sku&&x.itens[0].descricao===prod.descricao,x);
+    r=await call('DELETE','/api/wms/destinatarios/'+dest,{cookie:gest});
+    const lista=(await call('GET','/api/wms/destinatarios',{cookie:gest})).json.rows;
+    check('remove destinatário do cadastro (expedição continua com o nome)',r.status===200&&!lista.some(d=>d.id===dest));
+  }
+
   console.log(`\n${pass} OK, ${fail} falha(s)`);
   process.exit(fail?1:0);
 })().catch(e=>{console.error(e);process.exit(1)});
