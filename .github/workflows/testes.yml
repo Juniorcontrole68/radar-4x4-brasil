@@ -76,10 +76,19 @@ jobs:
           node --check controle-coletas-aiven-app/veic.js
           node --check controle-coletas-aiven-app/dashboard/public/frota.js
           node --check controle-coletas-aiven-app/wms.js
+          node --check controle-coletas-aiven-app/sefaz-nfe.js
           node --check controle-coletas-aiven-app/agendamento.js
           node --check controle-coletas-aiven-app/dashboard/public/agendamentos.js
           node --check controle-coletas-aiven-app/tests/agendamento.js
           node --check controle-coletas-aiven-app/tests/wms.js
+      - name: Certificado A1 de teste e SEFAZ de mentira (o teste do WMS sobe a SEFAZ na porta 10778)
+        run: |
+          F=controle-coletas-aiven-app/tests/fixtures/sefaz
+          echo "WMS_NFE_CERT_PFX_BASE64=$(base64 -w0 $F/a1-teste-legado.pfx)" >> "$GITHUB_ENV"
+          echo "WMS_NFE_CERT_SENHA=senha-a1" >> "$GITHUB_ENV"
+          echo "WMS_NFE_URL_DIST=https://127.0.0.1:10778/dist" >> "$GITHUB_ENV"
+          echo "WMS_NFE_URL_EVENTO=https://127.0.0.1:10778/evento" >> "$GITHUB_ENV"
+          { echo "WMS_NFE_CA_PEM<<FIM_DO_PEM"; cat $F/ca.pem; echo "FIM_DO_PEM"; } >> "$GITHUB_ENV"
       - name: Subir o servidor em modo teste
         run: |
           cd controle-coletas-aiven-app

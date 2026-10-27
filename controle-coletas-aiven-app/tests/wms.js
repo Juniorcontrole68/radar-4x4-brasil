@@ -330,6 +330,76 @@ function nfe({chave,itens}){
     check('auditoria registra o ajuste com o usuário',r.json.rows.some(x=>x.acao==='ajuste_estoque'&&String(x.usuario).startsWith('aj_')),r.json.rows?.slice(0,3));
   }
 
+
+  console.log('Código de barras do DANFE → XML na SEFAZ (SEFAZ de mentira com certificado A1 de teste)');
+  {
+    const sefaz=require('../sefaz-nfe.js');
+    const dv=b=>{let t=0,p=2;for(let i=b.length-1;i>=0;i--){t+=+b[i]*p;p=p===9?2:p+1}const r=t%11;return b+(r<2?0:11-r)};
+    const nova=n=>dv('352610'+CNPJ_FORN+'55001'+String(n).padStart(9,'0')+'1'+String(n).padStart(8,'0'));
+    const kOk=nova(4901),kRes=nova(4902),kNao=nova(4903);
+    check('chave: dígito verificador confere e chave alterada é recusada',sefaz.chaveValida(kOk)&&!sefaz.chaveValida(kOk.slice(0,43)+((+kOk[43]+1)%10)));
+    r=await call('GET','/api/wms/status',{cookie:gest});
+    const ligado=r.json.nfe_chave===true;
+    if(!ligado&&process.env.GITHUB_ACTIONS)check('servidor de teste com o certificado A1 de teste (WMS_NFE_*)',false,r.json);
+    if(!ligado){
+      r=await call('POST','/api/wms/recebimentos/chave',{cookie:gest,body:{chave:kOk,armazem_id:arm}});
+      check('sem certificado: avisa que a busca na SEFAZ não está ligada',r.status===503&&r.json.code==='SEFAZ_DESLIGADA',r.json);
+    }else{
+      const fs=require('fs'),https=require('https'),zlib=require('zlib'),path=require('path');
+      const dir=path.join(__dirname,'fixtures','sefaz');
+      const gz=x=>zlib.gzipSync(Buffer.from(x)).toString('base64');
+      const ret=(corpo)=>'<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"><soap:Body><nfeDistDFeInteresseResponse xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe"><nfeDistDFeInteresseResult><retDistDFeInt xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.01">'+corpo+'</retDistDFeInt></nfeDistDFeInteresseResult></nfeDistDFeInteresseResponse></soap:Body></soap:Envelope>';
+      const pedidos=[];
+      const mock=https.createServer({key:fs.readFileSync(path.join(dir,'servidor.key')),cert:fs.readFileSync(path.join(dir,'servidor.pem')),ca:fs.readFileSync(path.join(dir,'ca.pem')),requestCert:true,rejectUnauthorized:true},(req,res)=>{
+        let b='';req.on('data',d=>b+=d);req.on('end',()=>{
+          const cn=req.socket.getPeerCertificate()?.subject?.CN||'';
+          pedidos.push({url:req.url,acao:String(req.headers['content-type']||''),corpo:b,cn});
+          res.writeHead(200,{'Content-Type':'application/soap+xml; charset=utf-8'});
+          if(req.url==='/evento'){
+            const ch=(b.match(/<chNFe>(\d{44})</)||[])[1];
+            return res.end('<?xml version="1.0"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"><soap:Body><nfeResultMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4"><retEnvEvento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00"><idLote>1</idLote><tpAmb>1</tpAmb><cOrgao>91</cOrgao><cStat>128</cStat><xMotivo>Lote de evento processado</xMotivo><retEvento versao="1.00"><infEvento><tpAmb>1</tpAmb><cOrgao>91</cOrgao><cStat>135</cStat><xMotivo>Evento registrado e vinculado a NF-e</xMotivo><chNFe>'+ch+'</chNFe><tpEvento>210210</tpEvento><nProt>891260000000001</nProt></infEvento></retEvento></retEnvEvento></nfeResultMsg></soap:Body></soap:Envelope>');
+          }
+          const ch=(b.match(/<chNFe>(\d{44})</)||[])[1];
+          if(ch===kOk)return res.end(ret('<tpAmb>1</tpAmb><cStat>138</cStat><xMotivo>Documento localizado</xMotivo><loteDistDFeInt><docZip NSU="000000000000001" schema="procNFe_v4.00.xsd">'+gz(nfe({chave:kOk,itens:[{cod:'F-1',ean:'7891234567895',desc:'Argamassa',q:120,lotes:[{lote:'L9',q:120,val:'2027-09-30'}]},{cod:'F-2',desc:'Rejunte',q:15}]}))+'</docZip></loteDistDFeInt>'));
+          if(ch===kRes)return res.end(ret('<tpAmb>1</tpAmb><cStat>138</cStat><xMotivo>Documento localizado</xMotivo><loteDistDFeInt><docZip NSU="000000000000002" schema="resNFe_v1.01.xsd">'+gz('<resNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.01"><chNFe>'+kRes+'</chNFe></resNFe>')+'</docZip></loteDistDFeInt>'));
+          res.end(ret('<tpAmb>1</tpAmb><cStat>137</cStat><xMotivo>Nenhum documento localizado</xMotivo>'));
+        });
+      });
+      await new Promise(ok=>mock.listen(Number(process.env.SEFAZ_MOCK_PORT||10778),'127.0.0.1',ok));
+      try{
+        r=await call('POST','/api/wms/recebimentos/chave',{cookie:op,body:{chave:kOk,armazem_id:arm}});
+        check('operador não importa nota pela chave',r.status===403,r.json);
+        r=await call('POST','/api/wms/recebimentos/chave',{cookie:gest,body:{chave:kOk.slice(0,43)+((+kOk[43]+1)%10),armazem_id:arm}});
+        check('leitura errada (dígito não confere): 400 sem consultar a SEFAZ',r.status===400&&r.json.code==='CHAVE_INVALIDA'&&!pedidos.length,r.json);
+        r=await call('POST','/api/wms/recebimentos/chave',{cookie:gest,body:{chave:kOk,armazem_id:arm}});
+        check('lê a chave, baixa o XML na SEFAZ e cria o recebimento com os itens',r.status===201&&r.json.origem==='sefaz'&&r.json.chave===kOk&&r.json.itens===2,r.json);
+        const p0=pedidos[0]||{};
+        check('consulta pela chave com o CNPJ do certificado e o certificado A1 na conexão',p0.url==='/dist'&&/nfeDistDFeInteresse/.test(p0.acao)&&p0.corpo.includes('<CNPJ>11222333000181</CNPJ>')&&p0.corpo.includes('<consChNFe><chNFe>'+kOk+'</chNFe></consChNFe>')&&/11222333000181/.test(p0.cn),p0);
+        const recS=r.json.id;
+        r=await call('GET','/api/wms/recebimentos/'+recS,{cookie:gest});
+        check('recebimento da SEFAZ tem a nota, o cliente e o lote',r.json.recebimento?.nf_chave===kOk&&JSON.stringify(r.json).includes('L9'),r.json);
+        const antes=pedidos.length;
+        r=await call('POST','/api/wms/recebimentos/chave',{cookie:gest,body:{chave:kOk,armazem_id:arm}});
+        check('ler a mesma nota de novo: avisa o recebimento e nem consulta a SEFAZ',r.status===409&&r.json.code==='NFE_DUPLICADA'&&r.json.error.includes(recS)&&pedidos.length===antes,r.json);
+        r=await call('POST','/api/wms/recebimentos/chave',{cookie:gest,body:{chave:kRes,armazem_id:arm}});
+        const ev=pedidos.find(x=>x.url==='/evento');
+        check('só o resumo: registra a Ciência da Operação e pede para ler de novo em minutos',r.status===202&&r.json.pendente===true&&!!ev&&/nfeRecepcaoEvento/.test(ev.acao),r.json);
+        {
+          const x=ev?.corpo||'';
+          const inf=(x.match(/<infEvento [\s\S]*?<\/infEvento>/)||[''])[0].replace('<infEvento ','<infEvento xmlns="http://www.portalfiscal.inf.br/nfe" ');
+          const si=(x.match(/<SignedInfo>[\s\S]*?<\/SignedInfo>/)||[''])[0].replace('<SignedInfo>','<SignedInfo xmlns="http://www.w3.org/2000/09/xmldsig#">');
+          const dig=(x.match(/<DigestValue>([^<]+)/)||[])[1],sig=(x.match(/<SignatureValue>([^<]+)/)||[])[1],cer=(x.match(/<X509Certificate>([^<]+)/)||[])[1];
+          let ok=false;try{ok=crypto.createHash('sha1').update(inf).digest('base64')===dig&&crypto.verify('RSA-SHA1',Buffer.from(si),new crypto.X509Certificate(Buffer.from(cer,'base64')).publicKey,Buffer.from(sig,'base64'))}catch(e){}
+          check('evento 210210 assinado com o A1 (digest e assinatura conferem)',ok&&x.includes('<tpEvento>210210</tpEvento>')&&x.includes('Id="ID210210'+kRes+'01"')&&/<dhEvento>\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d-03:00</.test(x),x.slice(0,300));
+        }
+        r=await call('POST','/api/wms/recebimentos/chave',{cookie:gest,body:{chave:kNao,armazem_id:arm}});
+        check('nota que não é da empresa: a SEFAZ não acha e o aviso explica',r.status===404&&r.json.code==='NFE_NAO_ENCONTRADA',r.json);
+        r=await call('GET','/api/wms/auditoria',{cookie:sup});
+        check('auditoria registra a Ciência da Operação',r.json.rows.some(x=>x.acao==='ciencia_operacao'&&x.entidade_id===kRes),r.json.rows?.slice(0,3));
+      }finally{mock.close()}
+    }
+  }
+
   console.log(`\n${pass} OK, ${fail} falha(s)`);
   process.exit(fail?1:0);
 })().catch(e=>{console.error(e);process.exit(1)});
