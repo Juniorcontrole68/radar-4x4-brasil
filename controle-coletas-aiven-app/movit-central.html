@@ -21,7 +21,7 @@ input,select,textarea{width:100%;padding:10px 11px;border:1px solid #cbd5e1;bord
 .modules{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.mod{border:1px solid var(--line);border-radius:10px;padding:10px;background:#fafafa;display:flex;gap:9px;align-items:flex-start}.mod input{width:auto;margin-top:3px}.mod b{font-size:13px}.mod small{display:block;color:var(--muted);margin-top:2px}.modw{display:flex;flex-direction:column;gap:3px}.modw label.vid{font-size:11.5px;color:var(--muted);padding-left:12px;cursor:pointer}.modw label.vid input{width:auto;margin:0 4px 0 0;vertical-align:-2px}
 .msg{min-height:20px;font-size:13px;font-weight:700;margin-top:10px}.empty{padding:20px;text-align:center;color:var(--muted)}
 .convite{border:2px solid var(--brand);margin-bottom:16px}.passo{display:flex;align-items:center;gap:9px;font-weight:800;font-size:14px;margin:16px 0 10px}.passo>span:first-child{background:var(--brand);color:#fff;border-radius:50%;width:24px;height:24px;display:inline-grid;place-items:center;font-size:13px}.cmods{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}.cmods label{display:flex;flex-direction:row;align-items:center;gap:8px;border:1px solid var(--line);border-radius:9px;padding:9px 10px;font-size:13px;color:var(--text);cursor:pointer;background:#fafafa}.cmods label input{width:auto;margin:0}.cmods label:has(input:checked){border-color:var(--brand);background:#f0fdfa}
-body.demo #clientForm .form>label:not(:first-child),body.demo .modw label.vid,body.demo #modules small,body.demo #newClient,body.demo #reset{display:none}body.demo.semCliente #clientForm{display:none}#semClienteDica{display:none}body.demo.semCliente #semClienteDica{display:block}
+body.demo #clientForm .form>label:not(:first-child),body.demo .modw label.vid,body.demo #modules small,body.demo #newClient,body.demo #reset{display:none}body.demo.semCliente #clientForm{display:none}#semClienteDica{display:none}.btn.apagar{color:#b91c1c}#tLista .client{display:flex;justify-content:space-between;align-items:center;gap:10px;cursor:default}#dApagar,#dApagarTodos{display:none}body.demo #dApagarTodos,body.demo:not(.semCliente) #dApagar{display:inline-flex}body.demo.semCliente #semClienteDica{display:block}
 @media(max-width:900px){.kpis{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}.form,.modules{grid-template-columns:1fr}}
 </style>
 </head>
@@ -54,7 +54,8 @@ body.demo #clientForm .form>label:not(:first-child),body.demo .modw label.vid,bo
     <div class="actions" style="margin-top:12px"><button class="btn primary" type="button" id="sSalvar">Salvar módulos do site</button></div>
     <div id="sMsg" class="msg"></div>
     <div id="testesBox">
-      <div class="passo" style="margin-top:22px;border-top:1px solid var(--line);padding-top:16px">📋 Testes enviados</div>
+      <div class="passo" style="margin-top:22px;border-top:1px solid var(--line);padding-top:16px;display:flex;justify-content:space-between;align-items:center;gap:8px">📋 Testes enviados<button class="btn secondary apagar" type="button" id="tApagarTodos">🗑 Apagar todos</button></div>
+      <div id="tMsgApagar" class="msg"></div>
       <div id="tLista" class="clients"><div class="empty">Carregando…</div></div>
     </div>
   </div>
@@ -66,7 +67,7 @@ body.demo #clientForm .form>label:not(:first-child),body.demo .modw label.vid,bo
   </div>
   <div class="grid">
     <div class="card">
-      <div class="actions" style="justify-content:space-between;margin-bottom:12px"><h2 style="margin:0" id="clientsTitle">Clientes</h2><div class="actions"><button id="newTrial" class="btn secondary" type="button">🎁 Teste grátis</button><button id="newClient" class="btn primary">+ Novo cliente</button></div></div>
+      <div class="actions" style="justify-content:space-between;margin-bottom:12px"><h2 style="margin:0" id="clientsTitle">Clientes</h2><div class="actions"><button id="newTrial" class="btn secondary" type="button">🎁 Teste grátis</button><button id="newClient" class="btn primary">+ Novo cliente</button><button id="dApagarTodos" class="btn secondary apagar" type="button">🗑 Apagar todos os testes</button></div></div><div id="dMsgApagar" class="msg" style="margin:-4px 0 10px"></div>
       <div id="trialBox" class="trialbox" style="display:none"><b style="font-size:13px">Liberar teste grátis</b><div class="meta" style="margin-bottom:8px">Cria a empresa em teste por <span id="trialDias">7</span> dias com o Roteirizador e um usuário administrador.</div><div class="form"><label>Transportadora<input id="tName"></label><label>CNPJ<input id="tDoc"></label><label>E-mail<input id="tEmail" type="email"></label><label>WhatsApp<input id="tPhone"></label></div><div class="actions" style="margin-top:10px"><button id="tGo" class="btn primary" type="button">Criar acesso de teste</button><button id="tClose" class="btn secondary" type="button">Fechar</button></div><div id="tMsg" class="msg"></div></div>
       <div id="clients" class="clients"><div class="empty">Carregando…</div></div>
     </div>
@@ -95,6 +96,7 @@ body.demo #clientForm .form>label:not(:first-child),body.demo .modw label.vid,bo
         <div class="actions" style="margin-top:14px">
           <button class="btn primary" type="submit">Salvar cliente</button>
           <button class="btn secondary" type="button" id="reset">Limpar</button>
+          <button class="btn secondary apagar" type="button" id="dApagar">🗑 Apagar este teste</button>
         </div>
         <div id="msg" class="msg"></div>
       </form>
@@ -281,10 +283,25 @@ async function listarTestes(){
     $('tLista').innerHTML=(j.testes||[]).length?(j.testes||[]).map(t=>{
       const fim=t.trial_ends_at?new Date(t.trial_ends_at):null,acabou=fim&&fim<new Date();
       const sit=(t.so_exemplo?'só demonstração • ':'')+(!t.primeiro_acesso?'ainda não abriu o link':(acabou?'teste terminou em '+dt(fim):'testando até '+dt(fim)+' • '+(t.modo==='ssw'?'com o SSW dele':'com números de exemplo')));
-      return '<div class="client"><div><b>'+esc(t.empresa)+'</b><div class="meta">'+esc(t.nome||'')+(t.origem==='torre'?' • pediu pelo site':'')+' • '+t.modulos+' módulo(s) • '+esc(sit)+'</div></div></div>';
+      return '<div class="client"><div><b>'+esc(t.empresa)+'</b><div class="meta">'+esc(t.nome||'')+(t.origem==='torre'?' • pediu pelo site':'')+' • '+t.modulos+' módulo(s) • '+esc(sit)+'</div></div><button class="btn secondary apagar" type="button" data-apagar="'+esc(t.cliente_id)+'" data-nome="'+esc(t.empresa)+'">Apagar</button></div>';
     }).join(''):'<div class="empty">Nenhum teste enviado ainda.</div>';
   }catch(e){$('tLista').innerHTML='<div class="empty">'+esc(e.message)+'</div>'}
 }
+// Apagar teste: tira do banco da versão de teste a empresa, os usuários e tudo o que ela gravou.
+async function apagarTeste(id,nome,msg){
+  if(!confirm(id?'Apagar o teste de '+nome+'? A empresa, os usuários e tudo o que ela gravou saem do banco, e o link para de funcionar.':'Apagar TODOS os testes? Todas as empresas de teste, usuários e dados delas saem do banco, e os links param de funcionar.'))return;
+  msg.style.color='#475569';msg.textContent='Apagando…';
+  try{
+    const r=await fetch(TAPI.conv+(id?'/'+encodeURIComponent(id):''),{method:'DELETE'}),j=await r.json();
+    if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao apagar.');
+    msg.style.color='#15803d';msg.textContent='✓ '+(j.apagados===1?'1 teste apagado.':j.apagados+' testes apagados.');
+    await Promise.all([document.body.classList.contains('demo')?load():null,listarTestes()]);
+  }catch(e){msg.style.color='#b91c1c';msg.textContent=e.message}
+}
+$('tLista').addEventListener('click',e=>{const b=e.target.closest('[data-apagar]');if(b)apagarTeste(b.dataset.apagar,b.dataset.nome,$('tMsgApagar'))});
+$('tApagarTodos').onclick=()=>apagarTeste('','',$('tMsgApagar'));
+$('dApagarTodos').onclick=()=>apagarTeste('','',$('dMsgApagar'));
+$('dApagar').onclick=()=>apagarTeste($('clientId').value,$('name').value,$('dMsgApagar'));
 fetch('/api/demo/info',{cache:'no-store'}).then(r=>r.ok?r.json():null).catch(()=>null).then(j=>{
   if(j&&j.demo){
     // Na demonstração, a tela fica só com o envio do teste e a lista de quem está testando.

@@ -922,6 +922,28 @@ async function chamarDemo(metodo,caminho,corpo){
     await new Promise(ok=>setTimeout(ok,Number(process.env.MOVIT_DEMO_INTERVALO_MS||5000)));
   }
 }
+// Empresas de teste da versão de teste (link, entrada pelo SSW ou teste grátis). Nunca a CONSTRULOG
+// nem empresa com administrador MOVIT.
+const SQL_EMPRESA_TESTE=`c.status='trial' AND c.plan IN ('Teste MOVIT','Demonstração SSW','Teste grátis') AND lower(c.slug)<>'construlog'
+  AND NOT EXISTS(SELECT 1 FROM dashboard_users x WHERE x.client_id=c.id AND x.is_platform_admin)`;
+// Apaga do banco a empresa de teste e tudo dela: tabelas com client_id, Roteirizador, esquema próprio
+// e processos de leitura do SSW. Algumas tabelas dependem de outras, então tenta em até 4 passadas.
+async function apagarEmpresaTeste(id){
+  const cid=String(id);
+  const parc=(await pool.query('SELECT id::text AS id FROM movit_parceiros WHERE client_id=$1',[cid]).catch(()=>({rows:[]}))).rows;
+  movitDemo.encerrar(cid);for(const p of parc)movitDemo.encerrar('parceiro:'+p.id);
+  const tabs=(await pool.query("SELECT table_name AS t FROM information_schema.columns WHERE table_schema='public' AND column_name='client_id' AND table_name NOT IN ('movit_clients','dashboard_users')")).rows.map(r=>r.t);
+  let falta=[...tabs.map(t=>({sql:'DELETE FROM public."'+t.replace(/"/g,'')+'" WHERE client_id=$1',v:[cid]})),
+    {sql:'DELETE FROM rc_docs WHERE cliente=$1',v:['c'+cid]},{sql:'DELETE FROM rc_docs_removidos WHERE cliente=$1',v:['c'+cid]},
+    {sql:'DELETE FROM dashboard_users WHERE client_id=$1',v:[cid]},{sql:'DELETE FROM movit_clients WHERE id=$1',v:[cid]}],erro=null;
+  for(let i=0;i<4&&falta.length;i++){
+    const resto=[];
+    for(const q of falta)await pool.query(q.sql,q.v).catch(e=>{if(e.code!=='42P01'){resto.push(q);erro=e}});
+    falta=resto;
+  }
+  await esquemasDemo.limpar(cid).catch(()=>{});
+  if(falta.length)throw erro;
+}
 const SANDBOX_API=[/^\/api\/empresa\/logo$/,/^\/api\/rc\//,/^\/api\/rc$/,/^\/api\/auth\//,/^\/api\/painel\/auth\//,/^\/api\/guia(\/|$)/];
 function tenantSandbox(user){return !!(user&&!user.internal&&!user.is_platform_admin&&user.client&&String(user.client.slug||'').toLowerCase()!=='construlog'&&!movitDemo.clienteDemo(user))}
 function clienteBloqueado(user){
@@ -1209,6 +1231,19 @@ async function demoRotas(req,res,u){
         FROM movit_demo_convites v JOIN movit_clients c ON c.id=v.client_id ORDER BY v.criado_em DESC LIMIT 100`);
       sendJson(res,200,{ok:true,testes:q.rows});
     }catch(e){sendJson(res,e.status||500,{ok:false,error:e.status?e.message:'Não foi possível listar os testes.'})}
+    return true;
+  }
+  // Apagar do banco um teste (/api/demo/convites/<empresa>) ou todos (/api/demo/convites).
+  const apg=req.method==='DELETE'&&u.pathname.match(/^\/api\/demo\/convites(?:\/(\d+))?$/);
+  if(apg){
+    try{
+      if(!tokenDemo(req))await dashboardPlatformSession(req);
+      const ids=(await pool.query('SELECT c.id::text AS id FROM movit_clients c WHERE '+SQL_EMPRESA_TESTE+(apg[1]?' AND c.id=$1':''),apg[1]?[apg[1]]:[])).rows.map(r=>r.id);
+      if(apg[1]&&!ids.length){sendJson(res,404,{ok:false,error:'Teste não encontrado.'});return true}
+      for(const id of ids)await apagarEmpresaTeste(id);
+      console.log('MOVIT_DEMO: '+ids.length+' empresa(s) de teste apagada(s) do banco.');
+      sendJson(res,200,{ok:true,apagados:ids.length});
+    }catch(e){sendJson(res,e.status||500,{ok:false,error:e.status?e.message:'Não foi possível apagar agora.'})}
     return true;
   }
   if(req.method==='POST'&&u.pathname==='/api/demo/convites'){
@@ -3793,14 +3828,15 @@ async function start() {
 
       // Versão de teste dentro da MOVIT Central: envio do link e lista de testes, criados na versão
       // de teste (banco próprio, sem os dados da Construlog).
-      const tst=u.pathname.match(/^\/api\/movit-central\/teste\/(info|convites|modulos-site)$/);
+      const tst=u.pathname.match(/^\/api\/movit-central\/teste\/(info|convites|modulos-site)(?:\/(\d+))?$/);
       if (tst) {
         try{
           await dashboardPlatformSession(req);
-          const ok={info:['GET'],convites:['GET','POST'],'modulos-site':['GET','PUT']}[tst[1]];
+          // convites/<empresa>: só para apagar aquele teste.
+          const ok=tst[2]?(tst[1]==='convites'?['DELETE']:[]):{info:['GET'],convites:['GET','POST','DELETE'],'modulos-site':['GET','PUT']}[tst[1]];
           if(!ok.includes(req.method))return sendJson(res,405,{ok:false,error:'Método não suportado.'});
-          const corpo=req.method==='GET'?undefined:await readJsonBodyLimited(req,32*1024);
-          const r=await chamarDemo(req.method,'/api/demo/'+tst[1],corpo);
+          const corpo=req.method==='GET'||req.method==='DELETE'?undefined:await readJsonBodyLimited(req,32*1024);
+          const r=await chamarDemo(req.method,'/api/demo/'+tst[1]+(tst[2]?'/'+tst[2]:''),corpo);
           return sendJson(res,r.status,r.json);
         }catch(e){return sendJson(res,e.status||500,{ok:false,error:e.status?e.message:'Não foi possível falar com a versão de teste.'})}
       }
