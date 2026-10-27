@@ -31,7 +31,7 @@ ol{margin:0;padding-left:20px;font-size:14px;line-height:1.55;color:#334155}ol l
 .admin{display:block;text-align:center;margin-top:14px;font-size:12px;color:var(--muted)}
 details.bi2{margin-top:14px;border:1px solid var(--border);border-radius:10px;padding:0 12px}details.bi2 summary{cursor:pointer;padding:11px 0;font-size:13px;font-weight:700;color:var(--teal)}details.bi2[open]{padding-bottom:12px}details.bi2 p{margin:0;font-size:12.5px;color:var(--muted);line-height:1.45}
 .logo-row{display:flex;align-items:center;gap:10px}.logo-row img{height:40px;max-width:120px;object-fit:contain;border:1px solid var(--border);border-radius:8px;padding:3px;background:#fff}input[type=file]{padding:8px;font-size:13px}
-@media(max-width:760px){.main{grid-template-columns:1fr}h1{font-size:24px}.row{grid-template-columns:1fr}}
+@media(max-width:760px){.main{grid-template-columns:1fr}#exCard{order:-1}h1{font-size:24px}.row{grid-template-columns:1fr}}
 .alt{background:var(--teal)}.hide{display:none}.ok-box{padding:12px;border-radius:10px;background:#f0fdfa;border:1px solid #99f6e4;font-size:13px;color:#134e4a;margin-bottom:12px}</style>
 </head>
 <body>
@@ -58,7 +58,7 @@ details.bi2{margin-top:14px;border:1px solid var(--border);border-radius:10px;pa
     <button id="btn" type="submit">Entrar com o SSW</button>
     <div class="safe"><span>🔒</span><span>O login é conferido direto no SSW. A senha fica guardada criptografada e é usada só para ler os dados da sua própria empresa. Nenhuma outra empresa vê os seus dados.</span></div>
   </form>
-  <div class="card">
+  <div class="card" id="exCard">
     <h2 id="exTitulo">Entrar sem o SSW</h2>
     <p class="sub" id="exSub">Conheça todas as telas com uma transportadora de exemplo, já preenchida com números fictícios.</p>
     <button id="btnEx" class="alt" type="button">Ver com números de exemplo</button>
@@ -88,7 +88,12 @@ fetch(api,{cache:'no-store'}).then(async r=>{
   if(!r.ok||!j.ok){$('#main').innerHTML='<div class="card"><h2>Link indisponível</h2><p class="sub">'+(j.error||'Não foi possível abrir este link.').replace(/[<>&]/g,'')+'</p></div>';return}
   $('#titulo').textContent='Olá'+(j.nome?', '+j.nome.split(' ')[0]:'')+'! Este é o teste da '+j.empresa;
   const el=$('#mods');el.innerHTML='';for(const n of j.modulos||[]){const s=document.createElement('span');s.textContent=n;el.appendChild(s)}
-  if(j.modo==='ssw'){
+  if(j.so_exemplo){
+    // Link só de demonstração: sem a opção do SSW.
+    $('#f').classList.add('hide');$('#main').style.gridTemplateColumns='1fr';$('#main').style.maxWidth='560px';
+    $('#sub').textContent='Conheça todas as telas com uma transportadora de exemplo, já preenchida com números fictícios.';
+    $('#exTitulo').textContent='Conhecer o sistema';$('#exSub').textContent='Clique para entrar. Não precisa de login nem de senha.';$('#btnEx').textContent='Entrar no teste';
+  }else if(j.modo==='ssw'){
     $('#sub').textContent='Seu teste já está ligado ao SSW da sua transportadora.';
     $('#exTitulo').textContent='Continuar o teste';$('#exSub').textContent='Entre direto, com os dados da sua transportadora.';$('#btnEx').textContent='Entrar no meu teste';
     const b=$('#jaSsw');b.classList.remove('hide');b.textContent='Conectado ao SSW (domínio '+(j.dominio||'')+'). Preencha abaixo só se quiser trocar o login.';

@@ -218,6 +218,8 @@ async function initDb(pool) {
   )`);
   // Dias de teste escolhidos no envio (MOVIT Central ou Torre); sem valor, vale o padrão dos preços.
   await pool.query('ALTER TABLE movit_demo_convites ADD COLUMN IF NOT EXISTS dias INTEGER');
+  // Link só de demonstração: entra direto com números de exemplo, sem a opção do SSW.
+  await pool.query('ALTER TABLE movit_demo_convites ADD COLUMN IF NOT EXISTS so_exemplo BOOLEAN NOT NULL DEFAULT FALSE');
   // Parceiros de cada empresa: login do SSW que a empresa criou para o parceiro (ou o do domínio
   // do próprio parceiro) e as unidades onde saem os romaneios dele.
   await pool.query(`CREATE TABLE IF NOT EXISTS movit_parceiros (
@@ -427,12 +429,14 @@ function normalizarConvite(body) {
   if (whatsapp && !/^\d{12,15}$/.test(whatsapp)) erros.push('WhatsApp inválido. Use DDD e número, por exemplo 19 99999-0000.');
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) erros.push('E-mail inválido.');
   if (modulos && !modulos.length) erros.push('Escolha pelo menos um módulo.');
-  return { nome, empresa, whatsapp, email, modulos, dias, erros };
+  const soExemplo = b.so_exemplo === true || b.so_exemplo === 'true';
+  return { nome, empresa, whatsapp, email, modulos, dias, soExemplo, erros };
 }
-function mensagemConvite(nome, link) {
+function mensagemConvite(nome, link, soExemplo) {
   const primeiro = String(nome || '').split(' ')[0];
   return 'Olá' + (primeiro ? ', ' + primeiro : '') + '! Aqui está o seu acesso de teste à Torre de Controle MOVIT: ' + link +
-    '\nEntre com o login do SSW para ver os dados da sua transportadora, ou entre sem ele para conhecer o sistema com números de exemplo.';
+    (soExemplo ? '\nÉ só abrir o link para conhecer todas as telas do sistema com uma transportadora de exemplo.'
+      : '\nEntre com o login do SSW para ver os dados da sua transportadora, ou entre sem ele para conhecer o sistema com números de exemplo.');
 }
 function linkWhatsapp(whatsapp, texto) {
   return 'https://wa.me/' + (whatsapp ? String(whatsapp).replace(/\D/g, '') : '') + '?text=' + encodeURIComponent(texto);
