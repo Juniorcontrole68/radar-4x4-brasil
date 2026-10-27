@@ -9,7 +9,8 @@
 //   WMS_NFE_UF               (opcional) código IBGE da UF da empresa (35 = SP); padrão: a UF da chave
 //   WMS_NFE_AMBIENTE         (opcional) 1 = produção (padrão), 2 = homologação
 //   WMS_NFE_CA_PEM           (opcional) cadeia ICP-Brasil em PEM para validar o servidor da SEFAZ por completo.
-//                            Sem ela, o servidor só é aceito se a cadeia que ele apresenta for da ICP-Brasil.
+//                            Sem ela, o servidor é aceito se o certificado dele for válido para o endereço pelas
+//                            autoridades públicas do Node ou se a cadeia que ele apresenta for da ICP-Brasil.
 //   WMS_NFE_URL_DIST / WMS_NFE_URL_EVENTO  (testes) trocam os endereços da SEFAZ
 //
 // Fluxo: NFeDistribuicaoDFe (consChNFe). Quando a SEFAZ só devolve o resumo (resNFe), o interessado ainda não
@@ -111,7 +112,8 @@ function status(){
   catch(e){return{configurado:true,erro:e.message}}
 }
 
-// cadeia apresentada pelo servidor precisa ser ICP-Brasil quando não há WMS_NFE_CA_PEM
+// sem WMS_NFE_CA_PEM: vale o certificado público válido para o endereço (socket.authorized já confere o nome)
+// ou a cadeia ICP-Brasil apresentada pelo servidor
 function cadeiaIcp(socket){
   let c=socket.getPeerCertificate(true);const vistos=new Set();
   while(c&&c.raw&&!vistos.has(c.fingerprint256)){
@@ -133,7 +135,11 @@ function soap(url,acao,corpo){
       ...(ca?{ca,rejectUnauthorized:true}:{rejectUnauthorized:false}),
       agent:false,timeout:TIMEOUT,
       headers:{'Content-Type':'application/soap+xml; charset=utf-8; action="'+acao+'"','Content-Length':Buffer.byteLength(env)}},res=>{
-      if(!ca&&!cadeiaIcp(res.socket)){res.destroy();return falha(erro(502,'O servidor que respondeu não apresentou certificado ICP-Brasil. Consulta cancelada por segurança.','SEFAZ_TLS'))}
+      if(!ca&&!res.socket.authorized&&!cadeiaIcp(res.socket)){
+        const pc=res.socket.getPeerCertificate()||{};
+        res.destroy();
+        return falha(erro(502,'Não foi possível confirmar que o servidor é a SEFAZ (certificado emitido por '+(pc.issuer?.O||pc.issuer?.CN||'desconhecido')+', '+(res.socket.authorizationError||'sem validação')+'). Consulta cancelada por segurança.','SEFAZ_TLS'));
+      }
       const partes=[];let tam=0;
       res.on('data',d=>{tam+=d.length;if(tam>20*1024*1024){res.destroy();return}partes.push(d)});
       res.on('end',()=>{
