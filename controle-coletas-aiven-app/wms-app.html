@@ -122,8 +122,8 @@ document.addEventListener('click',e=>{if(e.target.closest('[data-home]'))home()}
 
 // ------------- telas
 function home(){
-  render('<div class="menu"><button class="big" id="mRec"><span>📥</span>Recebimento</button><button class="big" id="mArm"><span>📦</span>Armazenagem</button><button class="big" id="mMov"><span>🔀</span>Movimentação</button><button class="big" id="mCon"><span>🔎</span>Consulta</button></div>'+(S.arms.length>1?'<label>Armazém<select id="selArm" style="height:52px;border-radius:10px;background:#0b1220;color:#fff;font-size:17px;border:1px solid var(--line)">'+S.arms.map(a=>'<option value="'+a.id+'"'+(a.id===S.arm?' selected':'')+'>'+esc(a.codigo+' · '+a.nome)+'</option>').join('')+'</select></label>':''));
-  $('#mRec').onclick=listaRecebimentos;$('#mArm').onclick=listaTarefas;$('#mMov').onclick=telaMov;$('#mCon').onclick=telaConsulta;
+  render('<div class="menu"><button class="big" id="mRec"><span>📥</span>Recebimento</button><button class="big" id="mArm"><span>📦</span>Armazenagem</button><button class="big" id="mMov"><span>🔀</span>Movimentação</button><button class="big" id="mCon"><span>🔎</span>Consulta</button><button class="big" id="mSep" style="grid-column:1/-1"><span>📤</span>Separação (expedição)</button></div>'+(S.arms.length>1?'<label>Armazém<select id="selArm" style="height:52px;border-radius:10px;background:#0b1220;color:#fff;font-size:17px;border:1px solid var(--line)">'+S.arms.map(a=>'<option value="'+a.id+'"'+(a.id===S.arm?' selected':'')+'>'+esc(a.codigo+' · '+a.nome)+'</option>').join('')+'</select></label>':''));
+  $('#mRec').onclick=listaRecebimentos;$('#mArm').onclick=listaTarefas;$('#mMov').onclick=telaMov;$('#mCon').onclick=telaConsulta;$('#mSep').onclick=listaExpedicoes;
   if($('#selArm'))$('#selArm').onchange=e=>{S.arm=e.target.value;gravarLS('wmsArm',S.arm)};
 }
 async function listaRecebimentos(){
@@ -228,6 +228,36 @@ function telaConsulta(){
       $('#qCod').select();
     }catch(e){$('#qRes').innerHTML='';aviso(e.status?e.message:'Sem sinal para consultar.','err')}
   });
+}
+async function listaExpedicoes(){
+  render(voltar+'<b>Notas para separar</b><div class="lista" id="l">carregando…</div>');
+  try{
+    const j=await api('GET','/api/wms/expedicoes?status=separando');
+    $('#l').innerHTML=j.rows.length?j.rows.map(x=>'<button class="item" data-x="'+x.id+'"><b>NF '+esc(x.nf_numero||x.id)+' · '+x.linhas_pendentes+' linha(s)</b><small>'+esc(x.cliente+(x.destinatario_nome?' → '+x.destinatario_nome:''))+'</small></button>').join(''):'<div class="muted">Nenhuma nota esperando separação.</div>';
+    $('#l').onclick=e=>{const b=e.target.closest('[data-x]');if(b)separacao(b.dataset.x)};
+  }catch(e){aviso(e.status?e.message:'Sem sinal: a separação precisa de conexão.','err')}
+}
+// uma linha por vez, na ordem do caminho (mais perto da doca primeiro): endereço -> produto -> quantidade
+async function separacao(id){
+  let x;
+  try{x=(await api('GET','/api/wms/expedicoes/'+id)).expedicao}catch(e){aviso(e.status?e.message:'Sem sinal: a separação precisa de conexão.','err');return}
+  const pend=x.separacao.filter(l=>l.status==='pendente');
+  if(!pend.length){render(voltar+'<div class="aviso ok">NF '+esc(x.nf_numero||x.id)+': tudo separado'+(x.doca?' na doca '+esc(x.doca):'')+'. A gestão já pode expedir.</div><button class="btn" id="sVolta">Outras notas</button>');$('#sVolta').onclick=listaExpedicoes;return}
+  const l=pend[0],falta=l.qtd-l.qtd_separada;
+  render(voltar+'<div class="card"><small>NF '+esc(x.nf_numero||x.id)+' · '+esc(x.cliente.nome)+' · linha 1 de '+pend.length+'</small></div>'+
+    '<div class="destaque"><small>1. Vá até o endereço</small><div class="end">'+esc(l.endereco)+'</div><small>'+esc(l.sku+' · '+l.produto)+(l.lote?' · lote '+esc(l.lote):'')+(l.validade?' · val. '+l.validade.split('-').reverse().join('/'):'')+(l.lpn?' · palete '+esc(l.lpn):'')+'</small><div style="font-size:30px;font-weight:800;margin-top:6px">'+n(falta)+' '+esc(l.unidade||'')+'</div></div>'+
+    campo('sEnd','2. Leia o endereço')+campo('sProd','3. Leia o produto (EAN ou SKU)')+'<label>4. Quantidade pega<input id="sQtd" inputmode="decimal" style="height:72px;font-size:32px" value="'+falta+'"></label>'+
+    '<button class="btn p" id="sOk" type="button">Confirmar</button>');
+  $('#sEnd').focus();
+  aoLer('sEnd',v=>{if(v.toUpperCase()!==l.endereco.toUpperCase()){aviso('Endereço errado: a mercadoria está em '+l.endereco+'.','err');$('#sEnd').select();return}$('#sProd').focus()});
+  aoLer('sProd',()=>{$('#sQtd').focus();$('#sQtd').select()});
+  $('#sQtd').addEventListener('keydown',e=>{if(e.key==='Enter')$('#sOk').click()});
+  const op=uuid();
+  $('#sOk').onclick=async()=>{
+    try{const r=await api('POST','/api/wms/expedicoes/'+id+'/separar',{uuid:op,separacao_id:l.id,endereco:$('#sEnd').value.trim(),produto:$('#sProd').value.trim(),qtd:$('#sQtd').value.trim()});
+      aviso('Separado: '+r.sku+' · '+n(r.qtd)+' → doca '+r.doca+'.','ok');if(navigator.vibrate)navigator.vibrate(60);setTimeout(()=>separacao(id),900);
+    }catch(e){aviso(e.status?e.message:'Sem sinal: tente de novo quando a conexão voltar.','err')}
+  };
 }
 function telaFila(){
   const f=fila(),p=pendencias();
