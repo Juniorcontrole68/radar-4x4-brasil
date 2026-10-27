@@ -566,6 +566,22 @@ function nfe({chave,itens}){
     }finally{await db.end()}
   }
 
+  console.log('Apagar endereços');
+  {
+    r=await call('POST','/api/wms/armazens/'+arm+'/zonas',{cookie:gest,body:{codigo:'BLOC',nome:'Blocado chão',tipo:'blocado'}});
+    const zb=r.json.id;
+    r=await call('POST','/api/wms/enderecos/lote',{cookie:gest,body:{armazem_id:arm,zona_id:zb,tipo:'chao',rua_de:'C',colunas:{de:1,ate:3}}});
+    check('gera 3 endereços de chão',r.json.criados===3,r.json);
+    r=await call('DELETE','/api/wms/enderecos?armazem_id='+arm+'&zona_id='+zb,{cookie:op});
+    check('operador não apaga endereços',r.status===403);
+    r=await call('DELETE','/api/wms/enderecos?armazem_id='+arm+'&zona_id='+zb,{cookie:gest});
+    check('apaga os 3 endereços da zona',r.status===200&&r.json.apagados===3&&r.json.mantidos===0,r.json);
+    const antes=(await call('GET','/api/wms/enderecos?armazem_id='+arm,{cookie:gest})).json.rows.length;
+    r=await call('DELETE','/api/wms/enderecos?armazem_id='+arm,{cookie:gest});
+    const depois=(await call('GET','/api/wms/enderecos?armazem_id='+arm,{cookie:gest})).json.rows;
+    check('armazém inteiro: apaga os livres e mantém os com estoque ou histórico',r.status===200&&r.json.apagados>0&&r.json.com_saldo>0&&r.json.mantidos===depois.length&&antes===r.json.apagados+depois.length&&depois.some(e=>e.codigo==='B-05-01-01'),r.json);
+  }
+
   console.log(`\n${pass} OK, ${fail} falha(s)`);
   process.exit(fail?1:0);
 })().catch(e=>{console.error(e);process.exit(1)});

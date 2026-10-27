@@ -1257,6 +1257,25 @@ async function handle(req,res,u,deps){
       });
       return json(201,{ok:true,criados:n,ja_existiam:lista.length-n,primeiro:lista[0]?.codigo,ultimo:lista[lista.length-1]?.codigo});
     }
+    // Apaga os endereços do armazém (ou da zona) sem saldo e sem histórico; os que têm ficam e são contados.
+    if(p==='/api/wms/enderecos'&&M==='DELETE'){
+      const ctx=await contexto(deps,req,'gestao');
+      const arm=await doEmpresa(pool,ctx,'wms_armazens',u.searchParams.get('armazem_id'),'Armazém não encontrado.');
+      const zonaId=u.searchParams.get('zona_id')||null;
+      if(zonaId&&!(await pool.query('SELECT 1 FROM wms_zonas WHERE id=$1 AND armazem_id=$2',[zonaId,arm.id])).rowCount)throw erro(400,'Zona não encontrada neste armazém.');
+      const r=await tx(pool,async c=>{
+        const refs=(await c.query(`SELECT c.conrelid::regclass::text AS tabela,a.attname AS coluna FROM pg_constraint c
+          JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=ANY(c.conkey) WHERE c.contype='f' AND c.confrelid='wms_enderecos'::regclass`)).rows;
+        const usado=refs.map(f=>`EXISTS (SELECT 1 FROM ${f.tabela} x WHERE x.${f.coluna}=e.id)`).join(' OR ')||'FALSE';
+        const alvo='e.empresa=$1 AND e.armazem_id=$2 AND ($3::bigint IS NULL OR e.zona_id=$3)';
+        const comSaldo=(await c.query(`SELECT COUNT(*)::int AS n FROM wms_enderecos e WHERE ${alvo} AND EXISTS (SELECT 1 FROM wms_saldos s WHERE s.endereco_id=e.id AND s.qtd>0)`,[ctx.emp,arm.id,zonaId])).rows[0].n;
+        const apagados=(await c.query(`DELETE FROM wms_enderecos e WHERE ${alvo} AND NOT (${usado})`,[ctx.emp,arm.id,zonaId])).rowCount;
+        const mantidos=(await c.query(`SELECT COUNT(*)::int AS n FROM wms_enderecos e WHERE ${alvo}`,[ctx.emp,arm.id,zonaId])).rows[0].n;
+        await auditar(c,ctx,'apagar_lote','enderecos',arm.id,{zona_id:zonaId,apagados,mantidos,com_saldo:comSaldo});
+        return{apagados,mantidos,com_saldo:comSaldo};
+      });
+      return json(200,{ok:true,...r});
+    }
     m=p.match(/^\/api\/wms\/enderecos\/(\d+)$/);
     if(m&&M==='PATCH'){
       const ctx=await contexto(deps,req,'supervisor'),b=await corpo();
