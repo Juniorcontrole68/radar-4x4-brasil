@@ -95,7 +95,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}dialog form,dialog .in{padding:18
     <div class="card">
       <div class="bar" style="justify-content:space-between">
         <label>Situação<select id="expFiltro"><option value="abertas">Em aberto</option><option value="expedida">Expedidas</option><option value="cancelada">Canceladas</option></select></label>
-        <div class="bar"><button class="btn p" id="btnExpChave">▦ Ler código de barras da NF de saída</button><label class="btn" style="display:flex;align-items:center;cursor:pointer">⬆ Importar XML da NF de saída<input type="file" id="expXml" accept=".xml,text/xml" multiple hidden></label><label class="btn" style="display:flex;align-items:center;cursor:pointer" title="Quando a SEFAZ não libera o XML">📄 Importar DANFE (PDF)<input type="file" id="expPdf" accept=".pdf,application/pdf" hidden></label></div>
+        <div class="bar"><button class="btn p" id="btnExpManual">+ Expedição manual</button><button class="btn" id="btnExpChave">▦ Ler código de barras da NF de saída</button><label class="btn" style="display:flex;align-items:center;cursor:pointer">⬆ Importar XML da NF de saída<input type="file" id="expXml" accept=".xml,text/xml" multiple hidden></label><label class="btn" style="display:flex;align-items:center;cursor:pointer" title="Quando a SEFAZ não libera o XML">📄 Importar DANFE (PDF)<input type="file" id="expPdf" accept=".pdf,application/pdf" hidden></label></div>
       </div>
       <p class="muted">Fluxo: lançar a nota → reservar (o sistema escolhe os endereços pelo vencimento: o que vence primeiro sai primeiro) → o operador separa no aplicativo (menu Separação) → expedir dá a baixa no estoque.</p>
       <div class="tw" id="expLista"></div>
@@ -151,6 +151,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}dialog form,dialog .in{padding:18
 
   <section data-sec="clientes" hidden>
     <div class="card"><div class="bar" style="justify-content:space-between"><h2>Clientes depositantes</h2><button class="btn p" id="cliNovo">+ Cliente</button></div><div class="tw" id="cliLista"></div></div>
+    <div class="card"><div class="bar" style="justify-content:space-between"><div><h2>Destinatários (clientes de saída)</h2><div class="muted">Para quem sai a mercadoria. Cadastre antes de lançar a expedição à mão.</div></div><button class="btn p" id="destNovo">+ Destinatário</button></div><div class="tw" id="destLista"></div></div>
   </section>
 
   <section data-sec="enderecos" hidden>
@@ -444,7 +445,7 @@ async function importarDanfe(tipo,f,esperada){
 }
 function editarNota(tipo,pv,esperada){
   const cfg=NOTA[tipo],x=pv.nfe,ent=tipo==='entrada';
-  const linha=i=>'<tr class="ni"><td><input class="niC" value="'+esc(i.codigo||'')+'"></td><td><input class="niD" value="'+esc(i.descricao||'')+'" style="min-width:220px"></td><td><input class="niU" value="'+esc(i.unidade||'UN')+'" style="width:56px"></td>'+
+  const linha=i=>'<tr class="ni"><td><input class="niC" list="nSkus" autocomplete="off" value="'+esc(i.codigo||'')+'"></td><td><input class="niD" value="'+esc(i.descricao||'')+'" style="min-width:220px"></td><td><input class="niU" value="'+esc(i.unidade||'UN')+'" style="width:56px"></td>'+
     '<td><input class="niQ" inputmode="decimal" value="'+(i.qtd==null?'':String(i.qtd).replace('.',','))+'" style="width:90px"></td><td><input class="niL" value="'+esc(i.lote||'')+'"></td>'+(ent?'<td><input class="niV" type="date" value="'+esc(i.validade||'')+'"></td>':'')+
     '<td><button class="btn" type="button" data-tira title="Tirar o item">✕</button></td></tr>';
   abrir('<div class="nota-ed" style="display:grid;gap:10px"><h2>'+(ent?'Entrada':'Saída')+' · NF '+esc(x.numero)+' série '+esc(x.serie)+'</h2>'+
@@ -455,14 +456,20 @@ function editarNota(tipo,pv,esperada){
     (ent?'<label>Previsão de chegada<input id="nPrev" type="date"></label>':'')+'</div>'+
     (pv.cliente_id?'':'<p class="chip warn" style="margin:0">Nenhum cliente cadastrado com o CNPJ '+(ent?'do destinatário ou do emitente':'do emitente')+'. Escolha o cliente.</p>')+
     '<div class="tw"><table><thead><tr><th>Código</th><th>Descrição</th><th>Un.</th><th>Qtd</th><th>Lote</th>'+(ent?'<th>Validade</th>':'')+'<th></th></tr></thead><tbody id="nItens">'+(x.itens.length?x.itens:[{}]).map(linha).join('')+'</tbody></table></div>'+
-    '<div class="bar"><button class="btn" id="nMais" type="button">+ Item</button></div><p id="nMsg" class="muted" style="margin:0"></p>'+
+    '<datalist id="nSkus"></datalist><div class="bar"><button class="btn" id="nMais" type="button">+ Item</button></div><p id="nMsg" class="muted" style="margin:0"></p>'+
     '<div class="bar"><button class="btn p" id="nOk" type="button">Lançar '+cfg.nome+'</button><button class="btn" data-fechar type="button">Cancelar</button></div></div>');
   $('#nMais').onclick=()=>{$('#nItens').insertAdjacentHTML('beforeend',linha({}));const l=$$('#nItens .niC');l[l.length-1].focus()};
+  let prods=[];
+  const skus=async()=>{prods=$('#nCli').value?(await api('GET','/api/wms/produtos?cliente_id='+$('#nCli').value).catch(()=>({rows:[]}))).rows:[];
+    $('#nSkus').innerHTML=prods.map(p=>'<option value="'+esc(p.sku)+'">'+esc(p.descricao)+'</option>').join('')};
+  $('#nCli').addEventListener('change',skus);skus();
+  $('#nItens').addEventListener('input',e=>{if(!e.target.matches('.niC'))return;const v=e.target.value.trim().toUpperCase(),p=prods.find(x=>x.sku.toUpperCase()===v);
+    if(p){const tr=e.target.closest('tr');tr.querySelector('.niD').value=p.descricao;if(p.unidade)tr.querySelector('.niU').value=p.unidade}});
   $('#nItens').addEventListener('click',e=>{const b=e.target.closest('[data-tira]');if(b&&$$('#nItens .ni').length>1)b.closest('tr').remove()});
   const v=(tr,c)=>tr.querySelector(c)?.value.trim()||'';
   $('#nOk').onclick=async()=>{
     const msg=$('#nMsg');
-    const itens=$$('#nItens .ni').map(tr=>({codigo:v(tr,'.niC'),descricao:v(tr,'.niD'),unidade:v(tr,'.niU'),qtd:v(tr,'.niQ'),lote:v(tr,'.niL'),validade:v(tr,'.niV')})).filter(i=>i.codigo||i.descricao||i.qtd);
+    const itens=$$('#nItens .ni').map(tr=>({codigo:v(tr,'.niC'),descricao:v(tr,'.niD'),unidade:v(tr,'.niU'),qtd:qtdBR(v(tr,'.niQ'))??v(tr,'.niQ'),lote:v(tr,'.niL'),validade:v(tr,'.niV')})).filter(i=>i.codigo||i.descricao||i.qtd);
     if(!$('#nCli').value){msg.textContent='Escolha o cliente.';msg.className='kmsg err';return}
     if(!itens.length){msg.textContent='Informe pelo menos um item.';msg.className='kmsg err';return}
     $('#nOk').disabled=true;
@@ -641,8 +648,11 @@ $('#prodNovo').onclick=()=>ST.clientes.length?formProduto():aviso('Cadastre um c
 $('#prodLista').addEventListener('click',e=>{const a=e.target.closest('[data-prod]');if(a){e.preventDefault();formProduto(ST.prods.find(p=>p.id===a.dataset.prod))}});
 
 // ---------------- clientes
+async function carregarDests(){ST.dests=(await api('GET','/api/wms/destinatarios')).rows;return ST.dests}
 async function carregarClientes(){
   await carregarListaClientes();
+  await carregarDests();
+  $('#destLista').innerHTML=tabela([['Nome',d=>esc(d.nome)],['CNPJ/CPF',d=>esc(fmtDoc(d.cnpj))],['Cidade',d=>esc(d.cidade+(d.uf?' - '+d.uf:''))],['',d=>'<button class="btn" data-dest="'+d.id+'">Editar</button> <button class="btn d" data-destdel="'+d.id+'">Remover</button>']],ST.dests,'Nenhum destinatário cadastrado.');
   $('#cliLista').innerHTML=tabela([['Nome',c=>esc(c.nome)],['CNPJ',c=>esc(c.cnpj)],['Produtos',c=>c.produtos],['Recontagem automática',c=>c.regras.recontagem===false?'não':'sim'],['Política de saída',c=>esc(c.regras.politica||'FEFO')],['',c=>'<button class="btn" data-cli="'+c.id+'">Editar</button>']],ST.clientes,'Nenhum cliente.');
 }
 function formCliente(c){
@@ -652,6 +662,78 @@ function formCliente(c){
     if(c.id)await api('PATCH','/api/wms/clientes/'+c.id,b);else await api('POST','/api/wms/clientes',b);fechar();aviso('Cliente salvo.',true);carregarClientes()});
 }
 $('#cliNovo').onclick=()=>formCliente();
+function formDest(d,depois){
+  d=d||{};
+  abrir('<h2>'+(d.id?'Destinatário':'Novo destinatário')+'</h2><form id="fDest"><div class="cols"><label>Nome / razão social<input name="nome" value="'+esc(d.nome||'')+'" required></label><label>CNPJ / CPF<input name="cnpj" inputmode="numeric" value="'+esc(d.cnpj||'')+'"></label><label>Cidade<input name="cidade" value="'+esc(d.cidade||'')+'"></label><label>UF<input name="uf" maxlength="2" value="'+esc(d.uf||'')+'" style="text-transform:uppercase"></label></div><div class="bar"><button class="btn p">Salvar</button><button class="btn" type="button" data-fechar>Cancelar</button></div></form>');
+  $('#fDest').onsubmit=tenta(async e=>{e.preventDefault();const b=Object.fromEntries(new FormData(e.target));
+    const j=d.id?await api('PATCH','/api/wms/destinatarios/'+d.id,b):await api('POST','/api/wms/destinatarios',b);
+    fechar();aviso('Destinatário salvo.',true);if(depois)depois(j.id||d.id);else carregarClientes()});
+}
+$('#destNovo').onclick=()=>formDest();
+$('#destLista').addEventListener('click',tenta(async e=>{
+  const b=e.target.closest('[data-dest]');if(b)return formDest(ST.dests.find(d=>d.id===b.dataset.dest));
+  const x=e.target.closest('[data-destdel]');if(x&&confirm('Remover este destinatário do cadastro? As expedições já lançadas não mudam.')){await api('DELETE','/api/wms/destinatarios/'+x.dataset.destdel);carregarClientes()}
+}));
+// ---------------- expedição lançada à mão: produtos do cliente em lista, o SKU digitado já traz a descrição
+// quantidade digitada no jeito brasileiro: 1.250 = mil duzentos e cinquenta; 37,5 = trinta e sete e meio
+const qtdBR=v=>{let t=String(v??'').trim().replace(/\s/g,'');if(t.includes(','))t=t.replace(/\./g,'').replace(',','.');else if(/^\d{1,3}(\.\d{3})+$/.test(t))t=t.replace(/\./g,'');const x=Number(t);return t&&Number.isFinite(x)?x:null};
+async function formExpManual(salvo){
+  if(!ST.arm){aviso('Escolha o armazém.');return}
+  if(!ST.clientes.length)await carregarListaClientes();
+  if(!ST.clientes.length){aviso('Cadastre o cliente do armazém primeiro (aba Clientes).');return}
+  await carregarDests();
+  salvo=salvo||{};
+  const cliIni=salvo.cliente_id||(ST.clientes.find(c=>/ifco/i.test(c.nome))||ST.clientes[0]).id;
+  abrir('<div class="nota-ed" style="display:grid;gap:10px"><h2>Expedição manual</h2>'+
+    '<div class="cols"><label>Cliente do armazém<select id="emCli">'+ST.clientes.map(c=>'<option value="'+c.id+'"'+(c.id===cliIni?' selected':'')+'>'+esc(c.nome)+'</option>').join('')+'</select></label>'+
+    '<label>Destinatário<select id="emDest"><option value="">— escolha —</option>'+ST.dests.map(d=>'<option value="'+d.id+'"'+(d.id===salvo.destinatario_id?' selected':'')+'>'+esc(d.nome+(d.cidade?' · '+d.cidade+(d.uf?'/'+d.uf:''):''))+'</option>').join('')+'<option value="novo">+ Cadastrar novo destinatário…</option></select></label></div>'+
+    '<div class="cols"><label>Nº da NF<input id="emNf" value="'+esc(salvo.nf_numero||'')+'"></label><label>Série<input id="emSerie" value="'+esc(salvo.nf_serie||'')+'" style="max-width:90px"></label><label>Chave de acesso (opcional)<input id="emChave" inputmode="numeric" value="'+esc(salvo.nf_chave||'')+'" placeholder="44 dígitos; preenche número e série"></label></div>'+
+    '<datalist id="emSkus"></datalist><div class="tw"><table><thead><tr><th>SKU</th><th>Produto</th><th>Qtd</th><th>Lote (opcional)</th><th></th></tr></thead><tbody id="emItens"></tbody></table></div>'+
+    '<div class="bar"><button class="btn" id="emMais" type="button">+ Item</button></div><p id="emMsg" class="muted" style="margin:0"></p>'+
+    '<div class="bar"><button class="btn p" id="emOk" type="button">Lançar expedição</button><button class="btn" data-fechar type="button">Cancelar</button></div></div>');
+  let prods=[];
+  const opcoes=()=>'<option value="">— escolha o produto —</option>'+prods.map(p=>'<option value="'+p.id+'">'+esc(p.sku+' · '+p.descricao+' (saldo '+n(p.saldo)+')')+'</option>').join('');
+  const linha=it=>'<tr class="emi"><td><input class="emS" list="emSkus" autocomplete="off" value="'+esc(it?.sku||'')+'" style="width:130px"></td><td><select class="emP" style="min-width:260px">'+opcoes()+'</select></td>'+
+    '<td><input class="emQ" inputmode="decimal" value="'+esc(it?.qtd||'')+'" style="width:90px"></td><td><input class="emL" value="'+esc(it?.lote||'')+'" style="width:120px"></td><td><button class="btn" type="button" data-tira title="Tirar o item">✕</button></td></tr>';
+  const porSku=v=>{v=String(v||'').trim().toUpperCase();return v?prods.find(p=>p.sku.toUpperCase()===v||p.ean===v||(p.codigos_alt||[]).map(x=>String(x).toUpperCase()).includes(v)):null};
+  const carregarProds=async(itens)=>{
+    prods=(await api('GET','/api/wms/produtos?cliente_id='+$('#emCli').value)).rows;
+    $('#emSkus').innerHTML=prods.map(p=>'<option value="'+esc(p.sku)+'">'+esc(p.descricao)+'</option>').join('');
+    $('#emItens').innerHTML=(itens&&itens.length?itens:[{}]).map(linha).join('');
+    $$('#emItens .emi').forEach((tr,k)=>{const it=itens?.[k];if(it?.produto_id)tr.querySelector('.emP').value=it.produto_id});
+    $('#emMsg').textContent=prods.length?'':'Este cliente ainda não tem produtos cadastrados (aba Produtos).';$('#emMsg').className=prods.length?'muted':'kmsg err';
+  };
+  $('#emCli').onchange=tenta(()=>carregarProds());
+  await carregarProds(salvo.itens);
+  $('#emMais').onclick=()=>{$('#emItens').insertAdjacentHTML('beforeend',linha());const l=$$('#emItens .emS');l[l.length-1].focus()};
+  $('#emItens').addEventListener('click',e=>{const b=e.target.closest('[data-tira]');if(b&&$$('#emItens .emi').length>1)b.closest('tr').remove()});
+  $('#emItens').addEventListener('input',e=>{if(!e.target.matches('.emS'))return;const tr=e.target.closest('tr'),p=porSku(e.target.value);tr.querySelector('.emP').value=p?p.id:'';if(p)tr.querySelector('.emQ').focus()});
+  $('#emItens').addEventListener('change',e=>{if(!e.target.matches('.emP'))return;const p=prods.find(x=>x.id===e.target.value);e.target.closest('tr').querySelector('.emS').value=p?p.sku:''});
+  $('#emItens').addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.matches('.emQ,.emL')){e.preventDefault();$('#emMais').click()}});
+  $('#emChave').addEventListener('input',()=>{const ch=$('#emChave').value.replace(/\D/g,'');if(ch.length===44&&chaveDv(ch)){$('#emNf').value=String(+ch.slice(25,34));$('#emSerie').value=String(+ch.slice(22,25))}});
+  const estado=()=>({cliente_id:$('#emCli').value,destinatario_id:$('#emDest').value,nf_numero:$('#emNf').value,nf_serie:$('#emSerie').value,nf_chave:$('#emChave').value,
+    itens:$$('#emItens .emi').map(tr=>({sku:tr.querySelector('.emS').value,produto_id:tr.querySelector('.emP').value,qtd:tr.querySelector('.emQ').value,lote:tr.querySelector('.emL').value}))});
+  $('#emDest').onchange=()=>{if($('#emDest').value!=='novo')return;const st=estado();st.destinatario_id='';formDest(null,id=>{st.destinatario_id=id;formExpManual(st)})};
+  $('#emOk').onclick=async()=>{
+    const msg=$('#emMsg'),st=estado(),ch=st.nf_chave.replace(/\D/g,'');
+    const itens=st.itens.filter(i=>i.produto_id||i.qtd||i.sku);
+    const err=t=>{msg.textContent=t;msg.className='kmsg err'};
+    if(!st.destinatario_id)return err('Escolha o destinatário.');
+    if(!st.nf_numero.trim()&&!ch)return err('Informe o número da NF.');
+    if(ch&&(ch.length!==44||!chaveDv(ch)))return err('Chave de acesso inválida (44 dígitos).');
+    if(!itens.length)return err('Informe pelo menos um item.');
+    itens.forEach(i=>{i.qtd=qtdBR(i.qtd)});
+    const ruim=itens.findIndex(i=>!i.produto_id||!(i.qtd>0));
+    if(ruim>=0)return err('Item '+(ruim+1)+': escolha o produto e a quantidade.');
+    $('#emOk').disabled=true;
+    try{
+      const j=await api('POST','/api/wms/expedicoes',{armazem_id:ST.arm,cliente_id:st.cliente_id,destinatario_id:st.destinatario_id,nf_numero:st.nf_numero,nf_serie:st.nf_serie,nf_chave:ch||undefined,
+        itens:itens.map(i=>({produto_id:i.produto_id,qtd:i.qtd,lote:i.lote}))});
+      fechar();aviso('Expedição '+j.id+' lançada.',true);carregarExpedicoes();tenta(abrirExp)(j.id);
+    }catch(e){err(e.message);$('#emOk').disabled=false}
+  };
+}
+$('#btnExpManual').onclick=tenta(()=>formExpManual());
 $('#cliLista').addEventListener('click',e=>{const b=e.target.closest('[data-cli]');if(b)formCliente(ST.clientes.find(c=>c.id===b.dataset.cli))});
 
 // ---------------- armazéns e endereços
