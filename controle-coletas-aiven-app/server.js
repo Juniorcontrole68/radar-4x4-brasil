@@ -1204,7 +1204,7 @@ async function demoRotas(req,res,u){
   if(req.method==='GET'&&u.pathname==='/api/demo/convites'){
     try{
       if(!tokenDemo(req))await dashboardPlatformSession(req);
-      const q=await pool.query(`SELECT c.id::text AS cliente_id,c.name AS empresa,v.nome,v.whatsapp,v.origem,v.modo,v.criado_em,v.primeiro_acesso,v.ultimo_acesso,v.entradas,c.trial_ends_at,
+      const q=await pool.query(`SELECT c.id::text AS cliente_id,c.name AS empresa,v.nome,v.whatsapp,v.origem,v.modo,v.so_exemplo,v.criado_em,v.primeiro_acesso,v.ultimo_acesso,v.entradas,c.trial_ends_at,
           (SELECT count(*)::int FROM movit_client_modules m WHERE m.client_id=c.id AND m.enabled) AS modulos
         FROM movit_demo_convites v JOIN movit_clients c ON c.id=v.client_id ORDER BY v.criado_em DESC LIMIT 100`);
       sendJson(res,200,{ok:true,testes:q.rows});
@@ -1235,11 +1235,11 @@ async function demoRotas(req,res,u){
       const ph=dashboardHashPassword(crypto.randomBytes(18).toString('hex'));
       await pool.query("INSERT INTO dashboard_users(username,password_salt,password_hash,is_admin,active,permissions,client_id,is_platform_admin) VALUES($1,$2,$3,TRUE,TRUE,'[]'::jsonb,$4,FALSE)",[username,ph.salt,ph.hash,clientId]);
       const token=movitDemo.tokenConvite();
-      const cv=await pool.query("INSERT INTO movit_demo_convites(token_hash,client_id,nome,whatsapp,email,origem,expira_em,dias) VALUES($1,$2,$3,$4,$5,$6,NOW()+($7 * INTERVAL '1 day'),$8) RETURNING expira_em",
-        [movitDemo.hashConvite(token),clientId,d.nome,d.whatsapp||null,d.email||null,origem,movitDemo.CONVITE_DIAS,d.dias]);
+      const cv=await pool.query("INSERT INTO movit_demo_convites(token_hash,client_id,nome,whatsapp,email,origem,expira_em,dias,so_exemplo) VALUES($1,$2,$3,$4,$5,$6,NOW()+($7 * INTERVAL '1 day'),$8,$9) RETURNING expira_em",
+        [movitDemo.hashConvite(token),clientId,d.nome,d.whatsapp||null,d.email||null,origem,movitDemo.CONVITE_DIAS,d.dias,d.soExemplo]);
       const baseUrl=String(process.env.PUBLIC_BASE_URL||('https://'+(req.headers.host||'movit-demo.onrender.com'))).replace(/\/+$/,'');
-      const link=baseUrl+'/demo/convite/'+token,mensagem=movitDemo.mensagemConvite(d.nome,link);
-      sendJson(res,201,{ok:true,link,mensagem,whatsapp_url:movitDemo.linkWhatsapp(d.whatsapp,mensagem),cliente_id:clientId,modulos:mods,expira_em:cv.rows[0].expira_em,dias:d.dias});
+      const link=baseUrl+'/demo/convite/'+token,mensagem=movitDemo.mensagemConvite(d.nome,link,d.soExemplo);
+      sendJson(res,201,{ok:true,link,mensagem,whatsapp_url:movitDemo.linkWhatsapp(d.whatsapp,mensagem),cliente_id:clientId,modulos:mods,expira_em:cv.rows[0].expira_em,dias:d.dias,so_exemplo:d.soExemplo});
     }catch(e){sendJson(res,e.status||500,{ok:false,error:e.status?e.message:'Não foi possível criar o teste agora.'})}
     return true;
   }
@@ -1248,7 +1248,7 @@ async function demoRotas(req,res,u){
     if(req.method==='GET'&&!conv[1]&&!conv[3]){sendHtml(res,CONVITE_PAGE);return true}
     if(!conv[1]){sendJson(res,404,{ok:false,error:'Página não encontrada.'});return true}
     try{
-      const cq=await pool.query(`SELECT v.client_id::text AS client_id,v.nome,v.modo,v.primeiro_acesso,v.expira_em<NOW() AS vencido,c.name AS empresa,c.status,c.trial_ends_at,
+      const cq=await pool.query(`SELECT v.client_id::text AS client_id,v.nome,v.modo,v.so_exemplo,v.primeiro_acesso,v.expira_em<NOW() AS vencido,c.name AS empresa,c.status,c.trial_ends_at,
           s.client_id IS NOT NULL AS tem_ssw,COALESCE(s.exemplo,FALSE) AS exemplo,s.dominio
         FROM movit_demo_convites v JOIN movit_clients c ON c.id=v.client_id LEFT JOIN movit_client_ssw s ON s.client_id=v.client_id WHERE v.token_hash=$1`,[movitDemo.hashConvite(conv[2])]);
       const cv=cq.rows[0];
@@ -1256,7 +1256,7 @@ async function demoRotas(req,res,u){
       if(cv.vencido&&!cv.primeiro_acesso){sendJson(res,410,{ok:false,error:'Este link de teste venceu. Peça um novo link à MOVIT.'});return true}
       if(req.method==='GET'&&!conv[3]){
         const mq=await pool.query('SELECT m.name FROM movit_client_modules cm JOIN movit_modules m ON m.key=cm.module_key WHERE cm.client_id=$1 AND cm.enabled=TRUE ORDER BY m.name',[cv.client_id]);
-        sendJson(res,200,{ok:true,empresa:cv.empresa,nome:cv.nome,modo:cv.tem_ssw?(cv.exemplo?'exemplo':'ssw'):null,dominio:cv.tem_ssw&&!cv.exemplo?cv.dominio:null,modulos:mq.rows.map(x=>x.name)});return true;
+        sendJson(res,200,{ok:true,empresa:cv.empresa,nome:cv.nome,modo:cv.tem_ssw?(cv.exemplo?'exemplo':'ssw'):null,dominio:cv.tem_ssw&&!cv.exemplo?cv.dominio:null,so_exemplo:!!cv.so_exemplo,modulos:mq.rows.map(x=>x.name)});return true;
       }
       if(req.method!=='POST'){sendJson(res,405,{ok:false,error:'Método não suportado.'});return true}
       const ip=String(req.headers['x-forwarded-for']||req.socket?.remoteAddress||'').split(',')[0].trim();
@@ -1265,6 +1265,7 @@ async function demoRotas(req,res,u){
       DEMO_ENTRADAS.set(ip,lim);
       const corpo=await readJsonBodyLimited(req,32*1024),clientId=cv.client_id;
       let modo=cv.tem_ssw?(cv.exemplo?'exemplo':'ssw'):null;
+      if(corpo&&corpo.ssw&&cv.so_exemplo){sendJson(res,400,{ok:false,error:'Este link é só para conhecer o sistema com números de exemplo.'});return true}
       if(corpo&&corpo.ssw){
         // Com o login do SSW: a empresa passa a ler o SSW real dela (e deixa de ser de exemplo).
         const d=movitDemo.normalizarEntrada({...corpo.ssw,empresa:cv.empresa});

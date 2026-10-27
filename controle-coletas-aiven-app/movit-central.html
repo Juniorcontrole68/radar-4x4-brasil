@@ -41,6 +41,7 @@ body.demo #clientForm .form>label:not(:first-child),body.demo .modw label.vid,bo
       <label>WhatsApp (com DDD)<input id="cZap" inputmode="tel" placeholder="19 99999-0000"></label>
       <label>E-mail (opcional)<input id="cEmail" type="email"></label>
       <label>Dias de teste<input id="cDias" type="number" min="1" max="60" step="1" value="7" inputmode="numeric"></label>
+      <label>Tipo de teste<select id="cTipo"><option value="exemplo">Só conhecer o sistema (números de exemplo, sem SSW)</option><option value="ssw">Com o SSW dele (ou números de exemplo, ele escolhe)</option></select></label>
     </div>
     <div class="passo"><span>2</span>Módulos que ele pode abrir<span class="actions" style="margin-left:auto"><button class="btn secondary" type="button" id="cTodos">Marcar todos</button><button class="btn secondary" type="button" id="cNenhum">Desmarcar todos</button></span></div>
     <div id="cMods" class="cmods"></div>
@@ -279,7 +280,7 @@ async function listarTestes(){
     const dt=v=>v?new Date(v).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'}):'';
     $('tLista').innerHTML=(j.testes||[]).length?(j.testes||[]).map(t=>{
       const fim=t.trial_ends_at?new Date(t.trial_ends_at):null,acabou=fim&&fim<new Date();
-      const sit=!t.primeiro_acesso?'ainda não abriu o link':(acabou?'teste terminou em '+dt(fim):'testando até '+dt(fim)+' • '+(t.modo==='ssw'?'com o SSW dele':'com números de exemplo'));
+      const sit=(t.so_exemplo?'só demonstração • ':'')+(!t.primeiro_acesso?'ainda não abriu o link':(acabou?'teste terminou em '+dt(fim):'testando até '+dt(fim)+' • '+(t.modo==='ssw'?'com o SSW dele':'com números de exemplo')));
       return '<div class="client"><div><b>'+esc(t.empresa)+'</b><div class="meta">'+esc(t.nome||'')+(t.origem==='torre'?' • pediu pelo site':'')+' • '+t.modulos+' módulo(s) • '+esc(sit)+'</div></div></div>';
     }).join(''):'<div class="empty">Nenhum teste enviado ainda.</div>';
   }catch(e){$('tLista').innerHTML='<div class="empty">'+esc(e.message)+'</div>'}
@@ -315,7 +316,7 @@ $('sSalvar').onclick=async()=>{
 $('cTodos').onclick=()=>document.querySelectorAll('.cmod').forEach(i=>i.checked=true);
 $('cNenhum').onclick=()=>document.querySelectorAll('.cmod').forEach(i=>i.checked=false);
 $('cGo').onclick=async()=>{
-  const body={nome:$('cNome').value.trim(),empresa:$('cEmpresa').value.trim(),whatsapp:$('cZap').value.trim(),email:$('cEmail').value.trim(),dias:Number($('cDias').value)||undefined,modulos:[...document.querySelectorAll('.cmod:checked')].map(x=>x.value)};
+  const body={nome:$('cNome').value.trim(),empresa:$('cEmpresa').value.trim(),whatsapp:$('cZap').value.trim(),email:$('cEmail').value.trim(),dias:Number($('cDias').value)||undefined,so_exemplo:$('cTipo').value==='exemplo',modulos:[...document.querySelectorAll('.cmod:checked')].map(x=>x.value)};
   if(!body.empresa||!body.whatsapp){$('cMsg').style.color='#b91c1c';$('cMsg').textContent='Preencha a transportadora e o WhatsApp do cliente.';return}
   if(!body.modulos.length){$('cMsg').style.color='#b91c1c';$('cMsg').textContent='Marque pelo menos um módulo no passo 2.';return}
   $('cMsg').style.color='#475569';$('cMsg').textContent='Criando o teste…';

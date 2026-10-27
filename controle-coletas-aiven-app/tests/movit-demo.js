@@ -369,6 +369,16 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
     check('...e o teste dura esses dias a partir do primeiro acesso',r.status===200&&Number(diasD)>11.9&&Number(diasD)<=12,r.status+' dias='+diasD);
     r=await call('POST','/api/demo/convites',{body:{nome:'Davi',empresa:'Dias Errados',dias:90},ip:IPL,auth:'Bearer '+TOKEN_API});
     check('dias de teste fora de 1 a 60 -> 400',r.status===400&&/Dias de teste/.test(r.json?.error||''),r.status+' '+r.text.slice(0,160));
+    r=await call('POST','/api/demo/convites',{cookie:cookieAdm,ip:IPL,body:{nome:'Fabio Lima',empresa:'Só Conhecer',whatsapp:'5511944443333',so_exemplo:true,modulos:['lotacao']}});
+    const tokS=(r.json?.link||'').split('/').pop();
+    check('link só de demonstração -> 201, mensagem sem falar do SSW',r.status===201&&r.json?.so_exemplo===true&&!/SSW/.test(r.json?.mensagem||''),r.status+' '+r.text.slice(0,200));
+    r=await call('GET','/api/demo/convite/'+tokS);
+    check('...a página sabe que é só demonstração',r.status===200&&r.json?.so_exemplo===true,r.text.slice(0,160));
+    const sS0=await stats();
+    r=await call('POST','/api/demo/convite/'+tokS+'/entrar',{ip:IPL,body:{ssw:{dominio:'EXD',cpf:'11122233344',usuario:'ana',senha:'x'}}});
+    check('...e recusa o login do SSW sem ir ao SSW',r.status===400&&/só para conhecer/.test(r.json?.error||'')&&(await stats()).logins===sS0.logins,r.status+' '+r.text.slice(0,160));
+    r=await call('POST','/api/demo/convite/'+tokS+'/entrar',{ip:IPL,body:{}});
+    check('...entrando direto com os números de exemplo',r.status===200&&r.json?.modo==='exemplo'&&!!r.cookie,r.status+' '+r.text.slice(0,160));
     const TOKEN_CENTRAL=process.env.MOVIT_CENTRAL_TOKEN||'';
     if(TOKEN_CENTRAL){
       r=await call('GET','/api/demo/convites',{auth:'Bearer '+TOKEN_CENTRAL});
