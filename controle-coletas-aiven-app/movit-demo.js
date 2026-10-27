@@ -62,7 +62,7 @@ const BI2 = {
   ssw: [/^\/api\/bi2\/(?!saidas-baixas$|baixas$)/, /^\/api\/ssw\/cidades-mapa$/]
 };
 // Rotas que o cliente da demo nunca chama: administração MOVIT e as planilhas da CONSTRULOG.
-const ROTAS_FECHADAS = [/^\/api\/movit-central(\/|$)/, /^\/api\/demo\/convites$/, /^\/api\/sheet\//];
+const ROTAS_FECHADAS = [/^\/api\/movit-central(\/|$)/, /^\/api\/demo\/convites$/, /^\/api\/demo\/modulos-site$/, /^\/api\/sheet\//];
 const PERMS_POR_MODULO = Object.fromEntries(Object.entries(MODULOS).map(([k, m]) => [k, m.perms]));
 
 function modulosProntos() { return Object.keys(MODULOS); }

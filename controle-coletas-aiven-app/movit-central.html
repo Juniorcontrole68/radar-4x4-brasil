@@ -46,6 +46,11 @@ body.demo #clientForm .form>label:not(:first-child),body.demo .modw label.vid,bo
     <div class="passo"><span>3</span>Gerar o link</div>
     <div class="actions"><button class="btn primary" type="button" id="cGo" style="padding:12px 18px;font-size:15px">Gerar link do teste</button></div>
     <div id="cMsg" class="msg"></div>
+    <div class="passo" style="margin-top:22px;border-top:1px solid var(--line);padding-top:16px">🌐 Quem pede a demonstração pelo site</div>
+    <div class="meta" style="margin:-4px 0 10px">Quem preenche o pedido no site entra direto no teste, sem você mandar o link, e abre só os módulos marcados aqui.</div>
+    <div id="sMods" class="cmods"></div>
+    <div class="actions" style="margin-top:12px"><button class="btn primary" type="button" id="sSalvar">Salvar módulos do site</button></div>
+    <div id="sMsg" class="msg"></div>
   </div>
   <div class="kpis" id="kpis">
     <div class="kpi"><span>Clientes</span><b id="kClients">—</b></div>
@@ -261,7 +266,20 @@ fetch('/api/demo/info',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(j=>{
   document.body.classList.add('demo');if(!$('clientId').value){document.body.classList.add('semCliente');$('formTitle').textContent='Módulos do cliente'}
   $('clientsTitle').textContent='Clientes em teste';$('modsDica').style.display='';
   $('cMods').innerHTML=(j.modulos||[]).map(m=>'<label><input type="checkbox" class="cmod" value="'+esc(m.key)+'">'+esc(m.name)+'</label>').join('');
+  fetch('/api/demo/modulos-site',{cache:'no-store'}).then(r=>r.json()).then(s=>{
+    const marcados=new Set(s.modulos||[]);
+    $('sMods').innerHTML=(j.modulos||[]).map(m=>'<label><input type="checkbox" class="smod" value="'+esc(m.key)+'"'+(marcados.has(m.key)?' checked':'')+'>'+esc(m.name)+'</label>').join('');
+  }).catch(()=>{});
 }).catch(()=>{});
+$('sSalvar').onclick=async()=>{
+  const modulos=[...document.querySelectorAll('.smod:checked')].map(x=>x.value);
+  $('sMsg').style.color='#475569';$('sMsg').textContent='Salvando…';
+  try{
+    const r=await fetch('/api/demo/modulos-site',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({modulos})});
+    const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao salvar.');
+    $('sMsg').style.color='#15803d';$('sMsg').textContent='✓ Salvo. Quem pedir pelo site abre '+j.modulos.length+' módulo(s).';
+  }catch(e){$('sMsg').style.color='#b91c1c';$('sMsg').textContent=e.message}
+};
 $('cTodos').onclick=()=>document.querySelectorAll('.cmod').forEach(i=>i.checked=true);
 $('cNenhum').onclick=()=>document.querySelectorAll('.cmod').forEach(i=>i.checked=false);
 $('cGo').onclick=async()=>{

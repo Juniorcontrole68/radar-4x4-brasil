@@ -355,6 +355,12 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
     check('painel da Torre MOVIT cria o teste com o token (todos os módulos)',r.status===201&&cvT?.origem==='torre'&&(r.json.modulos||[]).length>=10,r.status+' '+r.text.slice(0,200));
     r=await call('POST','/api/demo/convites',{body:{nome:'Bruno',empresa:'X'},ip:IPL,auth:'Bearer '+'y'.repeat(TOKEN_API.length)});
     check('token errado -> 401',r.status===401,'veio '+r.status);
+    r=await call('PUT','/api/demo/modulos-site',{body:{modulos:['lotacao','frota']},cookie:cookieEx});
+    check('cliente em teste não muda os módulos do site',r.status===401||r.status===403,'veio '+r.status);
+    r=await call('PUT','/api/demo/modulos-site',{body:{modulos:['lotacao','frota']},cookie:cookieAdm});
+    check('MOVIT Central guarda os módulos de quem pede pelo site',r.status===200&&JSON.stringify(r.json?.modulos)==='["lotacao","frota"]',r.status+' '+r.text.slice(0,160));
+    r=await call('POST','/api/demo/convites',{body:{nome:'Carla',empresa:'Outro Pedido do Site',whatsapp:'5511977776666'},ip:IPL,auth:'Bearer '+TOKEN_API});
+    check('...e o pedido pelo site já sai com esses módulos',r.status===201&&JSON.stringify(r.json?.modulos)==='["lotacao","frota"]'&&/\/demo\/convite\//.test(r.json?.link||''),r.status+' '+r.text.slice(0,200));
   }
 
   await db.end();
