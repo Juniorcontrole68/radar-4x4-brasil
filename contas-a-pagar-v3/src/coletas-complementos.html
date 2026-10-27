@@ -601,7 +601,12 @@
     const v = String(valor ?? '').trim();
     return '<div class="f' + (cls ? ' ' + cls : '') + '"><span>' + esc(rotulo) + '</span><b>' + (v ? esc(v) : '<i>—</i>') + '</b></div>';
   }
-  function ordemHtml(c) {
+  // Vias da ordem: a do motorista não mostra o valor cobrado do cliente nem o lucro; a do cliente
+  // não mostra o frete do motorista, os dados bancários dele nem o lucro.
+  const VIAS = { motorista: 'Via do motorista', cliente: 'Via do cliente', interna: 'Uso interno (completa)' };
+  function ordemHtml(c, via) {
+    via = VIAS[via] ? via : 'motorista';
+    const verMot = via !== 'cliente', verCli = via !== 'motorista';
     const os = c.os_numero || c.id || '';
     const banco = obj(c.motorista_banco);
     const ep = obj(c.entrega_principal);
@@ -648,7 +653,7 @@
       'html.imp .g{gap:4px 12px;padding:6px 10px}html.imp .ent{padding:5px 10px}html.imp .tot{padding:6px 10px}html.imp .two{gap:8px}' +
       'html.imp .ass{padding:22px 16px 6px}html.imp .ft{padding:4px 16px 0}' +
       '</style></head><bo' + 'dy><div class="pg">' +
-      '<div class="hd"><div><div class="t">ORDEM DE COLETA</div><div class="s">CONSTRULOG • Lotação</div></div><div class="os"><span>Nº da coleta</span><b>' + esc(os) + '</b><span>Emitida em ' + esc(emitido) + '</span></div></div>' +
+      '<div class="hd"><div><div class="t">ORDEM DE COLETA</div><div class="s">CONSTRULOG • Lotação' + (via === 'interna' ? '' : ' • ' + esc(VIAS[via])) + '</div></div><div class="os"><span>Nº da coleta</span><b>' + esc(os) + '</b><span>Emitida em ' + esc(emitido) + '</span></div></div>' +
       '<div class="chips"><span class="chip">Status: <b>' + esc(c.status || 'Programada') + '</b></span><span class="chip">Coleta: <b>' + esc(dt(c.data_carregamento) || '—') + (hr(c.hora_carregamento) ? ' às ' + esc(hr(c.hora_carregamento)) : '') + '</b></span><span class="chip">Previsão de entrega: <b>' + esc(dt(c.previsao_entrega) || '—') + '</b></span>' + (coletasLista.length > 1 ? '<span class="chip">Coletas: <b>' + coletasLista.length + '</b></span>' : '') + '<span class="chip">Entregas: <b>' + entregas.length + '</b></span></div>' +
       '<div class="bd">' +
       (coletasLista.length > 1
@@ -661,19 +666,20 @@
       '<div class="sec"><h2>Entrega' + (entregas.length > 1 ? 's (' + entregas.length + ' destinatários)' : '') + '</h2>' +
       (entregas.length ? entregas.map((e, i) => '<div class="ent"><span class="nn">' + (i + 1) + '</span><div><b>' + esc(e.destinatario || '—') + '</b><div>' + esc(e.endereco_entrega || '—') + (e.cidade ? ' • ' + esc(e.cidade) + (e.uf ? '/' + esc(e.uf) : '') : '') + '</div>' + (e.observacao ? '<small>' + esc(e.observacao) + '</small>' : '') + '</div></div>').join('') : '<div class="obs">—</div>') +
       '</div>' +
-      '<div class="two">' +
+      (verMot ? '<div class="two">' : '<div>') +
       '<div class="sec"><h2>Motorista</h2><div class="g" style="grid-template-columns:1fr 1fr">' + campo('Nome', c.motorista, 'w3') + campo('Telefone / WhatsApp', c.telefone_motorista) + campo('Transportadora / Agregado', c.transportadora_agregado) + campo('CPF', c.motorista_cpf) + campo('RG', c.motorista_rg) + campo('CNH (nº / categoria)', [c.cnh_numero, c.cnh_categoria].filter(x => String(x || '').trim()).join(' • ')) + campo('Validade da CNH', dt(c.cnh_validade)) + '</div></div>' +
-      '<div class="sec"><h2>Dados bancários / Pix</h2><div class="g" style="grid-template-columns:1fr 1fr">' +
+      (verMot ? '<div class="sec"><h2>Dados bancários / Pix</h2><div class="g" style="grid-template-columns:1fr 1fr">' +
       (temBanco || banco.titular ? campo('Banco', banco.banco) + campo('Tipo de conta', banco.tipo_conta) + campo('Agência', banco.agencia) + campo('Conta', banco.conta) + campo('Titular', banco.titular) + campo('CPF / CNPJ do titular', banco.documento_titular) : (pix ? '' : campo('Dados bancários', '', 'w3'))) +
-      '</div>' + pix + '</div>' +
+      '</div>' + pix + '</div>' : '') +
       '</div>' +
       '<div class="sec"><h2>Veículo</h2><div class="g">' + campo('Placa do cavalo / caminhão', String(c.placa || '').toUpperCase()) + campo('Tipo de caminhão', c.tipo_caminhao) + campo('Implemento', c.implemento) +
       campo('Capacidade do caminhão / cavalo', c.capacidade_carga_cavalo) + campo('Eixos do caminhão / cavalo', c.eixos_cavalo) + campo('Total de eixos', c.eixos) +
       (temCarreta ? campo('Placa da carreta', String(c.placa_carreta || '').toUpperCase()) + campo('Capacidade da carreta', c.capacidade_carga_carreta) + campo('Eixos da carreta', c.eixos_carreta) : '') + '</div></div>' +
       '<div class="sec"><h2>Carga</h2><div class="g">' + campo('Quantidade de paletes', c.quantidade_paletes) + campo('Peso total', n(c.peso_total) ? new Intl.NumberFormat('pt-BR').format(n(c.peso_total)) + ' kg' : '') + campo('Data da descarga', dt(c.data_descarga)) + '</div>' +
       (String(c.observacoes || '').trim() ? '<div class="obs"><b>Observações:</b> ' + esc(c.observacoes) + '</div>' : '') + '</div>' +
-      '<div class="sec"><h2>Frete do motorista</h2><div class="tot"><div><span>Valor do frete</span><b>' + brl(frete) + '</b></div><div><span>Adiantamento (' + esc(new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(pct)) + '%)</span><b>' + brl(adiant) + '</b></div><div class="hl"><span>Saldo na entrega</span><b>' + brl(frete - adiant) + '</b></div></div></div>' +
-      '<div class="sec"><h2>Valores da coleta</h2><div class="tot"><div><span>Valor cobrado</span><b>' + brl(cobrado) + '</b></div><div><span>Pedágio</span><b>' + brl(pedagio) + '</b></div><div class="' + (lucro < 0 ? 'ln' : 'lp') + '"><span>Lucro</span><b>' + brl(lucro) + '</b></div></div></div>' +
+      (verMot ? '<div class="sec"><h2>Frete do motorista</h2><div class="tot"><div><span>Valor do frete</span><b>' + brl(frete) + '</b></div><div><span>Adiantamento (' + esc(new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(pct)) + '%)</span><b>' + brl(adiant) + '</b></div><div class="hl"><span>Saldo na entrega</span><b>' + brl(frete - adiant) + '</b></div></div></div>' : '') +
+      (via === 'interna' ? '<div class="sec"><h2>Valores da coleta</h2><div class="tot"><div><span>Valor cobrado</span><b>' + brl(cobrado) + '</b></div><div><span>Pedágio</span><b>' + brl(pedagio) + '</b></div><div class="' + (lucro < 0 ? 'ln' : 'lp') + '"><span>Lucro</span><b>' + brl(lucro) + '</b></div></div></div>' : '') +
+      (via === 'cliente' ? '<div class="sec"><h2>Valor do frete</h2><div class="tot"><div class="hl"><span>Valor do frete</span><b>' + brl(cobrado) + '</b></div></div></div>' : '') +
       '</div>' +
       '<div class="ass"><div>Motorista<br>' + esc(c.motorista || '') + '</div><div>Responsável pela expedição</div></div>' +
       '<div class="ft">Documento gerado pela Torre de Controle MOVIT • Confira os dados antes do carregamento.</div>' +
@@ -682,19 +688,22 @@
       'function voltar(){document.documentElement.classList.remove("imp");document.querySelector(".pg").style.zoom=""}' +
       'addEventListener("beforeprint",caber);addEventListener("afterprint",voltar)})()</scr' + 'ipt></bo' + 'dy></html>';
   }
-  function nomeArquivo(c) { return 'ordem-coleta-' + String(c.os_numero || c.id || 'nova').replace(/[^a-zA-Z0-9_-]/g, '-') + '.html' }
-  function abrirOrdem(c) {
+  function nomeArquivo(c, via) { return 'ordem-coleta-' + String(c.os_numero || c.id || 'nova').replace(/[^a-zA-Z0-9_-]/g, '-') + (via === 'interna' ? '' : '-' + via) + '.html' }
+  function abrirOrdem(c, via) {
     if (!c) return;
-    const html = ordemHtml(c);
     let dlg = byId('lcOrdemDlg');
+    via = VIAS[via] ? via : (dlg && dlg._via) || 'motorista';
+    const html = ordemHtml(c, via);
     if (!dlg) {
       dlg = document.createElement('dialog'); dlg.id = 'lcOrdemDlg';
       dlg.innerHTML = '<div class="lc-bar"><strong id="lcOrdemTit"></strong><div>' +
+        '<label style="display:inline-flex;gap:6px;align-items:center;font-weight:600">Para<select id="lcOrdemVia">' + Object.keys(VIAS).map(k => '<option value="' + k + '">' + VIAS[k] + '</option>').join('') + '</select></label>' +
         '<button type="button" class="pri" data-a="print">🖨️ Imprimir / Salvar PDF</button>' +
         '<button type="button" data-a="down">⬇️ Baixar arquivo</button>' +
         '<button type="button" data-a="share" hidden>📤 Compartilhar</button>' +
         '<button type="button" data-a="close">Fechar</button></div></div><iframe title="Ordem de coleta"></iframe>';
       document.body.appendChild(dlg);
+      byId('lcOrdemVia').onchange = ev => { if (dlg._row) abrirOrdem(dlg._row, ev.target.value) };
       dlg.addEventListener('click', ev => {
         const a = ev.target?.closest?.('button')?.dataset?.a; if (!a) return;
         const cur = dlg._ordem; if (!cur) return;
@@ -704,7 +713,7 @@
         else if (a === 'share') { const f = new File([cur.html], cur.nome, { type: 'text/html' }); navigator.share({ title: 'Ordem de coleta', files: [f] }).catch(() => { }) }
       });
     }
-    dlg._ordem = { html, nome: nomeArquivo(c) };
+    dlg._ordem = { html, nome: nomeArquivo(c, via) }; dlg._row = c; dlg._via = via; byId('lcOrdemVia').value = via;
     byId('lcOrdemTit').textContent = 'Ordem de coleta ' + (c.os_numero || c.id || '(nova)');
     try { const f = new File([html], 'x.html', { type: 'text/html' }); dlg.querySelector('[data-a="share"]').hidden = !(navigator.canShare && navigator.canShare({ files: [f] })) } catch { }
     dlg.querySelector('iframe').srcdoc = html;
