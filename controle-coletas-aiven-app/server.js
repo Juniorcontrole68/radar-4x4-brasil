@@ -1198,11 +1198,11 @@ async function demoRotas(req,res,u){
       const ph=dashboardHashPassword(crypto.randomBytes(18).toString('hex'));
       await pool.query("INSERT INTO dashboard_users(username,password_salt,password_hash,is_admin,active,permissions,client_id,is_platform_admin) VALUES($1,$2,$3,TRUE,TRUE,'[]'::jsonb,$4,FALSE)",[username,ph.salt,ph.hash,clientId]);
       const token=movitDemo.tokenConvite();
-      const cv=await pool.query("INSERT INTO movit_demo_convites(token_hash,client_id,nome,whatsapp,email,origem,expira_em) VALUES($1,$2,$3,$4,$5,$6,NOW()+($7 * INTERVAL '1 day')) RETURNING expira_em",
-        [movitDemo.hashConvite(token),clientId,d.nome,d.whatsapp||null,d.email||null,origem,movitDemo.CONVITE_DIAS]);
+      const cv=await pool.query("INSERT INTO movit_demo_convites(token_hash,client_id,nome,whatsapp,email,origem,expira_em,dias) VALUES($1,$2,$3,$4,$5,$6,NOW()+($7 * INTERVAL '1 day'),$8) RETURNING expira_em",
+        [movitDemo.hashConvite(token),clientId,d.nome,d.whatsapp||null,d.email||null,origem,movitDemo.CONVITE_DIAS,d.dias]);
       const baseUrl=String(process.env.PUBLIC_BASE_URL||('https://'+(req.headers.host||'movit-demo.onrender.com'))).replace(/\/+$/,'');
       const link=baseUrl+'/demo/convite/'+token,mensagem=movitDemo.mensagemConvite(d.nome,link);
-      sendJson(res,201,{ok:true,link,mensagem,whatsapp_url:movitDemo.linkWhatsapp(d.whatsapp,mensagem),cliente_id:clientId,modulos:mods,expira_em:cv.rows[0].expira_em});
+      sendJson(res,201,{ok:true,link,mensagem,whatsapp_url:movitDemo.linkWhatsapp(d.whatsapp,mensagem),cliente_id:clientId,modulos:mods,expira_em:cv.rows[0].expira_em,dias:d.dias});
     }catch(e){sendJson(res,e.status||500,{ok:false,error:e.status?e.message:'Não foi possível criar o teste agora.'})}
     return true;
   }
@@ -1254,9 +1254,10 @@ async function demoRotas(req,res,u){
         await esquemasDemo.rodar(clientId,()=>exemploDados.preencher(pool,clientId));
       }
       await pool.query("UPDATE movit_demo_convites SET modo=$2,primeiro_acesso=COALESCE(primeiro_acesso,NOW()),ultimo_acesso=NOW(),entradas=entradas+1 WHERE client_id=$1",[clientId,modo]);
-      // O prazo do teste grátis começa no primeiro acesso.
+      // O prazo do teste grátis começa no primeiro acesso: os dias escolhidos no envio ou o padrão dos preços.
       const precos=(await pool.query("SELECT valor FROM movit_config WHERE chave='precos'")).rows[0]?.valor||{};
-      await pool.query("UPDATE movit_clients SET trial_ends_at=COALESCE(trial_ends_at,NOW()+($2 * INTERVAL '1 day')),updated_at=NOW() WHERE id=$1",[clientId,Math.min(60,Math.max(1,Number(precos.teste_dias)||7))]);
+      const diasConvite=(await pool.query('SELECT dias FROM movit_demo_convites WHERE client_id=$1',[clientId])).rows[0]?.dias;
+      await pool.query("UPDATE movit_clients SET trial_ends_at=COALESCE(trial_ends_at,NOW()+($2 * INTERVAL '1 day')),updated_at=NOW() WHERE id=$1",[clientId,Math.min(60,Math.max(1,Number(diasConvite||precos.teste_dias)||7))]);
       await pool.query('UPDATE movit_client_ssw SET entradas=entradas+1,ultimo_acesso=NOW() WHERE client_id=$1',[clientId]);
       const ur=await pool.query('SELECT id::text AS id,username,is_admin,active,permissions,client_id,is_platform_admin FROM dashboard_users WHERE client_id=$1 AND is_admin=TRUE AND active=TRUE ORDER BY id LIMIT 1',[clientId]);
       if(!ur.rowCount){sendJson(res,403,{ok:false,error:'O acesso desta empresa foi desativado. Fale com a MOVIT.'});return true}
