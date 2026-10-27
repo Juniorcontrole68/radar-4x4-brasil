@@ -38,6 +38,7 @@ td{padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}
 .pos.sel{outline:3px solid var(--txt);outline-offset:2px}.pos.achado{box-shadow:0 0 0 3px #facc15}
 .leg{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-bottom:10px}.leg span{display:flex;gap:6px;align-items:center}.leg i{width:14px;height:14px;border-radius:3px;display:inline-block;border:1px solid #94a3b8}
 dialog{border:0;border-radius:14px;padding:0;max-width:min(720px,94vw);width:100%;background:var(--card);color:var(--txt)}
+dialog:has(.nota-ed){max-width:min(1060px,96vw)}.nota-ed table input{width:100%;min-width:56px;padding:5px 6px}.nota-ed td{padding:4px}
 dialog::backdrop{background:rgba(15,23,42,.55)}dialog form,dialog .in{padding:18px;display:grid;gap:12px}
 .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.cols>label{min-width:0}.cols input,.cols select{width:100%;min-width:0;box-sizing:border-box}
 .lado{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}.lado>.card{flex:1 1 320px}
@@ -94,7 +95,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}dialog form,dialog .in{padding:18
     <div class="card">
       <div class="bar" style="justify-content:space-between">
         <label>Situação<select id="expFiltro"><option value="abertas">Em aberto</option><option value="expedida">Expedidas</option><option value="cancelada">Canceladas</option></select></label>
-        <div class="bar"><button class="btn p" id="btnExpChave">▦ Ler código de barras da NF de saída</button><label class="btn" style="display:flex;align-items:center;cursor:pointer">⬆ Importar XML da NF de saída<input type="file" id="expXml" accept=".xml,text/xml" multiple hidden></label></div>
+        <div class="bar"><button class="btn p" id="btnExpChave">▦ Ler código de barras da NF de saída</button><label class="btn" style="display:flex;align-items:center;cursor:pointer">⬆ Importar XML da NF de saída<input type="file" id="expXml" accept=".xml,text/xml" multiple hidden></label><label class="btn" style="display:flex;align-items:center;cursor:pointer" title="Quando a SEFAZ não libera o XML">📄 Importar DANFE (PDF)<input type="file" id="expPdf" accept=".pdf,application/pdf" hidden></label></div>
       </div>
       <p class="muted">Fluxo: lançar a nota → reservar (o sistema escolhe os endereços pelo vencimento: o que vence primeiro sai primeiro) → o operador separa no aplicativo (menu Separação) → expedir dá a baixa no estoque.</p>
       <div class="tw" id="expLista"></div>
@@ -116,7 +117,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}dialog form,dialog .in{padding:18
     <div class="card">
       <div class="bar" style="justify-content:space-between">
         <label>Situação<select id="recFiltro"><option value="abertos">Em aberto</option><option value="finalizado">Finalizados</option><option value="cancelado">Cancelados</option></select></label>
-        <div class="bar"><button class="btn p" id="btnRecChave">▦ Ler código de barras da NF</button><button class="btn" id="btnRecManual">+ Recebimento manual</button><label class="btn p" style="display:flex;align-items:center;cursor:pointer">⬆ Importar XML da NF-e<input type="file" id="xmlArq" accept=".xml,text/xml" multiple hidden></label></div>
+        <div class="bar"><button class="btn p" id="btnRecChave">▦ Ler código de barras da NF</button><button class="btn" id="btnRecManual">+ Recebimento manual</button><label class="btn p" style="display:flex;align-items:center;cursor:pointer">⬆ Importar XML da NF-e<input type="file" id="xmlArq" accept=".xml,text/xml" multiple hidden></label><label class="btn" style="display:flex;align-items:center;cursor:pointer" title="Quando a SEFAZ não libera o XML">📄 Importar DANFE (PDF)<input type="file" id="recPdf" accept=".pdf,application/pdf" hidden></label></div>
       </div>
       <div class="tw" id="recLista"></div>
     </div>
@@ -377,15 +378,23 @@ function lerChaveNf(url,titulo,depois){return tenta(async()=>{
   if(!ST.arm){aviso('Escolha o armazém.');return}
   const ligado=!!ST.status.nfe_chave;
   abrir('<h2>'+titulo+'</h2>'+(ligado?'<p class="muted">Aponte o leitor para o código de barras do DANFE (ou digite a chave de 44 dígitos). O sistema busca o XML na SEFAZ e já lança a nota com os itens.</p>':'<p class="kmsg err">A busca na SEFAZ ainda não está ligada: falta cadastrar o certificado A1 no servidor. Enquanto isso, use “Importar XML da NF-e”.</p>')+
-    '<label>Chave de acesso<input id="kCh" inputmode="numeric" autocomplete="off" placeholder="0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000"'+(ligado?'':' disabled')+'></label><div id="kCam"></div><p id="kMsg" class="muted"></p>'+
-    '<div class="bar"><button class="btn p" id="kOk"'+(ligado?'':' disabled')+'>Buscar na SEFAZ</button>'+(ligado&&'BarcodeDetector' in window?'<button class="btn" id="kCamBtn" type="button">📷 Câmera</button>':'')+'<button class="btn" data-fechar>Fechar</button></div>');
-  if(!ligado)return;
+    '<label>Chave de acesso<input id="kCh" inputmode="numeric" autocomplete="off" placeholder="0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000"></label><div id="kCam"></div><p id="kMsg" class="muted"></p>'+
+    '<div class="bar"><button class="btn p" id="kOk"'+(ligado?'':' disabled')+'>Buscar na SEFAZ</button>'+('BarcodeDetector' in window?'<button class="btn" id="kCamBtn" type="button">📷 Câmera</button>':'')+'<button class="btn" data-fechar>Fechar</button></div>'+
+    '<div class="card" style="margin:0;padding:12px"><b>A SEFAZ não libera o XML desta nota?</b><p class="muted" style="margin:4px 0 8px">Acontece quando a casa não é emitente, destinatária, transportadora nem autorizada no XML. Lance pelo DANFE em PDF ou só com a chave (número, série e emitente saem dela) e digite os itens.</p>'+
+    '<div class="bar"><label class="btn" style="display:flex;align-items:center;cursor:pointer">📄 Usar o DANFE (PDF)<input type="file" id="kPdf" accept=".pdf,application/pdf" hidden></label><button class="btn" id="kMao" type="button">✍️ Lançar só com a chave</button></div></div>');
+  const tipo=/expedicoes/.test(url)?'saida':'entrada';
   const inp=$('#kCh'),msg=$('#kMsg');let stream=null;
   const parar=()=>{if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;$('#kCam').innerHTML=''}};
   $('#dlg').addEventListener('close',parar,{once:true});
   setTimeout(()=>inp.focus(),50);
   let ocupado=false;
+  const chaveLida=()=>{const ch=inp.value.replace(/\D/g,'');return ch.length===44&&chaveDv(ch)?ch:''};
+  $('#kPdf').onchange=tenta(async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;parar();msg.className='muted';msg.textContent='Lendo o DANFE…';
+    try{await importarDanfe(tipo,f,chaveLida())}catch(err){msg.textContent=err.message;msg.className='kmsg err'}});
+  $('#kMao').onclick=tenta(async()=>{const ch=chaveLida();if(!ch){msg.textContent='Leia ou digite a chave de 44 dígitos primeiro.';msg.className='kmsg err';inp.focus();return}
+    parar();try{editarNota(tipo,await api('POST','/api/wms/nfe/previa',{tipo,chave:ch}))}catch(err){msg.textContent=err.message;msg.className='kmsg err'}});
   const buscar=async(cliente_id)=>{
+    if(!ligado){msg.textContent='A busca na SEFAZ não está ligada. Use o DANFE (PDF) ou lance só com a chave.';msg.className='kmsg err';return}
     const ch=inp.value.replace(/\D/g,'');
     if(ch.length!==44||!chaveDv(ch)){msg.textContent='Chave inválida: são 44 dígitos (confira a leitura).';msg.className='kmsg err';inp.select();return}
     if(ocupado)return;ocupado=true;$('#kOk').disabled=true;msg.className='muted';msg.textContent='Consultando a SEFAZ…';
@@ -399,7 +408,7 @@ function lerChaveNf(url,titulo,depois){return tenta(async()=>{
           msg.innerHTML=esc(j.error)+'<label>Cliente<select id="kCli">'+ST.clientes.map(c=>'<option value="'+c.id+'">'+esc(c.nome)+'</option>').join('')+'</select></label><button class="btn p" id="kCliOk" type="button">Importar para este cliente</button>';
           msg.className='kmsg err';$('#kCliOk').onclick=()=>{ocupado=false;buscar($('#kCli').value)};return;
         }
-        throw new Error(j.error||('Falha '+r.status));
+        throw new Error((j.error||('Falha '+r.status))+(j.code==='NFE_DUPLICADA'?'':' Sem o XML, use o DANFE (PDF) ou lance só com a chave, logo abaixo.'));
       }
       fechar();depois(j);
     }catch(e){msg.textContent=e.message;msg.className='kmsg err';inp.select()}
@@ -407,7 +416,7 @@ function lerChaveNf(url,titulo,depois){return tenta(async()=>{
   };
   $('#kOk').onclick=()=>buscar();
   inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();buscar()}});
-  inp.addEventListener('input',()=>{if(inp.value.replace(/\D/g,'').length===44)buscar()});
+  inp.addEventListener('input',()=>{if(ligado&&inp.value.replace(/\D/g,'').length===44)buscar()});
   const cam=$('#kCamBtn');
   if(cam)cam.onclick=tenta(async()=>{
     if(stream){parar();return}
@@ -417,12 +426,54 @@ function lerChaveNf(url,titulo,depois){return tenta(async()=>{
     const v=$('#kCam video');v.srcObject=stream;await v.play();
     const ler=async()=>{
       if(!stream)return;
-      try{const cods=await det.detect(v);const c=cods.map(x=>x.rawValue.replace(/\D/g,'')).find(x=>x.length===44&&chaveDv(x));if(c){inp.value=c;parar();buscar();return}}catch{}
+      try{const cods=await det.detect(v);const c=cods.map(x=>x.rawValue.replace(/\D/g,'')).find(x=>x.length===44&&chaveDv(x));if(c){inp.value=c;parar();if(ligado)buscar();return}}catch{}
       requestAnimationFrame(ler);
     };
     ler();
   });
 })}
+// ---------------- DANFE em PDF / nota só pela chave: confere e corrige os itens antes de lançar
+const NOTA={entrada:{url:'/api/wms/recebimentos/danfe',nome:'recebimento',depois:j=>{aviso('Recebimento '+j.id+' lançado com '+j.itens+' item(ns)'+(j.sem_produto?', '+j.sem_produto+' sem produto vinculado':'')+'.',!j.sem_produto);carregarRecebimentos();tenta(abrirRec)(j.id)}},
+  saida:{url:'/api/wms/expedicoes/danfe',nome:'expedição',depois:j=>{aviso('Expedição '+j.id+' lançada com '+j.itens+' item(ns)'+(j.sem_produto?', '+j.sem_produto+' sem produto vinculado':'')+'.',!j.sem_produto);carregarExpedicoes();tenta(abrirExp)(j.id)}}};
+const fmtDoc=d=>(d=String(d||'')).length===14?d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/,'$1.$2.$3/$4-$5'):d.length===11?d.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/,'$1.$2.$3-$4'):d;
+function arquivoBase64(f){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]||'');r.onerror=()=>rej(new Error('Não foi possível ler o arquivo.'));r.readAsDataURL(f)})}
+async function importarDanfe(tipo,f,esperada){
+  if(!ST.arm)throw new Error('Escolha o armazém.');
+  if(f.size>6*1024*1024)throw new Error('PDF grande demais (máximo 6 MB).');
+  editarNota(tipo,await api('POST','/api/wms/nfe/previa',{tipo,pdf:await arquivoBase64(f)}),esperada);
+}
+function editarNota(tipo,pv,esperada){
+  const cfg=NOTA[tipo],x=pv.nfe,ent=tipo==='entrada';
+  const linha=i=>'<tr class="ni"><td><input class="niC" value="'+esc(i.codigo||'')+'"></td><td><input class="niD" value="'+esc(i.descricao||'')+'" style="min-width:220px"></td><td><input class="niU" value="'+esc(i.unidade||'UN')+'" style="width:56px"></td>'+
+    '<td><input class="niQ" inputmode="decimal" value="'+(i.qtd==null?'':String(i.qtd).replace('.',','))+'" style="width:90px"></td><td><input class="niL" value="'+esc(i.lote||'')+'"></td>'+(ent?'<td><input class="niV" type="date" value="'+esc(i.validade||'')+'"></td>':'')+
+    '<td><button class="btn" type="button" data-tira title="Tirar o item">✕</button></td></tr>';
+  abrir('<div class="nota-ed" style="display:grid;gap:10px"><h2>'+(ent?'Entrada':'Saída')+' · NF '+esc(x.numero)+' série '+esc(x.serie)+'</h2>'+
+    '<p class="muted" style="margin:0">'+(x.origem==='danfe'?'Lida do DANFE em PDF. Confira os itens com a nota antes de lançar.':'Lançada só com a chave: digite os itens da nota.')+'<br>Chave '+esc(x.chave)+'<br>Emitente: '+esc((x.emitente.nome?x.emitente.nome+' · ':'')+fmtDoc(x.emitente.cnpj))+(x.destinatario.cnpj?'<br>Destinatário: '+esc((x.destinatario.nome?x.destinatario.nome+' · ':'')+fmtDoc(x.destinatario.cnpj)):'')+'</p>'+
+    (esperada&&esperada!==x.chave?'<p class="chip err">Atenção: este PDF é de outra nota (a chave lida foi '+esc(esperada)+').</p>':'')+
+    (pv.ja?'<p class="chip warn">Esta NF já está '+(ent?'no recebimento':'na expedição')+' nº '+esc(pv.ja)+'.</p>':'')+
+    '<div class="cols"><label>Cliente do armazém<select id="nCli">'+(pv.cliente_id?'':'<option value="">— escolha o cliente —</option>')+ST.clientes.map(c=>'<option value="'+c.id+'"'+(c.id===pv.cliente_id?' selected':'')+'>'+esc(c.nome)+'</option>').join('')+'</select></label>'+
+    (ent?'<label>Previsão de chegada<input id="nPrev" type="date"></label>':'')+'</div>'+
+    (pv.cliente_id?'':'<p class="chip warn" style="margin:0">Nenhum cliente cadastrado com o CNPJ '+(ent?'do destinatário ou do emitente':'do emitente')+'. Escolha o cliente.</p>')+
+    '<div class="tw"><table><thead><tr><th>Código</th><th>Descrição</th><th>Un.</th><th>Qtd</th><th>Lote</th>'+(ent?'<th>Validade</th>':'')+'<th></th></tr></thead><tbody id="nItens">'+(x.itens.length?x.itens:[{}]).map(linha).join('')+'</tbody></table></div>'+
+    '<div class="bar"><button class="btn" id="nMais" type="button">+ Item</button></div><p id="nMsg" class="muted" style="margin:0"></p>'+
+    '<div class="bar"><button class="btn p" id="nOk" type="button">Lançar '+cfg.nome+'</button><button class="btn" data-fechar type="button">Cancelar</button></div></div>');
+  $('#nMais').onclick=()=>{$('#nItens').insertAdjacentHTML('beforeend',linha({}));const l=$$('#nItens .niC');l[l.length-1].focus()};
+  $('#nItens').addEventListener('click',e=>{const b=e.target.closest('[data-tira]');if(b&&$$('#nItens .ni').length>1)b.closest('tr').remove()});
+  const v=(tr,c)=>tr.querySelector(c)?.value.trim()||'';
+  $('#nOk').onclick=async()=>{
+    const msg=$('#nMsg');
+    const itens=$$('#nItens .ni').map(tr=>({codigo:v(tr,'.niC'),descricao:v(tr,'.niD'),unidade:v(tr,'.niU'),qtd:v(tr,'.niQ'),lote:v(tr,'.niL'),validade:v(tr,'.niV')})).filter(i=>i.codigo||i.descricao||i.qtd);
+    if(!$('#nCli').value){msg.textContent='Escolha o cliente.';msg.className='kmsg err';return}
+    if(!itens.length){msg.textContent='Informe pelo menos um item.';msg.className='kmsg err';return}
+    $('#nOk').disabled=true;
+    try{
+      const j=await api('POST',cfg.url,{armazem_id:ST.arm,cliente_id:$('#nCli').value,previsto_para:$('#nPrev')?.value||undefined,nfe:{chave:x.chave,emitente:x.emitente,destinatario:x.destinatario,itens}});
+      fechar();cfg.depois(j);
+    }catch(e){msg.textContent=e.message;msg.className='kmsg err';$('#nOk').disabled=false}
+  };
+}
+$('#recPdf').onchange=tenta(async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;aviso('Lendo o DANFE…',true);await importarDanfe('entrada',f)});
+$('#expPdf').onchange=tenta(async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;aviso('Lendo o DANFE…',true);await importarDanfe('saida',f)});
 $('#btnRecChave').onclick=lerChaveNf('/api/wms/recebimentos/chave','Ler código de barras da NF de entrada',j=>{aviso('NF '+(j.chave||'').slice(25,34).replace(/^0+/,'')+' importada da SEFAZ: recebimento '+j.id+' com '+j.itens+' item(ns)'+(j.sem_produto?', '+j.sem_produto+' sem produto vinculado':'')+'.',!j.sem_produto);carregarRecebimentos()});
 // ---------------------------------------------------------------- cobrança da armazenagem
 const brl=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
