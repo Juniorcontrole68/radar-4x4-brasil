@@ -18,6 +18,7 @@
 const fs=require('fs');
 const path=require('path');
 const crypto=require('crypto');
+const sefaz=require('./sefaz-nfe');
 
 let ativo=/^(1|true|sim|yes)$/i.test(String(process.env.WMS_ATIVO||'').trim());
 const PAGINA_GESTAO=path.join(__dirname,'wms.html');
@@ -442,6 +443,21 @@ async function lerRecebimento(c,ctx,id,{cega=false}={}){
     }
   }
   return out;
+}
+// NF-e (XML) vira recebimento; o cliente vem do CNPJ do destinatário ou do emitente quando não é informado
+async function importarXml(pool,ctx,b,xml){
+  const nfe=lerNfe(xml);
+  let clienteId=b.cliente_id||null;
+  if(!clienteId){
+    const r=await pool.query('SELECT id::text,cnpj FROM wms_clientes WHERE empresa=$1 AND ativo AND cnpj=ANY($2::text[])',[ctx.emp,[nfe.destinatario.cnpj,nfe.emitente.cnpj].filter(Boolean)]);
+    const d=r.rows.find(x=>x.cnpj===nfe.destinatario.cnpj)||r.rows.find(x=>x.cnpj===nfe.emitente.cnpj);
+    if(!d)throw erro(409,'Nenhum cliente cadastrado com o CNPJ do destinatário ('+nfe.destinatario.cnpj+') ou do emitente ('+nfe.emitente.cnpj+'). Escolha o cliente.','CLIENTE_NAO_IDENTIFICADO');
+    clienteId=d.id;
+  }
+  const r=await tx(pool,c=>criarRecebimento(c,ctx,{armazem_id:b.armazem_id,cliente_id:clienteId,nf_numero:nfe.numero,nf_serie:nfe.serie,nf_chave:nfe.chave,
+    emitente_cnpj:nfe.emitente.cnpj,emitente_nome:nfe.emitente.nome,previsto_para:b.previsto_para,xml:String(xml),
+    itens:nfe.itens.map(i=>({n_item:i.n_item,codigo:i.codigo,ean:i.ean,descricao:i.descricao,unidade:i.unidade,qtd:i.qtd,lote:i.lote,validade:i.validade,fabricacao:i.fabricacao}))}));
+  return{ok:true,...r,chave:nfe.chave,itens:nfe.itens.length};
 }
 async function criarRecebimento(c,ctx,b){
   const arm=await doEmpresa(c,ctx,'wms_armazens',b.armazem_id,'Armazém não encontrado.');
@@ -869,7 +885,8 @@ async function handle(req,res,u,deps){
     // ---------- API
     if(M==='GET'&&p==='/api/wms/status'){
       const ctx=await contexto(deps,req);
-      return json(200,{ok:true,ativo:true,usuario:ctx.usuario,gestao:ctx.gestao,operador:ctx.operador,supervisor:ctx.supervisor||ctx.admin,ajuste:ctx.ajuste});
+      return json(200,{ok:true,ativo:true,usuario:ctx.usuario,gestao:ctx.gestao,operador:ctx.operador,supervisor:ctx.supervisor||ctx.admin,ajuste:ctx.ajuste,
+        nfe_chave:ctx.emp===0&&sefaz.configurado()});
     }
     // armazéns e zonas
     if(p==='/api/wms/armazens'&&M==='GET'){
@@ -1048,18 +1065,23 @@ async function handle(req,res,u,deps){
     }
     if(p==='/api/wms/recebimentos/xml'&&M==='POST'){
       const ctx=await contexto(deps,req,'gestao'),b=await corpo(3*1024*1024);
-      const nfe=lerNfe(b.xml);
-      let clienteId=b.cliente_id||null;
-      if(!clienteId){
-        const r=await pool.query('SELECT id::text,cnpj FROM wms_clientes WHERE empresa=$1 AND ativo AND cnpj=ANY($2::text[])',[ctx.emp,[nfe.destinatario.cnpj,nfe.emitente.cnpj].filter(Boolean)]);
-        const d=r.rows.find(x=>x.cnpj===nfe.destinatario.cnpj)||r.rows.find(x=>x.cnpj===nfe.emitente.cnpj);
-        if(!d)throw erro(409,'Nenhum cliente cadastrado com o CNPJ do destinatário ('+nfe.destinatario.cnpj+') ou do emitente ('+nfe.emitente.cnpj+'). Escolha o cliente.','CLIENTE_NAO_IDENTIFICADO');
-        clienteId=d.id;
+      return json(201,await importarXml(pool,ctx,b,b.xml));
+    }
+    // leitura do código de barras do DANFE: baixa o XML na SEFAZ com o A1 da casa e cria o recebimento
+    if(p==='/api/wms/recebimentos/chave'&&M==='POST'){
+      const ctx=await contexto(deps,req,'gestao'),b=await corpo();
+      const chave=so(b.chave);
+      if(!sefaz.chaveValida(chave))throw erro(400,'Chave de acesso inválida. Leia o código de barras do DANFE (44 dígitos).','CHAVE_INVALIDA');
+      const ja=(await pool.query('SELECT id::text,status FROM wms_recebimentos WHERE empresa=$1 AND nf_chave=$2 ORDER BY id DESC LIMIT 1',[ctx.emp,chave])).rows[0];
+      if(ja&&ja.status!=='cancelado')throw erro(409,'Esta NF-e já está no recebimento nº '+ja.id+'.','NFE_DUPLICADA');
+      if(ctx.emp!==0||!sefaz.configurado())throw erro(503,'A busca da nota na SEFAZ ainda não está ligada (falta o certificado A1). Importe o arquivo XML.','SEFAZ_DESLIGADA');
+      const nota=await sefaz.baixarNfe(chave);
+      if(nota.resumo){
+        const ev=await sefaz.cienciaOperacao(chave);
+        await tx(pool,c=>auditar(c,ctx,'ciencia_operacao','nfe',chave,{protocolo:ev.protocolo||null,cStat:ev.cStat}));
+        return json(202,{ok:true,pendente:true,chave,mensagem:'A SEFAZ só liberou o resumo desta nota. Registramos a Ciência da Operação; o XML completo costuma ficar disponível em alguns minutos. Leia o código de novo daqui a pouco.'});
       }
-      const r=await tx(pool,c=>criarRecebimento(c,ctx,{armazem_id:b.armazem_id,cliente_id:clienteId,nf_numero:nfe.numero,nf_serie:nfe.serie,nf_chave:nfe.chave,
-        emitente_cnpj:nfe.emitente.cnpj,emitente_nome:nfe.emitente.nome,previsto_para:b.previsto_para,xml:String(b.xml),
-        itens:nfe.itens.map(i=>({n_item:i.n_item,codigo:i.codigo,ean:i.ean,descricao:i.descricao,unidade:i.unidade,qtd:i.qtd,lote:i.lote,validade:i.validade,fabricacao:i.fabricacao}))}));
-      return json(201,{ok:true,...r,chave:nfe.chave,itens:nfe.itens.length});
+      return json(201,{...(await importarXml(pool,ctx,b,nota.xml)),origem:'sefaz'});
     }
     m=p.match(/^\/api\/wms\/recebimentos\/(\d+)$/);
     if(m&&M==='GET'){

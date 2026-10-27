@@ -30,7 +30,7 @@ td{padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}
 .chip.ok{background:#dcfce7;color:#166534}.chip.err{background:#fee2e2;color:#991b1b}.chip.warn{background:#fef3c7;color:#92400e}.chip.info{background:#ccfbf1;color:#115e59}
 .barra{height:9px;background:#e2e8f0;border-radius:5px;overflow:hidden}.barra i{display:block;height:9px;background:var(--teal)}.barra i.alto{background:#c2410c}
 .msg{position:fixed;right:16px;bottom:16px;max-width:420px;padding:12px 14px;border-radius:10px;font-size:13px;font-weight:700;display:none;z-index:60;box-shadow:0 8px 24px rgba(0,0,0,.18)}
-.msg.ok{display:block;background:#dcfce7;color:#166534}.msg.err{display:block;background:#fee2e2;color:#991b1b}
+.kmsg{padding:10px 12px;border-radius:8px;font-weight:600}.kmsg.ok{background:#dcfce7;color:#166534}.kmsg.err{background:#fee2e2;color:#991b1b}.msg.ok{display:block;background:#dcfce7;color:#166534}.msg.err{display:block;background:#fee2e2;color:#991b1b}
 .mapa{display:flex;flex-direction:column;gap:6px;overflow-x:auto;padding-bottom:6px}
 .rua{display:flex;gap:4px;align-items:center}.rua>span{width:62px;font-weight:700;font-size:12px;flex:none}
 .pos{width:40px;height:40px;border-radius:6px;font:700 11px Segoe UI,Arial;cursor:pointer;flex:none;border:1px solid #94a3b8;background:#fff;color:#334155}
@@ -92,7 +92,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}dialog form,dialog .in{padding:18
     <div class="card">
       <div class="bar" style="justify-content:space-between">
         <label>Situação<select id="recFiltro"><option value="abertos">Em aberto</option><option value="finalizado">Finalizados</option><option value="cancelado">Cancelados</option></select></label>
-        <div class="bar"><button class="btn" id="btnRecManual">+ Recebimento manual</button><label class="btn p" style="display:flex;align-items:center;cursor:pointer">⬆ Importar XML da NF-e<input type="file" id="xmlArq" accept=".xml,text/xml" multiple hidden></label></div>
+        <div class="bar"><button class="btn p" id="btnRecChave">▦ Ler código de barras da NF</button><button class="btn" id="btnRecManual">+ Recebimento manual</button><label class="btn p" style="display:flex;align-items:center;cursor:pointer">⬆ Importar XML da NF-e<input type="file" id="xmlArq" accept=".xml,text/xml" multiple hidden></label></div>
       </div>
       <div class="tw" id="recLista"></div>
     </div>
@@ -342,6 +342,59 @@ $('#xmlArq').onchange=tenta(async e=>{
     }
   }
   carregarRecebimentos();
+});
+// código de barras do DANFE (chave de 44 dígitos): o leitor USB digita e dá Enter; no celular, a câmera
+function chaveDv(ch){let s=0,p=2;for(let i=42;i>=0;i--){s+=+ch[i]*p;p=p===9?2:p+1}const r=s%11;return(r<2?0:11-r)===+ch[43]}
+$('#btnRecChave').onclick=tenta(async()=>{
+  if(!ST.arm){aviso('Escolha o armazém.');return}
+  const ligado=!!ST.status.nfe_chave;
+  abrir('<h2>Ler código de barras da NF</h2>'+(ligado?'<p class="muted">Aponte o leitor para o código de barras do DANFE (ou digite a chave de 44 dígitos). O sistema busca o XML na SEFAZ e cria o recebimento com os itens.</p>':'<p class="kmsg err">A busca na SEFAZ ainda não está ligada: falta cadastrar o certificado A1 no servidor. Enquanto isso, use “Importar XML da NF-e”.</p>')+
+    '<label>Chave de acesso<input id="kCh" inputmode="numeric" autocomplete="off" placeholder="0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000"'+(ligado?'':' disabled')+'></label><div id="kCam"></div><p id="kMsg" class="muted"></p>'+
+    '<div class="bar"><button class="btn p" id="kOk"'+(ligado?'':' disabled')+'>Buscar na SEFAZ</button>'+(ligado&&'BarcodeDetector' in window?'<button class="btn" id="kCamBtn" type="button">📷 Câmera</button>':'')+'<button class="btn" data-fechar>Fechar</button></div>');
+  if(!ligado)return;
+  const inp=$('#kCh'),msg=$('#kMsg');let stream=null;
+  const parar=()=>{if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;$('#kCam').innerHTML=''}};
+  $('#dlg').addEventListener('close',parar,{once:true});
+  setTimeout(()=>inp.focus(),50);
+  let ocupado=false;
+  const buscar=async(cliente_id)=>{
+    const ch=inp.value.replace(/\D/g,'');
+    if(ch.length!==44||!chaveDv(ch)){msg.textContent='Chave inválida: são 44 dígitos (confira a leitura).';msg.className='kmsg err';inp.select();return}
+    if(ocupado)return;ocupado=true;$('#kOk').disabled=true;msg.className='muted';msg.textContent='Consultando a SEFAZ…';
+    try{
+      const r=await fetch('/api/wms/recebimentos/chave',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({chave:ch,armazem_id:ST.arm,cliente_id:cliente_id||undefined})});
+      const j=await r.json().catch(()=>({}));
+      if(r.status===401){location.href='/?login=1';return}
+      if(j.pendente){msg.textContent=j.mensagem;msg.className='kmsg ok';return}
+      if(!r.ok||j.ok===false){
+        if(j.code==='CLIENTE_NAO_IDENTIFICADO'&&ST.clientes.length){
+          msg.innerHTML=esc(j.error)+'<label>Cliente<select id="kCli">'+ST.clientes.map(c=>'<option value="'+c.id+'">'+esc(c.nome)+'</option>').join('')+'</select></label><button class="btn p" id="kCliOk" type="button">Importar para este cliente</button>';
+          msg.className='kmsg err';$('#kCliOk').onclick=()=>{ocupado=false;buscar($('#kCli').value)};return;
+        }
+        throw new Error(j.error||('Falha '+r.status));
+      }
+      fechar();aviso('NF '+(j.chave||'').slice(25,34).replace(/^0+/,'')+' importada da SEFAZ: recebimento '+j.id+' com '+j.itens+' item(ns)'+(j.sem_produto?', '+j.sem_produto+' sem produto vinculado':'')+'.',!j.sem_produto);
+      carregarRecebimentos();
+    }catch(e){msg.textContent=e.message;msg.className='kmsg err';inp.select()}
+    finally{ocupado=false;const b=$('#kOk');if(b)b.disabled=false}
+  };
+  $('#kOk').onclick=()=>buscar();
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();buscar()}});
+  inp.addEventListener('input',()=>{if(inp.value.replace(/\D/g,'').length===44)buscar()});
+  const cam=$('#kCamBtn');
+  if(cam)cam.onclick=tenta(async()=>{
+    if(stream){parar();return}
+    const det=new BarcodeDetector({formats:['code_128']});
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    $('#kCam').innerHTML='<video playsinline muted style="width:100%;max-height:240px;border-radius:8px;background:#000"></video>';
+    const v=$('#kCam video');v.srcObject=stream;await v.play();
+    const ler=async()=>{
+      if(!stream)return;
+      try{const cods=await det.detect(v);const c=cods.map(x=>x.rawValue.replace(/\D/g,'')).find(x=>x.length===44&&chaveDv(x));if(c){inp.value=c;parar();buscar();return}}catch{}
+      requestAnimationFrame(ler);
+    };
+    ler();
+  });
 });
 $('#btnRecManual').onclick=tenta(async()=>{
   if(!ST.clientes.length){aviso('Cadastre um cliente primeiro.');return}
