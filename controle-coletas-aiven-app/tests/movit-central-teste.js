@@ -23,6 +23,7 @@ const falsa=http.createServer((req,res)=>{
     if(acordando>0){acordando--;res.writeHead(503,{'Content-Type':'text/html'});res.end('<html>acordando</html>');return}
     const j=(s,o)=>{res.writeHead(s,{'Content-Type':'application/json'});res.end(JSON.stringify(o))};
     if(req.url==='/api/demo/info')return j(200,{ok:true,demo:true,modulos:[{key:'lotacao',name:'Lotação'},{key:'frota',name:'Frota'}]});
+    if(req.method==='DELETE'&&/^\/api\/demo\/convites(\/\d+)?$/.test(req.url))return j(200,{ok:true,apagados:req.url.endsWith('/7')?1:3});
     if(req.url==='/api/demo/convites'&&req.method==='POST'){const b=JSON.parse(corpo||'{}');return j(201,{ok:true,link:'https://teste/demo/convite/abc',modulos:b.modulos,dias:b.dias})}
     if(req.url==='/api/demo/convites')return j(200,{ok:true,testes:[{empresa:'Transportes X',modulos:2}]});
     if(req.url==='/api/demo/modulos-site')return j(200,{ok:true,modulos:req.method==='PUT'?JSON.parse(corpo).modulos:['lotacao']});
@@ -46,8 +47,14 @@ const falsa=http.createServer((req,res)=>{
   check('lista os testes enviados',r.status===200&&r.json?.testes?.[0]?.empresa==='Transportes X',r.text.slice(0,160));
   r=await call('PUT','/api/movit-central/teste/modulos-site',{cookie,body:{modulos:['frota']}});
   check('salva os módulos de quem pede pelo site',r.status===200&&JSON.stringify(r.json?.modulos)==='["frota"]',r.text.slice(0,160));
+  r=await call('DELETE','/api/movit-central/teste/convites/7',{cookie});
+  check('apaga um teste na versão de teste',r.status===200&&r.json?.apagados===1&&pedidos.at(-1).metodo==='DELETE'&&pedidos.at(-1).url==='/api/demo/convites/7',r.status+' '+r.text.slice(0,160));
   r=await call('DELETE','/api/movit-central/teste/convites',{cookie});
+  check('apaga todos os testes na versão de teste',r.status===200&&r.json?.apagados===3&&pedidos.at(-1).url==='/api/demo/convites',r.status+' '+r.text.slice(0,160));
+  r=await call('DELETE','/api/movit-central/teste/info',{cookie});
   check('método não suportado -> 405',r.status===405,'veio '+r.status);
+  r=await call('POST','/api/movit-central/teste/convites/7',{cookie,body:{}});
+  check('convites/<empresa> só aceita apagar -> 405',r.status===405,'veio '+r.status);
   const antes=pedidos.length;falsa.close();
   r=await call('GET','/api/movit-central/teste/info',{cookie});
   check('versão de teste fora do ar -> 503 com aviso, sem travar',r.status===503&&/não respondeu/.test(r.json?.error||''),r.status+' '+r.text.slice(0,160));

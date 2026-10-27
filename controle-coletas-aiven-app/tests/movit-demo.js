@@ -393,6 +393,33 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
     check('lista de testes com token errado -> 401',r.status===401,'veio '+r.status);
     r=await call('GET','/api/demo/convites',{cookie:cookieEx});
     check('cliente em teste não vê a lista de testes',r.status===401||r.status===403,'veio '+r.status);
+    // Apagar testes: sai do banco a empresa, os usuários, o esquema e o link.
+    const cliS=(await db.query("SELECT id::text AS id FROM movit_clients WHERE name='Só Conhecer'")).rows[0]?.id;
+    const esqS=async()=>(await db.query('SELECT 1 FROM pg_namespace WHERE nspname=$1',['t'+cliS])).rowCount;
+    check('(empresa só de demonstração tem usuário e esquema próprio)',!!cliS&&(await db.query('SELECT 1 FROM dashboard_users WHERE client_id=$1',[cliS])).rowCount>0&&await esqS()===1,'cliente='+cliS);
+    r=await call('DELETE','/api/demo/convites/'+cliS,{cookie:cookieEx});
+    check('cliente em teste não apaga testes',r.status===401||r.status===403,'veio '+r.status);
+    r=await call('DELETE','/api/demo/convites/'+cliS);
+    check('apagar teste sem login -> 401',r.status===401,'veio '+r.status);
+    r=await call('DELETE','/api/demo/convites/'+cliS,{cookie:cookieAdm});
+    const restoS=(await db.query('SELECT (SELECT count(*) FROM movit_clients WHERE id=$1)+(SELECT count(*) FROM dashboard_users WHERE client_id=$1)+(SELECT count(*) FROM movit_demo_convites WHERE client_id=$1)+(SELECT count(*) FROM movit_client_modules WHERE client_id=$1) AS n',[cliS])).rows[0].n;
+    check('apaga um teste: empresa, usuários, link e módulos saem do banco',r.status===200&&r.json?.apagados===1&&Number(restoS)===0,r.status+' '+r.text.slice(0,160)+' resto='+restoS);
+    check('...e o esquema da empresa também',await esqS()===0);
+    r=await call('GET','/api/demo/convite/'+tokS);
+    check('...e o link para de funcionar',r.status!==200,'veio '+r.status);
+    r=await call('DELETE','/api/demo/convites/'+cliS,{cookie:cookieAdm});
+    check('apagar teste que não existe -> 404',r.status===404,'veio '+r.status);
+    const fixa=(await db.query("SELECT id::text AS id FROM movit_clients WHERE status<>'trial' OR plan NOT IN ('Teste MOVIT','Demonstração SSW','Teste grátis') ORDER BY id LIMIT 1")).rows[0]?.id;
+    if(fixa){
+      r=await call('DELETE','/api/demo/convites/'+fixa,{cookie:cookieAdm});
+      check('empresa que não é de teste não é apagada -> 404',r.status===404&&(await db.query('SELECT 1 FROM movit_clients WHERE id=$1',[fixa])).rowCount===1,'veio '+r.status);
+    }
+    const naoTeste=(await db.query("SELECT count(*)::int AS n FROM movit_clients WHERE status<>'trial' OR plan NOT IN ('Teste MOVIT','Demonstração SSW','Teste grátis')")).rows[0].n;
+    r=await call('DELETE','/api/demo/convites',{auth:'Bearer '+TOKEN_API});
+    const sobra=(await db.query("SELECT (SELECT count(*)::int FROM movit_clients WHERE status='trial' AND plan IN ('Teste MOVIT','Demonstração SSW','Teste grátis')) AS t,(SELECT count(*)::int FROM movit_clients) AS c,(SELECT count(*)::int FROM movit_demo_convites) AS v")).rows[0];
+    check('apagar todos: só as empresas de teste saem',r.status===200&&r.json?.apagados>=1&&sobra.t===0&&sobra.v===0&&sobra.c===naoTeste,r.status+' '+r.text.slice(0,160)+' '+JSON.stringify(sobra)+' nãoTeste='+naoTeste);
+    r=await call('GET','/api/demo/convites',{cookie:cookieAdm});
+    check('...a administração MOVIT continua entrando e a lista fica vazia',r.status===200&&(r.json?.testes||[]).length===0,r.status+' '+r.text.slice(0,160));
   }
 
   await db.end();
