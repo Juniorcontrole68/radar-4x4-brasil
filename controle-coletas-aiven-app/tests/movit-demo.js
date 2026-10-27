@@ -369,6 +369,20 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
     check('...e o teste dura esses dias a partir do primeiro acesso',r.status===200&&Number(diasD)>11.9&&Number(diasD)<=12,r.status+' dias='+diasD);
     r=await call('POST','/api/demo/convites',{body:{nome:'Davi',empresa:'Dias Errados',dias:90},ip:IPL,auth:'Bearer '+TOKEN_API});
     check('dias de teste fora de 1 a 60 -> 400',r.status===400&&/Dias de teste/.test(r.json?.error||''),r.status+' '+r.text.slice(0,160));
+    const TOKEN_CENTRAL=process.env.MOVIT_CENTRAL_TOKEN||'';
+    if(TOKEN_CENTRAL){
+      r=await call('GET','/api/demo/convites',{auth:'Bearer '+TOKEN_CENTRAL});
+      check('MOVIT Central da Construlog lista os testes enviados com o token dela',r.status===200&&(r.json?.testes||[]).some(t=>t.empresa==='Teste de Doze Dias'&&t.primeiro_acesso)&&(r.json.testes||[]).some(t=>t.empresa==='Expresso Convite'),r.status+' '+r.text.slice(0,200));
+      r=await call('PUT','/api/demo/modulos-site',{auth:'Bearer '+TOKEN_CENTRAL,body:{modulos:['frota']}});
+      check('...e muda os módulos do site com o token',r.status===200&&JSON.stringify(r.json?.modulos)==='["frota"]',r.status+' '+r.text.slice(0,160));
+      r=await call('POST','/api/demo/convites',{auth:'Bearer '+TOKEN_CENTRAL,ip:IPL,body:{nome:'Eva',empresa:'Pela Central da Construlog',whatsapp:'5511955554444',modulos:['frota']}});
+      const orgC=r.json?.cliente_id&&(await db.query('SELECT origem FROM movit_demo_convites WHERE client_id=$1',[r.json.cliente_id])).rows[0]?.origem;
+      check('...e cria o teste com origem central',r.status===201&&orgC==='central',r.status+' '+orgC);
+    }
+    r=await call('GET','/api/demo/convites',{auth:'Bearer '+'z'.repeat(48)});
+    check('lista de testes com token errado -> 401',r.status===401,'veio '+r.status);
+    r=await call('GET','/api/demo/convites',{cookie:cookieEx});
+    check('cliente em teste não vê a lista de testes',r.status===401||r.status===403,'veio '+r.status);
   }
 
   await db.end();

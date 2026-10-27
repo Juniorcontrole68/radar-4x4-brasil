@@ -43,6 +43,10 @@ jobs:
       DASHBOARD_INITIAL_ADMIN_USER: admin_teste
       DASHBOARD_INITIAL_ADMIN_PASSWORD: senha-de-teste-123
       WMS_ATIVO: '1'
+      MOVIT_DEMO_URL: http://127.0.0.1:10777
+      MOVIT_CENTRAL_TOKEN: token-da-movit-central-com-32-caracteres-ou-mais
+      MOVIT_DEMO_INTERVALO_MS: '200'
+      MOVIT_DEMO_ESPERA_MS: '3000'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -87,6 +91,8 @@ jobs:
           echo "Servidor não subiu"; cat ../servidor.log; exit 1
       - name: Testes ponta a ponta
         run: node controle-coletas-aiven-app/tests/e2e.js
+      - name: MOVIT Central envia o teste pela versão de teste
+        run: node controle-coletas-aiven-app/tests/movit-central-teste.js
       - name: Roteirizador de Cargas (motor e servidor)
         run: |
           node controle-coletas-aiven-app/roteirizador-cargas-fonte/test.js

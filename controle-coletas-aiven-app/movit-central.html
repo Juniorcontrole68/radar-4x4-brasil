@@ -33,7 +33,7 @@ body.demo #clientForm .form>label:not(:first-child),body.demo .modw label.vid,bo
 <div class="wrap">
   <div class="card convite" id="conviteCard" style="display:none">
     <h2>📲 Enviar teste para um cliente</h2>
-    <div class="meta" style="margin:-6px 0 14px">O cliente recebe pelo WhatsApp um link pessoal. Todos os módulos aparecem para ele, mas só abrem os que você marcar no passo 2.</div>
+    <div class="meta" style="margin:-6px 0 14px">O cliente recebe pelo WhatsApp um link pessoal para a versão de teste, que não tem os dados da Construlog. Todos os módulos aparecem para ele, mas só abrem os que você marcar no passo 2.</div>
     <div class="passo"><span>1</span>Dados do cliente</div>
     <div class="form">
       <label>Nome do contato<input id="cNome" maxlength="120"></label>
@@ -52,6 +52,10 @@ body.demo #clientForm .form>label:not(:first-child),body.demo .modw label.vid,bo
     <div id="sMods" class="cmods"></div>
     <div class="actions" style="margin-top:12px"><button class="btn primary" type="button" id="sSalvar">Salvar módulos do site</button></div>
     <div id="sMsg" class="msg"></div>
+    <div id="testesBox">
+      <div class="passo" style="margin-top:22px;border-top:1px solid var(--line);padding-top:16px">📋 Testes enviados</div>
+      <div id="tLista" class="clients"><div class="empty">Carregando…</div></div>
+    </div>
   </div>
   <div class="kpis" id="kpis">
     <div class="kpi"><span>Clientes</span><b id="kClients">—</b></div>
@@ -258,25 +262,52 @@ $('savePrices').onclick=async()=>{
   }catch(e){$('pMsg').style.color='#b91c1c';$('pMsg').textContent=e.message}
 };
 load().catch(e=>{$('clients').innerHTML='<div class="empty">'+e.message+'</div>'});
-// Envio do link de teste (só no serviço de demonstração, onde /api/demo/info responde).
-fetch('/api/demo/info',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(j=>{
-  if(!j||!j.demo)return;
-  // Na demonstração, a tela fica só com o envio do teste e a lista de quem está testando.
-  $('conviteCard').style.display='';
-  ['kpis','precosCard','mensalCard','newTrial','trialBox'].forEach(k=>{const el=$(k);if(el)el.style.display='none'});
-  document.body.classList.add('demo');if(!$('clientId').value){document.body.classList.add('semCliente');$('formTitle').textContent='Módulos do cliente'}
-  $('clientsTitle').textContent='Clientes em teste';$('modsDica').style.display='';
+// Envio do link de teste. Na versão de teste fala direto com /api/demo; na MOVIT Central da
+// Construlog passa por /api/movit-central/teste, que cria tudo na versão de teste (banco próprio).
+let TAPI={info:'/api/demo/info',conv:'/api/demo/convites',site:'/api/demo/modulos-site'};
+function montarTeste(j){
   $('cMods').innerHTML=(j.modulos||[]).map(m=>'<label><input type="checkbox" class="cmod" value="'+esc(m.key)+'">'+esc(m.name)+'</label>').join('');
-  fetch('/api/demo/modulos-site',{cache:'no-store'}).then(r=>r.json()).then(s=>{
+  fetch(TAPI.site,{cache:'no-store'}).then(r=>r.json()).then(s=>{
     const marcados=new Set(s.modulos||[]);
     $('sMods').innerHTML=(j.modulos||[]).map(m=>'<label><input type="checkbox" class="smod" value="'+esc(m.key)+'"'+(marcados.has(m.key)?' checked':'')+'>'+esc(m.name)+'</label>').join('');
   }).catch(()=>{});
-}).catch(()=>{});
+}
+async function listarTestes(){
+  if(!$('tLista'))return;
+  try{
+    const r=await fetch(TAPI.conv,{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao listar.');
+    const dt=v=>v?new Date(v).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'}):'';
+    $('tLista').innerHTML=(j.testes||[]).length?(j.testes||[]).map(t=>{
+      const fim=t.trial_ends_at?new Date(t.trial_ends_at):null,acabou=fim&&fim<new Date();
+      const sit=!t.primeiro_acesso?'ainda não abriu o link':(acabou?'teste terminou em '+dt(fim):'testando até '+dt(fim)+' • '+(t.modo==='ssw'?'com o SSW dele':'com números de exemplo'));
+      return '<div class="client"><div><b>'+esc(t.empresa)+'</b><div class="meta">'+esc(t.nome||'')+(t.origem==='torre'?' • pediu pelo site':'')+' • '+t.modulos+' módulo(s) • '+esc(sit)+'</div></div></div>';
+    }).join(''):'<div class="empty">Nenhum teste enviado ainda.</div>';
+  }catch(e){$('tLista').innerHTML='<div class="empty">'+esc(e.message)+'</div>'}
+}
+fetch('/api/demo/info',{cache:'no-store'}).then(r=>r.ok?r.json():null).catch(()=>null).then(j=>{
+  if(j&&j.demo){
+    // Na demonstração, a tela fica só com o envio do teste e a lista de quem está testando.
+    $('conviteCard').style.display='';
+    ['kpis','precosCard','mensalCard','newTrial','trialBox','testesBox'].forEach(k=>{const el=$(k);if(el)el.style.display='none'});
+    document.body.classList.add('demo');if(!$('clientId').value){document.body.classList.add('semCliente');$('formTitle').textContent='Módulos do cliente'}
+    $('clientsTitle').textContent='Clientes em teste';$('modsDica').style.display='';
+    montarTeste(j);return;
+  }
+  // MOVIT Central da Construlog: o envio do teste fica no topo, sem sair da tela.
+  TAPI={info:'/api/movit-central/teste/info',conv:'/api/movit-central/teste/convites',site:'/api/movit-central/teste/modulos-site'};
+  $('conviteCard').style.display='';$('newTrial').style.display='none';$('trialBox').style.display='none';
+  $('cMods').innerHTML='<div class="meta">Ligando a versão de teste… (pode levar até 1 minuto)</div>';
+  fetch(TAPI.info,{cache:'no-store'}).then(async r=>{
+    const t=await r.json().catch(()=>({}));
+    if(!r.ok||!t.ok){if(/não ligada/.test(t.error||'')){$('conviteCard').style.display='none';$('newTrial').style.display=''}else $('cMods').innerHTML='<div class="meta">'+esc(t.error||'A versão de teste não respondeu.')+'</div>';return}
+    montarTeste(t);listarTestes();
+  }).catch(()=>{$('cMods').innerHTML='<div class="meta">A versão de teste não respondeu. Atualize a página em 1 minuto.</div>'});
+});
 $('sSalvar').onclick=async()=>{
   const modulos=[...document.querySelectorAll('.smod:checked')].map(x=>x.value);
   $('sMsg').style.color='#475569';$('sMsg').textContent='Salvando…';
   try{
-    const r=await fetch('/api/demo/modulos-site',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({modulos})});
+    const r=await fetch(TAPI.site,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({modulos})});
     const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao salvar.');
     $('sMsg').style.color='#15803d';$('sMsg').textContent='✓ Salvo. Quem pedir pelo site abre '+j.modulos.length+' módulo(s).';
   }catch(e){$('sMsg').style.color='#b91c1c';$('sMsg').textContent=e.message}
@@ -289,13 +320,13 @@ $('cGo').onclick=async()=>{
   if(!body.modulos.length){$('cMsg').style.color='#b91c1c';$('cMsg').textContent='Marque pelo menos um módulo no passo 2.';return}
   $('cMsg').style.color='#475569';$('cMsg').textContent='Criando o teste…';
   try{
-    const r=await fetch('/api/demo/convites',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const r=await fetch(TAPI.conv,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao criar o teste.');
     $('cMsg').style.color='#15803d';
     $('cMsg').innerHTML='✓ Teste criado para '+esc(body.empresa)+'. Agora clique em Enviar no WhatsApp.<div class="cred">'+esc(j.link)+'</div><div class="actions" style="margin-top:8px"><a class="btn primary" style="text-decoration:none;background:#16a34a;padding:12px 18px;font-size:15px" target="_blank" rel="noopener" href="'+esc(j.whatsapp_url)+'">Enviar no WhatsApp</a><button class="btn secondary" type="button" id="cCopy">Copiar mensagem</button></div>';
     $('cCopy').onclick=()=>navigator.clipboard&&navigator.clipboard.writeText(j.mensagem);
     ['cNome','cEmpresa','cZap','cEmail'].forEach(k=>$(k).value='');document.querySelectorAll('.cmod').forEach(i=>i.checked=false);
-    await load();
+    await Promise.all([load(),listarTestes()]);
   }catch(e){$('cMsg').style.color='#b91c1c';$('cMsg').textContent=e.message}
 };
 </script>
