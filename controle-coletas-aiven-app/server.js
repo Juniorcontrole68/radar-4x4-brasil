@@ -2013,7 +2013,7 @@ async function start() {
   // Demo MOVIT: o Roteirizador do administrador (chave da CONSTRULOG) volta a cada início só com as
   // cidades e os ajustes; some o que veio do SSW real (notas, cargas, veículos e motoristas).
   if(movitDemo.ATIVA){
-    const ap=await pool.query("DELETE FROM rc_docs WHERE path NOT LIKE 'cad/main/cidades/%' AND path<>'cad/main' AND (cliente='construlog' OR cliente IN (SELECT 'c'||id FROM movit_clients WHERE lower(slug)='construlog'))").catch(e=>({rowCount:'erro: '+e.message}));
+    const ap=await pool.query("DELETE FROM rc_docs WHERE path NOT LIKE 'cad/main/cidades/%' AND path<>'cad/main' AND (cliente='construlog' OR cliente IN (SELECT 'c'||id FROM movit_clients WHERE lower(slug)='construlog'))").catch(()=>({rowCount:0})); // banco novo: ainda sem movit_clients
     if(ap.rowCount)console.log('MOVIT_DEMO: Roteirizador do administrador sem dados da CONSTRULOG ('+ap.rowCount+')');
   }
   // sobras em galpão: de hora em hora, das 05:00 às 20:00, confere no SSW o que já foi entregue e tira da lista (o painel lê o SSW)
@@ -2217,6 +2217,12 @@ async function start() {
       for(const t of ['ag_eventos','ag_agendamentos','ag_sincronizacoes','ag_notas'])await pool.query('DELETE FROM '+t+' WHERE client_id=$1',[cid]).catch(e=>console.error('MOVIT_DEMO: limpeza de '+t+' falhou:',e.message));
       console.log('MOVIT_DEMO: empresa '+cid+' desconectada do SSW bloqueado.');
     }
+    // Parceiros (outro login do SSW dentro de uma empresa de teste) com login bloqueado também saem.
+    const dp=bl.length?(await pool.query('DELETE FROM movit_parceiros WHERE upper(dominio)=ANY($1::text[])',[bl])).rowCount:0;
+    if(dp)console.log('MOVIT_DEMO: '+dp+' parceiro(s) desconectado(s) do SSW bloqueado.');
+    // Conferência: domínios do SSW em uso na demo (sem senhas).
+    const em=(await pool.query("SELECT 'empresa '||client_id||' '||upper(dominio)||CASE WHEN exemplo THEN ' (exemplo)' ELSE '' END AS t FROM movit_client_ssw UNION ALL SELECT 'parceiro '||id||' da empresa '||client_id||' '||upper(dominio) FROM movit_parceiros")).rows.map(r=>r.t);
+    console.log('MOVIT_DEMO: '+bl.length+' domínio(s) do SSW bloqueado(s); em uso: '+(em.join('; ')||'nenhum'));
   }
   if (!TEST_MODE && !movitDemo.ATIVA) await migrateLegacyBillsIfNeeded();
   else console.log('TEST_MODE: importação do sistema antigo de contas desativada.');

@@ -89,8 +89,8 @@ function decifrar(blob) {
 
 // ------------------------------------------------------------------ dados do formulário de entrada
 // Logins do SSW que não entram na demonstração: os de MOVIT_SSW_BLOQUEADOS e o da CONSTRULOG
-// (o domínio do SSW real do serviço, SSW_INTERNAL_DOMINIO), para os dados dela não aparecerem no teste.
-const BLOQUEADOS = [...new Set([...String(process.env.MOVIT_SSW_BLOQUEADOS || '').split(/[\s,;]+/), ATIVA ? process.env.SSW_INTERNAL_DOMINIO : '']
+// (o domínio do SSW real do serviço, SSW_INTERNAL_DOMINIO e SSW_DOMAIN), para os dados dela não aparecerem no teste.
+const BLOQUEADOS = [...new Set([...String(process.env.MOVIT_SSW_BLOQUEADOS || '').split(/[\s,;]+/), ATIVA ? process.env.SSW_INTERNAL_DOMINIO : '', ATIVA ? process.env.SSW_DOMAIN : '']
   .map(x => String(x || '').trim().toUpperCase()).filter(Boolean))];
 const dominiosBloqueados = () => BLOQUEADOS.slice();
 
