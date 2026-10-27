@@ -66,6 +66,9 @@ try{
       trocas.forEach(([de,para])=>{if(!html.includes(de))console.error('Período de apuração: trecho não encontrado: '+de);html=html.replace(de,para)});
     }
 
+    // Tipo de caminhão: Cavalo (cavalo mecânico) na lista.
+    html=html.replace('<option>Carreta</option></select>','<option>Carreta</option><option>Cavalo</option></select>');
+
     html=html.replace(
       'Cliente *<input id="cliente" required placeholder="Nome do cliente" />',
       'Remetente *<input id="cliente" required placeholder="Nome do remetente" />'
