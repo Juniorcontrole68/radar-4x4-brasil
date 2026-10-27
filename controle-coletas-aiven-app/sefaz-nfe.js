@@ -47,19 +47,25 @@ function arquivoPfx(){
   if(f)return f;
   try{const n=fs.readdirSync('/etc/secrets').filter(x=>/\.(pfx|p12)$/i.test(x)).sort()[0];return n?path.join('/etc/secrets',n):''}catch{return ''}
 }
-function lerPfx(){
-  const f=arquivoPfx();
-  if(f){
-    try{return{der:fs.readFileSync(f),origem:'o arquivo '+path.basename(f)}}
-    catch(e){throw erro(503,'Não foi possível abrir o arquivo do certificado A1 ('+path.basename(f)+').','CERTIFICADO_INVALIDO')}
-  }
-  // tolera o que costuma vir junto ao colar: quebras de linha, aspas e o prefixo data:...;base64,
-  const b64=String(process.env.WMS_NFE_CERT_PFX_BASE64||'').replace(/\s+/g,'').replace(/^["']+|["']+$/g,'').replace(/^data:[^,]*,/,'');
+// texto do .pfx em base64, tolerando o que costuma vir junto: quebras de linha, aspas, prefixo data:...;base64,
+// e as linhas -----BEGIN/END----- que o certutil -encode do Windows acrescenta
+function deTexto(txt,origem){
+  const b64=String(txt||'').replace(/-----(BEGIN|END)[^-]*-----/g,'').replace(/\s+/g,'').replace(/^["']+|["']+$/g,'').replace(/^data:[^,]*,/,'');
   if(!b64)return null;
   const der=Buffer.from(b64,'base64');
   if(!/^[A-Za-z0-9+/_-]+=*$/.test(b64)||der[0]!==0x30)
-    throw erro(503,'O texto em WMS_NFE_CERT_PFX_BASE64 não é o certificado A1 ('+b64.length+' caracteres; o certificado em texto começa com MII). Cole de novo o texto gerado do arquivo .pfx ou envie o arquivo como Secret File no Render.','CERTIFICADO_INVALIDO');
-  return{der,origem:'WMS_NFE_CERT_PFX_BASE64, '+b64.length+' caracteres'};
+    throw erro(503,'O conteúdo de '+origem+' não é o certificado A1 ('+b64.length+' caracteres; o certificado em texto começa com MII). Gere o texto de novo a partir do arquivo .pfx.','CERTIFICADO_INVALIDO');
+  return{der,origem:origem+', '+b64.length+' caracteres'};
+}
+function lerPfx(){
+  const f=arquivoPfx();
+  if(f){
+    let buf;
+    try{buf=fs.readFileSync(f)}catch(e){throw erro(503,'Não foi possível abrir o arquivo do certificado A1 ('+path.basename(f)+').','CERTIFICADO_INVALIDO')}
+    // o Secret File pode ser o .pfx (binário) ou o texto em base64 dele
+    return buf[0]===0x30?{der:buf,origem:'o arquivo '+path.basename(f)}:deTexto(buf.toString('latin1'),'o arquivo '+path.basename(f));
+  }
+  return deTexto(process.env.WMS_NFE_CERT_PFX_BASE64,'WMS_NFE_CERT_PFX_BASE64');
 }
 let cache=null;
 function certificado(){

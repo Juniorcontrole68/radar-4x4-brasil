@@ -46,6 +46,8 @@ function nfe({chave,itens}){
       check('A1 lido do arquivo .pfx (Secret File)',s.cnpj==='11222333000181'&&!s.erro,s);
       s=st({WMS_NFE_CERT_PFX_BASE64:'"'+fs.readFileSync(F).toString('base64').replace(/(.{76})/g,'$1\r\n')+'"',WMS_NFE_CERT_SENHA:'senha-a1'});
       check('A1 colado com aspas e quebras de linha',s.cnpj==='11222333000181'&&!s.erro,s);
+      s=st({WMS_NFE_CERT_PFX_BASE64:'-----BEGIN CERTIFICATE-----\r\n'+fs.readFileSync(F).toString('base64').replace(/(.{64})/g,'$1\r\n')+'\r\n-----END CERTIFICATE-----\r\n',WMS_NFE_CERT_SENHA:'senha-a1'});
+      check('A1 colado do certutil -encode (com BEGIN/END)',s.cnpj==='11222333000181'&&!s.erro,s);
       s=st({WMS_NFE_CERT_PFX_BASE64:'[Convert]::ToBase64String([IO.File]::ReadAllBytes("cert.pfx"))',WMS_NFE_CERT_SENHA:'x'});
       check('texto que não é o certificado: aviso explica',/não é o certificado A1/.test(s.erro||''),s);
       for(const k of['WMS_NFE_CERT_PFX_FILE','WMS_NFE_CERT_PFX_BASE64','WMS_NFE_CERT_SENHA'])if(antes[k]===undefined)delete process.env[k];else process.env[k]=antes[k];
