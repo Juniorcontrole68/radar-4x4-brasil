@@ -2187,6 +2187,17 @@ async function start() {
     // Conserta quem a migração antiga promoveu: usuário de empresa da demo nunca é administrador MOVIT.
     const r=await pool.query('UPDATE dashboard_users SET is_platform_admin=FALSE WHERE is_platform_admin=TRUE AND client_id IN (SELECT client_id FROM movit_client_ssw)');
     if(r.rowCount)console.log('MOVIT_DEMO: '+r.rowCount+' usuário(s) de empresa da demo deixaram de ser administradores MOVIT.');
+    // Empresa de teste ligada a um login do SSW bloqueado (o da CONSTRULOG): desconecta e apaga o que veio dele.
+    // Ao abrir o link de novo, ela escolhe outro login ou os números de exemplo.
+    const bl=movitDemo.dominiosBloqueados();
+    const desl=bl.length?(await pool.query('DELETE FROM movit_client_ssw WHERE upper(dominio)=ANY($1::text[]) RETURNING client_id',[bl])).rows:[];
+    for(const {client_id:cid} of desl){
+      await pool.query('DROP SCHEMA IF EXISTS '+esquemasDemo.nomeEsquema(cid)+' CASCADE').catch(()=>{});
+      await pool.query('DELETE FROM rc_docs WHERE cliente=$1',['c'+cid]).catch(()=>{});
+      await pool.query('DELETE FROM rc_docs_removidos WHERE cliente=$1',['c'+cid]).catch(()=>{});
+      for(const t of ['ag_eventos','ag_agendamentos','ag_sincronizacoes','ag_notas'])await pool.query('DELETE FROM '+t+' WHERE client_id=$1',[cid]).catch(e=>console.error('MOVIT_DEMO: limpeza de '+t+' falhou:',e.message));
+      console.log('MOVIT_DEMO: empresa '+cid+' desconectada do SSW bloqueado.');
+    }
   }
   if (!TEST_MODE && !movitDemo.ATIVA) await migrateLegacyBillsIfNeeded();
   else console.log('TEST_MODE: importação do sistema antigo de contas desativada.');

@@ -333,6 +333,12 @@ const EMPRESA_B={empresa:'Logística Teste B',dominio:'XYZ',cpf:'98765432100',us
   r=await call('GET','/api/demo/convite/'+tokEx);check('abrindo o link de novo, a página sabe que está no exemplo',r.json?.modo==='exemplo',r.text.slice(0,160));
   r=await call('POST','/api/demo/convite/'+tokEx+'/entrar',{body:{ssw:{dominio:'tst',cpf:'12345678901',usuario:'joao',senha:'x'}},ip:IPL});
   check('domínio do SSW de outro teste -> 409',r.status===409,r.status+' '+r.text.slice(0,160));
+  if(process.env.MOVIT_SSW_BLOQUEADOS){
+    const sB0=await stats();
+    r=await call('POST','/api/demo/convite/'+tokEx+'/entrar',{body:{ssw:{dominio:process.env.MOVIT_SSW_BLOQUEADOS.split(',')[0].toLowerCase(),cpf:'12345678901',usuario:'joao',senha:'x'}},ip:IPL});
+    const sB1=await stats();
+    check('login do SSW bloqueado (o da CONSTRULOG) é recusado sem ir ao SSW -> 400',r.status===400&&/não pode ser usado/.test(r.json?.error||'')&&sB1.logins===sB0.logins,r.status+' '+r.text.slice(0,160));
+  }
   r=await call('POST','/api/demo/convite/'+tokEx+'/entrar',{body:{ssw:{dominio:'EXC',cpf:'11122233344',usuario:'ana',senha:'senha-errada'}},ip:IPL});
   check('senha do SSW recusada -> 401 e continua no exemplo',r.status===401&&(await db.query('SELECT exemplo FROM movit_client_ssw WHERE client_id=$1',[cliEx])).rows[0]?.exemplo===true,r.status+' '+r.text.slice(0,160));
   r=await call('POST','/api/demo/convite/'+tokEx+'/entrar',{body:{ssw:{dominio:'EXC',cpf:'111.222.333-44',usuario:'Ana',senha:'segredo-exc',unidades:'MTZ'}},ip:IPL});const cookieExS=r.cookie;

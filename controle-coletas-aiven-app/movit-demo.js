@@ -88,6 +88,12 @@ function decifrar(blob) {
 }
 
 // ------------------------------------------------------------------ dados do formulário de entrada
+// Logins do SSW que não entram na demonstração: os de MOVIT_SSW_BLOQUEADOS e o da CONSTRULOG
+// (o domínio do SSW real do serviço, SSW_INTERNAL_DOMINIO), para os dados dela não aparecerem no teste.
+const BLOQUEADOS = [...new Set([...String(process.env.MOVIT_SSW_BLOQUEADOS || '').split(/[\s,;]+/), ATIVA ? process.env.SSW_INTERNAL_DOMINIO : '']
+  .map(x => String(x || '').trim().toUpperCase()).filter(Boolean))];
+const dominiosBloqueados = () => BLOQUEADOS.slice();
+
 function normalizarEntrada(body) {
   const dominio = String(body.dominio || '').trim().toUpperCase();
   const cpf = String(body.cpf || '').replace(/\D/g, '');
@@ -103,6 +109,7 @@ function normalizarEntrada(body) {
   const bi2 = bi2Sigla || bi2Senha ? { sigla: bi2Sigla, senha: bi2Senha, pasta: bi2Pasta } : null;
   const erros = [];
   if (!/^[A-Z0-9]{2,10}$/.test(dominio)) erros.push('Informe o domínio do SSW (as letras que você digita no primeiro campo do login).');
+  else if (BLOQUEADOS.includes(dominio)) erros.push('Este login do SSW não pode ser usado na versão de teste.');
   if (cpf.length !== 11) erros.push('Informe o CPF do login do SSW (11 números).');
   if (!/^[a-z0-9._-]{1,40}$/.test(usuario)) erros.push('Informe o usuário do SSW.');
   if (!senha || senha.length > 80) erros.push('Informe a senha do SSW.');
@@ -444,5 +451,5 @@ async function envProcessoPadrao(base) {
 module.exports = {
   CONVITE_DIAS, tokenConvite, hashConvite, normalizarConvite, mensagemConvite, linkWhatsapp,
   ATIVA, MODULOS, modulosProntos, cifrar, decifrar, normalizarEntrada, testarLoginSsw, testarBi2, bi2Automatico, initDb,
-  processoDaEmpresa, processoDoParceiro, envProcessoPadrao, normalizarParceiro, consultar, encerrar, encerrarTodos, repassar, clienteDemo, comBi2, modulosLiberados, telasLiberadas, permsLiberadas, rotaLiberada
+  processoDaEmpresa, processoDoParceiro, envProcessoPadrao, dominiosBloqueados, normalizarParceiro, consultar, encerrar, encerrarTodos, repassar, clienteDemo, comBi2, modulosLiberados, telasLiberadas, permsLiberadas, rotaLiberada
 };
