@@ -70,6 +70,8 @@
 .lc-cli-wrap select{min-height:32px;padding:4px 8px;border-radius:7px;border:1px solid #93c5fd;font-size:13.5px;background:#fff}
 .lc-cli-wrap button,.lc-cli-btn{border:1px solid #93c5fd;background:#fff;color:#1d4ed8;border-radius:7px;padding:6px 10px;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap}
 .lc-r-cli{grid-column:1/-1}
+.lc-busca-linha{display:flex;gap:6px;flex-wrap:wrap}.lc-busca-linha select{flex:1 1 220px;min-width:0}
+.lc-cli-busca{flex:1 1 200px;min-width:0;min-height:32px;padding:4px 8px;border-radius:7px;border:1px solid #93c5fd;font-size:13px;background:#fff;font-weight:400}
 .lc-r-cli select{padding:4px 8px;font-size:13px;min-height:30px;border-radius:7px;border:1px solid #93c5fd;background:#eff6ff}
 /* Remetente e destinatário vêm só do cadastro de clientes: sem as listas de "já utilizado". */
 .history-select-wrap:has(#historico_remetente),.history-select-wrap:has(#historico_destinatario){display:none!important}
@@ -173,7 +175,7 @@
       row.querySelector('.lc-d-obs').value = obsDoCliente(c);
     });
     row.querySelector('.lc-del').onclick = () => { row.remove(); renumerar() };
-    list.appendChild(row); renumerar();
+    list.appendChild(row); renumerar(); ligarBusca(row.querySelector('.lc-d-cli-sel'));
     return row;
   }
   function lerDestinos() {
@@ -218,7 +220,7 @@
       row.querySelector('.lc-r-obs').value = obsDoCliente(c);
     });
     row.querySelector('.lc-del').onclick = () => { row.remove(); renumerar() };
-    list.appendChild(row); renumerar();
+    list.appendChild(row); renumerar(); ligarBusca(row.querySelector('.lc-r-cli-sel'));
     return row;
   }
   function lerRemetentes() {
@@ -262,13 +264,32 @@
   // Rua, bairro e CEP: cidade e UF ficam nos campos próprios (outros remetentes e destinatários, entrega 1).
   const enderecoSemCidade = c => [c.endereco, c.bairro, c.cep ? 'CEP ' + c.cep : ''].filter(Boolean).join(' - ');
   const obsDoCliente = c => [c.referencia ? 'Ref.: ' + c.referencia : '', c.observacoes || ''].filter(Boolean).join(' • ').replace(/\s+/g, ' ').slice(0, 200);
-  function opcoesClientes() {
-    return '<option value="">' + (CLIENTES.length ? 'Escolha um cliente cadastrado…' : 'Nenhum cliente cadastrado') + '</option>' +
-      CLIENTES.map(c => '<option value="' + esc(c.id) + '">' + esc(c.nome) + '</option>').join('');
+  // Procurar: o texto digitado ao lado do seletor filtra os clientes por nome, cidade, UF, endereço ou CNPJ.
+  const textoCliente = c => norm([c.nome, c.cidade, c.uf, c.endereco, c.bairro, c.cep, c.cnpj, c.documento].filter(Boolean).join(' '));
+  const clientesFiltrados = q => { const t = norm(q); return t ? CLIENTES.filter(c => t.split(' ').every(p => textoCliente(c).includes(p))) : CLIENTES };
+  function opcoesClientes(q) {
+    const lista = clientesFiltrados(q);
+    return '<option value="">' + (!CLIENTES.length ? 'Nenhum cliente cadastrado' : q && norm(q) ? (lista.length ? lista.length + ' encontrado(s): escolha…' : 'Nenhum cliente encontrado') : 'Escolha um cliente cadastrado…') + '</option>' +
+      lista.map(c => '<option value="' + esc(c.id) + '">' + esc(c.nome) + '</option>').join('');
   }
   function atualizarSeletores() {
-    document.querySelectorAll('#lcCliSel, #lcCliSelEnt, .lc-r-cli-sel, .lc-d-cli-sel').forEach(sel => { const v = sel.value; sel.innerHTML = opcoesClientes(); sel.value = clientePorId(v) ? v : '' });
+    document.querySelectorAll(SELETORES_CLI).forEach(sel => { const v = sel.value; sel.innerHTML = opcoesClientes(sel.dataset.q); sel.value = clientePorId(v) ? v : ''; ligarBusca(sel) });
   }
+  const SELETORES_CLI = '#lcCliSel, #lcCliSelEnt, .lc-r-cli-sel, .lc-d-cli-sel';
+  function ligarBusca(sel) {
+    if (!sel || sel.dataset.busca) return;
+    sel.dataset.busca = '1';
+    const inp = document.createElement('input'); inp.type = 'search'; inp.className = 'lc-cli-busca'; inp.placeholder = '🔎 Procurar por nome, cidade ou CNPJ'; inp.dataset.noTitlecase = 'true'; inp.autocomplete = 'off';
+    const linha = document.createElement('span'); linha.className = 'lc-busca-linha'; sel.before(linha); linha.append(inp, sel);
+    const escolher = id => { if (id && String(sel.value) !== String(id)) { sel.value = id; sel.dispatchEvent(new Event('change', { bubbles: true })) } };
+    inp.addEventListener('input', () => {
+      sel.dataset.q = inp.value; const v = sel.value;
+      sel.innerHTML = opcoesClientes(inp.value); sel.value = clientePorId(v) && clientesFiltrados(inp.value).some(c => String(c.id) === String(v)) ? v : '';
+      const lista = clientesFiltrados(inp.value); if (norm(inp.value) && lista.length === 1) escolher(lista[0].id);
+    });
+    inp.addEventListener('keydown', ev => { if (ev.key !== 'Enter') return; ev.preventDefault(); const l = clientesFiltrados(inp.value); if (l.length) escolher(l[0].id) });
+  }
+  function ligarBuscas() { document.querySelectorAll(SELETORES_CLI).forEach(ligarBusca) }
   async function carregarClientes() {
     try {
       const r = await baseFetch('/api/painel/lotacao-clientes', { cache: 'no-store' });
@@ -475,6 +496,7 @@
       b.onclick = () => abrirOrdem(dadosDoFormulario());
       actions.insertBefore(b, actions.firstChild);
     }
+    ligarBuscas();
   }
 
   function carregarNoFormulario() {
@@ -491,6 +513,7 @@
     if (byId('lc_col_obs')) byId('lc_col_obs').value = cp.observacao || '';
     if (byId('lcCliSel')) byId('lcCliSel').value = '';
     if (byId('lcCliSelEnt')) byId('lcCliSelEnt').value = '';
+    document.querySelectorAll('.lc-cli-busca').forEach(i => { if (!i.value) return; i.value = ''; const sel = i.parentElement.querySelector('select'); if (sel) { sel.dataset.q = ''; sel.innerHTML = opcoesClientes() } });
     avisoEndereco(null);
     const selecionarEntrega = () => { const c = clientePorNome(byId('destinatario')?.value), s = byId('lcCliSelEnt'); if (s) s.value = c ? c.id : '' };
     enderecoDoCliente();
