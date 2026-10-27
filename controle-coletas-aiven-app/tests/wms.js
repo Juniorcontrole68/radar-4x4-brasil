@@ -301,6 +301,35 @@ function nfe({chave,itens}){
   r=await call('GET','/api/wms/auditoria',{cookie:sup});
   check('auditoria registra fora da sugestão, bloqueio e decisões',['armazenar_fora_sugestao','bloquear','decidir','finalizar'].every(a=>r.json.rows.some(x=>x.acao===a)),r.json.rows?.map(x=>x.acao));
 
+  console.log('Estoque inicial / ajuste (permissão wms_ajuste)');
+  {
+    r=await call('POST','/api/wms/produtos',{cookie:gest,body:{cliente_id:cli,sku:'AJ1',descricao:'Produto do estoque inicial'}});
+    check('cria produto para o estoque inicial',r.status===201,r.json);
+    const corpoAj=(x={})=>({uuid:'aj-'+sufixo+'-'+Math.random().toString(36).slice(2,10),armazem_id:arm,cliente_id:cli,produto:'AJ1',endereco:'B-05-01-01',qtd:50,motivo:'Estoque inicial',...x});
+    r=await call('POST','/api/wms/ajuste',{cookie:gest,body:corpoAj()});
+    check('gestão sem a permissão de ajuste: 403',r.status===403,r.status+' '+JSON.stringify(r.json));
+    const aj=await criarUser('aj',['wms','wms_ajuste']);
+    r=await call('GET','/api/wms/status',{cookie:aj});
+    check('status avisa a tela que o usuário pode ajustar',r.json?.ajuste===true&&(await call('GET','/api/wms/status',{cookie:gest})).json?.ajuste===false,r.json);
+    const c1=corpoAj();
+    r=await call('POST','/api/wms/ajuste',{cookie:aj,body:c1});
+    check('estoque inicial: 50 entram direto no endereço',r.status===200&&r.json.qtd===50&&r.json.endereco==='B-05-01-01',r.json);
+    r=await call('POST','/api/wms/ajuste',{cookie:aj,body:c1});
+    check('mesma operação repetida (rede ruim) não duplica',r.json?.duplicado===true,r.json);
+    const saldoAj=async()=>(await call('GET','/api/wms/saldos?q=AJ1',{cookie:aj})).json.rows.filter(x=>x.sku==='AJ1').reduce((t,x)=>t+x.qtd,0);
+    check('saldo do produto = 50',await saldoAj()===50);
+    r=await call('POST','/api/wms/ajuste',{cookie:aj,body:corpoAj({sentido:'retirar',qtd:20,motivo:'Inventário'})});
+    check('ajuste para menos: retira 20',r.status===200&&r.json.sentido==='retirar'&&await saldoAj()===30,r.json);
+    r=await call('POST','/api/wms/ajuste',{cookie:aj,body:corpoAj({sentido:'retirar',qtd:100})});
+    check('retirar mais do que tem: 409 sem mexer no saldo',r.status===409&&await saldoAj()===30,r.json);
+    r=await call('POST','/api/wms/ajuste',{cookie:aj,body:corpoAj({motivo:''})});
+    check('sem motivo: 400',r.status===400,r.json);
+    r=await call('POST','/api/wms/ajuste',{cookie:aj,body:corpoAj({produto:'ARG20'})});
+    check('produto que controla lote exige o lote',r.status===400&&/lote/.test(r.json?.error||''),r.json);
+    r=await call('GET','/api/wms/auditoria',{cookie:sup});
+    check('auditoria registra o ajuste com o usuário',r.json.rows.some(x=>x.acao==='ajuste_estoque'&&String(x.usuario).startsWith('aj_')),r.json.rows?.slice(0,3));
+  }
+
   console.log(`\n${pass} OK, ${fail} falha(s)`);
   process.exit(fail?1:0);
 })().catch(e=>{console.error(e);process.exit(1)});
