@@ -39,6 +39,16 @@ async function call(method,path,{body,cookie,bearer,headers}={}){
   r=await call('GET','/api/lotacao?from=2026-10-01&to=2026-10-31',{cookie});
   check('aba Lotação do dashboard responde (antes: HTTP 500)',r.status===200&&r.json?.ok===true&&r.json.rows?.length===1&&Number(r.json.rows[0].lucro)===500,r.status+' '+r.text.slice(0,160));
   r=await call('GET','/api/carregamentos-finais',{cookie}); check('dashboard -> carregamentos (chave interna)',r.status===200&&r.json?.ok===true,r.status+' '+r.text.slice(0,120));
+  {
+    // Carros carregados no dia x descargas (com o cliente que descarregou), contados em separado.
+    const foto='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',agora=new Date().toISOString();
+    r=await call('POST','/api/carregamentos-finais',{cookie,body:{tipo:'carregamento',conferente:'CONF',motorista:'MOTORISTA CARGA',quantidade_entregas:5,capturada_em:agora,foto}});
+    check('registra carregamento',r.status===201&&r.json?.ok===true,r.status+' '+r.text.slice(0,160));
+    r=await call('POST','/api/carregamentos-finais',{cookie,body:{tipo:'descarga',conferente:'CONF',motorista:'MOTORISTA DESCARGA',cliente:'Construtora Silva',quantidade_entregas:3,capturada_em:agora,foto}});
+    check('registra descarga com o cliente',r.status===201&&r.json?.cliente==='Construtora Silva',r.status+' '+r.text.slice(0,160));
+    r=await call('GET','/api/carregamentos-count?data='+new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}),{cookie});
+    check('carros carregados no dia não contam a descarga; descargas trazem o cliente',r.status===200&&r.json?.total===1&&r.json?.descargas===1&&r.json?.clientes?.[0]?.cliente==='Construtora Silva',r.status+' '+r.text.slice(0,200));
+  }
   r=await call('GET','/api/nf-materiais',{cookie}); check('dashboard -> notas (chave interna)',r.status===200&&r.json?.ok===true,r.status+' '+r.text.slice(0,120));
   r=await call('GET','/api/coletas/status',{cookie}); check('dashboard -> resumo de coletas (chave interna)',r.status===200&&r.json?.ok===true&&Number(r.json.total)===1,r.status+' '+r.text.slice(0,120));
   r=await call('PATCH','/api/painel/coletas-financeiro/'+coletaId,{cookie,body:{recebido:true}});

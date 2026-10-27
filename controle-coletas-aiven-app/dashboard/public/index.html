@@ -104,7 +104,8 @@ body.embedded-view #currentUser,body.embedded-view #logoutBtn,body.embedded-view
     <div class="card kpi fin"><div class="label">Ajudantes</div><div id="checkerValueHelperTotal" class="value">—</div><div class="sub">valor no período</div></div>
     <div class="card kpi"><div class="label">Pessoas</div><div id="checkerValuePeople" class="value">—</div><div class="sub">nomes distintos</div></div>
     <div class="card kpi"><div class="label">Lançamentos</div><div id="checkerValueEntries" class="value">—</div><div class="sub">registros encontrados</div></div>
-    <div class="card kpi"><div class="label">Carros carregados no dia</div><div id="checkerCarsLoaded" class="value">—</div><div class="sub">carregamentos registrados</div></div>
+    <div class="card kpi"><div class="label">Carros carregados no dia</div><div id="checkerCarsLoaded" class="value">—</div><div class="sub">só carregamentos</div></div>
+    <div class="card kpi"><div class="label">Descargas no dia</div><div id="checkerUnloads" class="value">—</div><div id="checkerUnloadClients" class="sub">clientes que descarregaram</div></div>
   </div>
   <div class="card tablecard" style="margin-top:12px">
     <div class="thead">Relatório por pessoa • Conferentes primeiro, depois Ajudantes</div>
@@ -287,6 +288,7 @@ body.embedded-view #currentUser,body.embedded-view #logoutBtn,body.embedded-view
           <div class="load-field"><label for="unloadChecker">Nome do conferente</label><input id="unloadChecker" autocomplete="name" placeholder="Ex.: João Silva" required></div>
           <div class="load-field"><label for="unloadDriver">Nome do motorista</label><input id="unloadDriver" list="loadDriverList" placeholder="Selecione ou digite" required></div>
         </div>
+        <div class="load-field"><label for="unloadClient">Cliente que descarregou</label><input id="unloadClient" list="unloadClientList" placeholder="Ex.: Construtora Silva" maxlength="160" required><datalist id="unloadClientList"></datalist></div>
         <div class="load-field"><label for="unloadQty">Quantidade descarregada / entregas</label><input id="unloadQty" type="number" min="0" max="1000" inputmode="numeric" placeholder="Ex.: 18" required></div>
         <div class="load-photo-grid">
           <label class="load-photo-btn" for="unloadPhoto">📷 Foto 1 • Descarga<input id="unloadPhoto" type="file" accept="image/*" capture="environment" required></label>
