@@ -113,7 +113,7 @@ jobs:
           node controle-coletas-aiven-app/tests/dre.js
       - name: Abastecimentos do Veic na Frota (Veic de mentira, sem rede externa)
         run: node controle-coletas-aiven-app/tests/veic.js
-      - name: Armazém (WMS) — Fase 1
+      - name: Armazém (WMS) — recebimento, SEFAZ e expedição
         run: node controle-coletas-aiven-app/tests/wms.js
       - name: Agendamento de entregas (varredura do SSW simulada, listas e histórico)
         run: node controle-coletas-aiven-app/tests/agendamento.js

@@ -240,6 +240,28 @@ async function ensureSchema(pool){
   await q("CREATE UNIQUE INDEX IF NOT EXISTS uq_wms_tarefa_lpn_aberta ON wms_tarefas (lpn_id) WHERE status IN ('pendente','em_execucao')");
   await q(`CREATE TABLE IF NOT EXISTS wms_auditoria (id BIGSERIAL PRIMARY KEY, empresa BIGINT NOT NULL DEFAULT 0, usuario TEXT NOT NULL, acao TEXT NOT NULL,
     entidade TEXT NOT NULL, entidade_id TEXT NOT NULL DEFAULT '', dados JSONB NOT NULL DEFAULT '{}'::jsonb, criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+  await q(`CREATE TABLE IF NOT EXISTS wms_expedicoes (id BIGSERIAL PRIMARY KEY, empresa BIGINT NOT NULL DEFAULT 0, armazem_id BIGINT NOT NULL REFERENCES wms_armazens(id),
+    cliente_id BIGINT NOT NULL REFERENCES wms_clientes(id), nf_numero TEXT NOT NULL DEFAULT '', nf_serie TEXT NOT NULL DEFAULT '', nf_chave TEXT NOT NULL DEFAULT '',
+    destinatario_cnpj TEXT NOT NULL DEFAULT '', destinatario_nome TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'aberta' CHECK (status IN ('aberta','separando','separada','expedida','cancelada')),
+    doca_id BIGINT REFERENCES wms_enderecos(id), placa TEXT NOT NULL DEFAULT '', criado_por TEXT NOT NULL DEFAULT '', criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    separada_em TIMESTAMPTZ, expedida_em TIMESTAMPTZ, expedida_por TEXT NOT NULL DEFAULT '', xml TEXT)`);
+  await q("CREATE UNIQUE INDEX IF NOT EXISTS uq_wms_expedicoes_chave ON wms_expedicoes (empresa,nf_chave) WHERE nf_chave<>'' AND status<>'cancelada'");
+  await q(`CREATE TABLE IF NOT EXISTS wms_expedicao_itens (id BIGSERIAL PRIMARY KEY, expedicao_id BIGINT NOT NULL REFERENCES wms_expedicoes(id) ON DELETE CASCADE,
+    n_item INT NOT NULL DEFAULT 0, produto_id BIGINT REFERENCES wms_produtos(id), codigo TEXT NOT NULL DEFAULT '', ean TEXT NOT NULL DEFAULT '', descricao TEXT NOT NULL DEFAULT '',
+    unidade TEXT NOT NULL DEFAULT '', qtd_nf NUMERIC NOT NULL CHECK (qtd_nf>0), fator NUMERIC NOT NULL DEFAULT 1 CHECK (fator>0), lote TEXT NOT NULL DEFAULT '')`);
+  await q('CREATE INDEX IF NOT EXISTS idx_wms_exp_itens ON wms_expedicao_itens (expedicao_id)');
+  await q(`CREATE TABLE IF NOT EXISTS wms_expedicao_separacao (id BIGSERIAL PRIMARY KEY, expedicao_id BIGINT NOT NULL REFERENCES wms_expedicoes(id),
+    item_id BIGINT NOT NULL REFERENCES wms_expedicao_itens(id), endereco_id BIGINT NOT NULL REFERENCES wms_enderecos(id), lote_id BIGINT REFERENCES wms_lotes(id),
+    lpn_id BIGINT REFERENCES wms_lpns(id), qtd NUMERIC NOT NULL CHECK (qtd>0), qtd_separada NUMERIC NOT NULL DEFAULT 0 CHECK (qtd_separada>=0 AND qtd_separada<=qtd),
+    status TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente','separada','cancelada')), separado_por TEXT NOT NULL DEFAULT '', separado_em TIMESTAMPTZ)`);
+  await q('CREATE INDEX IF NOT EXISTS idx_wms_exp_sep ON wms_expedicao_separacao (expedicao_id)');
+  // tipos de movimento da expedição (reserva e separação) entram na regra do banco sem recriar a tabela
+  {const r=await q("SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conname='wms_movimentos_tipo_check'");
+   if(!r?.rows?.[0]||!/separacao/.test(r.rows[0].d)){
+     await q('ALTER TABLE wms_movimentos DROP CONSTRAINT IF EXISTS wms_movimentos_tipo_check');
+     await q("ALTER TABLE wms_movimentos ADD CONSTRAINT wms_movimentos_tipo_check CHECK (tipo IN ('entrada','armazenagem','transferencia','bloqueio','desbloqueio','ajuste','saida','reserva','separacao'))");
+   }}
   await q(`CREATE OR REPLACE FUNCTION wms_imutavel() RETURNS trigger LANGUAGE plpgsql AS $f$
     BEGIN RAISE EXCEPTION 'registro do WMS não pode ser alterado nem apagado (%).', TG_TABLE_NAME USING ERRCODE='42501'; END $f$`);
   for(const t of['wms_movimentos','wms_auditoria']){
@@ -715,6 +737,182 @@ async function ajustar(pool,ctx,b){
     return{ok:true,sentido,sku:prod.sku,descricao:prod.descricao,endereco:end.codigo,qtd:q};
   });
 }
+// ---------------------------------------------------------------- expedição (saída)
+// NF de saída (XML, chave na SEFAZ ou manual) -> reserva FEFO do saldo disponível -> separação no coletor
+// (endereço, produto e quantidade conferidos) para a doca de expedição -> expedir dá baixa (movimento "saida").
+async function criarExpedicao(c,ctx,b){
+  const arm=await doEmpresa(c,ctx,'wms_armazens',b.armazem_id,'Escolha o armazém.');
+  const cli=await doEmpresa(c,ctx,'wms_clientes',b.cliente_id,'Cliente não encontrado.');
+  const itens=Array.isArray(b.itens)?b.itens:[];
+  if(!itens.length||itens.length>500)throw erro(400,'Informe de 1 a 500 itens.');
+  const chave=so(b.nf_chave);
+  if(chave&&chave.length!==44)throw erro(400,'Chave da NF-e deve ter 44 dígitos.');
+  if(chave){const d=await c.query("SELECT id FROM wms_expedicoes WHERE empresa=$1 AND nf_chave=$2 AND status<>'cancelada'",[ctx.emp,chave]);
+    if(d.rowCount)throw erro(409,'Esta NF-e já está na expedição nº '+d.rows[0].id+'.','NFE_DUPLICADA')}
+  const r=await c.query(`INSERT INTO wms_expedicoes(empresa,armazem_id,cliente_id,nf_numero,nf_serie,nf_chave,destinatario_cnpj,destinatario_nome,criado_por,xml)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,[ctx.emp,arm.id,cli.id,limpo(b.nf_numero,20),limpo(b.nf_serie,5),chave,so(b.destinatario_cnpj),limpo(b.destinatario_nome,160),ctx.usuario,b.xml||null]);
+  const id=r.rows[0].id;
+  let n=0,semProduto=0;
+  for(const it of itens){
+    n++;
+    const qtd=num(it.qtd);
+    if(!qtdOk(qtd))throw erro(400,'Item '+n+': quantidade inválida.');
+    let prod=null;
+    if(it.produto_id)prod=(await c.query('SELECT * FROM wms_produtos WHERE id=$1 AND cliente_id=$2',[it.produto_id,cli.id])).rows[0]||null;
+    else for(const cod of[it.ean,it.codigo,it.sku].filter(Boolean)){
+      const p=await c.query(`SELECT * FROM wms_produtos WHERE cliente_id=$1 AND ativo AND (upper(sku)=upper($2) OR ean=$2 OR $2=ANY(codigos_alt)) LIMIT 1`,[cli.id,limpo(cod,80)]);
+      if(p.rowCount){prod=p.rows[0];break}
+    }
+    if(it.produto_id&&!prod)throw erro(400,'Item '+n+': produto não é deste cliente.');
+    if(!prod)semProduto++;
+    const un=codigo(it.unidade,10);
+    const fator=prod&&prod.un_por_caixa>0&&['CX','CXA','CAIXA','FD','FARDO','PCT'].includes(un)&&un!==prod.unidade?prod.un_por_caixa:1;
+    await c.query(`INSERT INTO wms_expedicao_itens(expedicao_id,n_item,produto_id,codigo,ean,descricao,unidade,qtd_nf,fator,lote) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [id,it.n_item||n,prod?.id||null,limpo(it.codigo||prod?.sku,60),so(it.ean),limpo(it.descricao||prod?.descricao,200),un||prod?.unidade||'UN',qtd,fator,limpo(it.lote,40)]);
+  }
+  await auditar(c,ctx,'criar','expedicao',id,{nf:chave||b.nf_numero,itens:itens.length,sem_produto:semProduto});
+  return{id:String(id),sem_produto:semProduto};
+}
+// NF de saída: o cliente do armazém normalmente é o emitente (vende o que está guardado); depois tenta o destinatário
+async function importarSaida(pool,ctx,b,xml){
+  const nfe=lerNfe(xml);
+  let clienteId=b.cliente_id||null;
+  if(!clienteId){
+    const r=await pool.query('SELECT id::text,cnpj FROM wms_clientes WHERE empresa=$1 AND ativo AND cnpj=ANY($2::text[])',[ctx.emp,[nfe.emitente.cnpj,nfe.destinatario.cnpj].filter(Boolean)]);
+    const d=r.rows.find(x=>x.cnpj===nfe.emitente.cnpj)||r.rows.find(x=>x.cnpj===nfe.destinatario.cnpj);
+    if(!d)throw erro(409,'Nenhum cliente cadastrado com o CNPJ do emitente ('+nfe.emitente.cnpj+') ou do destinatário ('+nfe.destinatario.cnpj+'). Escolha o cliente.','CLIENTE_NAO_IDENTIFICADO');
+    clienteId=d.id;
+  }
+  // na saída o lote da nota é o pedido do cliente; sem lote, a reserva escolhe pelo vencimento (FEFO)
+  const r=await tx(pool,c=>criarExpedicao(c,ctx,{armazem_id:b.armazem_id,cliente_id:clienteId,nf_numero:nfe.numero,nf_serie:nfe.serie,nf_chave:nfe.chave,
+    destinatario_cnpj:nfe.destinatario.cnpj,destinatario_nome:nfe.destinatario.nome,xml:String(xml),
+    itens:nfe.itens.map(i=>({n_item:i.n_item,codigo:i.codigo,ean:i.ean,descricao:i.descricao,unidade:i.unidade,qtd:i.qtd,lote:i.lote}))}));
+  return{ok:true,...r,chave:nfe.chave,itens:nfe.itens.length};
+}
+// baixa o XML pela chave; devolve {xml} ou a resposta "pendente" (só resumo: Ciência da Operação registrada)
+async function nfePelaChave(pool,ctx,chave){
+  if(ctx.emp!==0||!sefaz.configurado())throw erro(503,'A busca da nota na SEFAZ ainda não está ligada (falta o certificado A1). Importe o arquivo XML.','SEFAZ_DESLIGADA');
+  const nota=await sefaz.baixarNfe(chave);
+  if(!nota.resumo)return nota;
+  const ev=await sefaz.cienciaOperacao(chave);
+  await tx(pool,c=>auditar(c,ctx,'ciencia_operacao','nfe',chave,{protocolo:ev.protocolo||null,cStat:ev.cStat}));
+  return{pendente:{ok:true,pendente:true,chave,mensagem:'A SEFAZ só liberou o resumo desta nota. Registramos a Ciência da Operação; o XML completo costuma ficar disponível em alguns minutos. Leia o código de novo daqui a pouco.'}};
+}
+async function lerExpedicao(c,ctx,id){
+  const x=await doEmpresa(c,ctx,'wms_expedicoes',id,'Expedição não encontrada.');
+  const itens=(await c.query(`SELECT i.id::text,i.n_item,i.produto_id::text,i.codigo,i.ean,i.descricao,i.unidade,i.qtd_nf::float,i.fator::float,(i.qtd_nf*i.fator)::float AS qtd,i.lote,
+      p.sku,p.descricao AS produto,COALESCE((SELECT SUM(s.qtd) FROM wms_expedicao_separacao s WHERE s.item_id=i.id AND s.status<>'cancelada'),0)::float AS reservado,
+      COALESCE((SELECT SUM(s.qtd_separada) FROM wms_expedicao_separacao s WHERE s.item_id=i.id AND s.status<>'cancelada'),0)::float AS separado
+    FROM wms_expedicao_itens i LEFT JOIN wms_produtos p ON p.id=i.produto_id WHERE i.expedicao_id=$1 ORDER BY i.n_item,i.id`,[x.id])).rows;
+  const sep=(await c.query(`SELECT s.id::text,s.item_id::text,e.codigo AS endereco,e.distancia_m::float AS distancia,p.sku,p.descricao AS produto,p.ean,p.unidade,l.lote,l.validade::text,
+      lp.codigo AS lpn,s.qtd::float,s.qtd_separada::float,s.status,s.separado_por,s.separado_em
+    FROM wms_expedicao_separacao s JOIN wms_expedicao_itens i ON i.id=s.item_id JOIN wms_produtos p ON p.id=i.produto_id JOIN wms_enderecos e ON e.id=s.endereco_id
+    LEFT JOIN wms_lotes l ON l.id=s.lote_id LEFT JOIN wms_lpns lp ON lp.id=s.lpn_id WHERE s.expedicao_id=$1 AND s.status<>'cancelada'
+    ORDER BY (s.status='pendente') DESC,e.distancia_m,e.codigo,s.id`,[x.id])).rows;
+  const cli=(await c.query('SELECT id::text,nome,cnpj FROM wms_clientes WHERE id=$1',[x.cliente_id])).rows[0];
+  const doca=x.doca_id?(await c.query('SELECT codigo FROM wms_enderecos WHERE id=$1',[x.doca_id])).rows[0]?.codigo:'';
+  return{id:String(x.id),armazem_id:String(x.armazem_id),cliente:cli,nf_numero:x.nf_numero,nf_serie:x.nf_serie,nf_chave:x.nf_chave,destinatario_cnpj:x.destinatario_cnpj,
+    destinatario_nome:x.destinatario_nome,status:x.status,doca:doca||'',placa:x.placa,criado_por:x.criado_por,criado_em:x.criado_em,separada_em:x.separada_em,
+    expedida_em:x.expedida_em,expedida_por:x.expedida_por,itens,separacao:sep};
+}
+// reserva tudo ou nada: primeiro vence, primeiro sai (FEFO); no mesmo vencimento, picking e saldo solto antes de palete fechado
+async function reservarExpedicao(c,ctx,id){
+  const x=(await c.query('SELECT * FROM wms_expedicoes WHERE id=$1 AND empresa=$2 FOR UPDATE',[id,ctx.emp])).rows[0];
+  if(!x)throw erro(404,'Expedição não encontrada.');
+  if(x.status!=='aberta')throw erro(409,'A expedição já foi reservada (situação: '+x.status+').','SITUACAO');
+  const itens=(await c.query('SELECT i.*,p.sku FROM wms_expedicao_itens i LEFT JOIN wms_produtos p ON p.id=i.produto_id WHERE i.expedicao_id=$1 ORDER BY i.n_item,i.id',[x.id])).rows;
+  if(itens.some(i=>!i.produto_id))throw erro(409,'Há itens da nota sem produto vinculado. Vincule antes de reservar.','ITEM_SEM_PRODUTO');
+  const op='exp-'+x.id+'-reserva',faltas=[];let linhas=0;
+  for(const it of itens){
+    let falta=+it.qtd_nf*+it.fator;
+    const rs=(await c.query(`SELECT s.id,s.endereco_id,s.lote_id,s.lpn_id,s.qtd::float AS qtd FROM wms_saldos s JOIN wms_enderecos e ON e.id=s.endereco_id JOIN wms_zonas z ON z.id=e.zona_id
+        LEFT JOIN wms_lotes l ON l.id=s.lote_id
+      WHERE s.empresa=$1 AND s.armazem_id=$2 AND s.produto_id=$3 AND s.cliente_id=$4 AND s.estado='disponivel' AND e.status='ativo' AND z.tipo=ANY($5::text[])
+        AND ($6='' OR l.lote=$6)
+      ORDER BY l.validade NULLS LAST,(z.tipo='picking') DESC,s.lpn_id NULLS FIRST,e.distancia_m,s.id FOR UPDATE OF s`,[ctx.emp,x.armazem_id,it.produto_id,x.cliente_id,ZONAS_GUARDA,it.lote||''])).rows;
+    const tirar=[];
+    for(const s of rs){if(falta<=1e-9)break;const q=Math.min(falta,s.qtd);falta-=q;tirar.push({s,q})}
+    if(falta>1e-9){faltas.push(it.sku+(it.lote?' lote '+it.lote:'')+': faltam '+fmt(falta,3).replace(/,?0+$/,''));continue}
+    for(const{s,q}of tirar){
+      await mover(c,ctx,{operacao:op,tipo:'reserva',armazem_id:x.armazem_id,produto_id:it.produto_id,cliente_id:x.cliente_id,lote_id:s.lote_id,qtd:q,
+        de:{endereco_id:s.endereco_id,estado:'disponivel',lpn_id:s.lpn_id},para:{endereco_id:s.endereco_id,estado:'reservado',lpn_id:s.lpn_id},motivo:'reserva para expedição',documento:'NF '+(x.nf_numero||x.id)});
+      await c.query('INSERT INTO wms_expedicao_separacao(expedicao_id,item_id,endereco_id,lote_id,lpn_id,qtd) VALUES($1,$2,$3,$4,$5,$6)',[x.id,it.id,s.endereco_id,s.lote_id,s.lpn_id,q]);
+      linhas++;
+    }
+  }
+  if(faltas.length)throw erro(409,'Estoque disponível insuficiente: '+faltas.join('; ')+'. Nada foi reservado.','ESTOQUE_INSUFICIENTE');
+  await c.query("UPDATE wms_expedicoes SET status='separando' WHERE id=$1",[x.id]);
+  await auditar(c,ctx,'reservar','expedicao',x.id,{linhas});
+  return{ok:true,status:'separando',linhas};
+}
+async function docaExpedicao(c,ctx,x,cod){
+  if(cod){const e=await enderecoPorCodigo(c,ctx,x.armazem_id,cod);
+    if(!['doca','expedicao'].includes(e.zona_tipo))throw erro(409,'O endereço '+e.codigo+' não é doca nem área de expedição.','ENDERECO_INVALIDO');return e}
+  if(x.doca_id)return(await c.query('SELECT * FROM wms_enderecos WHERE id=$1',[x.doca_id])).rows[0];
+  const e=(await c.query(`SELECT e.* FROM wms_enderecos e JOIN wms_zonas z ON z.id=e.zona_id WHERE e.armazem_id=$1 AND e.status='ativo' AND z.tipo IN ('expedicao','doca')
+    ORDER BY (z.tipo='expedicao') DESC,e.codigo LIMIT 1`,[x.armazem_id])).rows[0];
+  if(!e)throw erro(409,'Cadastre um endereço de doca ou de expedição neste armazém.','SEM_DOCA');
+  return e;
+}
+async function separarItem(pool,ctx,id,b){
+  return operacao(pool,ctx,b.uuid,'separacao',async(c,op)=>{
+    const x=(await c.query('SELECT * FROM wms_expedicoes WHERE id=$1 AND empresa=$2 FOR UPDATE',[id,ctx.emp])).rows[0];
+    if(!x)throw erro(404,'Expedição não encontrada.');
+    if(x.status!=='separando')throw erro(409,'Esta expedição não está em separação (situação: '+x.status+').','SITUACAO');
+    const s=(await c.query("SELECT s.*,i.produto_id FROM wms_expedicao_separacao s JOIN wms_expedicao_itens i ON i.id=s.item_id WHERE s.id=$1 AND s.expedicao_id=$2 FOR UPDATE OF s",[b.separacao_id,x.id])).rows[0];
+    if(!s)throw erro(404,'Linha de separação não encontrada.');
+    if(s.status!=='pendente')throw erro(409,'Esta linha já foi separada.','JA_SEPARADA');
+    const end=await enderecoPorCodigo(c,ctx,x.armazem_id,b.endereco);
+    if(String(end.id)!==String(s.endereco_id)){const certo=(await c.query('SELECT codigo FROM wms_enderecos WHERE id=$1',[s.endereco_id])).rows[0].codigo;
+      throw erro(409,'Endereço errado: a mercadoria reservada está em '+certo+'.','ENDERECO_ERRADO')}
+    const prod=await produtoPorCodigo(c,ctx,x.cliente_id,b.produto);
+    if(String(prod.id)!==String(s.produto_id))throw erro(409,'Produto errado: '+prod.sku+' não é o item desta linha.','PRODUTO_ERRADO');
+    const pend=+s.qtd-+s.qtd_separada;
+    const q=b.qtd===undefined||b.qtd===''?pend:num(b.qtd);
+    if(!qtdOk(q))throw erro(400,'Quantidade inválida.');
+    if(q>pend+1e-9)throw erro(409,'Quantidade maior que a reservada nesta linha ('+fmt(pend,3).replace(/,?0+$/,'')+').','QTD_MAIOR');
+    const doca=await docaExpedicao(c,ctx,x,b.doca);
+    await mover(c,ctx,{operacao:op,tipo:'separacao',armazem_id:x.armazem_id,produto_id:s.produto_id,cliente_id:x.cliente_id,lote_id:s.lote_id,qtd:q,
+      de:{endereco_id:s.endereco_id,estado:'reservado',lpn_id:s.lpn_id},para:{endereco_id:doca.id,estado:'reservado',lpn_id:null},motivo:'separação',documento:'NF '+(x.nf_numero||x.id)});
+    const resto=pend-q;
+    await c.query("UPDATE wms_expedicao_separacao SET qtd_separada=qtd_separada+$2,status=CASE WHEN $3 THEN 'separada' ELSE status END,separado_por=$4,separado_em=NOW() WHERE id=$1",
+      [s.id,q,resto<=1e-9,ctx.usuario]);
+    if(!x.doca_id)await c.query('UPDATE wms_expedicoes SET doca_id=$2 WHERE id=$1',[x.id,doca.id]);
+    const abertas=+(await c.query("SELECT COUNT(*) AS n FROM wms_expedicao_separacao WHERE expedicao_id=$1 AND status='pendente'",[x.id])).rows[0].n;
+    if(!abertas)await c.query("UPDATE wms_expedicoes SET status='separada',separada_em=NOW() WHERE id=$1",[x.id]);
+    return{ok:true,sku:prod.sku,qtd:q,restante:resto,doca:doca.codigo,status:abertas?'separando':'separada',linhas_abertas:abertas};
+  });
+}
+async function expedir(c,ctx,id,b){
+  const x=(await c.query('SELECT * FROM wms_expedicoes WHERE id=$1 AND empresa=$2 FOR UPDATE',[id,ctx.emp])).rows[0];
+  if(!x)throw erro(404,'Expedição não encontrada.');
+  if(x.status!=='separada')throw erro(409,x.status==='separando'?'Ainda há itens para separar.':'A expedição não está pronta para sair (situação: '+x.status+').','SITUACAO');
+  const op='exp-'+x.id+'-saida';
+  const rs=(await c.query(`SELECT i.produto_id,s.lote_id,SUM(s.qtd_separada)::float AS q FROM wms_expedicao_separacao s JOIN wms_expedicao_itens i ON i.id=s.item_id
+    WHERE s.expedicao_id=$1 AND s.status='separada' GROUP BY i.produto_id,s.lote_id`,[x.id])).rows;
+  for(const r of rs)await mover(c,ctx,{operacao:op,tipo:'saida',armazem_id:x.armazem_id,produto_id:r.produto_id,cliente_id:x.cliente_id,lote_id:r.lote_id,qtd:r.q,
+    de:{endereco_id:x.doca_id,estado:'reservado',lpn_id:null},motivo:'expedição'+(limpo(b.placa,8)?' placa '+codigo(b.placa,8):''),documento:'NF '+(x.nf_numero||x.id)});
+  await c.query("UPDATE wms_expedicoes SET status='expedida',expedida_em=NOW(),expedida_por=$2,placa=$3 WHERE id=$1",[x.id,ctx.usuario,codigo(b.placa,8)]);
+  await auditar(c,ctx,'expedir','expedicao',x.id,{nf:x.nf_chave||x.nf_numero,placa:codigo(b.placa,8)||null,itens:rs.length});
+  return{ok:true,status:'expedida'};
+}
+// cancelar devolve ao disponível: o que não foi separado fica onde estava; o que já foi para a doca fica disponível na doca
+async function cancelarExpedicao(c,ctx,id,b){
+  const x=(await c.query('SELECT * FROM wms_expedicoes WHERE id=$1 AND empresa=$2 FOR UPDATE',[id,ctx.emp])).rows[0];
+  if(!x)throw erro(404,'Expedição não encontrada.');
+  if(['expedida','cancelada'].includes(x.status))throw erro(409,'Expedição já '+x.status+'.','SITUACAO');
+  const op='exp-'+x.id+'-cancela',base={operacao:op,tipo:'reserva',armazem_id:x.armazem_id,cliente_id:x.cliente_id,motivo:'expedição cancelada',documento:'NF '+(x.nf_numero||x.id)};
+  const rs=(await c.query("SELECT s.*,i.produto_id FROM wms_expedicao_separacao s JOIN wms_expedicao_itens i ON i.id=s.item_id WHERE s.expedicao_id=$1 AND s.status<>'cancelada' FOR UPDATE OF s",[x.id])).rows;
+  for(const s of rs){
+    const pend=+s.qtd-+s.qtd_separada,sep=+s.qtd_separada;
+    if(pend>1e-9)await mover(c,ctx,{...base,produto_id:s.produto_id,lote_id:s.lote_id,qtd:pend,de:{endereco_id:s.endereco_id,estado:'reservado',lpn_id:s.lpn_id},para:{endereco_id:s.endereco_id,estado:'disponivel',lpn_id:s.lpn_id}});
+    if(sep>1e-9)await mover(c,ctx,{...base,produto_id:s.produto_id,lote_id:s.lote_id,qtd:sep,de:{endereco_id:x.doca_id,estado:'reservado',lpn_id:null},para:{endereco_id:x.doca_id,estado:'disponivel',lpn_id:null}});
+  }
+  await c.query("UPDATE wms_expedicao_separacao SET status='cancelada' WHERE expedicao_id=$1",[x.id]);
+  await c.query("UPDATE wms_expedicoes SET status='cancelada' WHERE id=$1",[x.id]);
+  await auditar(c,ctx,'cancelar','expedicao',x.id,{motivo:limpo(b.motivo,300)});
+  return{ok:true,status:'cancelada'};
+}
 async function mudarEstado(pool,ctx,b,bloquear){
   const motivo=limpo(b.motivo,300);
   if(!motivo)throw erro(400,'Informe o motivo.');
@@ -1074,14 +1272,69 @@ async function handle(req,res,u,deps){
       if(!sefaz.chaveValida(chave))throw erro(400,'Chave de acesso inválida. Leia o código de barras do DANFE (44 dígitos).','CHAVE_INVALIDA');
       const ja=(await pool.query('SELECT id::text,status FROM wms_recebimentos WHERE empresa=$1 AND nf_chave=$2 ORDER BY id DESC LIMIT 1',[ctx.emp,chave])).rows[0];
       if(ja&&ja.status!=='cancelado')throw erro(409,'Esta NF-e já está no recebimento nº '+ja.id+'.','NFE_DUPLICADA');
-      if(ctx.emp!==0||!sefaz.configurado())throw erro(503,'A busca da nota na SEFAZ ainda não está ligada (falta o certificado A1). Importe o arquivo XML.','SEFAZ_DESLIGADA');
-      const nota=await sefaz.baixarNfe(chave);
-      if(nota.resumo){
-        const ev=await sefaz.cienciaOperacao(chave);
-        await tx(pool,c=>auditar(c,ctx,'ciencia_operacao','nfe',chave,{protocolo:ev.protocolo||null,cStat:ev.cStat}));
-        return json(202,{ok:true,pendente:true,chave,mensagem:'A SEFAZ só liberou o resumo desta nota. Registramos a Ciência da Operação; o XML completo costuma ficar disponível em alguns minutos. Leia o código de novo daqui a pouco.'});
-      }
+      const nota=await nfePelaChave(pool,ctx,chave);
+      if(nota.pendente)return json(202,nota.pendente);
       return json(201,{...(await importarXml(pool,ctx,b,nota.xml)),origem:'sefaz'});
+    }
+    // expedição
+    if(p==='/api/wms/expedicoes'&&M==='GET'){
+      const ctx=await contexto(deps,req,'operador');
+      const st=String(u.searchParams.get('status')||'');
+      const sts=st==='abertas'?['aberta','separando','separada']:st?st.split(','):null;
+      const r=await pool.query(`SELECT x.id::text,x.nf_numero,x.nf_chave,x.status,c.nome AS cliente,x.destinatario_nome,a.nome AS armazem,x.armazem_id::text,e.codigo AS doca,x.placa,x.criado_em,x.expedida_em,
+          (SELECT COUNT(*) FROM wms_expedicao_itens i WHERE i.expedicao_id=x.id)::int AS itens,
+          (SELECT COUNT(*) FROM wms_expedicao_itens i WHERE i.expedicao_id=x.id AND i.produto_id IS NULL)::int AS itens_sem_produto,
+          (SELECT COUNT(*) FROM wms_expedicao_separacao s WHERE s.expedicao_id=x.id AND s.status='pendente')::int AS linhas_pendentes
+        FROM wms_expedicoes x JOIN wms_clientes c ON c.id=x.cliente_id JOIN wms_armazens a ON a.id=x.armazem_id LEFT JOIN wms_enderecos e ON e.id=x.doca_id
+        WHERE x.empresa=$1 AND ($2::text[] IS NULL OR x.status=ANY($2)) ORDER BY x.id DESC LIMIT 200`,[ctx.emp,sts]);
+      return json(200,{ok:true,rows:r.rows});
+    }
+    if(p==='/api/wms/expedicoes'&&M==='POST'){
+      const ctx=await contexto(deps,req,'gestao'),b=await corpo();
+      return json(201,{ok:true,...(await tx(pool,c=>criarExpedicao(c,ctx,{...b,xml:null})))});
+    }
+    if(p==='/api/wms/expedicoes/xml'&&M==='POST'){
+      const ctx=await contexto(deps,req,'gestao'),b=await corpo(3*1024*1024);
+      return json(201,await importarSaida(pool,ctx,b,b.xml));
+    }
+    if(p==='/api/wms/expedicoes/chave'&&M==='POST'){
+      const ctx=await contexto(deps,req,'gestao'),b=await corpo();
+      const chave=so(b.chave);
+      if(!sefaz.chaveValida(chave))throw erro(400,'Chave de acesso inválida. Leia o código de barras do DANFE (44 dígitos).','CHAVE_INVALIDA');
+      const ja=(await pool.query("SELECT id::text FROM wms_expedicoes WHERE empresa=$1 AND nf_chave=$2 AND status<>'cancelada' LIMIT 1",[ctx.emp,chave])).rows[0];
+      if(ja)throw erro(409,'Esta NF-e já está na expedição nº '+ja.id+'.','NFE_DUPLICADA');
+      const nota=await nfePelaChave(pool,ctx,chave);
+      if(nota.pendente)return json(202,nota.pendente);
+      return json(201,{...(await importarSaida(pool,ctx,b,nota.xml)),origem:'sefaz'});
+    }
+    m=p.match(/^\/api\/wms\/expedicoes\/(\d+)$/);
+    if(m&&M==='GET'){
+      const ctx=await contexto(deps,req,'operador');
+      return json(200,{ok:true,expedicao:await lerExpedicao(pool,ctx,m[1])});
+    }
+    m=p.match(/^\/api\/wms\/expedicoes\/(\d+)\/(vincular|reservar|separar|expedir|cancelar)$/);
+    if(m&&M==='POST'){
+      const acao=m[2],id=m[1];
+      if(acao==='separar'){const ctx=await contexto(deps,req,'operador'),b=await corpo();return json(200,await separarItem(pool,ctx,id,b))}
+      const ctx=await contexto(deps,req,'gestao'),b=await corpo();
+      if(acao==='reservar')return json(200,await tx(pool,c=>reservarExpedicao(c,ctx,id)));
+      if(acao==='expedir')return json(200,await tx(pool,c=>expedir(c,ctx,id,b)));
+      if(acao==='cancelar')return json(200,await tx(pool,c=>cancelarExpedicao(c,ctx,id,b)));
+      // vincular item da nota a um produto do cliente (só antes de reservar)
+      return json(200,await tx(pool,async c=>{
+        const x=(await c.query('SELECT * FROM wms_expedicoes WHERE id=$1 AND empresa=$2 FOR UPDATE',[id,ctx.emp])).rows[0];
+        if(!x)throw erro(404,'Expedição não encontrada.');
+        if(x.status!=='aberta')throw erro(409,'Só dá para vincular antes de reservar.','SITUACAO');
+        const it=(await c.query('SELECT * FROM wms_expedicao_itens WHERE id=$1 AND expedicao_id=$2',[b.item_id,x.id])).rows[0];
+        if(!it)throw erro(404,'Item não encontrado.');
+        const prod=(await c.query('SELECT * FROM wms_produtos WHERE id=$1 AND cliente_id=$2 AND ativo',[b.produto_id,x.cliente_id])).rows[0];
+        if(!prod)throw erro(400,'Produto não é deste cliente.');
+        const fator=num(b.fator)||(prod.un_por_caixa>0&&['CX','CXA','CAIXA','FD','FARDO','PCT'].includes(it.unidade)&&it.unidade!==prod.unidade?prod.un_por_caixa:1);
+        await c.query('UPDATE wms_expedicao_itens SET produto_id=$2,fator=$3 WHERE id=$1',[it.id,prod.id,fator]);
+        if(it.codigo&&it.codigo!==prod.sku)await c.query('UPDATE wms_produtos SET codigos_alt=array_append(codigos_alt,$2) WHERE id=$1 AND NOT ($2=ANY(codigos_alt))',[prod.id,it.codigo]);
+        await auditar(c,ctx,'vincular','expedicao_item',it.id,{produto:prod.sku,fator});
+        return{ok:true};
+      }));
     }
     m=p.match(/^\/api\/wms\/recebimentos\/(\d+)$/);
     if(m&&M==='GET'){

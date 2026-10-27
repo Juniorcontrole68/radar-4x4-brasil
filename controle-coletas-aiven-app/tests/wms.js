@@ -331,12 +331,102 @@ function nfe({chave,itens}){
   }
 
 
+
+  console.log('Fase 2 — expedição: NF de saída, reserva por vencimento, separação no coletor e baixa');
+  {
+    const gx=await criarUser('gx',['wms','wms_ajuste']);
+    r=await call('POST','/api/wms/produtos',{cookie:gx,body:{cliente_id:cli,sku:'EXP1',descricao:'Produto da expedição',controla_lote:true,controla_validade:true}});
+    check('cria produto com lote para a expedição',r.status===201,r.json);
+    const aj=(x)=>call('POST','/api/wms/ajuste',{cookie:gx,body:{uuid:'ex-'+Math.random().toString(36).slice(2,12),armazem_id:arm,cliente_id:cli,motivo:'Estoque inicial',...x}});
+    r=await aj({produto:'EXP1',endereco:'B-03-02-01',qtd:40,lote:'LA',validade:'2027-12-31'});
+    const r2=await aj({produto:'EXP1',endereco:'B-04-02-01',qtd:20,lote:'LB',validade:'2027-03-31'});
+    check('estoque: 40 do lote LA (vence 12/2027) e 20 do LB (vence 03/2027)',r.status===200&&r2.status===200,[r.json,r2.json]);
+    const saldo=async(sku,estado)=>(await call('GET','/api/wms/saldos?q='+sku,{cookie:gx})).json.rows.filter(x=>x.sku===sku&&(!estado||x.estado===estado)).reduce((t,x)=>t+x.qtd,0);
+    const aj1Antes=await saldo('AJ1','disponivel');
+    const chS='3526'+String(Date.now()+7).padStart(40,'0').slice(-40);
+    const xmlS=nfe({chave:chS,itens:[{cod:'EXP1',desc:'Produto da expedição',q:30},{cod:'AJ1',desc:'Produto do estoque inicial',q:5}]});
+    r=await call('POST','/api/wms/expedicoes/xml',{cookie:op,body:{armazem_id:arm,xml:xmlS}});
+    check('operador não lança nota de saída',r.status===403);
+    r=await call('POST','/api/wms/expedicoes/xml',{cookie:gest,body:{armazem_id:arm,xml:xmlS}});
+    check('importa a NF de saída e acha o cliente e os produtos',r.status===201&&r.json.itens===2&&r.json.sem_produto===0,r.json);
+    const ex=r.json.id;
+    r=await call('POST','/api/wms/expedicoes/xml',{cookie:gest,body:{armazem_id:arm,xml:xmlS}});
+    check('a mesma nota de saída não entra duas vezes',r.status===409&&r.json.code==='NFE_DUPLICADA',r.json);
+    r=await call('POST','/api/wms/expedicoes/'+ex+'/separar',{cookie:op,body:{uuid:uuid(),separacao_id:1,endereco:'B-04-02-01',produto:'EXP1'}});
+    check('não separa antes de reservar',r.status===409||r.status===404,r.json);
+    r=await call('POST','/api/wms/expedicoes/'+ex+'/reservar',{cookie:op});
+    check('operador não reserva',r.status===403);
+    r=await call('POST','/api/wms/expedicoes/'+ex+'/reservar',{cookie:gest});
+    check('reserva: 3 linhas de separação',r.status===200&&r.json.linhas===3&&r.json.status==='separando',r.json);
+    r=await call('GET','/api/wms/expedicoes/'+ex,{cookie:op});
+    const E=r.json.expedicao||{},sepEXP=(E.separacao||[]).filter(x=>x.sku==='EXP1');
+    check('vence primeiro, sai primeiro: 20 do LB e 10 do LA',sepEXP.length===2&&sepEXP.some(x=>x.lote==='LB'&&x.qtd===20&&x.endereco==='B-04-02-01')&&sepEXP.some(x=>x.lote==='LA'&&x.qtd===10&&x.endereco==='B-03-02-01'),E.separacao);
+    check('reservado sai do disponível: EXP1 30 disponíveis e 30 reservados',await saldo('EXP1','disponivel')===30&&await saldo('EXP1','reservado')===30);
+    r=await call('POST','/api/wms/expedicoes/'+ex+'/reservar',{cookie:gest});
+    check('reservar de novo é recusado',r.status===409);
+    {
+      const ch2='3526'+String(Date.now()+11).padStart(40,'0').slice(-40);
+      r=await call('POST','/api/wms/expedicoes/xml',{cookie:gest,body:{armazem_id:arm,xml:nfe({chave:ch2,itens:[{cod:'AJ1',desc:'x',q:1},{cod:'EXP1',desc:'x',q:31}]})}});
+      const ex2=r.json.id;
+      r=await call('POST','/api/wms/expedicoes/'+ex2+'/reservar',{cookie:gest});
+      check('sem estoque suficiente: 409 com o que falta e nada reservado',r.status===409&&r.json.code==='ESTOQUE_INSUFICIENTE'&&/EXP1/.test(r.json.error)&&await saldo('AJ1','reservado')===5&&await saldo('EXP1','disponivel')===30,r.json);
+      r=await call('POST','/api/wms/expedicoes/'+ex2+'/cancelar',{cookie:gest,body:{motivo:'sem estoque'}});
+      check('cancela a expedição sem reserva',r.status===200&&r.json.status==='cancelada',r.json);
+    }
+    const lb=sepEXP.find(x=>x.lote==='LB'),la=sepEXP.find(x=>x.lote==='LA'),lAj=E.separacao.find(x=>x.sku==='AJ1');
+    r=await call('POST','/api/wms/expedicoes/'+ex+'/separar',{cookie:op,body:{uuid:uuid(),separacao_id:lb.id,endereco:'B-03-02-01',produto:'EXP1',qtd:5}});
+    check('endereço errado é recusado e diz onde está',r.status===409&&r.json.code==='ENDERECO_ERRADO'&&r.json.error.includes('B-04-02-01'),r.json);
+    r=await call('POST','/api/wms/expedicoes/'+ex+'/separar',{cookie:op,body:{uuid:uuid(),separacao_id:lb.id,endereco:'B-04-02-01',produto:'AJ1',qtd:5}});
+    check('produto errado é recusado',r.status===409&&r.json.code==='PRODUTO_ERRADO',r.json);
+    r=await call('POST','/api/wms/expedicoes/'+ex+'/separar',{cookie:op,body:{uuid:uuid(),separacao_id:lb.id,endereco:'B-04-02-01',produto:'EXP1',qtd:21}});
+    check('quantidade maior que a reservada é recusada',r.status===409&&r.json.code==='QTD_MAIOR',r.json);
+    const u1=uuid();
+    r=await call('POST','/api/wms/expedicoes/'+ex+'/separar',{cookie:op,body:{uuid:u1,separacao_id:lb.id,endereco:'B-04-02-01',produto:'EXP1',qtd:15}});
+    check('separa 15 de 20 e vai para a doca',r.status===200&&r.json.qtd===15&&r.json.restante===5&&r.json.doca==='D-01-01-01'&&r.json.status==='separando',r.json);
+    r=await call('POST','/api/wms/expedicoes/'+ex+'/separar',{cookie:op,body:{uuid:u1,separacao_id:lb.id,endereco:'B-04-02-01',produto:'EXP1',qtd:15}});
+    check('a mesma leitura repetida (sinal ruim) não separa de novo',r.json.duplicado===true,r.json);
+    r=await call('POST','/api/wms/expedicoes/'+ex+'/expedir',{cookie:gest,body:{}});
+    check('não expede com item por separar',r.status===409,r.json);
+    r=await call('POST','/api/wms/expedicoes/'+ex+'/separar',{cookie:op,body:{uuid:uuid(),separacao_id:lb.id,endereco:'B-04-02-01',produto:'EXP1'}});
+    check('sem quantidade separa o que falta da linha (5)',r.status===200&&r.json.qtd===5&&r.json.restante===0,r.json);
+    r=await call('POST','/api/wms/expedicoes/'+ex+'/separar',{cookie:op,body:{uuid:uuid(),separacao_id:la.id,endereco:'B-03-02-01',produto:'EXP1',qtd:10}});
+    const r3=await call('POST','/api/wms/expedicoes/'+ex+'/separar',{cookie:op2,body:{uuid:uuid(),separacao_id:lAj.id,endereco:lAj.endereco,produto:'AJ1',qtd:5}});
+    check('tudo separado: expedição fica "separada"',r.status===200&&r3.status===200&&r3.json.status==='separada'&&r3.json.linhas_abertas===0,[r.json,r3.json]);
+    r=await call('POST','/api/wms/expedicoes/'+ex+'/separar',{cookie:op,body:{uuid:uuid(),separacao_id:la.id,endereco:'B-03-02-01',produto:'EXP1',qtd:1}});
+    check('linha já separada não separa de novo',r.status===409,r.json);
+    r=await call('GET','/api/wms/saldos?q=D-01-01-01',{cookie:gx});
+    check('na doca: 30 EXP1 e 5 AJ1 reservados para a nota',r.json.rows.filter(x=>x.sku==='EXP1'&&x.estado==='reservado').reduce((t,x)=>t+x.qtd,0)===30&&r.json.rows.filter(x=>x.sku==='AJ1'&&x.estado==='reservado').reduce((t,x)=>t+x.qtd,0)===5,r.json.rows);
+    r=await call('POST','/api/wms/expedicoes/'+ex+'/expedir',{cookie:op,body:{placa:'ABC1D23'}});
+    check('operador não dá saída',r.status===403);
+    r=await call('POST','/api/wms/expedicoes/'+ex+'/expedir',{cookie:gest,body:{placa:'abc1d23'}});
+    check('expede: baixa do estoque',r.status===200&&r.json.status==='expedida',r.json);
+    check('saldo depois da saída: EXP1 30 (só o LA), AJ1 −5, nada reservado',await saldo('EXP1')===30&&await saldo('EXP1','reservado')===0&&await saldo('AJ1','disponivel')===aj1Antes-5&&await saldo('AJ1','reservado')===0);
+    r=await call('GET','/api/wms/expedicoes/'+ex,{cookie:gest});
+    check('expedição guarda placa, quem expediu e as quantidades separadas',r.json.expedicao.status==='expedida'&&r.json.expedicao.placa==='ABC1D23'&&r.json.expedicao.itens.every(i=>i.separado===i.qtd),r.json.expedicao);
+    r=await call('POST','/api/wms/expedicoes/'+ex+'/cancelar',{cookie:gest,body:{}});
+    check('expedição já expedida não cancela',r.status===409);
+    {
+      const ch3='3526'+String(Date.now()+13).padStart(40,'0').slice(-40);
+      r=await call('POST','/api/wms/expedicoes/xml',{cookie:gest,body:{armazem_id:arm,xml:nfe({chave:ch3,itens:[{cod:'AJ1',desc:'x',q:4}]})}});
+      const ex3=r.json.id;
+      await call('POST','/api/wms/expedicoes/'+ex3+'/reservar',{cookie:gest});
+      const L=(await call('GET','/api/wms/expedicoes/'+ex3,{cookie:op})).json.expedicao.separacao[0];
+      await call('POST','/api/wms/expedicoes/'+ex3+'/separar',{cookie:op,body:{uuid:uuid(),separacao_id:L.id,endereco:L.endereco,produto:'AJ1',qtd:1}});
+      r=await call('POST','/api/wms/expedicoes/'+ex3+'/cancelar',{cookie:gest,body:{motivo:'cliente desistiu'}});
+      check('cancelar depois de separar parte: tudo volta ao disponível (o separado fica na doca)',r.status===200&&await saldo('AJ1','reservado')===0&&await saldo('AJ1','disponivel')===aj1Antes-5,r.json);
+    }
+    r=await call('GET','/api/wms/expedicoes?status=abertas',{cookie:op});
+    check('lista de abertas não mostra expedida nem cancelada',r.status===200&&!r.json.rows.some(x=>['expedida','cancelada'].includes(x.status)),r.json.rows);
+    r=await call('GET','/api/wms/auditoria',{cookie:sup});
+    check('auditoria registra reserva e saída',r.json.rows.some(x=>x.acao==='expedir'&&x.entidade_id===ex)&&r.json.rows.some(x=>x.acao==='reservar'&&x.entidade_id===ex),r.json.rows?.slice(0,4));
+  }
+
   console.log('Código de barras do DANFE → XML na SEFAZ (SEFAZ de mentira com certificado A1 de teste)');
   {
     const sefaz=require('../sefaz-nfe.js');
     const dv=b=>{let t=0,p=2;for(let i=b.length-1;i>=0;i--){t+=+b[i]*p;p=p===9?2:p+1}const r=t%11;return b+(r<2?0:11-r)};
     const nova=n=>dv('352610'+CNPJ_FORN+'55001'+String(n).padStart(9,'0')+'1'+String(n).padStart(8,'0'));
-    const kOk=nova(4901),kRes=nova(4902),kNao=nova(4903);
+    const kOk=nova(4901),kRes=nova(4902),kNao=nova(4903),kSai=nova(4904);
     check('chave: dígito verificador confere e chave alterada é recusada',sefaz.chaveValida(kOk)&&!sefaz.chaveValida(kOk.slice(0,43)+((+kOk[43]+1)%10)));
     r=await call('GET','/api/wms/status',{cookie:gest});
     const ligado=r.json.nfe_chave===true;
@@ -361,6 +451,7 @@ function nfe({chave,itens}){
           }
           const ch=(b.match(/<chNFe>(\d{44})</)||[])[1];
           if(ch===kOk)return res.end(ret('<tpAmb>1</tpAmb><cStat>138</cStat><xMotivo>Documento localizado</xMotivo><loteDistDFeInt><docZip NSU="000000000000001" schema="procNFe_v4.00.xsd">'+gz(nfe({chave:kOk,itens:[{cod:'F-1',ean:'7891234567895',desc:'Argamassa',q:120,lotes:[{lote:'L9',q:120,val:'2027-09-30'}]},{cod:'F-2',desc:'Rejunte',q:15}]}))+'</docZip></loteDistDFeInt>'));
+          if(ch===kSai)return res.end(ret('<tpAmb>1</tpAmb><cStat>138</cStat><xMotivo>Documento localizado</xMotivo><loteDistDFeInt><docZip NSU="000000000000003" schema="procNFe_v4.00.xsd">'+gz(nfe({chave:kSai,itens:[{cod:'AJ1',desc:'Produto do estoque inicial',q:2}]}))+'</docZip></loteDistDFeInt>'));
           if(ch===kRes)return res.end(ret('<tpAmb>1</tpAmb><cStat>138</cStat><xMotivo>Documento localizado</xMotivo><loteDistDFeInt><docZip NSU="000000000000002" schema="resNFe_v1.01.xsd">'+gz('<resNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.01"><chNFe>'+kRes+'</chNFe></resNFe>')+'</docZip></loteDistDFeInt>'));
           res.end(ret('<tpAmb>1</tpAmb><cStat>137</cStat><xMotivo>Nenhum documento localizado</xMotivo>'));
         });
@@ -394,6 +485,8 @@ function nfe({chave,itens}){
         }
         r=await call('POST','/api/wms/recebimentos/chave',{cookie:gest,body:{chave:kNao,armazem_id:arm}});
         check('nota que não é da empresa: a SEFAZ não acha e o aviso explica',r.status===404&&r.json.code==='NFE_NAO_ENCONTRADA',r.json);
+        r=await call('POST','/api/wms/expedicoes/chave',{cookie:gest,body:{chave:kSai,armazem_id:arm}});
+        check('expedição: lê a chave da nota de saída e baixa o XML na SEFAZ',r.status===201&&r.json.origem==='sefaz'&&r.json.itens===1,r.json);
         r=await call('GET','/api/wms/auditoria',{cookie:sup});
         check('auditoria registra a Ciência da Operação',r.json.rows.some(x=>x.acao==='ciencia_operacao'&&x.entidade_id===kRes),r.json.rows?.slice(0,3));
       }finally{mock.close()}

@@ -49,7 +49,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}dialog form,dialog .in{padding:18
 <body>
 <div class="page">
   <header>
-    <div><h1>🏭 Armazém (WMS)</h1><div class="muted" id="sub">CONSTRULOG WMS 360° · Fase 1</div></div>
+    <div><h1>🏭 Armazém (WMS)</h1><div class="muted" id="sub">CONSTRULOG WMS 360° · Fase 2</div></div>
     <div class="bar">
       <label>Armazém<select id="selArm"></select></label>
       <a class="btn" href="/wms/app" target="_blank" rel="noopener">📱 Aplicativo do operador</a>
@@ -61,6 +61,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}dialog form,dialog .in{padding:18
     <button role="tab" data-aba="mapa">Mapa</button>
     <button role="tab" data-aba="recebimentos">Recebimentos</button>
     <button role="tab" data-aba="tarefas">Armazenagem</button>
+    <button role="tab" data-aba="expedicao">Expedição</button>
     <button role="tab" data-aba="estoque">Estoque</button>
     <button role="tab" data-aba="produtos">Produtos</button>
     <button role="tab" data-aba="clientes">Clientes</button>
@@ -88,6 +89,17 @@ dialog::backdrop{background:rgba(15,23,42,.55)}dialog form,dialog .in{padding:18
     <div class="card" id="mapaDet"><div class="vazio">Clique numa posição para ver o conteúdo.</div></div>
   </section>
 
+  <section data-sec="expedicao" hidden>
+    <div class="card">
+      <div class="bar" style="justify-content:space-between">
+        <label>Situação<select id="expFiltro"><option value="abertas">Em aberto</option><option value="expedida">Expedidas</option><option value="cancelada">Canceladas</option></select></label>
+        <div class="bar"><button class="btn p" id="btnExpChave">▦ Ler código de barras da NF de saída</button><label class="btn" style="display:flex;align-items:center;cursor:pointer">⬆ Importar XML da NF de saída<input type="file" id="expXml" accept=".xml,text/xml" multiple hidden></label></div>
+      </div>
+      <p class="muted">Fluxo: lançar a nota → reservar (o sistema escolhe os endereços pelo vencimento: o que vence primeiro sai primeiro) → o operador separa no aplicativo (menu Separação) → expedir dá a baixa no estoque.</p>
+      <div class="tw" id="expLista"></div>
+    </div>
+    <div class="card" id="expDet" hidden></div>
+  </section>
   <section data-sec="recebimentos" hidden>
     <div class="card">
       <div class="bar" style="justify-content:space-between">
@@ -177,7 +189,9 @@ const ST_REC={aguardando:['Aguardando',''],na_doca:['Na doca','info'],em_confere
 const chipRec=s=>'<span class="chip '+(ST_REC[s]||['',''])[1]+'">'+esc((ST_REC[s]||[s])[0])+'</span>';
 const EST={disponivel:['Disponível','ok'],bloqueado:['Bloqueado','err'],avariado:['Avariado','warn'],reservado:['Reservado','info'],em_conferencia:['Em conferência','warn'],em_transferencia:['Em transferência','info']};
 const chipEst=s=>'<span class="chip '+(EST[s]||['',''])[1]+'">'+esc((EST[s]||[s])[0])+'</span>';
-const MOV={entrada:'Entrada',armazenagem:'Armazenagem',transferencia:'Transferência',bloqueio:'Bloqueio',desbloqueio:'Desbloqueio',ajuste:'Ajuste',saida:'Saída'};
+const MOV={entrada:'Entrada',armazenagem:'Armazenagem',transferencia:'Transferência',bloqueio:'Bloqueio',desbloqueio:'Desbloqueio',ajuste:'Ajuste',saida:'Saída',reserva:'Reserva',separacao:'Separação'};
+const ST_EXP={aberta:['Aberta',''],separando:['Em separação','warn'],separada:['Separada','info'],expedida:['Expedida','ok'],cancelada:['Cancelada','']};
+const chipExp=s=>'<span class="chip '+(ST_EXP[s]||['',''])[1]+'">'+esc((ST_EXP[s]||[s])[0])+'</span>';
 const tabela=(cols,rows,vazio)=>rows.length?'<table><thead><tr>'+cols.map(c=>'<th>'+c[0]+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+cols.map(c=>'<td>'+c[1](r)+'</td>').join('')+'</tr>').join('')+'</tbody></table>':'<div class="vazio">'+(vazio||'Nada por aqui ainda.')+'</div>';
 function abrir(html){$('#dlgIn').innerHTML=html;$('#dlg').showModal()}
 function fechar(){$('#dlg').close()}
@@ -188,7 +202,7 @@ try{const t=localStorage.getItem('wmsTema');if(t)document.documentElement.datase
 $('#btnTema').onclick=()=>{const atual=document.documentElement.dataset.tema||(matchMedia('(prefers-color-scheme: dark)').matches?'escuro':'claro');const t=atual==='escuro'?'claro':'escuro';document.documentElement.dataset.tema=t;try{localStorage.setItem('wmsTema',t)}catch{}};
 
 // abas
-const CARREGA={painel:carregarPainel,mapa:carregarMapa,recebimentos:carregarRecebimentos,tarefas:carregarTarefas,estoque:carregarEstoque,produtos:carregarProdutos,clientes:carregarClientes,enderecos:carregarEnderecos,auditoria:carregarAuditoria};
+const CARREGA={painel:carregarPainel,mapa:carregarMapa,recebimentos:carregarRecebimentos,tarefas:carregarTarefas,expedicao:carregarExpedicoes,estoque:carregarEstoque,produtos:carregarProdutos,clientes:carregarClientes,enderecos:carregarEnderecos,auditoria:carregarAuditoria};
 function irAba(a){$$('#abas button').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.aba===a)));$$('section[data-sec]').forEach(s=>s.hidden=s.dataset.sec!==a);try{sessionStorage.setItem('wmsAba',a)}catch{};tenta(CARREGA[a])()}
 $('#abas').addEventListener('click',e=>{const b=e.target.closest('button[data-aba]');if(b)irAba(b.dataset.aba)});
 
@@ -345,10 +359,10 @@ $('#xmlArq').onchange=tenta(async e=>{
 });
 // código de barras do DANFE (chave de 44 dígitos): o leitor USB digita e dá Enter; no celular, a câmera
 function chaveDv(ch){let s=0,p=2;for(let i=42;i>=0;i--){s+=+ch[i]*p;p=p===9?2:p+1}const r=s%11;return(r<2?0:11-r)===+ch[43]}
-$('#btnRecChave').onclick=tenta(async()=>{
+function lerChaveNf(url,titulo,depois){return tenta(async()=>{
   if(!ST.arm){aviso('Escolha o armazém.');return}
   const ligado=!!ST.status.nfe_chave;
-  abrir('<h2>Ler código de barras da NF</h2>'+(ligado?'<p class="muted">Aponte o leitor para o código de barras do DANFE (ou digite a chave de 44 dígitos). O sistema busca o XML na SEFAZ e cria o recebimento com os itens.</p>':'<p class="kmsg err">A busca na SEFAZ ainda não está ligada: falta cadastrar o certificado A1 no servidor. Enquanto isso, use “Importar XML da NF-e”.</p>')+
+  abrir('<h2>'+titulo+'</h2>'+(ligado?'<p class="muted">Aponte o leitor para o código de barras do DANFE (ou digite a chave de 44 dígitos). O sistema busca o XML na SEFAZ e já lança a nota com os itens.</p>':'<p class="kmsg err">A busca na SEFAZ ainda não está ligada: falta cadastrar o certificado A1 no servidor. Enquanto isso, use “Importar XML da NF-e”.</p>')+
     '<label>Chave de acesso<input id="kCh" inputmode="numeric" autocomplete="off" placeholder="0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000"'+(ligado?'':' disabled')+'></label><div id="kCam"></div><p id="kMsg" class="muted"></p>'+
     '<div class="bar"><button class="btn p" id="kOk"'+(ligado?'':' disabled')+'>Buscar na SEFAZ</button>'+(ligado&&'BarcodeDetector' in window?'<button class="btn" id="kCamBtn" type="button">📷 Câmera</button>':'')+'<button class="btn" data-fechar>Fechar</button></div>');
   if(!ligado)return;
@@ -362,7 +376,7 @@ $('#btnRecChave').onclick=tenta(async()=>{
     if(ch.length!==44||!chaveDv(ch)){msg.textContent='Chave inválida: são 44 dígitos (confira a leitura).';msg.className='kmsg err';inp.select();return}
     if(ocupado)return;ocupado=true;$('#kOk').disabled=true;msg.className='muted';msg.textContent='Consultando a SEFAZ…';
     try{
-      const r=await fetch('/api/wms/recebimentos/chave',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({chave:ch,armazem_id:ST.arm,cliente_id:cliente_id||undefined})});
+      const r=await fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({chave:ch,armazem_id:ST.arm,cliente_id:cliente_id||undefined})});
       const j=await r.json().catch(()=>({}));
       if(r.status===401){location.href='/?login=1';return}
       if(j.pendente){msg.textContent=j.mensagem;msg.className='kmsg ok';return}
@@ -373,8 +387,7 @@ $('#btnRecChave').onclick=tenta(async()=>{
         }
         throw new Error(j.error||('Falha '+r.status));
       }
-      fechar();aviso('NF '+(j.chave||'').slice(25,34).replace(/^0+/,'')+' importada da SEFAZ: recebimento '+j.id+' com '+j.itens+' item(ns)'+(j.sem_produto?', '+j.sem_produto+' sem produto vinculado':'')+'.',!j.sem_produto);
-      carregarRecebimentos();
+      fechar();depois(j);
     }catch(e){msg.textContent=e.message;msg.className='kmsg err';inp.select()}
     finally{ocupado=false;const b=$('#kOk');if(b)b.disabled=false}
   };
@@ -395,7 +408,67 @@ $('#btnRecChave').onclick=tenta(async()=>{
     };
     ler();
   });
+})}
+$('#btnRecChave').onclick=lerChaveNf('/api/wms/recebimentos/chave','Ler código de barras da NF de entrada',j=>{aviso('NF '+(j.chave||'').slice(25,34).replace(/^0+/,'')+' importada da SEFAZ: recebimento '+j.id+' com '+j.itens+' item(ns)'+(j.sem_produto?', '+j.sem_produto+' sem produto vinculado':'')+'.',!j.sem_produto);carregarRecebimentos()});
+// ---------------------------------------------------------------- expedição
+async function carregarExpedicoes(){
+  const j=await api('GET','/api/wms/expedicoes?status='+$('#expFiltro').value);
+  $('#expLista').innerHTML=tabela([['#',x=>'<a href="#" data-exp="'+x.id+'">'+x.id+'</a>'],['NF',x=>esc(x.nf_numero||'')],['Cliente',x=>esc(x.cliente)],['Destinatário',x=>esc(x.destinatario_nome||'')],['Armazém',x=>esc(x.armazem)],
+    ['Situação',x=>chipExp(x.status)+(x.itens_sem_produto?' <span class="chip warn">'+x.itens_sem_produto+' sem produto</span>':'')+(x.status==='separando'?' <span class="muted">'+x.linhas_pendentes+' linha(s) a separar</span>':'')],['Doca',x=>esc(x.doca||'')],['Criada',x=>dt(x.criado_em)]],j.rows,'Nenhuma expedição.');
+}
+$('#expFiltro').onchange=tenta(carregarExpedicoes);
+$('#expLista').addEventListener('click',e=>{const a=e.target.closest('[data-exp]');if(a){e.preventDefault();tenta(abrirExp)(a.dataset.exp)}});
+$('#btnExpChave').onclick=lerChaveNf('/api/wms/expedicoes/chave','Ler código de barras da NF de saída',j=>{aviso('NF de saída lançada: expedição '+j.id+' com '+j.itens+' item(ns)'+(j.sem_produto?', '+j.sem_produto+' sem produto vinculado':'')+'.',!j.sem_produto);carregarExpedicoes();tenta(abrirExp)(j.id)});
+$('#expXml').onchange=tenta(async e=>{
+  const files=[...e.target.files];e.target.value='';
+  if(!ST.arm){aviso('Escolha o armazém.');return}
+  let ultimo=null;
+  for(const f of files){
+    const xml=await f.text();
+    try{const j=await api('POST','/api/wms/expedicoes/xml',{armazem_id:ST.arm,xml});ultimo=j.id;aviso('NF de saída lançada: expedição '+j.id+' com '+j.itens+' item(ns)'+(j.sem_produto?', '+j.sem_produto+' sem produto vinculado':'')+'.',!j.sem_produto)}
+    catch(err){
+      if(/Nenhum cliente cadastrado/.test(err.message)&&ST.clientes.length){
+        abrir('<h2>'+esc(f.name)+'</h2><p>'+esc(err.message)+'</p><label>Cliente<select id="xCli">'+ST.clientes.map(c=>'<option value="'+c.id+'">'+esc(c.nome)+'</option>').join('')+'</select></label><div class="bar"><button class="btn p" id="xOk">Lançar</button><button class="btn" data-fechar>Cancelar</button></div>');
+        await new Promise(res=>{$('#xOk').onclick=tenta(async()=>{const j=await api('POST','/api/wms/expedicoes/xml',{armazem_id:ST.arm,xml,cliente_id:$('#xCli').value});ultimo=j.id;fechar();aviso('NF de saída lançada: expedição '+j.id+'.',true);res()});$('#dlg').addEventListener('close',res,{once:true})});
+      }else aviso(f.name+': '+err.message);
+    }
+  }
+  await carregarExpedicoes();if(ultimo)abrirExp(ultimo);
 });
+async function abrirExp(id){
+  const x=(await api('GET','/api/wms/expedicoes/'+id)).expedicao;
+  const box=$('#expDet');box.hidden=false;
+  const ordem=['aberta','separando','separada','expedida'],i=ordem.indexOf(x.status);
+  const etapas=[['Nota lançada',0],['Reserva e separação',1],['Separada na doca',2],['Expedida',3]].map(([t,k])=>'<span class="chip '+(x.status==='cancelada'?'':i>k||x.status==='expedida'?'ok':i===k?'warn':'')+'">'+t+'</span>').join('');
+  box.innerHTML='<div class="bar" style="justify-content:space-between"><div><h2>Expedição '+x.id+' · NF '+esc(x.nf_numero||'—')+' '+chipExp(x.status)+'</h2><div class="muted">'+esc(x.cliente.nome+(x.destinatario_nome?' → '+x.destinatario_nome:'')+(x.nf_chave?' · chave '+x.nf_chave:'')+(x.doca?' · doca '+x.doca:'')+(x.placa?' · placa '+x.placa:'')+(x.expedida_por?' · expedida por '+x.expedida_por+' '+dt(x.expedida_em):''))+'</div></div><div class="bar">'+
+    (x.status==='aberta'?'<button class="btn p" data-ea="reservar">Reservar estoque</button>':'')+
+    (x.status==='separada'?'<button class="btn p" data-ea="expedir">Expedir (dar baixa)</button>':'')+
+    (!['expedida','cancelada'].includes(x.status)?'<button class="btn d" data-ea="cancelar">Cancelar</button>':'')+'</div></div>'+
+    '<div class="etapas">'+etapas+'</div>'+(x.status==='separando'?'<p class="chip warn">Os operadores separam pelo aplicativo, no menu Separação.</p>':'')+
+    '<h2 style="margin-top:12px">Itens da nota</h2><div class="tw">'+tabela([['Item',y=>y.n_item],['Código NF',y=>esc(y.codigo)],['Descrição NF',y=>esc(y.descricao)],['Produto',y=>y.produto_id?esc(y.sku):(x.status==='aberta'?'<button class="btn" data-evinc="'+y.id+'">Vincular produto</button>':'—')],['Lote pedido',y=>esc(y.lote||'')],['Quantidade',y=>n(y.qtd)+(y.fator>1?' <span class="muted">('+n(y.qtd_nf)+' '+esc(y.unidade)+' × '+y.fator+')</span>':'')],['Reservado',y=>n(y.reservado)],['Separado',y=>n(y.separado)]],x.itens)+'</div>'+
+    (x.separacao.length?'<h2 style="margin-top:12px">Lista de separação</h2><div class="tw">'+tabela([['Endereço',y=>'<b>'+esc(y.endereco)+'</b>'],['Produto',y=>esc(y.sku+' · '+y.produto)],['Lote · Val.',y=>esc(y.lote||'')+(y.validade?' · '+dBR(y.validade):'')],['Palete',y=>esc(y.lpn||'')],['Qtd',y=>n(y.qtd)],['Separado',y=>n(y.qtd_separada)],['Situação',y=>'<span class="chip '+(y.status==='separada'?'ok':'warn')+'">'+esc(y.status)+'</span> <span class="muted">'+esc(y.separado_por||'')+'</span>']],x.separacao)+'</div>':'');
+  box.dataset.id=x.id;box.dataset.cli=x.cliente.id;box.scrollIntoView({behavior:'smooth',block:'start'});
+}
+$('#expDet').addEventListener('click',tenta(async e=>{
+  const box=$('#expDet'),id=box.dataset.id;
+  const a=e.target.closest('[data-ea]');
+  if(a){
+    const ac=a.dataset.ea;
+    if(ac==='reservar'){const j=await api('POST','/api/wms/expedicoes/'+id+'/reservar',{});aviso('Estoque reservado: '+j.linhas+' linha(s) de separação no aplicativo.',true)}
+    if(ac==='expedir'){
+      abrir('<h2>Expedir a expedição '+esc(id)+'</h2><p class="muted">A mercadoria separada sai do estoque (baixa definitiva).</p><label>Placa do veículo<input id="ePlaca" maxlength="8"></label><div class="bar"><button class="btn p" id="eOk">Expedir</button><button class="btn" data-fechar>Cancelar</button></div>');
+      await new Promise(res=>{$('#eOk').onclick=tenta(async()=>{await api('POST','/api/wms/expedicoes/'+id+'/expedir',{placa:$('#ePlaca').value});fechar();aviso('Expedida: estoque baixado.',true);res()});$('#dlg').addEventListener('close',res,{once:true})});
+    }
+    if(ac==='cancelar'){const motivo=prompt('Motivo do cancelamento (o reservado volta a ficar disponível):');if(motivo===null)return;await api('POST','/api/wms/expedicoes/'+id+'/cancelar',{motivo});aviso('Expedição cancelada.',true)}
+    await abrirExp(id);carregarExpedicoes();return;
+  }
+  const v=e.target.closest('[data-evinc]');
+  if(v){
+    const prods=(await api('GET','/api/wms/produtos?cliente_id='+box.dataset.cli)).rows;
+    abrir('<h2>Vincular item da nota a um produto</h2><label>Produto do cliente<select id="vProd">'+prods.map(p=>'<option value="'+p.id+'">'+esc(p.sku+' · '+p.descricao)+'</option>').join('')+'</select></label><label>Fator (unidades por unidade da nota; vazio = automático)<input id="vFator" type="number" min="0" step="any"></label><div class="bar"><button class="btn p" id="vOk">Vincular</button><button class="btn" data-fechar>Cancelar</button></div>');
+    $('#vOk').onclick=tenta(async()=>{await api('POST','/api/wms/expedicoes/'+id+'/vincular',{item_id:v.dataset.evinc,produto_id:$('#vProd').value,fator:$('#vFator').value||null});fechar();abrirExp(id)});
+  }
+}));
 $('#btnRecManual').onclick=tenta(async()=>{
   if(!ST.clientes.length){aviso('Cadastre um cliente primeiro.');return}
   abrir('<h2>Recebimento manual (pré-aviso)</h2><div class="cols"><label>Cliente<select id="mCli">'+ST.clientes.map(c=>'<option value="'+c.id+'">'+esc(c.nome)+'</option>').join('')+'</select></label><label>Nº da NF / pedido<input id="mNf"></label><label>Previsão de chegada<input id="mPrev" type="date"></label></div><div id="mItens"></div><button class="btn" id="mMais" type="button">+ Item</button><div class="bar"><button class="btn p" id="mOk">Criar</button><button class="btn" data-fechar>Cancelar</button></div>');
