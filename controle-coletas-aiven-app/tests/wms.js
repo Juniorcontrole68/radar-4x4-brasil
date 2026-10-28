@@ -727,6 +727,21 @@ function nfe({chave,itens}){
     check('depois de mudar a zona a reserva usa o saldo',r.status===200&&r.json.linhas===1,r.json);
   }
 
+  console.log('SKU sempre em maiúsculo');
+  {
+    let r=await call('POST','/api/wms/produtos',{cookie:gest,body:{cliente_id:cli,sku:'  sku-minusc 1 ',descricao:'Produto com SKU minúsculo'}});
+    check('SKU cadastrado em minúsculo é gravado em maiúsculo',r.status===201,r.json);
+    r=await call('GET','/api/wms/produtos?cliente_id='+cli+'&q=sku-minusc',{cookie:gest});
+    check('lista mostra o SKU em maiúsculo',r.json.rows?.some(p=>p.sku==='SKU-MINUSC 1'),r.json.rows?.map(p=>p.sku));
+    r=await call('POST','/api/wms/produtos',{cookie:gest,body:{cliente_id:cli,sku:'SKU-Minusc 1',descricao:'repetido'}});
+    check('mesmo SKU com outra caixa é repetido',r.status===409,r.json);
+    const {Client}=require('pg');const db=new Client({connectionString:process.env.DATABASE_URL||'postgresql://teste:teste@127.0.0.1:5432/construlog_teste'});await db.connect();
+    await db.query("UPDATE wms_produtos SET sku='antigo-min' WHERE sku='SKU-MINUSC 1'");
+    await lib.ensureSchema(db);
+    const x=(await db.query("SELECT sku FROM wms_produtos WHERE upper(sku)='ANTIGO-MIN'")).rows;await db.end();
+    check('SKUs antigos em minúsculo são convertidos ao subir',x.length===1&&x[0].sku==='ANTIGO-MIN',x);
+  }
+
   console.log('Limpeza do estoque (administrador, com backup)');
   {
     let r=await call('GET','/api/wms/estoque/limpeza',{cookie:gest});
