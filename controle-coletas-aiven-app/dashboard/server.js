@@ -1536,7 +1536,9 @@ async function fetchSswDespesas475(from,to,unidade=SSW_UNIDADE){
     const body=await r.text();sswAssertLoggedIn(body);
     const lido=sswDespesas.despesasDaListagem(body);
     const diag={prog,act:envio.act,campos:envio.campos,colunas:lido.colunas,linhas:lido.linhas,amostra:sswDespesas.texto(body).slice(0,3000)};
-    console.log('SSW475 DESPESAS: '+JSON.stringify({from,to,act:envio.act,linhas:lido.linhas,despesas:lido.despesas.length,colunas:lido.colunas}));
+    // situações lidas e as primeiras linhas como vieram: mostra no log se a baixa (476) está sendo reconhecida
+    const situacoes={};for(const x of lido.despesas){const k=x.situacao||'(vazia)';situacoes[k]=(situacoes[k]||0)+1}
+    console.log('SSW475 DESPESAS: '+JSON.stringify({from,to,act:envio.act,linhas:lido.linhas,despesas:lido.despesas.length,colunas:lido.colunas,situacoes,amostra:sswDespesas.linhasBrutas(body).slice(0,4)}));
     return{ok:true,from,to,unidade,despesas:lido.despesas,total:lido.despesas.reduce((t,x)=>t+x.valor,0),diag}
   })
 }
