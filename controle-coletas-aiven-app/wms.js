@@ -19,6 +19,7 @@ const fs=require('fs');
 const path=require('path');
 const crypto=require('crypto');
 const sefaz=require('./sefaz-nfe');
+const wmsPdf=require('./wms-pdf');
 
 let ativo=/^(1|true|sim|yes)$/i.test(String(process.env.WMS_ATIVO||'').trim());
 const PAGINA_GESTAO=path.join(__dirname,'wms.html');
@@ -342,8 +343,15 @@ async function ensureSchema(pool){
     armazem_id BIGINT NOT NULL REFERENCES wms_armazens(id), paletes INT NOT NULL DEFAULT 0, posicoes INT NOT NULL DEFAULT 0, unidades NUMERIC NOT NULL DEFAULT 0, kg NUMERIC NOT NULL DEFAULT 0, m3 NUMERIC NOT NULL DEFAULT 0,
     atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (data,cliente_id,armazem_id))`);
   await q('ALTER TABLE wms_ocupacao_diaria ADD COLUMN IF NOT EXISTS posicoes INT NOT NULL DEFAULT 0');
+  // cópia de segurança feita antes de limpar o estoque (sem as fotos, que vão só no arquivo baixado)
+  await q(`CREATE TABLE IF NOT EXISTS wms_backups (id BIGSERIAL PRIMARY KEY, empresa BIGINT NOT NULL DEFAULT 0, motivo TEXT NOT NULL DEFAULT '', usuario TEXT NOT NULL DEFAULT '',
+    resumo JSONB NOT NULL DEFAULT '{}'::jsonb, dados JSONB NOT NULL, criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
   await q(`CREATE OR REPLACE FUNCTION wms_imutavel() RETURNS trigger LANGUAGE plpgsql AS $f$
-    BEGIN RAISE EXCEPTION 'registro do WMS não pode ser alterado nem apagado (%).', TG_TABLE_NAME USING ERRCODE='42501'; END $f$`);
+    BEGIN
+      -- única exceção: a limpeza do estoque feita pelo administrador, com backup, dentro da própria transação
+      IF TG_OP='DELETE' AND current_setting('wms.limpeza',true)='1' THEN RETURN OLD; END IF;
+      RAISE EXCEPTION 'registro do WMS não pode ser alterado nem apagado (%).', TG_TABLE_NAME USING ERRCODE='42501';
+    END $f$`);
   for(const t of['wms_movimentos','wms_auditoria']){
     await q(`DROP TRIGGER IF EXISTS ${t}_imutavel ON ${t}`);
     await q(`CREATE TRIGGER ${t}_imutavel BEFORE UPDATE OR DELETE ON ${t} FOR EACH ROW EXECUTE FUNCTION wms_imutavel()`);
@@ -821,6 +829,83 @@ async function ajustar(pool,ctx,b){
     return{ok:true,sentido,sku:prod.sku,descricao:prod.descricao,endereco:end.codigo,qtd:q};
   });
 }
+// ---------------------------------------------------------------- limpeza do estoque (administrador)
+// Tabelas de estoque e operação de uma empresa; os cadastros (armazéns, zonas, endereços, clientes, produtos, destinatários, tarifas) nunca entram.
+const SQL_REC='SELECT id FROM wms_recebimentos WHERE empresa=$1',SQL_EXP='SELECT id FROM wms_expedicoes WHERE empresa=$1',SQL_PROD='SELECT id FROM wms_produtos WHERE empresa=$1';
+const TABELAS_ESTOQUE=[
+  ['wms_saldos','empresa=$1'],['wms_lpns','empresa=$1'],['wms_tarefas','empresa=$1'],['wms_lotes','produto_id IN ('+SQL_PROD+')'],
+  ['wms_recebimentos','empresa=$1'],['wms_recebimento_itens','recebimento_id IN ('+SQL_REC+')'],['wms_contagens','recebimento_id IN ('+SQL_REC+')'],['wms_divergencias','empresa=$1'],
+  ['wms_expedicoes','empresa=$1'],['wms_expedicao_itens','expedicao_id IN ('+SQL_EXP+')'],['wms_expedicao_separacao','expedicao_id IN ('+SQL_EXP+')'],
+  ['wms_movimentos','empresa=$1'],['wms_operacoes','empresa=$1'],['wms_ocupacao_diaria','empresa=$1'],['wms_auditoria','empresa=$1']];
+async function resumoEstoque(c,ctx){
+  const out={};
+  for(const [t,w] of TABELAS_ESTOQUE)out[t]=(await c.query(`SELECT COUNT(*)::int AS n FROM ${t} WHERE ${w}`,[ctx.emp])).rows[0].n;
+  const s=(await c.query("SELECT COALESCE(SUM(qtd),0)::float AS q,COUNT(DISTINCT produto_id)::int AS p,COUNT(DISTINCT endereco_id)::int AS e FROM wms_saldos WHERE empresa=$1 AND qtd>0",[ctx.emp])).rows[0];
+  out.unidades_em_estoque=s.q;out.produtos_com_saldo=s.p;out.enderecos_ocupados=s.e;
+  return out;
+}
+async function backupEstoque(c,ctx,{fotos=false}={}){
+  const dados={};
+  for(const [t,w] of TABELAS_ESTOQUE){
+    const sel=t==='wms_contagens'?(fotos?"*,encode(foto,'base64') AS foto":'*,NULL::bytea AS foto'):'*';
+    dados[t]=(await c.query(`SELECT ${sel} FROM ${t} WHERE ${w} ORDER BY 1`,[ctx.emp])).rows;
+  }
+  return{gerado_em:new Date().toISOString(),empresa:ctx.emp,usuario:ctx.usuario,versao:1,tabelas:dados};
+}
+async function limparEstoque(pool,ctx,b){
+  if(!ctx.admin)throw erro(403,'Só o administrador limpa o estoque do WMS.','SEM_PERMISSAO');
+  const modo=b.modo==='saldo'?'saldo':b.modo==='tudo'?'tudo':null;
+  if(!modo)throw erro(400,'Escolha o que limpar: "tudo" (começar do zero) ou "saldo" (só zerar as quantidades).');
+  if(String(b.confirmar||'').trim().toUpperCase()!=='LIMPAR')throw erro(400,'Para confirmar, digite LIMPAR.','CONFIRMAR');
+  return tx(pool,async c=>{
+    // uma limpeza por vez na empresa
+    await c.query('SELECT pg_advisory_xact_lock(hashtext($1))',['wms-limpeza-'+ctx.emp]);
+    const antes=await resumoEstoque(c,ctx);
+    const bk=(await c.query('INSERT INTO wms_backups(empresa,motivo,usuario,resumo,dados) VALUES($1,$2,$3,$4,$5) RETURNING id',
+      [ctx.emp,'antes de limpar o estoque ('+modo+')',ctx.usuario,antes,await backupEstoque(c,ctx)])).rows[0].id;
+    if(modo==='tudo'){
+      await c.query("SELECT set_config('wms.limpeza','1',true)");
+      for(const t of['wms_expedicao_separacao','wms_expedicao_itens','wms_tarefas','wms_saldos','wms_divergencias','wms_contagens','wms_recebimento_itens'])
+        await c.query(`DELETE FROM ${t} WHERE ${TABELAS_ESTOQUE.find(x=>x[0]===t)[1]}`,[ctx.emp]);
+      await c.query('DELETE FROM wms_expedicoes WHERE empresa=$1',[ctx.emp]);
+      await c.query('DELETE FROM wms_lpns WHERE empresa=$1',[ctx.emp]);
+      await c.query('DELETE FROM wms_recebimentos WHERE empresa=$1',[ctx.emp]);
+      await c.query('DELETE FROM wms_lotes WHERE produto_id IN ('+SQL_PROD+')',[ctx.emp]);
+      for(const t of['wms_movimentos','wms_operacoes','wms_ocupacao_diaria','wms_auditoria'])await c.query(`DELETE FROM ${t} WHERE empresa=$1`,[ctx.emp]);
+      await c.query("SELECT set_config('wms.limpeza','0',true)");
+    }else{
+      // só o saldo: devolve as reservas, cancela o que está aberto e tira tudo com movimento de ajuste (o histórico fica)
+      for(const x of(await c.query("SELECT id FROM wms_expedicoes WHERE empresa=$1 AND status NOT IN ('expedida','cancelada') ORDER BY id",[ctx.emp])).rows)
+        await cancelarExpedicao(c,ctx,x.id,{motivo:'limpeza do estoque'});
+      await c.query("UPDATE wms_tarefas SET status='cancelada',concluido_em=NOW() WHERE empresa=$1 AND status IN ('pendente','em_execucao')",[ctx.emp]);
+      const op='limpeza-'+bk;
+      for(const s of(await c.query('SELECT * FROM wms_saldos WHERE empresa=$1 AND qtd>0 ORDER BY id',[ctx.emp])).rows)
+        await mover(c,ctx,{operacao:op,tipo:'ajuste',armazem_id:s.armazem_id,produto_id:s.produto_id,cliente_id:s.cliente_id,lote_id:s.lote_id,qtd:+s.qtd,
+          de:{endereco_id:s.endereco_id,estado:s.estado,lpn_id:s.lpn_id},motivo:'limpeza do estoque (backup '+bk+')',documento:'Ajuste −'});
+      await c.query('DELETE FROM wms_saldos WHERE empresa=$1',[ctx.emp]);
+      await c.query('UPDATE wms_lpns SET endereco_id=NULL WHERE empresa=$1',[ctx.emp]);
+    }
+    await auditar(c,ctx,'limpar_estoque','estoque',String(bk),{modo,backup:String(bk),antes});
+    return{ok:true,modo,backup_id:String(bk),antes,depois:await resumoEstoque(c,ctx)};
+  });
+}
+
+// ---------------------------------------------------------------- relatórios em PDF
+async function relatorioPdf(pool,ctx,rec,id){
+  const x=rec?await lerRecebimento(pool,ctx,id):await lerExpedicao(pool,ctx,id);
+  const t=rec?'wms_recebimentos':'wms_expedicoes';
+  const extra=(await pool.query(`SELECT a.nome AS armazem${rec?',t.motorista_doc':''} FROM ${t} t JOIN wms_armazens a ON a.id=t.armazem_id WHERE t.id=$1`,[x.id])).rows[0]||{};
+  const ids=[...new Set(x.itens.map(i=>i.produto_id).filter(Boolean))];
+  const produtos=(await pool.query(`SELECT p.id::text,p.peso_bruto_kg::float,${SQL_M3}::float AS m3 FROM wms_produtos p WHERE p.id=ANY($1::bigint[])`,[ids])).rows;
+  const eventos={};
+  for(const e of(await pool.query('SELECT acao,usuario,criado_em FROM wms_auditoria WHERE empresa=$1 AND entidade=$2 AND entidade_id=$3 ORDER BY id',[ctx.emp,rec?'recebimento':'expedicao',x.id])).rows)
+    eventos[e.acao]={em:e.criado_em,por:e.usuario};
+  let barras=null;if(/^\d{44}$/.test(x.nf_chave||''))barras=code128(x.nf_chave);
+  const dados={...x,...extra,produtos,eventos,barras};
+  const empresa=ctx.emp===0?'Construlog':String(ctx.user.client?.name||ctx.user.client?.nome||'Armazém');
+  return rec?wmsPdf.pdfRecebimento(dados,{empresa,usuario:ctx.usuario}):wmsPdf.pdfExpedicao(dados,{empresa,usuario:ctx.usuario});
+}
+
 // ---------------------------------------------------------------- expedição (saída)
 // NF de saída (XML, chave na SEFAZ ou manual) -> reserva FEFO do saldo disponível -> separação no coletor
 // (endereço, produto e quantidade conferidos) para a doca de expedição -> expedir dá baixa (movimento "saida").
@@ -1308,7 +1393,7 @@ async function handle(req,res,u,deps){
     // ---------- API
     if(M==='GET'&&p==='/api/wms/status'){
       const ctx=await contexto(deps,req);
-      return json(200,{ok:true,ativo:true,usuario:ctx.usuario,gestao:ctx.gestao,operador:ctx.operador,supervisor:ctx.supervisor||ctx.admin,ajuste:ctx.ajuste,
+      return json(200,{ok:true,ativo:true,usuario:ctx.usuario,gestao:ctx.gestao,operador:ctx.operador,supervisor:ctx.supervisor||ctx.admin,ajuste:ctx.ajuste,admin:ctx.admin,
         nfe_chave:ctx.emp===0&&sefaz.configurado()});
     }
     // armazéns e zonas
@@ -1636,6 +1721,36 @@ async function handle(req,res,u,deps){
       const nota=await nfePelaChave(pool,ctx,chave);
       if(nota.pendente)return json(202,nota.pendente);
       return json(201,{...(await importarSaida(pool,ctx,b,nota.xml)),origem:'sefaz'});
+    }
+    // limpeza do estoque (administrador): resumo, backup para baixar e a limpeza com cópia de segurança no banco
+    if(p==='/api/wms/estoque/limpeza'&&M==='GET'){
+      const ctx=await contexto(deps,req,'gestao');
+      if(!ctx.admin)throw erro(403,'Só o administrador limpa o estoque do WMS.','SEM_PERMISSAO');
+      const backups=(await pool.query('SELECT id::text,motivo,usuario,resumo,criado_em FROM wms_backups WHERE empresa=$1 ORDER BY id DESC LIMIT 10',[ctx.emp])).rows;
+      return json(200,{ok:true,resumo:await resumoEstoque(pool,ctx),backups});
+    }
+    if(p==='/api/wms/estoque/backup'&&M==='GET'){
+      const ctx=await contexto(deps,req,'gestao');
+      if(!ctx.admin)throw erro(403,'Só o administrador baixa o backup do estoque do WMS.','SEM_PERMISSAO');
+      const id=u.searchParams.get('id');
+      const dados=id?(await pool.query('SELECT dados FROM wms_backups WHERE id=$1 AND empresa=$2',[id,ctx.emp])).rows[0]?.dados:await backupEstoque(pool,ctx,{fotos:true});
+      if(!dados)throw erro(404,'Backup não encontrado.');
+      const corpoJson=JSON.stringify(dados),nome='wms-backup-'+(id?id:new Date().toISOString().slice(0,19).replace(/[:T]/g,'-'))+'.json';
+      res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Content-Disposition':'attachment; filename="'+nome+'"','Cache-Control':'no-store'});
+      res.end(corpoJson);return true;
+    }
+    if(p==='/api/wms/estoque/limpar'&&M==='POST'){
+      const ctx=await contexto(deps,req,'gestao'),b=await corpo();
+      return json(200,await limparEstoque(pool,ctx,b));
+    }
+    // relatórios em PDF (gestão: mostram o esperado da nota, que a conferência cega esconde do operador)
+    m=p.match(/^\/api\/wms\/(recebimentos|expedicoes)\/(\d+)\/pdf$/);
+    if(m&&M==='GET'){
+      const ctx=await contexto(deps,req,'gestao');
+      const rec=m[1]==='recebimentos',buf=await relatorioPdf(pool,ctx,rec,m[2]);
+      const nome=(rec?'recebimento-':'expedicao-')+m[2]+'.pdf';
+      res.writeHead(200,{'Content-Type':'application/pdf','Content-Disposition':(u.searchParams.get('baixar')==='1'?'attachment':'inline')+'; filename="'+nome+'"','Cache-Control':'no-store','Content-Length':buf.length});
+      res.end(buf);return true;
     }
     m=p.match(/^\/api\/wms\/expedicoes\/(\d+)$/);
     if(m&&M==='GET'){

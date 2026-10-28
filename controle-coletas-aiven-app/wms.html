@@ -138,6 +138,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}dialog form,dialog .in{padding:18
         <button class="btn" id="estMover">Movimentar</button>
         <button class="btn" id="estBloq" data-sup>Bloquear / liberar</button>
         <button class="btn" id="estAjuste" data-aj>± Estoque inicial / ajuste</button>
+        <button class="btn d" id="estLimpar" data-adm hidden>🧹 Limpar estoque</button>
       </div>
       <div class="grid" id="estTot" style="margin-top:12px"></div>
       <div class="tw" id="estLista" style="margin-top:8px"></div>
@@ -225,6 +226,7 @@ async function iniciar(){
   if(!ST.status.supervisor)$$('[data-sup]').forEach(x=>x.hidden=true);
   if(!ST.status.ajuste)$$('[data-aj]').forEach(x=>x.hidden=true);
   if(!ST.status.gestao)$$('[data-gest]').forEach(x=>x.hidden=true);
+  $$('[data-adm]').forEach(x=>x.hidden=!ST.status.admin);
   await carregarArmazens();
   await carregarListaClientes();
   let a='painel';try{a=sessionStorage.getItem('wmsAba')||a}catch{}
@@ -325,6 +327,7 @@ async function abrirRec(id){
     (['em_conferencia','recontagem'].includes(r.status)?'<button class="btn p" data-a="fechar">Fechar conferência</button>':'')+
     (r.status==='conferido'?'<button class="btn p" data-a="finalizar">Finalizar e gerar LPNs</button>':'')+
     (r.lpns.length?'<a class="btn" target="_blank" href="/wms/etiquetas?tipo=lpn&recebimento_id='+r.id+'">🏷 Etiquetas LPN</a>':'')+
+    '<a class="btn" target="_blank" href="/api/wms/recebimentos/'+r.id+'/pdf" title="Relatório completo para imprimir e assinar">📄 PDF do recebimento</a>'+
     (!['finalizado','cancelado'].includes(r.status)?'<button class="btn d" data-a="cancelar">Cancelar</button>':'')+'</div></div>'+
     '<div class="etapas">'+etapas+'</div>'+(r.status==='recontagem'?'<p class="chip warn">Contagem diferente da nota: os itens marcados precisam ser recontados por outro conferente no aplicativo.</p>':'')+
     '<h2 style="margin-top:12px">Itens da nota × contagem</h2><div class="tw">'+tabela([['Item',x=>x.n_item],['Código NF',x=>esc(x.codigo)],['Descrição NF',x=>esc(x.descricao)],['Produto',x=>x.produto_id?esc(x.sku):'<button class="btn" data-vinc="'+x.id+'">Vincular produto</button>'],['Lote · Val.',x=>esc(x.lote||'')+(x.validade?' · '+dBR(x.validade):'')],['Esperado',x=>n(x.qtd_esperada)+(x.fator>1?' <span class="muted">('+n(x.qtd_nf)+' '+esc(x.unidade)+' × '+x.fator+')</span>':'')],['1ª contagem',x=>x.produto_id&&soma[x.produto_id+'|1']!=null?n(soma[x.produto_id+'|1']):'—'],['2ª contagem',x=>x.produto_id&&soma[x.produto_id+'|2']!=null?n(soma[x.produto_id+'|2']):(r.recontar.includes(x.produto_id)?'<span class="chip warn">recontar</span>':'—')]],r.itens)+'</div>'+
@@ -543,10 +546,11 @@ async function abrirExp(id){
   const ordem=['aberta','separando','separada','expedida'],i=ordem.indexOf(x.status);
   const etapas=[['Nota lançada',0],['Reserva e separação',1],['Separada na doca',2],['Expedida',3]].map(([t,k])=>'<span class="chip '+(x.status==='cancelada'?'':i>k||x.status==='expedida'?'ok':i===k?'warn':'')+'">'+t+'</span>').join('');
   box.innerHTML='<div class="bar" style="justify-content:space-between"><div><h2>Expedição '+x.id+' · NF '+esc(x.nf_numero||'—')+' '+chipExp(x.status)+'</h2><div class="muted">'+esc(x.cliente.nome+(x.destinatario_nome?' → '+x.destinatario_nome:'')+(x.nf_chave?' · chave '+x.nf_chave:'')+(x.doca?' · doca '+x.doca:'')+(x.placa?' · placa '+x.placa:'')+(x.expedida_por?' · expedida por '+x.expedida_por+' '+dt(x.expedida_em):''))+'</div></div><div class="bar">'+
+    '<a class="btn" target="_blank" href="/api/wms/expedicoes/'+x.id+'/pdf" title="Romaneio completo para imprimir e assinar">📄 PDF da expedição</a>'+
     (x.status==='aberta'?'<button class="btn p" data-ea="reservar">Reservar estoque</button>':'')+
     (x.status==='separada'?'<button class="btn p" data-ea="expedir">Expedir (dar baixa)</button>':'')+
     (!['expedida','cancelada'].includes(x.status)?'<button class="btn d" data-ea="cancelar">Cancelar</button>':'')+'</div></div>'+
-    '<div class="etapas">'+etapas+'</div>'+(x.status==='separando'?'<p class="chip warn">Os operadores separam pelo aplicativo, no menu Separação.</p>':'')+
+    '<div class="etapas">'+etapas+'</div>'+(x.status==='separando'?'<p class="chip warn">Os operadores separam pelo aplicativo, no menu Separação.</p>':'')+(x.status==='separada'?'<p class="chip info">Tudo separado e na doca. Próximo passo: clique em Expedir (dar baixa) e informe a placa do veículo.</p>':'')+
     '<h2 style="margin-top:12px">Itens da nota</h2><div class="tw">'+tabela([['Item',y=>y.n_item],['Código NF',y=>esc(y.codigo)],['Descrição NF',y=>esc(y.descricao)],['Produto',y=>y.produto_id?esc(y.sku):(x.status==='aberta'?'<button class="btn" data-evinc="'+y.id+'">Vincular produto</button>':'—')],['Lote pedido',y=>esc(y.lote||'')],['Quantidade',y=>n(y.qtd)+(y.fator>1?' <span class="muted">('+n(y.qtd_nf)+' '+esc(y.unidade)+' × '+y.fator+')</span>':'')],['Reservado',y=>n(y.reservado)],['Separado',y=>n(y.separado)]],x.itens)+'</div>'+
     (x.separacao.length?'<h2 style="margin-top:12px">Lista de separação</h2><div class="tw">'+tabela([['Endereço',y=>'<b>'+esc(y.endereco)+'</b>'],['Produto',y=>esc(y.sku+' · '+y.produto)],['Lote · Val.',y=>esc(y.lote||'')+(y.validade?' · '+dBR(y.validade):'')],['Palete',y=>esc(y.lpn||'')],['Qtd',y=>n(y.qtd)],['Separado',y=>n(y.qtd_separada)],['Situação',y=>'<span class="chip '+(y.status==='separada'?'ok':'warn')+'">'+esc(y.status)+'</span> <span class="muted">'+esc(y.separado_por||'')+'</span>']],x.separacao)+'</div>':'');
   box.dataset.id=x.id;box.dataset.cli=x.cliente.id;box.scrollIntoView({behavior:'smooth',block:'start'});
@@ -612,6 +616,25 @@ $('#estMover').onclick=()=>{
   $('#mvOk').onclick=tenta(async()=>{const j=await api('POST','/api/wms/movimentar',{uuid:uuid(),armazem_id:ST.arm,lpn:$('#mvLpn').value,origem:$('#mvOri').value,produto:$('#mvProd').value,lote:$('#mvLote').value,qtd:$('#mvQtd').value,destino:$('#mvDest').value,motivo:$('#mvMot').value});fechar();aviso('Movido '+n(j.qtd)+' de '+j.origem+' para '+j.destino+'.',true);carregarEstoque()});
 };
 // Estoque inicial / ajuste (permissão wms_ajuste): saldo direto no endereço, sem recebimento.
+// limpeza do estoque (só administrador): mostra o que será apagado, oferece o backup e pede LIMPAR
+const NOME_TAB={wms_saldos:'Saldos (linhas de estoque)',wms_lpns:'Paletes (LPN)',wms_tarefas:'Tarefas de armazenagem',wms_lotes:'Lotes',wms_recebimentos:'Recebimentos',
+  wms_recebimento_itens:'Itens de recebimento',wms_contagens:'Contagens',wms_divergencias:'Divergências',wms_expedicoes:'Expedições',wms_expedicao_itens:'Itens de expedição',
+  wms_expedicao_separacao:'Linhas de separação',wms_movimentos:'Movimentos',wms_operacoes:'Operações do aplicativo',wms_ocupacao_diaria:'Ocupação diária (cobrança)',wms_auditoria:'Auditoria'};
+$('#estLimpar').onclick=tenta(async()=>{
+  const j=await api('GET','/api/wms/estoque/limpeza'),r=j.resumo;
+  abrir('<h2>Limpar estoque do WMS</h2><p class="muted">Hoje há <b>'+n(r.unidades_em_estoque)+'</b> unidades de <b>'+n(r.produtos_com_saldo)+'</b> produtos em <b>'+n(r.enderecos_ocupados)+'</b> endereços. Armazéns, zonas, endereços, clientes, produtos, destinatários e tarifas <b>não</b> são apagados.</p>'+
+    '<div class="tw">'+tabela([['Registro',y=>esc(NOME_TAB[y[0]]||y[0])],['Quantidade',y=>n(y[1])]],Object.entries(r).filter(([k])=>k.startsWith('wms_')))+'</div>'+
+    '<p><a class="btn" href="/api/wms/estoque/backup" download>⬇ Baixar backup completo (com fotos)</a></p>'+
+    '<label>O que limpar<select id="lModo"><option value="tudo">Começar do zero: apaga tudo da tabela acima</option><option value="saldo">Só zerar o saldo: recebimentos, expedições e movimentos ficam como histórico</option></select></label>'+
+    '<p class="muted">Antes de limpar, o sistema guarda uma cópia no banco (sem as fotos). Não dá para desfazer pela tela.</p>'+
+    '<label>Para confirmar, digite LIMPAR<input id="lConf" autocomplete="off"></label><div class="bar"><button class="btn d" id="lOk">Limpar estoque</button><button class="btn" data-fechar>Cancelar</button></div>');
+  $('#lOk').onclick=tenta(async()=>{
+    const modo=$('#lModo').value;
+    const x=await api('POST','/api/wms/estoque/limpar',{modo,confirmar:$('#lConf').value});
+    fechar();aviso('Estoque limpo ('+(x.modo==='tudo'?'do zero':'saldo zerado')+'). Cópia de segurança nº '+x.backup_id+' guardada.',true);
+    if(typeof $('#estIr').onclick==='function')$('#estIr').onclick();
+  });
+});
 $('#estAjuste').onclick=()=>{
   abrir('<h2>Estoque inicial / ajuste</h2><p class="muted">Põe o saldo direto no endereço, sem recebimento, ou tira dele. Fica registrado com o seu usuário e o motivo.</p><div class="cols"><label>Operação<select id="ajSent"><option value="adicionar">Adicionar ao estoque</option><option value="retirar">Retirar do estoque</option></select></label><label>Cliente<select id="ajCli"><option value="">—</option>'+(ST.clientes||[]).map(c=>'<option value="'+c.id+'">'+esc(c.nome)+'</option>').join('')+'</select></label><label>Produto (SKU/EAN)<input id="ajProd" required></label><label>Endereço<input id="ajEnd" required placeholder="Ex.: A-01-01-1"></label><label>Quantidade<input id="ajQtd" type="number" min="0" step="any" required></label><label>Lote<input id="ajLote"></label><label>Validade<input id="ajVal" type="date"></label></div><label>Motivo<input id="ajMot" value="Estoque inicial" required></label><div class="bar"><button class="btn p" id="ajOk">Salvar</button><button class="btn" data-fechar>Cancelar</button></div>');
   $('#ajOk').onclick=tenta(async()=>{const j=await api('POST','/api/wms/ajuste',{uuid:uuid(),armazem_id:ST.arm,sentido:$('#ajSent').value,cliente_id:$('#ajCli').value||null,produto:$('#ajProd').value,endereco:$('#ajEnd').value,qtd:$('#ajQtd').value,lote:$('#ajLote').value,validade:$('#ajVal').value,motivo:$('#ajMot').value});fechar();aviso((j.sentido==='retirar'?'Retirado ':'Adicionado ')+n(j.qtd)+' de '+j.sku+' em '+j.endereco+'.',true);carregarEstoque()});
