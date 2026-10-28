@@ -108,10 +108,21 @@ function despesasDaListagem(body){
       if(!RE_VALOR.test(String(l[col.valor]||'').trim()))continue
     }else{
       const vals=l.filter(x=>RE_VALOR.test(x.trim()));if(!vals.length)continue;
-      v=valor(vals[vals.length-1]);d=dataIso(l.find(x=>RE_DATA.test(x))||'');
+      v=valor(vals[vals.length-1]);
       ev=l.find(x=>/^\d{1,5}\s*[-–]?\s*[A-Za-zÀ-ú]/.test(x)&&!RE_DATA.test(x))||'';
-      lc=l.find(x=>/^\d{3,10}$/.test(x.trim()))||'';si=l.find(x=>RE_SITUACAO.test(x))||'';
-      fo=l.filter(x=>x!==ev&&x!==si&&!RE_VALOR.test(x.trim())&&!RE_DATA.test(x)&&/[A-Za-zÀ-ú]{3}/.test(x)).sort((a,b)=>b.length-a.length)[0]||''
+      const li=l.findIndex(x=>/^\d{3,10}$/.test(x.trim()));
+      lc=li>=0?l[li]:'';si=l.find(x=>RE_SITUACAO.test(x))||'';
+      const letras=x=>/[A-Za-zÀ-ú]{3}/.test(x||'')&&!RE_DATA.test(x)&&!RE_VALOR.test(String(x).trim());
+      // tela da 475 sem cabeçalho: Filial, Lançamento, Parcela, Evento (código), Descrição, Fornecedor, Histórico, NF, Emissão, Vencimento, Pagamento, Valor
+      const ei=ev?-1:l.findIndex((x,i)=>i>li&&li>=0&&/^\d{1,5}$/.test(x.trim())&&letras(l[i+1]));
+      if(ei>=0){
+        ev=l[ei].trim()+' - '+l[ei+1].trim();
+        fo=letras(l[ei+2])?l[ei+2]:'';de=letras(l[ei+3])?l[ei+3]:'';
+        const ds=l.filter(x=>RE_DATA.test(x));d=dataIso(ds[ds.length-1]||'');
+      }else{
+        d=dataIso(l.find(x=>RE_DATA.test(x))||'');
+        fo=l.filter(x=>x!==ev&&x!==si&&letras(x)).sort((a,b)=>b.length-a.length)[0]||''
+      }
     }
     if(!v)continue;
     out.push({lancamento:String(lc).trim(),data:d,evento:String(ev).trim(),fornecedor:String(fo).trim(),descricao:String(de).trim(),situacao:String(si).trim(),valor:Math.abs(v)})
