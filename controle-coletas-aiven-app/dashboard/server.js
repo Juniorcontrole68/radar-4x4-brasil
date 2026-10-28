@@ -701,6 +701,7 @@ async function deliveryProgramEnrich(rows){
     return{
       ...x,m3,peso,volumes,
       cliente:x.cliente||pickField(a,'DESTINATARIO','DESTINATARIO NOME','DESTINATARIO_NOME')||pickField(b,'DESTINATARIO')||pickField(d,'DESTINATARIO'),
+      pagador:x.pagador||pickField(a,'PAGADOR','CLIENTE PAGADOR','PAGADOR NOME','PAGADOR_NOME')||pickField(b,'PAGADOR','CLIENTE PAGADOR')||pickField(d,'PAGADOR','CLIENTE PAGADOR'),
       cidade:x.cidade||pickField(a,'CIDADE DESTINO','CIDADE_DESTINO')||pickField(b,'CIDADE DESTINO')||pickField(d,'CIDADE DESTINO'),
       uf:pickField(a,'UF DESTINO','UF_DESTINO')||pickField(b,'UF DESTINO')||pickField(d,'UF DESTINO')||x.uf||'SP',
       mercadoria:pickField(a,'TIPO MERCADORIA','TIPO_MERCADORIA','MERCADORIA')||pickField(b,'MERCADORIA','TIPO MERCADORIA')||pickField(d,'MERCADORIA','TIPO MERCADORIA'),
@@ -6293,6 +6294,7 @@ if(u.pathname==='/api/agendamentos/nf'&&req.method==='GET'){try{
         nf,
         ctrc:pickField(hit,'CTRC','NUMERO CTRC','NUMERO_CTRC')||hit.numero_ctrc||'',
         remetente:pickField(hit,'remetente_nome','NOME REMETENTE','REMETENTE NOME','REMETENTE')||'',
+        pagador:pickField(hit,'pagador_nome','NOME PAGADOR','PAGADOR NOME','PAGADOR')||'',
         cliente:pickField(hit,'destinatario_nome','DESTINATARIO NOME','DESTINATARIO_NOME','DESTINATARIO','CLIENTE')||'',
         cidade:pickField(hit,'CIDADE DESTINO','CIDADE_DESTINO','DEST CIDADE','DEST_CIDADE')||'',
         uf:pickField(hit,'UF DESTINO','UF_DESTINO','DEST UF','DEST_UF')||'SP',
@@ -6414,9 +6416,9 @@ if(u.pathname==='/api/agendamentos/nf'&&req.method==='GET'){try{
     ok:true,
     row:{
       destinatario:row.cliente||'',endereco,data_emissao:row.emissao||'',
-      produto:(produtos.length?produtos.slice(0,6).join('; '):'')||row.tipoMercadoria||row.mercadoria||row.especieMercadoria||'',
+      produto:sswCte.limparProduto(produtos.slice(0,6).join('; '))||row.tipoMercadoria||row.mercadoria||row.especieMercadoria||'',
       produtos,produtos_fonte:produtosFonte,produtos_diag:produtosDiag,
-      nf:row.nf||nf,ctrc:row.ctrc||'',remetente:row.remetente||'',cliente:row.cliente||'',cidade:row.cidade||'',uf:row.uf||'SP',
+      nf:row.nf||nf,ctrc:row.ctrc||'',remetente:row.remetente||'',pagador:row.pagador||'',cliente:row.cliente||'',cidade:row.cidade||'',uf:row.uf||'SP',
       status_ssw:row.situacao101||row.status||'',mercadoria:row.tipoMercadoria||row.mercadoria||row.especieMercadoria||'',
       peso:Number(row.peso||0),volumes:Number(row.volumes||0),previsao_ssw:row.previsao||'',
       dia_rota:cityRule?.weekdayLabel||'',amostras_rota:cityRule?.samples||[]
@@ -6441,7 +6443,7 @@ if(u.pathname==='/api/agendamentos/ssw-snapshot'&&req.method==='POST'){try{
   const pending=await fetchSswPendingDeliveries();   // sem pendências o SSW está fora: erro, nada muda lá
   let rows=pending.rows||[];
   try{rows=await deliveryProgramEnrich(rows)}catch(e){console.log('AGENDAMENTO varredura BI2: '+String(e.message||e))}
-  const pendentes=rows.map(x=>({nf:x.nf,ctrc:x.ctrc,remetente:x.remetente||'',destinatario:x.cliente||'',cidade:x.cidade||'',uf:x.uf||'',peso:Number(x.peso||0),volumes:Number(x.volumes||0),
+  const pendentes=rows.map(x=>({nf:x.nf,ctrc:x.ctrc,remetente:x.remetente||'',pagador:x.pagador||'',destinatario:x.cliente||'',cidade:x.cidade||'',uf:x.uf||'',peso:Number(x.peso||0),volumes:Number(x.volumes||0),
     previsao:x.previsao||'',status:x.status||'',mercadoria:x.mercadoria||'',emissao:x.emissao||''}));
   const naLista=new Set(),nfsNaLista=new Set();
   for(const x of rows){if(normCtrcLoose(x.ctrc))naLista.add(normCtrcLoose(x.ctrc));if(normNf(x.nf))nfsNaLista.add(normNf(x.nf))}

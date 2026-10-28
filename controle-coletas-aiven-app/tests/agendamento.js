@@ -36,6 +36,10 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   let p=await api('GET','/api/painel/agendamentos/painel');
   check('painel antes da primeira sincronização: sem dados e marcado como desatualizado',p.status===200&&p.j.indicadores.pendentes===0&&p.j.indicadores.desatualizado===true&&!p.j.indicadores.sync.ultimaOk,p.j);
   check('configuração padrão: 02:00, amarelo 2 e vermelho 5 dias',p.j.config.hora_sync==='02:00'&&p.j.config.dias_amarelo===2&&p.j.config.dias_vermelho===5,p.j.config);
+  check('parceiros padrão da Construlog (FCB, THM, Langbhen, JT Transportes e Transbarbosa)',['FCB','THM','LANGB','JT TRANSP','TRANSBARBOSA'].every(t=>p.j.config.parceiros.includes(t)),p.j.config);
+  check('parceiro pelo remetente ou pelo pagador; os demais clientes ficam de fora',ag.ehParceiro(ag.termosParceiros(ag.PARCEIROS_PADRAO),'CONSTRUDECOR S.A - CUMBIC')&&ag.ehParceiro(ag.termosParceiros(ag.PARCEIROS_PADRAO),'FABRICA X','Langbhen Transportes')&&!ag.ehParceiro(ag.termosParceiros(ag.PARCEIROS_PADRAO),'COMERCIAL LEAL','LEAL DUTRA')&&!ag.ehParceiro(ag.termosParceiros(ag.PARCEIROS_PADRAO),'NAVAS E CIA LTDA')&&ag.ehParceiro([],'QUALQUER'));
+  // o resto do teste usa clientes de mentira: sem filtro de parceiros (a seção "Parceiros" liga de novo)
+  check('lista de parceiros vazia = todas as notas',(await api('PUT','/api/painel/agendamentos/config',{parceiros:''})).j.config?.parceiros==='');
 
   console.log('Varredura do SSW');
   const leitura1={pendentes:[
@@ -128,6 +132,32 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   x=await api('GET','/api/painel/agendamentos/sincronizacoes');
   check('  ...sem SSW no modo teste: falha registrada e notas preservadas',x.j.rows[0].origem==='manual'&&x.j.rows[0].status==='erro'&&(await api('GET','/api/painel/agendamentos/painel')).j.indicadores.pendentes===p.j.indicadores.pendentes,x.j.rows[0]);
   check('  ...e não aceita outra manual em menos de 2 minutos',(await api('POST','/api/painel/agendamentos/sincronizar')).status===429);
+
+  console.log('Parceiros do agendamento e nome do produto');
+  x=await api('PUT','/api/painel/agendamentos/config',{parceiros:'fcb; Construdec, LANGB'});
+  check('administrador define os parceiros',x.status===200&&x.j.config.parceiros==='FCB, CONSTRUDEC, LANGB',x.j);
+  const antesParc=(await pool.query("SELECT COUNT(*)::int n FROM ag_notas WHERE situacao='pendente'")).rows[0].n;
+  c=await ag.aplicarSnapshot(pool,cli,{pendentes:[
+    {nf:'7001',ctrc:'AMR000701-1',remetente:'CONSTRUDECOR S.A - CUMBIC',destinatario:'SILVANA',cidade:'SP',peso:28},
+    {nf:'7002',ctrc:'AMR000702-2',remetente:'COMERCIAL LEAL',destinatario:'OBRA X',cidade:'CAMPINAS',peso:500},
+    {nf:'7003',ctrc:'AMR000703-3',remetente:'FABRICA DELTA',pagador:'LANGBHEN TRANSPORTES',destinatario:'BEATRIZ',cidade:'SP',peso:75}
+  ],verificados:{}},null);
+  check('varredura grava só as notas dos parceiros (remetente ou pagador)',c.novas===2&&c.pendentes_ssw===2&&!(await pool.query("SELECT 1 FROM ag_notas WHERE nf='7002'")).rowCount,c);
+  check('  ...e não mexe nas notas de outros clientes que já estavam gravadas',(await pool.query("SELECT COUNT(*)::int n FROM ag_notas WHERE situacao='pendente'")).rows[0].n===antesParc+2);
+  x=await api('GET','/api/painel/agendamentos/lista?aba=sem');
+  check('Sem Agendamento mostra só os parceiros',x.j.total===2&&x.j.rows.every(r=>['7001','7003'].includes(r.nf)),x.j.rows.map(r=>[r.nf,r.remetente]));
+  p=await api('GET','/api/painel/agendamentos/painel');
+  check('indicadores contam só os parceiros',p.j.indicadores.pendentes===2&&p.j.indicadores.sem_agendamento===2,p.j.indicadores);
+  x=await api('POST','/api/painel/agendamentos',{nota:{nf:'7009',ctrc:'AMR000709-9',remetente:'LEAL DUTRA',destinatario:'Y',cidade:'SP'},data_agendada:dia(1)});
+  check('NF de cliente que não é parceiro não pode ser agendada',x.status===422&&/parceiro/.test(x.j.error),x);
+  x=await api('POST','/api/painel/agendamentos',{nota:{nf:'7010',ctrc:'AMR000710-0',remetente:'CONSTRUDECOR S.A - CUMBIC',destinatario:'DANIELLA',cidade:'SP',produto:'CONSTRULOG DIST COMERCIO E TRA PAG: 1; TUBO PVC 100MM; Emissao 28/10/26 10:15'},data_agendada:dia(1)});
+  check('agenda NF de parceiro consultada na hora',x.status===201,x.j);
+  x=await api('GET','/api/painel/agendamentos/lista?aba=agendadas&nf=7010');
+  check('produto gravado sem o cabeçalho da relação do SSW',x.j.rows[0]?.produto==='TUBO PVC 100MM',x.j.rows);
+  await pool.query("UPDATE ag_notas SET produto='CONSTRULOG DIST COMERCIO E TRA PAG: 1; CAIXA D AGUA 1000L; PISO 60X60' WHERE nf='7001'");
+  x=await api('GET','/api/painel/agendamentos/lista?aba=sem&nf=7001');
+  check('produto gravado antes da correção aparece só com os nomes',x.j.rows[0]?.produto==='CAIXA D AGUA 1000L; PISO 60X60',x.j.rows);
+  check('volta sem filtro de parceiros para o resto do teste',(await api('PUT','/api/painel/agendamentos/config',{parceiros:''})).status===200);
 
   console.log('Configuração, coletas e exportação');
   x=await api('PUT','/api/painel/agendamentos/config',{hora_sync:'03:30',dias_amarelo:3,dias_vermelho:6});

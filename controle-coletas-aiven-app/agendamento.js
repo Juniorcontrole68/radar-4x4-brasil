@@ -20,6 +20,7 @@
 // Testado em tests/agendamento.js.
 
 const http = require('http');
+const { limparProduto } = require('./dashboard/ssw-cte');
 
 const OPERACIONAIS = ['pendente', 'em_rota', 'verificar'];
 const FINAIS = ['entregue', 'devolvida'];
@@ -37,6 +38,21 @@ function normCtrc(v) {
 const numero = v => { const n = typeof v === 'number' ? v : Number(String(v ?? '').replace(/\./g, '').replace(',', '.')); return Number.isFinite(n) && n > 0 ? n : 0; };
 const hojeSp = (d = new Date()) => d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 const horaSp = (d = new Date()) => d.toLocaleTimeString('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false });
+// Parceiros cujas entregas entram no agendamento: o termo é procurado no remetente e no pagador da nota.
+// A FCB aparece também como Construdecor e Sarke (clientes da FCB). Lista vazia = todas as notas entram.
+// Na versão de demonstração (outras transportadoras) não há filtro; a tela de configuração muda a lista.
+const DEMO = /^(1|true|sim|yes)$/i.test(String(process.env.MOVIT_DEMO || '').trim());
+const PARCEIROS_PADRAO = DEMO ? '' : 'FCB, CONSTRUDEC, SARKE, THM, THB, LANGB, JT TRANSP, TRANSBARBOSA, TRANS BARBOSA';
+const semAcento = v => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+const termosParceiros = txt => [...new Set(String(txt ?? '').split(/[,;\n]+/).map(t => semAcento(limpo(t, 60))).filter(t => t.length >= 2))].slice(0, 40);
+const ehParceiro = (termos, ...nomes) => { if (!termos.length) return true; const t = nomes.map(semAcento).join(' | '); return termos.some(x => t.includes(x)); };
+// Condição SQL equivalente a ehParceiro, para as listas e os indicadores ('' quando não há filtro).
+function parceiroSql(termos, params) {
+  if (!termos.length) return '';
+  params.push(termos.map(t => '%' + t.replace(/[\\%_]/g, m => '\\' + m) + '%'));
+  const k = '$' + params.length + '::text[]';
+  return `(COALESCE(n.remetente,'') ILIKE ANY(${k}) OR COALESCE(n.pagador,'') ILIKE ANY(${k}))`;
+}
 const dataIso = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : '';
 // "21/10/2026", "21/10/26" ou "2026-10-21" -> "2026-10-21"
 function dataBr(v) {
@@ -138,14 +154,18 @@ async function ensureSchema(pool) {
     atualizado_por TEXT,
     atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
+  await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS pagador TEXT');
+  await pool.query('ALTER TABLE ag_config ADD COLUMN IF NOT EXISTS parceiros TEXT');   // NULL = lista padrão
   // varredura que ficou "rodando" porque o servidor reiniciou no meio
   await pool.query("UPDATE ag_sincronizacoes SET status='erro',erro='Interrompida (o servidor reiniciou durante a varredura).',finalizado_em=NOW() WHERE status='rodando' AND iniciado_em<NOW()-INTERVAL '20 minutes'");
 }
 
 const chaveCfg = cli => Number(cli || 0);
+const termosDe = async (db, cli) => termosParceiros((await lerConfig(db, cli)).parceiros);
 async function lerConfig(db, cli) {
-  const q = await db.query('SELECT hora_sync,sync_ativa,dias_amarelo,dias_vermelho,atualizado_por,atualizado_em FROM ag_config WHERE chave=$1', [chaveCfg(cli)]);
-  return q.rows[0] || { hora_sync: '02:00', sync_ativa: true, dias_amarelo: 2, dias_vermelho: 5, atualizado_por: null, atualizado_em: null };
+  const q = await db.query('SELECT hora_sync,sync_ativa,dias_amarelo,dias_vermelho,parceiros,atualizado_por,atualizado_em FROM ag_config WHERE chave=$1', [chaveCfg(cli)]);
+  const c = q.rows[0] || { hora_sync: '02:00', sync_ativa: true, dias_amarelo: 2, dias_vermelho: 5, parceiros: null, atualizado_por: null, atualizado_em: null };
+  return { ...c, parceiros: c.parceiros == null ? PARCEIROS_PADRAO : c.parceiros };
 }
 async function gravarConfig(db, cli, b, usuario) {
   const atual = await lerConfig(db, cli);
@@ -154,8 +174,9 @@ async function gravarConfig(db, cli, b, usuario) {
   let vm = Number.isInteger(Number(b.dias_vermelho)) && Number(b.dias_vermelho) >= 0 && Number(b.dias_vermelho) <= 90 ? Number(b.dias_vermelho) : atual.dias_vermelho;
   if (vm <= am) { const e = new Error('O limite vermelho precisa ser maior que o amarelo.'); e.status = 400; throw e; }
   const ativa = typeof b.sync_ativa === 'boolean' ? b.sync_ativa : atual.sync_ativa;
-  await db.query(`INSERT INTO ag_config(chave,hora_sync,sync_ativa,dias_amarelo,dias_vermelho,atualizado_por,atualizado_em) VALUES($1,$2,$3,$4,$5,$6,NOW())
-    ON CONFLICT (chave) DO UPDATE SET hora_sync=$2,sync_ativa=$3,dias_amarelo=$4,dias_vermelho=$5,atualizado_por=$6,atualizado_em=NOW()`, [chaveCfg(cli), hora, ativa, am, vm, usuario]);
+  const parceiros = typeof b.parceiros === 'string' ? termosParceiros(b.parceiros).join(', ') : atual.parceiros;
+  await db.query(`INSERT INTO ag_config(chave,hora_sync,sync_ativa,dias_amarelo,dias_vermelho,parceiros,atualizado_por,atualizado_em) VALUES($1,$2,$3,$4,$5,$6,$7,NOW())
+    ON CONFLICT (chave) DO UPDATE SET hora_sync=$2,sync_ativa=$3,dias_amarelo=$4,dias_vermelho=$5,parceiros=$6,atualizado_por=$7,atualizado_em=NOW()`, [chaveCfg(cli), hora, ativa, am, vm, parceiros, usuario]);
   return lerConfig(db, cli);
 }
 
@@ -173,7 +194,7 @@ async function gravarNota(db, cli, r, { origem = 'sync', syncId = null, pendente
       AND (ctrc=$3 OR ctrc='' OR $3='') AND (serie=$4 OR serie='' OR $4='')
       ORDER BY (ctrc=$3) DESC, (serie=$4) DESC, id LIMIT 1`, [cli, nf, ctrc, serie]);
   const v = [limpo(r.remetente), limpo(r.destinatario ?? r.cliente), limpo(r.cidade, 80), limpo(r.uf, 2).toUpperCase(), limpo(r.endereco, 300),
-    numero(r.peso), numero(r.volumes), limpo(r.produto ?? r.mercadoria, 600), limpo(r.status_ssw ?? r.status, 300), limpo(r.previsao, 20), dataBr(r.data_emissao || r.emissao) || null];
+    numero(r.peso), numero(r.volumes), limpo(limparProduto(r.produto) || r.mercadoria, 600), limpo(r.status_ssw ?? r.status, 300), limpo(r.previsao, 20), dataBr(r.data_emissao || r.emissao) || null];
   if (ex.rows[0]) {
     const id = ex.rows[0].id, antes = ex.rows[0].situacao;
     await db.query(`UPDATE ag_notas SET ctrc=CASE WHEN ctrc='' THEN $2 ELSE ctrc END, serie=CASE WHEN serie='' THEN $3 ELSE serie END, emitente=CASE WHEN emitente='' THEN $4 ELSE emitente END,
@@ -181,14 +202,15 @@ async function gravarNota(db, cli, r, { origem = 'sync', syncId = null, pendente
         endereco=COALESCE(NULLIF($9,''),endereco), peso=CASE WHEN $10::numeric>0 THEN $10::numeric ELSE peso END, volumes=CASE WHEN $11::numeric>0 THEN $11::numeric ELSE volumes END,
         produto=COALESCE(NULLIF($12,''),produto), status_ssw=COALESCE(NULLIF($13,''),status_ssw), previsao=COALESCE(NULLIF($14,''),previsao), data_emissao=COALESCE(data_emissao,$15::date),
         situacao=CASE WHEN $16 THEN 'pendente' ELSE situacao END, concluido_em=CASE WHEN $16 THEN NULL ELSE concluido_em END,
-        erro_integracao=CASE WHEN $16 THEN NULL ELSE erro_integracao END, ultima_consulta=NOW(), ultimo_sync_id=COALESCE($17,ultimo_sync_id), atualizado_em=NOW()
-      WHERE id=$1`, [id, ctrc, serie, emitente, ...v, !!pendente, syncId]);
+        erro_integracao=CASE WHEN $16 THEN NULL ELSE erro_integracao END, ultima_consulta=NOW(), ultimo_sync_id=COALESCE($17,ultimo_sync_id), atualizado_em=NOW(),
+        pagador=COALESCE(NULLIF($18,''),pagador)
+      WHERE id=$1`, [id, ctrc, serie, emitente, ...v, !!pendente, syncId, limpo(r.pagador)]);
     return { id, nova: false, situacaoAntes: antes };
   }
   const q = await db.query(`INSERT INTO ag_notas(client_id,nf,ctrc,serie,emitente,remetente,destinatario,cidade,uf,endereco,peso,volumes,produto,status_ssw,previsao,data_emissao,
-      situacao,data_entrada,ultima_consulta,ultimo_sync_id,origem)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,(NOW() AT TIME ZONE 'America/Sao_Paulo')::date,NOW(),$18,$19) RETURNING id`,
-    [cli, nf, ctrc, serie, emitente, ...v, situacaoNova || (pendente ? 'pendente' : 'verificar'), syncId, origem]);
+      situacao,data_entrada,ultima_consulta,ultimo_sync_id,origem,pagador)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,(NOW() AT TIME ZONE 'America/Sao_Paulo')::date,NOW(),$18,$19,NULLIF($20,'')) RETURNING id`,
+    [cli, nf, ctrc, serie, emitente, ...v, situacaoNova || (pendente ? 'pendente' : 'verificar'), syncId, origem, limpo(r.pagador)]);
   return { id: q.rows[0].id, nova: true, situacaoAntes: null };
 }
 
@@ -208,9 +230,11 @@ async function concluirNota(db, cli, nota, situacao, texto, em, syncId) {
 async function aplicarSnapshot(db, cli, snap, syncId = null) {
   const c = { pendentes_ssw: 0, novas: 0, atualizadas: 0, entregues: 0, devolvidas: 0, em_rota: 0, verificar: 0, retornaram: 0 };
   const vistos = new Set(), vistosNf = new Set();
+  const termos = await termosDe(db, cli);
   for (const r of snap.pendentes || []) {
     const nf = normNf(r.nf), ctrc = normCtrc(r.ctrc);
     if (!nf) continue;
+    if (!ehParceiro(termos, r.remetente, r.pagador)) continue;   // cliente que não entra no agendamento
     const k = nf + '|' + ctrc;
     if (vistos.has(k)) continue;
     vistos.add(k); vistosNf.add(nf); c.pendentes_ssw++;
@@ -224,7 +248,8 @@ async function aplicarSnapshot(db, cli, snap, syncId = null) {
     }
   }
   const ver = snap.verificados || {};
-  const ops = await db.query("SELECT id,nf,ctrc,situacao FROM ag_notas WHERE client_id IS NOT DISTINCT FROM $1 AND tipo_operacao='entrega' AND situacao=ANY($2) AND (ultimo_sync_id IS DISTINCT FROM $3::bigint OR $3::bigint IS NULL)", [cli, OPERACIONAIS, syncId]);
+  const pOps = [cli, OPERACIONAIS, syncId], fOps = parceiroSql(termos, pOps);
+  const ops = await db.query("SELECT id,nf,ctrc,situacao FROM ag_notas n WHERE client_id IS NOT DISTINCT FROM $1 AND tipo_operacao='entrega' AND situacao=ANY($2) AND (ultimo_sync_id IS DISTINCT FROM $3::bigint OR $3::bigint IS NULL)" + (fOps ? ' AND ' + fOps : ''), pOps);
   for (const n of ops.rows) {
     if (vistos.has(n.nf + '|' + n.ctrc) || (!n.ctrc && vistosNf.has(n.nf))) continue;
     const v = ver[n.nf + '|' + n.ctrc] || ver[n.nf + '|'] || null;
@@ -252,7 +277,8 @@ async function aplicarSnapshot(db, cli, snap, syncId = null) {
 
 // Notas que a varredura precisa conferir no SSW (as operacionais que já conhecemos).
 async function alvosDaVarredura(db, cli) {
-  const q = await db.query("SELECT nf,ctrc FROM ag_notas WHERE client_id IS NOT DISTINCT FROM $1 AND tipo_operacao='entrega' AND situacao=ANY($2) ORDER BY (situacao='pendente') DESC, id LIMIT 3000", [cli, OPERACIONAIS]);
+  const params = [cli, OPERACIONAIS], f = parceiroSql(await termosDe(db, cli), params);
+  const q = await db.query("SELECT nf,ctrc FROM ag_notas n WHERE client_id IS NOT DISTINCT FROM $1 AND tipo_operacao='entrega' AND situacao=ANY($2)" + (f ? ' AND ' + f : '') + " ORDER BY (situacao='pendente') DESC, id LIMIT 3000", params);
   return q.rows.map(r => ({ chave: r.nf + '|' + r.ctrc, nf: r.nf, ctrc: r.ctrc }));
 }
 
@@ -331,13 +357,16 @@ function postJson(porta, caminho, headers, corpo, timeoutMs = 12 * 60 * 1000) {
 }
 
 // ------------------------------------------------------------------ consultas das telas
-const SEL_NOTA = `n.id::text AS nota_id,n.nf,n.serie,n.ctrc,n.remetente,n.destinatario,n.cidade,n.uf,n.endereco,n.peso::float8 AS peso,n.volumes::float8 AS volumes,
+const SEL_NOTA = `n.id::text AS nota_id,n.nf,n.serie,n.ctrc,n.remetente,n.pagador,n.destinatario,n.cidade,n.uf,n.endereco,n.peso::float8 AS peso,n.volumes::float8 AS volumes,
   n.produto,n.situacao,n.status_ssw,n.previsao,to_char(n.data_emissao,'YYYY-MM-DD') AS data_emissao,to_char(n.data_entrada,'YYYY-MM-DD') AS data_entrada,
   n.ultima_consulta,n.erro_integracao,to_char(n.concluido_em,'YYYY-MM-DD') AS concluido_em,
   ((NOW() AT TIME ZONE 'America/Sao_Paulo')::date-COALESCE(n.data_entrada,n.data_emissao,(n.primeiro_visto AT TIME ZONE 'America/Sao_Paulo')::date))::int AS dias_sem`;
 const SEL_AG = `a.id::text AS agendamento_id,to_char(a.data_agendada,'YYYY-MM-DD') AS data_agendada,a.observacao,a.reagendamentos,a.criado_por_nome,a.criado_em AS agendado_em,a.status AS status_agendamento`;
 const DIAS_SEM_SQL = "((NOW() AT TIME ZONE 'America/Sao_Paulo')::date-COALESCE(n.data_entrada,n.data_emissao,(n.primeiro_visto AT TIME ZONE 'America/Sao_Paulo')::date))";
 const HOJE_SQL = "(NOW() AT TIME ZONE 'America/Sao_Paulo')::date";
+
+// Notas gravadas antes da limpeza do produto ainda trazem o cabeçalho da relação do SSW: mostra só os nomes.
+const comProdutoLimpo = r => (r.produto ? { ...r, produto: limparProduto(r.produto) } : r);
 
 function filtrosEntrega(f, params, aba) {
   const w = [];
@@ -386,11 +415,12 @@ async function listar(db, cli, aba, f) {
     ordem = 'n.atualizado_em DESC';
   } else { const e = new Error('Aba inválida.'); e.status = 400; throw e; }
   const w = filtrosEntrega(f, params, aba);
+  if (aba !== 'historico') { const fp = parceiroSql(await termosDe(db, cli), params); if (fp) w.push(fp); }
   const where = base + (w.length ? ' AND ' + w.join(' AND ') : '');
   const tot = await db.query('SELECT COUNT(*)::int AS n,COALESCE(SUM(n.peso),0)::float8 AS peso,COALESCE(SUM(n.volumes),0)::float8 AS volumes ' + where, params);
   params.push(per, (page - 1) * per);
   const q = await db.query('SELECT ' + sel + ' ' + where + ' ORDER BY ' + ordem + ' LIMIT $' + (params.length - 1) + ' OFFSET $' + params.length, params);
-  return { rows: q.rows, total: tot.rows[0].n, peso: tot.rows[0].peso, volumes: tot.rows[0].volumes, page, per };
+  return { rows: q.rows.map(comProdutoLimpo), total: tot.rows[0].n, peso: tot.rows[0].peso, volumes: tot.rows[0].volumes, page, per };
 }
 
 // Coletas programadas (tabela de coletas da Lotação), só leitura: as que ainda não foram entregues nem canceladas.
@@ -431,6 +461,7 @@ async function ultimaSync(db, cli) {
 }
 
 async function indicadores(db, cli) {
+  const params = [cli, OPERACIONAIS], fp = parceiroSql(await termosDe(db, cli), params);
   const q = await db.query(`SELECT COUNT(*)::int AS pendentes,
       COUNT(a.id)::int AS com_agendamento,
       COUNT(*) FILTER (WHERE a.id IS NULL)::int AS sem_agendamento,
@@ -440,7 +471,7 @@ async function indicadores(db, cli) {
       COUNT(*) FILTER (WHERE n.situacao='verificar')::int AS verificar,
       COALESCE(SUM(n.peso),0)::float8 AS peso_pendente
     FROM ag_notas n LEFT JOIN ag_agendamentos a ON a.nota_id=n.id AND a.status='ativo'
-    WHERE n.client_id IS NOT DISTINCT FROM $1 AND n.tipo_operacao='entrega' AND n.situacao=ANY($2)`, [cli, OPERACIONAIS]);
+    WHERE n.client_id IS NOT DISTINCT FROM $1 AND n.tipo_operacao='entrega' AND n.situacao=ANY($2)` + (fp ? ' AND ' + fp : ''), params);
   const s = await ultimaSync(db, cli);
   const r = q.rows[0];
   r.entregues_ultima = s.ultimaOk ? s.ultimaOk.entregues : 0;
@@ -453,7 +484,7 @@ async function indicadores(db, cli) {
 async function buscarNf(db, cli, nf) {
   const q = await db.query('SELECT ' + SEL_NOTA + ',' + SEL_AG + " FROM ag_notas n LEFT JOIN ag_agendamentos a ON a.nota_id=n.id AND a.status='ativo' WHERE n.client_id IS NOT DISTINCT FROM $1 AND n.tipo_operacao='entrega' AND n.nf=$2 ORDER BY (n.situacao=ANY($3)) DESC, n.id DESC LIMIT 20",
     [cli, normNf(nf), OPERACIONAIS]);
-  return q.rows;
+  return q.rows.map(comProdutoLimpo);
 }
 
 async function historicoNota(db, cli, notaId) {
@@ -492,7 +523,8 @@ async function agendar(pool, cli, user, b) {
       const g = await gravarNota(db, cli, nota, { origem: 'consulta', pendente: false, situacaoNova: 'pendente' });
       notaId = String(g.id);
     }
-    const n = (await db.query('SELECT id,nf,situacao FROM ag_notas WHERE id=$1 FOR UPDATE', [notaId])).rows[0];
+    const n = (await db.query('SELECT id,nf,situacao,remetente,pagador FROM ag_notas WHERE id=$1 FOR UPDATE', [notaId])).rows[0];
+    if (!ehParceiro(await termosDe(db, cli), n.remetente, n.pagador)) throw erro(422, 'A NF ' + n.nf + (n.remetente ? ' (' + n.remetente + ')' : '') + ' não é de um parceiro do agendamento e não entra aqui. Os parceiros ficam em ⚙ Configurar.');
     if (FINAIS.includes(n.situacao)) throw erro(409, 'A NF ' + n.nf + ' já está ' + ROTULO[n.situacao].toLowerCase() + ' no SSW e não pode ser agendada.');
     const at = await db.query("SELECT id,to_char(data_agendada,'YYYY-MM-DD') AS data FROM ag_agendamentos WHERE nota_id=$1 AND status='ativo'", [notaId]);
     if (at.rowCount) throw erro(409, 'A NF ' + n.nf + ' já está agendada para ' + brData(at.rows[0].data) + '. Use Reagendar na lista.');
@@ -617,5 +649,5 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
   }
 }
 
-module.exports = { OPERACIONAIS, FINAIS, ROTULO, normNf, normCtrc, dataBr, ensureSchema, lerConfig, gravarConfig, gravarNota, aplicarSnapshot, alvosDaVarredura,
+module.exports = { OPERACIONAIS, FINAIS, ROTULO, PARCEIROS_PADRAO, normNf, normCtrc, dataBr, termosParceiros, ehParceiro, ensureSchema, lerConfig, gravarConfig, gravarNota, aplicarSnapshot, alvosDaVarredura,
   sincronizar, iniciarVarreduraAutomatica, postJson, listar, indicadores, buscarNf, historicoNota, agendar, alterar, cancelar, handle };
