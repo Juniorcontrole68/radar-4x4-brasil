@@ -289,8 +289,63 @@ async function aplicarSnapshot(db, cli, snap, syncId = null) {
 // Baixa pelo app do motorista: comprovante "entregue" (entregas.js, tabela entregas_comprovantes) da mesma NF
 // (e do mesmo CT-e, quando o comprovante tem) registrado depois da entrada da nota -> nota entregue no agendamento.
 // O comprovante mais recente da parada vale (um "não entregue" depois do "entregue" desfaz).
-async function baixasDosMotoristas(pool) {
-  const c = { conferidas: 0, entregues: 0 };
+// Marca a nota como entregue pela baixa do motorista e conclui o agendamento ativo (só se ainda estiver em aberto).
+async function darBaixa(pool, notaId, quando, texto, compId, usuario) {
+  const db = await pool.connect();
+  try {
+    await db.query('BEGIN');
+    const n = (await db.query("SELECT id,client_id,situacao FROM ag_notas WHERE id=$1 AND situacao=ANY($2) FOR UPDATE", [notaId, OPERACIONAIS])).rows[0];
+    if (!n) { await db.query('ROLLBACK'); return false; }
+    await db.query("UPDATE ag_notas SET situacao='entregue',status_ssw=$2,concluido_em=$3,erro_integracao=NULL,baixa_motorista_em=$4,baixa_comprovante_id=$5,atualizado_em=NOW() WHERE id=$1",
+      [n.id, texto, quando.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }), quando.toISOString(), compId || null]);
+    const ag = await db.query("UPDATE ag_agendamentos SET status='concluido',concluido_em=NOW(),atualizado_em=NOW() WHERE nota_id=$1 AND status='ativo' RETURNING id", [n.id]);
+    await evento(db, n.client_id, n.id, ag.rows[0]?.id || null, 'entregue', ROTULO[n.situacao] || n.situacao, ROTULO.entregue, texto, usuario);
+    await db.query('COMMIT');
+    return true;
+  } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
+}
+const quandoBr = d => d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+// Só os dígitos do número do CT-e com o dígito verificador ("AMR017002-0" e "017002-0" -> "170020").
+const ctrcDigitos = v => String(v || '').replace(/^[^0-9]*/, '').replace(/\D/g, '').replace(/^0+/, '');
+// Data/hora da baixa no SSW ("2026-10-28T08:38:38" ou "28/10/2026 08:38"), no horário de Brasília.
+function dataBaixa(v) {
+  const t = String(v || '').trim();
+  let m = t.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if (!m) { const b = t.match(/^(\d{2})\/(\d{2})\/(\d{2,4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/); if (b) m = [b[0], b[3].length === 2 ? '20' + b[3] : b[3], b[2], b[1], b[4], b[5], b[6]]; }
+  if (!m) return null;
+  const d = new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4] || '12'}:${m[5] || '00'}:${m[6] || '00'}-03:00`);
+  return isNaN(d) ? null : d;
+}
+// Baixas dos motoristas: o rastreio do SSW (ocorrência 01, MERCADORIA ENTREGUE) e o comprovante do app MOVIT.
+// lerBaixas() devolve { rows: [{ ctrc, ctrcOficial, nf, motorista, baixaDataHora }] } com as entregues do SSW.
+async function baixasDosMotoristas(pool, { lerBaixas, ontem } = {}) {
+  const c = { conferidas: 0, entregues: 0, baixas_ssw: 0 };
+  if (lerBaixas) {
+    const r = await lerBaixas({ ontem: !!ontem });
+    if (!r || r.ok === false) throw new Error((r && r.error) || 'O SSW não respondeu.');
+    const baixas = Array.isArray(r.rows) ? r.rows : [];
+    c.baixas_ssw = baixas.length;
+    const notas = (await pool.query(`SELECT id,nf,ctrc,COALESCE(data_entrada,data_emissao) AS desde FROM ag_notas
+       WHERE tipo_operacao='entrega' AND situacao=ANY($1)
+         AND (client_id IS NULL OR client_id IN (SELECT id FROM movit_clients WHERE lower(slug)='construlog'))`, [OPERACIONAIS])).rows;
+    const porNf = new Map();
+    for (const n of notas) { if (!porNf.has(n.nf)) porNf.set(n.nf, []); porNf.get(n.nf).push(n); }
+    c.conferidas += notas.length;
+    const feitas = new Set();
+    for (const b of baixas) {
+      const quando = dataBaixa(b.baixaDataHora) || new Date();
+      const ctes = [b.ctrc, b.ctrcOficial].map(ctrcDigitos).filter(Boolean);
+      for (const nf of new Set(String(b.nf || '').split(/\D+/).map(normNf).filter(Boolean))) {
+        for (const n of porNf.get(nf) || []) {
+          if (feitas.has(n.id)) continue;
+          if (n.ctrc && ctes.length && !ctes.includes(ctrcDigitos(n.ctrc))) continue;   // outra nota com o mesmo número
+          if (n.desde && quando < new Date(new Date(n.desde).getTime() - 2 * 86400000)) continue;   // baixa antiga de outra nota
+          const texto = 'Baixa do motorista ' + (limpo(b.motorista, 80) || 'no SSW') + ' em ' + quandoBr(quando);
+          if (await darBaixa(pool, n.id, quando, texto, null, 'Baixa do motorista (SSW)')) { feitas.add(n.id); c.entregues++; }
+        }
+      }
+    }
+  }
   const q = await pool.query(`SELECT n.id,n.client_id,n.nf,n.ctrc,n.situacao,x.id AS comp_id,x.ctrc AS comp_ctrc,x.resultado,x.driver_name,x.registrado_em
       FROM ag_notas n
       JOIN LATERAL (
@@ -307,37 +362,26 @@ async function baixasDosMotoristas(pool) {
     if (!porNota.has(r.id)) porNota.set(r.id, r);
   }
   for (const r of porNota.values()) {
-    c.conferidas++;
+    if (!lerBaixas) c.conferidas++;
     if (r.resultado !== 'entregue') continue;
-    const db = await pool.connect();
-    try {
-      await db.query('BEGIN');
-      const n = (await db.query("SELECT id,situacao FROM ag_notas WHERE id=$1 AND situacao=ANY($2) FOR UPDATE", [r.id, OPERACIONAIS])).rows[0];
-      if (!n) { await db.query('ROLLBACK'); continue; }
-      const quando = new Date(r.registrado_em), texto = 'Baixa no app pelo motorista ' + limpo(r.driver_name, 80) + ' em ' +
-        quando.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-      await db.query("UPDATE ag_notas SET situacao='entregue',status_ssw=$2,concluido_em=$3,erro_integracao=NULL,baixa_motorista_em=$4,baixa_comprovante_id=$5,atualizado_em=NOW() WHERE id=$1",
-        [n.id, texto, quando.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }), quando.toISOString(), r.comp_id]);
-      const ag = await db.query("UPDATE ag_agendamentos SET status='concluido',concluido_em=NOW(),atualizado_em=NOW() WHERE nota_id=$1 AND status='ativo' RETURNING id", [n.id]);
-      await evento(db, r.client_id, n.id, ag.rows[0]?.id || null, 'entregue', ROTULO[n.situacao] || n.situacao, ROTULO.entregue, texto, 'App do motorista');
-      await db.query('COMMIT');
-      c.entregues++;
-    } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
+    const quando = new Date(r.registrado_em), texto = 'Baixa no app pelo motorista ' + limpo(r.driver_name, 80) + ' em ' + quandoBr(quando);
+    if (await darBaixa(pool, r.id, quando, texto, r.comp_id, 'App do motorista')) c.entregues++;
   }
   console.log('AGENDAMENTO baixas dos motoristas: ' + JSON.stringify(c));
   return c;
 }
 // De hora em hora, das 07:00 às 19:00 (Brasília): uma rodada no começo de cada hora.
-function iniciarBaixasMotoristas({ pool }) {
+// A das 07:00 (e a que roda logo depois de subir) confere também a véspera, para pegar as baixas da noite.
+function iniciarBaixasMotoristas({ pool, lerBaixas }) {
   let ultima = '';
+  const rodar = async ontem => { try { await baixasDosMotoristas(pool, { lerBaixas, ontem }); } catch (e) { console.log('AGENDAMENTO baixas dos motoristas ERRO: ' + (e.message || e)); } };
   const tick = async () => {
     const h = Number(horaSp().slice(0, 2)), k = hojeSp() + ' ' + h;
     if (h < 7 || h > 19 || k === ultima) return;
     ultima = k;
-    try { await baixasDosMotoristas(pool); } catch (e) { console.log('AGENDAMENTO baixas dos motoristas ERRO: ' + (e.message || e)); }
+    await rodar(h === 7);
   };
-  // logo depois de subir, confere uma vez (qualquer hora); depois só no começo de cada hora, das 07:00 às 19:00
-  setTimeout(async () => { ultima = hojeSp() + ' ' + Number(horaSp().slice(0, 2)); try { await baixasDosMotoristas(pool); } catch (e) { console.log('AGENDAMENTO baixas dos motoristas ERRO: ' + (e.message || e)); } }, 60 * 1000);
+  setTimeout(() => { ultima = hojeSp() + ' ' + Number(horaSp().slice(0, 2)); rodar(true); }, 60 * 1000);
   return setInterval(tick, 60 * 1000);
 }
 
@@ -657,7 +701,7 @@ async function handle(req, res, u, ctx) {
   await atender(req, res, u, ctx);
   return true;
 }
-async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashboardSession, dashboardHas, lerSswDoUsuario }) {
+async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashboardSession, dashboardHas, lerSswDoUsuario, lerBaixasDoUsuario }) {
   const p = u.pathname.slice('/api/painel/agendamentos'.length) || '/';
   try {
     const user = await dashboardSession(req, false);
@@ -715,7 +759,7 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
       } catch (e) { if (e.emAndamento) return sendJson(res, 409, { ok: false, error: e.message, rodando: true }); throw e; }
     }
     // botão "Atualizar baixas": confere agora as baixas dos motoristas no app (a rotina roda de hora em hora)
-    if (p === '/baixas' && req.method === 'POST') return sendJson(res, 200, { ok: true, ...(await baixasDosMotoristas(pool)) });
+    if (p === '/baixas' && req.method === 'POST') return sendJson(res, 200, { ok: true, ...(await baixasDosMotoristas(pool, { lerBaixas: lerBaixasDoUsuario ? lerBaixasDoUsuario(user) : null, ontem: true })) });
     if (p === '/config' && req.method === 'GET') return sendJson(res, 200, { ok: true, config: await lerConfig(pool, cli) });
     if (p === '/config' && req.method === 'PUT') {
       if (!user.is_admin) return sendJson(res, 403, { ok: false, error: 'Só o administrador altera a configuração do agendamento.' });
