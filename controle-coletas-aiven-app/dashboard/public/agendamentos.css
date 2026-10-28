@@ -48,7 +48,10 @@
 .ag-tabela th{position:sticky;top:0;background:#f1f5f9;z-index:1;text-align:left;padding:6px 7px;border-bottom:1px solid var(--line);white-space:nowrap;font-size:11px}
 .ag-tabela td{padding:5px 7px;border-bottom:1px solid #eef2f7;vertical-align:top}
 .ag-tabela td.n,.ag-tabela th.n{text-align:right;white-space:nowrap}
-.ag-tabela td.prod{max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ag-tabela td.obs{max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* produto: até 2 linhas (a operação precisa ler o nome), sem alargar a tabela; o texto todo fica no title */
+.ag-tabela td.prod{min-width:170px;max-width:260px}
+.ag-prod{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;line-height:1.3}
 .ag-tabela td.acoes{white-space:nowrap}
 .ag-tabela td.acoes .ag-mini{margin-right:3px}
 .ag-tabela tr.amarelo td{background:#fef9c3}

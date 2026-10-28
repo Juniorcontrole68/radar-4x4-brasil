@@ -157,6 +157,30 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   await pool.query("UPDATE ag_notas SET produto='CONSTRULOG DIST COMERCIO E TRA PAG: 1; CAIXA D AGUA 1000L; PISO 60X60' WHERE nf='7001'");
   x=await api('GET','/api/painel/agendamentos/lista?aba=sem&nf=7001');
   check('produto gravado antes da correção aparece só com os nomes',x.j.rows[0]?.produto==='CAIXA D AGUA 1000L; PISO 60X60',x.j.rows);
+  console.log('Produtos pela NF-e (itens do DANFE)');
+  {
+    const nfeProdutos=require('../nfe-produtos.js');
+    const dv=c43=>{let soma=0,peso=2;for(let i=42;i>=0;i--){soma+=Number(c43[i])*peso;peso=peso===9?2:peso+1}const r=soma%11;return c43+(r<2?0:11-r)};
+    const chave=dv('3526100916634400022055001'+'000007010'+'1'+'62548164');
+    const xml='<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe"><NFe><infNFe Id="NFe'+chave+'" versao="4.00"><ide><serie>1</serie><nNF>7010</nNF></ide><emit><CNPJ>09166344000220</CNPJ><xNome>CONSTRUDECOR S.A</xNome></emit><dest><CPF>12345678909</CPF><xNome>DANIELLA</xNome></dest>'+
+      '<det nItem="1"><prod><cProd>1</cProd><cEAN>SEM GTIN</cEAN><xProd>PORCELANATO 60X60 POLIDO</xProd><uCom>M2</uCom><qCom>20</qCom></prod></det><det nItem="2"><prod><cProd>2</cProd><cEAN>SEM GTIN</cEAN><xProd>ARGAMASSA AC3 20KG</xProd><uCom>SC</uCom><qCom>4</qCom></prod></det></infNFe></NFe></nfeProc>';
+    let pr=await nfeProdutos.produtos(pool,{chaves:[],xml});
+    check('XML da NF-e baixado do SSW: os nomes dos itens',pr.fonte==='ssw_xml'&&pr.produtos.join('; ')==='PORCELANATO 60X60 POLIDO; ARGAMASSA AC3 20KG',pr);
+    pr=await nfeProdutos.produtos(pool,{chaves:[chave]});
+    check('  ...e fica gravado: a mesma chave depois sai de nf_materiais, sem SEFAZ',pr.fonte==='xml'&&pr.produtos.length===2,pr);
+    // notas do agendamento sem produto: o painel devolve os itens e a nota guarda
+    await pool.query("UPDATE ag_notas SET produto='DES: DANIELLA - END: RUA X,1',produto_fonte=NULL,produtos_em=NULL WHERE nf IN ('7001','7010')");
+    let pedidas=null;
+    const cc=await ag.completarProdutos(pool,cli,async notas=>{pedidas=notas;const out={};for(const n of notas)out[n.nf+'|'+n.ctrc]=n.nf==='7010'?{produtos:pr.produtos,fonte:'nfe'}:{produtos:[],fonte:'',avisos:['SEFAZ: não encontrada']};return{ok:true,produtos:out}});
+    check('completa os produtos das notas pendentes dos parceiros (só as sem itens da NF-e)',cc.achadas===1&&pedidas.some(n=>n.nf==='7010')&&pedidas.some(n=>n.nf==='7001')&&!pedidas.some(n=>n.nf==='7002'),{cc,pedidas});
+    x=await api('GET','/api/painel/agendamentos/lista?aba=agendadas&nf=7010');
+    check('  ...a lista mostra os itens da NF-e',x.j.rows[0]?.produto==='PORCELANATO 60X60 POLIDO; ARGAMASSA AC3 20KG',x.j.rows);
+    x=await api('GET','/api/painel/agendamentos/lista?aba=sem&nf=7001');
+    check('  ...e a relação do SSW com destinatário e endereço não aparece como produto',x.j.rows[0]&&x.j.rows[0].produto==='',x.j.rows);
+    check('  ...nota já tentada não é pedida de novo na mesma hora',(await ag.completarProdutos(pool,cli,async()=>{throw new Error('não devia pedir')})).lidas===0);
+    c=await ag.aplicarSnapshot(pool,cli,{pendentes:[{nf:'7010',ctrc:'AMR000710-0',remetente:'CONSTRUDECOR S.A - CUMBIC',mercadoria:'PISOS'}],verificados:{}},null);
+    check('  ...a varredura não troca os itens da NF-e pela mercadoria do BI2',(await pool.query("SELECT produto FROM ag_notas WHERE nf='7010'")).rows[0].produto.startsWith('PORCELANATO'));
+  }
   check('volta sem filtro de parceiros para o resto do teste',(await api('PUT','/api/painel/agendamentos/config',{parceiros:''})).status===200);
 
   console.log('Configuração, coletas e exportação');

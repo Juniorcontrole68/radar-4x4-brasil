@@ -110,6 +110,7 @@ function parseCteXml(xml){
     remetente:xmlParty(xml,'rem','enderReme'),expedidor:xmlParty(xml,'exped','enderExped'),
     recebedor:xmlParty(xml,'receb','enderReceb'),destinatario:xmlParty(xml,'dest','enderDest'),
     valorPrestacao:Number(xmlValue(xmlBlock(xml,'vPrest'),'vTPrest'))||0,valorCarga:Number(xmlValue(xmlBlock(xml,'infCarga'),'vCarga'))||0,
+    produtoPredominante:xmlValue(xmlBlock(xml,'infCarga'),'proPred'),
     nfChaves:[...xml.matchAll(/<(?:\w+:)?infNFe\b[^>]*>\s*<(?:\w+:)?chave>(\d{44})<\//gi)].map(m=>m[1]),
     observacoes:obs
   }
@@ -282,7 +283,7 @@ function parseComprovantes(body){
 
 // Linha da relação de produtos que é nome de produto, e não cabeçalho do relatório do SSW
 // ("CONSTRULOG DIST COMERCIO E TRA   PAG: 1", "Emissao 10/10/26 14:32", "CNPJ: ..."), título de coluna ou total.
-const CABECALHO=/\b(RELACAO|SSW|PAGINA|PAG\b\.?\s*:?\s*\d|FOLHA\s*:?\s*\d|EMISSAO|EMITIDO|CNPJ|CPF|REMETENTE|DESTINATARIO|PAGADOR|TOTAL|CTRC|CT-E|USUARIO|SISTEMA|IMPRESSO|DATA\s*:|HORA\s*:|NOTA FISCAL|SERIE\s*:|LTDA|EIRELI|S\/A|S\.A\b|CONSTRULOG)(?![A-Z])/;
+const CABECALHO=/\b(RELACAO|SSW|PAGINA|PAG\b\.?\s*:?\s*\d|FOLHA\s*:?\s*\d|EMISSAO|EMITIDO|CNPJ|CPF|REMETENTE|DESTINATARIO|PAGADOR|TOTAL|CTRC|CT-E|USUARIO|SISTEMA|IMPRESSO|DATA\s*:|HORA\s*:|NOTA FISCAL|SERIE\s*:|LTDA|EIRELI|S\/A|S\.A\b|CONSTRULOG|DES\s*:|END\s*:|BAIRRO\s*:|CEP\s*:)(?![A-Z])/;
 const TITULOS=/^(?:ITEM|COD(?:IGO)?|DESCRICAO|DO|DA|PRODUTOS?|QTDE?|QUANTIDADE|UN(?:ID(?:ADE)?)?|VALOR|PESO|NCM|CFOP|NF|NOTA|[\s;|.:/-])+$/;
 function pareceProduto(t){
   const n=semAcento(t);

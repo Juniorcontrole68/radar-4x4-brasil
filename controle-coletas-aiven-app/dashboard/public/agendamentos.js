@@ -169,7 +169,7 @@ function celula(r,k,num){
   }
   if(k==='situacao')return'<td>'+st(r.situacao)+(r.erro_integracao&&r.situacao==='verificar'?'<div style="font-size:10px;color:#92400e">'+esc(r.erro_integracao)+'</div>':'')+'</td>';
   const v=valor(r,k);
-  return'<td class="'+(num?'n':'')+(k==='produto'||k==='observacao'?' prod':'')+'" title="'+esc(k==='produto'||k==='observacao'||k==='remetente'||k==='destinatario'?v:'')+'">'+(k==='nf'?'<b>'+esc(v)+'</b>':esc(v))+'</td>'
+  return'<td class="'+(num?'n':'')+(k==='produto'?' prod':k==='observacao'?' obs':'')+'" title="'+esc(k==='produto'||k==='observacao'||k==='remetente'||k==='destinatario'?v:'')+'">'+(k==='nf'?'<b>'+esc(v)+'</b>':k==='produto'?'<div class="ag-prod">'+esc(v)+'</div>':esc(v))+'</td>'
 }
 // A lista ocupa o resto da altura da janela (os indicadores e o formulário ficam em faixas finas acima).
 function ajustarAltura(){
