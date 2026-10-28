@@ -1668,13 +1668,13 @@ async function agendamentoProdutos(nf,ctrc,prio=1){
   const out={produtos:[],fonte:'',avisos:[]};
   ctrc=String(ctrc||'').toUpperCase().trim();
   if(!/^[A-Z]{3}0*\d+-\d$/.test(ctrc)||!internalSswConfigured()){out.avisos.push('nota sem CT-e no SSW');return out}
-  let lido=null,arquivo=null;
+  let lido=null,arquivo=null,telaA='';
   await sswCteEnqueue('agp:'+sswCteKey(ctrc),prio,async()=>{
     const s=await sswCteSession();
     try{lido=await sswCteLer(s,ctrc)}catch(e){SSW_CTE_SESSION=null;throw e}
     try{
       const p=deliveryProgramFormParams(lido.html);p.set('act','A');
-      const r=await sswPost101(s,p);
+      const r=await sswPost101(s,p);telaA=r.html||'';
       let f=await sswAbrirArquivo(s,r.html);
       // tela com a lista de DANFEs: abre o primeiro link de XML/DANFE/PDF
       if(!f.buf){
@@ -1686,7 +1686,9 @@ async function agendamentoProdutos(nf,ctrc,prio=1){
     }catch(e){out.avisos.push('DANFE do SSW: '+String(e.message||e).slice(0,160))}
   }).catch(e=>out.avisos.push('CT-e no SSW: '+String(e.message||e).slice(0,160)));
   const info=sswCteFromLido(lido,ctrc);if(info)sswCteStore(ctrc,info);
-  const chaves=info?.cte?.nfChaves||[],daNf=chaves.filter(c=>Number(c.slice(25,34))===Number(String(nf||'').replace(/\D/g,'')));
+  // a chave da NF-e: no XML do CT-e (infNFe) ou escrita na tela do CT-e / na lista de DANFEs do SSW
+  // (CT-e de redespacho e subcontratação nem sempre traz infNFe)
+  const chaves=[...new Set([...(info?.cte?.nfChaves||[]),...sswCte.chavesNfe(lido?.xml),...sswCte.chavesNfe(lido?.html),...sswCte.chavesNfe(telaA)])],daNf=chaves.filter(c=>Number(c.slice(25,34))===Number(String(nf||'').replace(/\D/g,'')));
   const body={chaves:(daNf.length?daNf:chaves).slice(0,5)};
   if(arquivo){
     const x=sswCte.xmlFromDownload(arquivo.buf);
@@ -1698,7 +1700,8 @@ async function agendamentoProdutos(nf,ctrc,prio=1){
       const j=await portalJson('/api/painel/nf-materiais/produtos',{method:'POST',body,timeout:70000});
       out.produtos=Array.isArray(j.produtos)?j.produtos:[];out.fonte=out.produtos.length?j.fonte:'';out.avisos.push(...(j.avisos||[]));
     }catch(e){out.avisos.push('produtos da NF-e: '+String(e.message||e).slice(0,160))}
-  }else out.avisos.push('CT-e sem a chave da NF-e');
+  }else out.avisos.push('CT-e sem a chave da NF-e (tela '+(lido?'lida':'não lida')+', XML do CT-e '+(lido?.xml?'baixado':(lido?.arquivo?'não abriu: '+(lido.arquivo.erro||lido.arquivo.tipo||lido.arquivo.status):'não oferecido'))+
+    ', DANFEs: '+(telaA?sswDiagActions(telaA).map(a=>(a.text||a.label||a.call).slice(0,30)).slice(0,6).join('/')||htmlText38(telaA).slice(0,120):'sem resposta')+')');
   if(!out.produtos.length&&info?.cte?.produtoPredominante){out.produtos=[info.cte.produtoPredominante];out.fonte='cte'}
   if(!out.produtos.length)console.log('AGENDAMENTO PRODUTOS '+ctrc+' NF '+nf+': '+out.avisos.join(' | '));
   return out

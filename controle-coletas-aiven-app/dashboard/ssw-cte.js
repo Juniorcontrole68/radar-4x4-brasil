@@ -342,4 +342,19 @@ function situacaoBloqueiaAgendamento(textos){
   return''
 }
 
-module.exports={situacaoBloqueiaAgendamento,parseRelacaoProdutos,limparProduto,pareceProduto,parseComprovantes,zipEntries,isZip,xmlFromDownload,parseCteXml,parseTela101,parseMapaCall,xmlValue,xmlBlock,entregaNoComplemento,enderecosEntrega,recebedorEhOutroLocal};
+// Chaves de NF-e (modelo 55, dígito verificador conferido) soltas num texto: tela do SSW, lista de DANFEs, XML.
+// Aceita a chave em grupos de 4 separados por espaço ou ponto, como aparece no DANFE.
+function chavesNfe(texto){
+  const out=[];
+  for(const m of String(texto||'').matchAll(/(?<!\d)(?:\d{4}[ .]?){10}\d{4}(?!\d)/g)){
+    const c=m[0].replace(/\D/g,'');
+    if(c.length!==44||c.slice(20,22)!=='55'||out.includes(c))continue;
+    let soma=0,peso=2;
+    for(let i=42;i>=0;i--){soma+=Number(c[i])*peso;peso=peso===9?2:peso+1}
+    const dv=11-soma%11;
+    if((dv>=10?0:dv)===Number(c[43]))out.push(c)
+  }
+  return out
+}
+
+module.exports={chavesNfe,situacaoBloqueiaAgendamento,parseRelacaoProdutos,limparProduto,pareceProduto,parseComprovantes,zipEntries,isZip,xmlFromDownload,parseCteXml,parseTela101,parseMapaCall,xmlValue,xmlBlock,entregaNoComplemento,enderecosEntrega,recebedorEhOutroLocal};
