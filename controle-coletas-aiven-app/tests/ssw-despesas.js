@@ -73,6 +73,32 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
   m=await api('GET','/api/dre/mes?competencia=2026-10');
   check('  ...e fica marcada como escolhida',m.j.sswDespesas.find(e=>e.evento_chave==='777')?.escolhida===true);
 
+  console.log('Baixa no Contas a Pagar quando a despesa sai da listagem da 475 (liquidada na 476)');
+  const EXTRAS=['104599','T1','T2','T3','T4','T5','T6'];
+  const limparExtras=async()=>{await pg.query('DELETE FROM bills WHERE ssw_lancamento = ANY($1)',[EXTRAS]);for(const l of LANCS)await fetch(M+'/__mock/despesa?lanc='+l+'&sumir=0')};
+  await limparExtras();
+  x=await api('GET','/api/ssw/despesas475?abertas=1');
+  const st2=await (await fetch(M+'/__mock/stats')).json();
+  check('listagem de abertas: sem período, Situação T, só a listagem',x.status===200&&x.j.despesas?.length===5&&st2.despesasProibidas===0&&st2.ultimaListagem?.f7===''&&st2.ultimaListagem.f8===''&&st2.ultimaListagem.f12==='T',{n:x.j.despesas?.length,l:st2.ultimaListagem});
+  const lancs=j=>j.despesas.map(d=>d.lancamento);
+  let bx=await dre.baixarPelaListagem(pg,lancs(x.j),lancs(x.j),'2026-10-28');
+  check('  ...tudo ainda em aberto no SSW: nada é baixado',bx.baixadas===0&&!bx.erro,bx);
+  await fetch(M+'/__mock/despesa?lanc=104541&sumir=1');
+  const mesAtual=lancs((await api('GET','/api/ssw/despesas475?from=2026-10-01&to=2026-10-31')).j);
+  x=await api('GET','/api/ssw/despesas475?abertas=1');
+  bx=await dre.baixarPelaListagem(pg,lancs(x.j),mesAtual,'2026-10-28');
+  b=(await pg.query("SELECT status,to_char(payment_date,'YYYY-MM-DD') AS pg FROM bills WHERE ssw_lancamento='104541'")).rows[0];
+  check('liquidada na 476 (saiu da listagem): a conta fica paga com a data de hoje',x.j.despesas.length===4&&bx.baixadas===1&&b?.status==='paid'&&b.pg==='2026-10-28',{bx,b});
+  await pg.query("INSERT INTO bills(id,description,supplier,area,category,amount,due_date,status,ssw_lancamento) VALUES(gen_random_uuid(),'Teste 475','F','Empresa','Outros',10,'2026-10-20','pending','104599')");
+  bx=await dre.baixarPelaListagem(pg,lancs(x.j),[...mesAtual,'104599'],'2026-10-28');
+  check('lançamento do mês fora da listagem de abertas (listagem cortada): não baixa nada',!!bx.erro&&bx.baixadas===0&&(await pg.query("SELECT status FROM bills WHERE ssw_lancamento='104599'")).rows[0].status==='pending',bx);
+  bx=await dre.baixarPelaListagem(pg,[],[],'2026-10-28');
+  check('listagem de abertas vazia: não baixa nada',!!bx.erro&&bx.baixadas===0,bx);
+  for(const t of EXTRAS.slice(1))await pg.query("INSERT INTO bills(id,description,supplier,area,category,amount,due_date,status,ssw_lancamento) VALUES(gen_random_uuid(),'Teste 475','F','Empresa','Outros',10,'2026-10-20','pending',$1)",[t]);
+  bx=await dre.baixarPelaListagem(pg,lancs(x.j),mesAtual,'2026-10-28');
+  check('mais da metade das contas pendentes sumindo de uma vez: não baixa nada',!!bx.erro&&bx.baixadas===0&&(await pg.query("SELECT COUNT(*)::int n FROM bills WHERE ssw_lancamento = ANY($1) AND status='pending'",[EXTRAS])).rows[0].n===7,bx);
+  await limparExtras();
+
   await limpar();await pg.end();
   console.log('\n'+pass+' OK, '+fail+' falha(s)');
   process.exit(fail?1:0)

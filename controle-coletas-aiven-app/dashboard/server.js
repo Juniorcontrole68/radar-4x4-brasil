@@ -1536,9 +1536,7 @@ async function fetchSswDespesas475(from,to,unidade=SSW_UNIDADE){
     const body=await r.text();sswAssertLoggedIn(body);
     const lido=sswDespesas.despesasDaListagem(body);
     const diag={prog,act:envio.act,campos:envio.campos,colunas:lido.colunas,linhas:lido.linhas,amostra:sswDespesas.texto(body).slice(0,3000)};
-    // situações lidas e as primeiras linhas como vieram: mostra no log se a baixa (476) está sendo reconhecida
-    const situacoes={};for(const x of lido.despesas){const k=x.situacao||'(vazia)';situacoes[k]=(situacoes[k]||0)+1}
-    console.log('SSW475 DESPESAS: '+JSON.stringify({from,to,act:envio.act,linhas:lido.linhas,despesas:lido.despesas.length,colunas:lido.colunas,situacoes,amostra:sswDespesas.linhasBrutas(body).slice(0,4),telaSituacao:(sswDespesas.texto(tela).match(/.{0,160}Situa[cç][aã]o.{0,200}/i)||[''])[0]}));
+    console.log('SSW475 DESPESAS: '+JSON.stringify({from,to,act:envio.act,linhas:lido.linhas,despesas:lido.despesas.length,colunas:lido.colunas,amostra:sswDespesas.linhasBrutas(body).slice(0,2)}));
     return{ok:true,from,to,unidade,despesas:lido.despesas,total:lido.despesas.reduce((t,x)=>t+x.valor,0),diag}
   })
 }
@@ -7024,8 +7022,10 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
   return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/ssw/despesas475'){try{
   if(!dashboardHas(authUser,'financeiro'))return dashboardDeny(res);
-  const from=u.searchParams.get('from')||'',to=u.searchParams.get('to')||'',re=/^\d{4}-\d{2}-\d{2}$/;
-  if(!re.test(from)||!re.test(to)||from>to||(Date.parse(to)-Date.parse(from))>62*86400000){res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'});return res.end(JSON.stringify({ok:false,error:'Período inválido (até 62 dias)'}))}
+  // abertas=1: listagem sem período (todas as despesas ainda em aberto na 475), para conferir as que foram liquidadas
+  const abertas=u.searchParams.get('abertas')==='1';
+  const from=abertas?'':u.searchParams.get('from')||'',to=abertas?'':u.searchParams.get('to')||'',re=/^\d{4}-\d{2}-\d{2}$/;
+  if(!abertas&&(!re.test(from)||!re.test(to)||from>to||(Date.parse(to)-Date.parse(from))>62*86400000)){res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'});return res.end(JSON.stringify({ok:false,error:'Período inválido (até 62 dias)'}))}
   const x=await fetchSswDespesas475(from,to);
   res.writeHead(x.ok?200:502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
