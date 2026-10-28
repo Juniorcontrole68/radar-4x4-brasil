@@ -317,7 +317,11 @@ function completarProdutosAgora(pool, cli, lerProdutos) {
 }
 function iniciarProdutosAutomaticos({ pool, clientes, lerProdutos }) {
   const tick = async () => { try { for (const cli of await clientes()) await completarProdutosAgora(pool, cli, lerProdutos); } catch (e) { console.log('AGENDAMENTO produtos automáticos ERRO: ' + (e.message || e)); } };
-  setTimeout(tick, 90 * 1000);
+  // depois de uma atualização do sistema, as notas ainda sem os itens da NF-e tentam de novo na primeira rodada
+  setTimeout(async () => {
+    try { await pool.query("UPDATE ag_notas SET produtos_em=NULL WHERE produtos_em IS NOT NULL AND (produto_fonte IS NULL OR produto_fonte='cte')"); } catch (e) { console.log('AGENDAMENTO produtos: ' + (e.message || e)); }
+    tick();
+  }, 90 * 1000);
   return setInterval(tick, 15 * 60 * 1000);
 }
 
