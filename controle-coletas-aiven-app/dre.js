@@ -356,7 +356,7 @@ async function sincronizarContas(pool,despesas,hojeIso){
   return out
 }
 // A listagem da 475 só traz despesas em aberto (Situação: V-vencidas, A-a vencer, T-todas): a liquidada na 476
-// some dela. Com a listagem sem período (todas as abertas), a conta pendente ligada a um lançamento que não
+// some dela. Com a listagem de todas as abertas (pagamento de 2 anos atrás a 1 ano à frente), a conta pendente ligada a um lançamento que não
 // está mais lá recebe a baixa, com a data de hoje. Nunca desfaz um pagamento; a despesa excluída no SSW também some.
 // Proteção contra listagem cortada ou com erro: os lançamentos lidos agora no mês atual têm que estar todos nela,
 // e não baixa nada se mais da metade das contas pendentes sumiria de uma vez.

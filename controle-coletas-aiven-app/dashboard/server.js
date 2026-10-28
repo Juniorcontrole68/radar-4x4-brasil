@@ -7022,9 +7022,11 @@ if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas
   return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/ssw/despesas475'){try{
   if(!dashboardHas(authUser,'financeiro'))return dashboardDeny(res);
-  // abertas=1: listagem sem período (todas as despesas ainda em aberto na 475), para conferir as que foram liquidadas
+  // abertas=1: todas as despesas ainda em aberto na 475, para conferir as que foram liquidadas. O SSW exige um
+  // período ("Informe ao menos o período de inclusão ou de pagamento"): vai de 2 anos atrás a 1 ano à frente.
   const abertas=u.searchParams.get('abertas')==='1';
-  const from=abertas?'':u.searchParams.get('from')||'',to=abertas?'':u.searchParams.get('to')||'',re=/^\d{4}-\d{2}-\d{2}$/;
+  const dia=n=>new Date(Date.now()+n*86400000).toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+  const from=abertas?dia(-730):u.searchParams.get('from')||'',to=abertas?dia(365):u.searchParams.get('to')||'',re=/^\d{4}-\d{2}-\d{2}$/;
   if(!abertas&&(!re.test(from)||!re.test(to)||from>to||(Date.parse(to)-Date.parse(from))>62*86400000)){res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'});return res.end(JSON.stringify({ok:false,error:'Período inválido (até 62 dias)'}))}
   const x=await fetchSswDespesas475(from,to);
   res.writeHead(x.ok?200:502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
