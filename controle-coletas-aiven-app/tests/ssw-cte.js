@@ -235,5 +235,17 @@ console.log('Tela de comprovantes do romaneio (opção 38)');
   check('sem situação passa',b(['',null])==='')
 }
 
+{
+  console.log('\nAgendamento: chave da NF-e escrita na tela do SSW');
+  let k='3526101234567800019955001000012345100000001',soma=0,peso=2;
+  for(let i=42;i>=0;i--){soma+=Number(k[i])*peso;peso=peso===9?2:peso+1}
+  const dv=11-soma%11;k+=dv>=10?0:dv;
+  const errada=k.slice(0,43)+((Number(k[43])+1)%10),cteKey=k.slice(0,20)+'57'+k.slice(22);
+  check('acha a chave em grupos de 4',cte.chavesNfe('<td>Chave: '+k.match(/.{4}/g).join(' ')+'</td>').join()===k);
+  check('acha a chave corrida no XML',cte.chavesNfe('<chave>'+k+'</chave><chave>'+k+'</chave>').join()===k);
+  check('dígito errado não passa',cte.chavesNfe(errada).length===0);
+  check('chave de CT-e (modelo 57) não passa',cte.chavesNfe(cteKey).length===0)
+}
+
 console.log('\n'+ok+' ok, '+bad+' falha(s)');
 process.exit(bad?1:0);
