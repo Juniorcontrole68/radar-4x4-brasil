@@ -43,6 +43,7 @@ async function carregarPainel(){
     ['devolvidas','Devolvidas na última sinc.',ind.devolvidas_ultima,'devolvida'],['peso','Peso pendente (kg)',kg(ind.peso_pendente),'sem_filtro']];
   q('#agCards').innerHTML=C.map(([k,t,v,a])=>'<button type="button" class="ag-card'+(ind.desatualizado?' velho':'')+(card===k?' sel':'')+'" data-card="'+k+'" data-alvo="'+a+'" title="'+(ind.desatualizado?'Dados da última sincronização válida (desatualizados)':'Clique para filtrar')+'"><span>'+esc(t)+'</span><b>'+esc(typeof v==='number'?nfmt(v):v)+'</b></button>').join('');
   q('#agNAg').textContent='('+nfmt(ind.com_agendamento)+')';q('#agNSem').textContent='('+nfmt(ind.sem_agendamento)+')';
+  ajustarAltura();
   clearTimeout(timerSync);
   if(ind.rodando)timerSync=setTimeout(async()=>{await carregarPainel();if(!painel.indicadores.rodando)carregarLista()},5000);
 }
@@ -170,6 +171,13 @@ function celula(r,k,num){
   const v=valor(r,k);
   return'<td class="'+(num?'n':'')+(k==='produto'||k==='observacao'?' prod':'')+'" title="'+esc(k==='produto'||k==='observacao'||k==='remetente'||k==='destinatario'?v:'')+'">'+(k==='nf'?'<b>'+esc(v)+'</b>':esc(v))+'</td>'
 }
+// A lista ocupa o resto da altura da janela (os indicadores e o formulário ficam em faixas finas acima).
+function ajustarAltura(){
+  const box=q('.ag-tabela-box');if(!box||!box.offsetParent)return;
+  const topo=box.getBoundingClientRect().top+window.scrollY;
+  const h=Math.max(340,window.innerHeight-topo-(q('#agPag').innerHTML?44:14))+'px';
+  if(box.style.maxHeight!==h)box.style.maxHeight=h
+}
 async function carregarLista(){
   const t=q('#agTabela'),cols=COLS[aba];
   try{
@@ -181,6 +189,7 @@ async function carregarLista(){
       (j.rows.length?j.rows.map(r=>'<tr class="'+classe(r)+'">'+cols.map(([k,,n])=>celula(r,k,n)).join('')+'</tr>').join(''):'<tr><td class="ag-vazio" colspan="'+cols.length+'">'+(aba==='sem'&&!painel?.indicadores?.sync?.ultimaOk?'A lista aparece depois da primeira sincronização com o SSW.':'Nenhuma nota com estes filtros.')+'</td></tr>')+'</tbody>';
     const pags=Math.max(1,Math.ceil(j.total/PER));
     q('#agPag').innerHTML=pags>1?'<button type="button" class="ag-mini" data-pg="'+(page-1)+'"'+(page<=1?' disabled':'')+'>‹ Anterior</button><span>Página '+page+' de '+pags+'</span><button type="button" class="ag-mini" data-pg="'+(page+1)+'"'+(page>=pags?' disabled':'')+'>Próxima ›</button>':'';
+    ajustarAltura();
   }catch(e){t.innerHTML='<tbody><tr><td class="ag-vazio">'+esc(e.message)+'</td></tr></tbody>'}
 }
 async function acao(b){
@@ -230,8 +239,8 @@ async function logSync(){
 }
 function configurar(){
   const c=painel?.config||{};
-  dialogo('<h3>Configuração do agendamento</h3><label>Horário da varredura automática no SSW (Brasília)<input name="hora" type="time" required value="'+esc(c.hora_sync||'02:00')+'"></label><label><span><input name="ativa" type="checkbox" style="width:auto;height:auto"'+(c.sync_ativa!==false?' checked':'')+'> Varredura automática ligada</span></label><label>Amarelo: sem agendamento há mais de (dias)<input name="am" type="number" min="0" max="60" required value="'+esc(c.dias_amarelo??2)+'"></label><label>Vermelho: sem agendamento há mais de (dias)<input name="vm" type="number" min="1" max="90" required value="'+esc(c.dias_vermelho??5)+'"></label>',
-    async fd=>{await api('/api/painel/agendamentos/config',{method:'PUT',body:{hora_sync:fd.get('hora'),sync_ativa:fd.get('ativa')==='on',dias_amarelo:Number(fd.get('am')),dias_vermelho:Number(fd.get('vm'))}})},'Salvar')
+  dialogo('<h3>Configuração do agendamento</h3><label>Horário da varredura automática no SSW (Brasília)<input name="hora" type="time" required value="'+esc(c.hora_sync||'02:00')+'"></label><label><span><input name="ativa" type="checkbox" style="width:auto;height:auto"'+(c.sync_ativa!==false?' checked':'')+'> Varredura automática ligada</span></label><label>Amarelo: sem agendamento há mais de (dias)<input name="am" type="number" min="0" max="60" required value="'+esc(c.dias_amarelo??2)+'"></label><label>Vermelho: sem agendamento há mais de (dias)<input name="vm" type="number" min="1" max="90" required value="'+esc(c.dias_vermelho??5)+'"></label><label>Parceiros que entram no agendamento (procurados no remetente e no pagador; separe por vírgula, vazio = todos)<textarea name="parc" rows="2" maxlength="1500">'+esc(c.parceiros||'')+'</textarea></label>',
+    async fd=>{await api('/api/painel/agendamentos/config',{method:'PUT',body:{hora_sync:fd.get('hora'),sync_ativa:fd.get('ativa')==='on',dias_amarelo:Number(fd.get('am')),dias_vermelho:Number(fd.get('vm')),parceiros:String(fd.get('parc')||'')}})},'Salvar')
 }
 
 // ------------------------------------------------------------------ exportações (todas as linhas do filtro)
@@ -299,6 +308,9 @@ function setup(){
   q('#agTabela').onclick=e=>{const b=e.target.closest('[data-ac]');if(b)acao(b)};
   q('#agPag').onclick=e=>{const b=e.target.closest('[data-pg]');if(!b||b.disabled)return;page=Number(b.dataset.pg);carregarLista()};
   // a lista e os indicadores se atualizam sozinhos enquanto a tela está aberta
+  // avisos que entram ou saem acima da tela mudam o espaço livre: a lista acompanha
+  window.addEventListener('resize',ajustarAltura);
+  if(window.ResizeObserver)new ResizeObserver(()=>requestAnimationFrame(ajustarAltura)).observe(document.body);
   setInterval(()=>{if(!document.hidden&&q('#agendamento-entregas')?.classList.contains('active')&&!q('#agDlg').open){carregarPainel()}},120000);
 }
 // Chamado pelo painel quando a aba "Agendamento de entregas" é aberta.
