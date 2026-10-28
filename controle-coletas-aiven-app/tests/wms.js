@@ -659,6 +659,25 @@ function nfe({chave,itens}){
     check('remove destinatário do cadastro (expedição continua com o nome)',r.status===200&&!lista.some(d=>d.id===dest));
   }
 
+  console.log('Reserva usa estoque inicial fora das zonas de armazenagem e diz onde está o que falta');
+  {
+    r=await call('POST','/api/wms/produtos',{cookie:gest,body:{cliente_id:cli,sku:'XD1',descricao:'Produto no cross docking'}});
+    r=await call('POST','/api/wms/armazens/'+arm+'/zonas',{cookie:gest,body:{codigo:'XDK',nome:'Cross docking',tipo:'cross_docking'}});
+    const zx=r.json.id;
+    r=await call('POST','/api/wms/enderecos/lote',{cookie:gest,body:{armazem_id:arm,zona_id:zx,tipo:'chao',rua_de:'X',colunas:{de:1,ate:1}}});
+    const endX=(await call('GET','/api/wms/enderecos?armazem_id='+arm,{cookie:gest})).json.rows.find(e=>e.zona_id===zx||/^X-/.test(e.codigo));
+    const ajx=await criarUser('ajx',['wms','wms_ajuste']);
+    r=await call('POST','/api/wms/ajuste',{cookie:ajx,body:{uuid:'ajx-'+sufixo,armazem_id:arm,cliente_id:cli,produto:'XD1',endereco:endX?.codigo,qtd:10,motivo:'Estoque inicial'}});
+    check('estoque inicial de 10 no cross docking',r.status===200,r.json);
+    const px=(await call('GET','/api/wms/produtos?cliente_id='+cli+'&q=XD1',{cookie:gest})).json.rows.find(p=>p.sku==='XD1');
+    r=await call('POST','/api/wms/expedicoes',{cookie:gest,body:{armazem_id:arm,cliente_id:cli,nf_numero:'7001',itens:[{produto_id:px.id,qtd:20}]}});
+    r=await call('POST','/api/wms/expedicoes/'+r.json.id+'/reservar',{cookie:gest});
+    check('faltando: a mensagem diz quanto há e onde',r.status===409&&/XD1: faltam 10 \(há 10 em X-/.test(r.json.error),r.json);
+    r=await call('POST','/api/wms/expedicoes',{cookie:gest,body:{armazem_id:arm,cliente_id:cli,nf_numero:'7002',itens:[{produto_id:px.id,qtd:7}]}});
+    r=await call('POST','/api/wms/expedicoes/'+r.json.id+'/reservar',{cookie:gest});
+    check('reserva o estoque inicial que está no cross docking',r.status===200&&r.json.linhas===1,r.json);
+  }
+
   console.log(`\n${pass} OK, ${fail} falha(s)`);
   process.exit(fail?1:0);
 })().catch(e=>{console.error(e);process.exit(1)});
