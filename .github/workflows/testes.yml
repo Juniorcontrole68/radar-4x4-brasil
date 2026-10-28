@@ -76,6 +76,7 @@ jobs:
           node --check controle-coletas-aiven-app/veic.js
           node --check controle-coletas-aiven-app/dashboard/public/frota.js
           node --check controle-coletas-aiven-app/wms.js
+          node --check controle-coletas-aiven-app/wms-pdf.js
           node --check controle-coletas-aiven-app/sefaz-nfe.js
           node --check controle-coletas-aiven-app/agendamento.js
           node --check controle-coletas-aiven-app/dashboard/public/agendamentos.js

@@ -19,6 +19,7 @@ const fs=require('fs');
 const path=require('path');
 const crypto=require('crypto');
 const sefaz=require('./sefaz-nfe');
+const wmsPdf=require('./wms-pdf');
 
 let ativo=/^(1|true|sim|yes)$/i.test(String(process.env.WMS_ATIVO||'').trim());
 const PAGINA_GESTAO=path.join(__dirname,'wms.html');
@@ -821,6 +822,22 @@ async function ajustar(pool,ctx,b){
     return{ok:true,sentido,sku:prod.sku,descricao:prod.descricao,endereco:end.codigo,qtd:q};
   });
 }
+// ---------------------------------------------------------------- relatórios em PDF
+async function relatorioPdf(pool,ctx,rec,id){
+  const x=rec?await lerRecebimento(pool,ctx,id):await lerExpedicao(pool,ctx,id);
+  const t=rec?'wms_recebimentos':'wms_expedicoes';
+  const extra=(await pool.query(`SELECT a.nome AS armazem${rec?',t.motorista_doc':''} FROM ${t} t JOIN wms_armazens a ON a.id=t.armazem_id WHERE t.id=$1`,[x.id])).rows[0]||{};
+  const ids=[...new Set(x.itens.map(i=>i.produto_id).filter(Boolean))];
+  const produtos=(await pool.query(`SELECT p.id::text,p.peso_bruto_kg::float,${SQL_M3}::float AS m3 FROM wms_produtos p WHERE p.id=ANY($1::bigint[])`,[ids])).rows;
+  const eventos={};
+  for(const e of(await pool.query('SELECT acao,usuario,criado_em FROM wms_auditoria WHERE empresa=$1 AND entidade=$2 AND entidade_id=$3 ORDER BY id',[ctx.emp,rec?'recebimento':'expedicao',x.id])).rows)
+    eventos[e.acao]={em:e.criado_em,por:e.usuario};
+  let barras=null;if(/^\d{44}$/.test(x.nf_chave||''))barras=code128(x.nf_chave);
+  const dados={...x,...extra,produtos,eventos,barras};
+  const empresa=ctx.emp===0?'Construlog':String(ctx.user.client?.name||ctx.user.client?.nome||'Armazém');
+  return rec?wmsPdf.pdfRecebimento(dados,{empresa,usuario:ctx.usuario}):wmsPdf.pdfExpedicao(dados,{empresa,usuario:ctx.usuario});
+}
+
 // ---------------------------------------------------------------- expedição (saída)
 // NF de saída (XML, chave na SEFAZ ou manual) -> reserva FEFO do saldo disponível -> separação no coletor
 // (endereço, produto e quantidade conferidos) para a doca de expedição -> expedir dá baixa (movimento "saida").
@@ -1636,6 +1653,15 @@ async function handle(req,res,u,deps){
       const nota=await nfePelaChave(pool,ctx,chave);
       if(nota.pendente)return json(202,nota.pendente);
       return json(201,{...(await importarSaida(pool,ctx,b,nota.xml)),origem:'sefaz'});
+    }
+    // relatórios em PDF (gestão: mostram o esperado da nota, que a conferência cega esconde do operador)
+    m=p.match(/^\/api\/wms\/(recebimentos|expedicoes)\/(\d+)\/pdf$/);
+    if(m&&M==='GET'){
+      const ctx=await contexto(deps,req,'gestao');
+      const rec=m[1]==='recebimentos',buf=await relatorioPdf(pool,ctx,rec,m[2]);
+      const nome=(rec?'recebimento-':'expedicao-')+m[2]+'.pdf';
+      res.writeHead(200,{'Content-Type':'application/pdf','Content-Disposition':(u.searchParams.get('baixar')==='1'?'attachment':'inline')+'; filename="'+nome+'"','Cache-Control':'no-store','Content-Length':buf.length});
+      res.end(buf);return true;
     }
     m=p.match(/^\/api\/wms\/expedicoes\/(\d+)$/);
     if(m&&M==='GET'){

@@ -419,6 +419,27 @@ function nfe({chave,itens}){
     check('saldo depois da saída: EXP1 30 (só o LA), AJ1 −5, nada reservado',await saldo('EXP1')===30&&await saldo('EXP1','reservado')===0&&await saldo('AJ1','disponivel')===aj1Antes-5&&await saldo('AJ1','reservado')===0);
     r=await call('GET','/api/wms/expedicoes/'+ex,{cookie:gest});
     check('expedição guarda placa, quem expediu e as quantidades separadas',r.json.expedicao.status==='expedida'&&r.json.expedicao.placa==='ABC1D23'&&r.json.expedicao.itens.every(i=>i.separado===i.qtd),r.json.expedicao);
+    {
+      // relatórios em PDF do recebimento e da expedição
+      const pdfParse=require('pdf-parse/lib/pdf-parse.js');
+      const baixa=async(url,cookie)=>{const r=await fetch(B+url,{headers:{Cookie:cookie}});const buf=Buffer.from(await r.arrayBuffer());
+        let texto='';if(r.status===200)try{texto=(await pdfParse(buf)).text}catch(e){texto='ERRO '+e.message}
+        return{status:r.status,tipo:r.headers.get('content-type')||'',buf,texto}};
+      let x=await baixa('/api/wms/expedicoes/'+ex+'/pdf',gest);
+      check('PDF da expedição: arquivo PDF',x.status===200&&/application\/pdf/.test(x.tipo)&&x.buf.slice(0,5).toString()==='%PDF-',[x.status,x.tipo]);
+      check('PDF da expedição traz romaneio, placa, lista de separação, endereços e assinaturas',/Romaneio de expedição/i.test(x.texto)&&x.texto.includes('ABC1D23')&&/Lista de separação/i.test(x.texto)
+        &&x.texto.includes('EXP1')&&x.texto.includes('Expedida')&&/Motorista \(nome, documento e assinatura\)/.test(x.texto)&&/Página 1 de \d/.test(x.texto),x.texto.slice(0,600));
+      x=await baixa('/api/wms/expedicoes/'+ex+'/pdf',op);
+      check('operador não baixa o PDF da expedição',x.status===403,x.status);
+      x=await baixa('/api/wms/recebimentos/'+rec+'/pdf',gest);
+      check('PDF do recebimento: arquivo PDF',x.status===200&&/application\/pdf/.test(x.tipo)&&x.buf.slice(0,5).toString()==='%PDF-',[x.status,x.tipo]);
+      check('PDF do recebimento traz nota, transporte, contagens, divergências, LPNs e assinaturas',/Relatório de recebimento/i.test(x.texto)&&x.texto.includes('ABC1D23')&&x.texto.includes('João')
+        &&/Contagens registradas/i.test(x.texto)&&/Divergências e decisões/i.test(x.texto)&&/LPN\d{9}/.test(x.texto)&&x.texto.includes('Fornecedor Teste Ltda')&&/Conferente/.test(x.texto),x.texto.slice(0,600));
+      x=await baixa('/api/wms/recebimentos/'+rec+'/pdf',op);
+      check('conferência cega: operador não baixa o PDF do recebimento',x.status===403,x.status);
+      x=await baixa('/api/wms/recebimentos/999999/pdf',gest);
+      check('PDF de recebimento que não existe -> 404',x.status===404,x.status);
+    }
     r=await call('POST','/api/wms/expedicoes/'+ex+'/cancelar',{cookie:gest,body:{}});
     check('expedição já expedida não cancela',r.status===409);
     {
