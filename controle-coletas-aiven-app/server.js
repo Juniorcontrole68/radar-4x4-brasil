@@ -1103,6 +1103,12 @@ function isInternalCall(req){
 function agendamentoLerSswInterno(alvos){
   return agendamento.postJson(DASH_INTERNAL_PORT,'/api/agendamentos/ssw-snapshot',{'X-Internal-Key':INTERNAL_KEY},{alvos});
 }
+// Baixas dos motoristas no rastreio do SSW (ocorrência 01), lidas pelo painel deste servidor.
+function agendamentoLerBaixasInterno(opcoes){
+  return agendamento.postJson(DASH_INTERNAL_PORT,'/api/agendamentos/baixas-ssw',{'X-Internal-Key':INTERNAL_KEY},opcoes||{});
+}
+// Na demonstração não há SSW da Construlog: só os comprovantes do app.
+const agendamentoLerBaixasDoUsuario=user=>(TEST_MODE||movitDemo.ATIVA||movitDemo.clienteDemo(user))?null:agendamentoLerBaixasInterno;
 function agendamentoLerSswDoUsuario(user,req){
   if(!movitDemo.clienteDemo(user))return agendamentoLerSswInterno;
   const headers={cookie:req.headers.cookie||'',authorization:req.headers.authorization||''};
@@ -2113,8 +2119,8 @@ async function start() {
   if(!TEST_MODE&&!movitDemo.ATIVA&&process.env.AGENDAMENTO_SSW_AUTO!=='0')agendamento.iniciarVarreduraAutomatica({pool,
     lerSsw:(cli,alvos)=>agendamentoLerSswInterno(alvos),
     clientes:agendamentoClientes});
-  // baixas dos motoristas no app (entregue) -> entregue no agendamento: de hora em hora, das 07:00 às 19:00
-  if(!TEST_MODE)agendamento.iniciarBaixasMotoristas({pool});
+  // baixas dos motoristas (rastreio do SSW e app) -> entregue no agendamento: de hora em hora, das 07:00 às 19:00
+  if(!TEST_MODE)agendamento.iniciarBaixasMotoristas({pool,lerBaixas:movitDemo.ATIVA?null:agendamentoLerBaixasInterno});
   await lotacaoRastreio.ensureSchema(pool);
   await lotacaoClientes.ensureSchema(pool);
   await entregas.ensureSchema(pool);
@@ -3332,7 +3338,7 @@ async function start() {
       // Lançamentos da operação (substitui a aba de lançamentos da planilha): ver lancamentos.js
       if (await lancamentos.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,sessionOrInternal,dashboardSession,dashboardHas,spToday})) return;
       // Agendamento de entregas (notas pendentes no SSW, com e sem agendamento): ver agendamento.js
-      if (await agendamento.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,lerSswDoUsuario:agendamentoLerSswDoUsuario})) return;
+      if (await agendamento.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,lerSswDoUsuario:agendamentoLerSswDoUsuario,lerBaixasDoUsuario:agendamentoLerBaixasDoUsuario})) return;
       // Despesas (DRE) do Financeiro, com os holerites da conta Salários: ver dre.js
       if (await dre.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
       // Roteirizador de Cargas (substitui o Roteirizador Teste e o Roteirizador V02): ver roteirizador-cargas.js

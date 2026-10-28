@@ -194,6 +194,30 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     check('  ...botão "Atualizar baixas" confere na hora',x.status===200&&x.j.ok&&x.j.entregues===0,x);
     check('  ...e exige login',(await fetch(B+'/api/painel/agendamentos/baixas',{method:'POST'})).status===401);
   }
+  console.log('Baixa do motorista no rastreio do SSW');
+  {
+    await ag.aplicarSnapshot(pool,cli,{pendentes:[
+      {nf:'7101',ctrc:'AMR017002-0',remetente:'CONSTRUDECOR S.A - CUMBIC'},
+      {nf:'7102',ctrc:'AMR017003-8',remetente:'CONSTRUDECOR S.A - CUMBIC'},
+      {nf:'7103',ctrc:'',remetente:'CONSTRUDECOR S.A - CUMBIC'}],verificados:{}},null);
+    const sit=async nf=>(await pool.query('SELECT situacao,status_ssw,baixa_motorista_em FROM ag_notas WHERE nf=$1',[nf])).rows[0];
+    let pedido=null;
+    const lerBaixas=async o=>{pedido=o;return{ok:true,rows:[
+      {ctrc:'017002-0',nf:'7101',motorista:'GILMAR DUARTE',baixaDataHora:dia(0)+'T08:38:38'},   // CT-e sem a série, como vem do rastreio
+      {ctrc:'017999-1',nf:'7102',motorista:'OUTRO',baixaDataHora:dia(0)+'T09:00:00'},          // mesma NF, outro CT-e
+      {ctrc:'',nf:'7103',motorista:'',baixaDataHora:dia(0)+'T10:15:00'}]}};
+    const bx=await ag.baixasDosMotoristas(pool,{lerBaixas,ontem:true});
+    check('entregue no rastreio do SSW vira entregue no agendamento',(await sit('7101')).situacao==='entregue'&&!!(await sit('7101')).baixa_motorista_em&&bx.entregues>=2,bx);
+    check('  ...o texto traz o motorista e a hora da baixa',/GILMAR DUARTE em \d{2}\/\d{2}, 08:38/.test((await sit('7101')).status_ssw||''),(await sit('7101')).status_ssw);
+    check('  ...pede também a véspera quando mandado',pedido&&pedido.ontem===true,pedido);
+    check('  ...outro CT-e com a mesma NF não baixa',(await sit('7102')).situacao!=='entregue');
+    check('  ...sem CT-e vale a NF',(await sit('7103')).situacao==='entregue');
+    const h=(await pool.query("SELECT e.usuario FROM ag_eventos e JOIN ag_notas n ON n.id=e.nota_id WHERE n.nf='7101' AND e.tipo='entregue'")).rows[0];
+    check('  ...histórico registra a baixa do SSW',h?.usuario==='Baixa do motorista (SSW)',h);
+    check('  ...rodar de novo não duplica',(await ag.baixasDosMotoristas(pool,{lerBaixas})).entregues===0);
+    let erro='';try{await ag.baixasDosMotoristas(pool,{lerBaixas:async()=>({ok:false,error:'SSW fora'})})}catch(e){erro=e.message}
+    check('  ...SSW fora: erro, nada muda',erro==='SSW fora'&&(await sit('7102')).situacao!=='entregue',erro);
+  }
   check('volta sem filtro de parceiros para o resto do teste',(await api('PUT','/api/painel/agendamentos/config',{parceiros:''})).status===200);
 
   console.log('Configuração, coletas e exportação');
