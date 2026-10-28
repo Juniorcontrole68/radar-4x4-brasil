@@ -929,6 +929,16 @@ async function lerExpedicao(c,ctx,id){
     expedida_em:x.expedida_em,expedida_por:x.expedida_por,itens,separacao:sep};
 }
 // reserva tudo ou nada: primeiro vence, primeiro sai (FEFO); no mesmo vencimento, picking e saldo solto antes de palete fechado
+// quando falta, diz onde está o saldo do produto que a reserva não pôde usar (outro armazém, palete na doca, quarentena…)
+async function ondeEsta(c,ctx,x,it){
+  const r=(await c.query(`SELECT a.nome AS armazem,(s.armazem_id=$2) AS mesmo,e.codigo,z.tipo,e.status AS st_end,s.estado,(s.lpn_id IS NOT NULL) AS palete,l.lote,SUM(s.qtd)::float AS qtd
+      FROM wms_saldos s JOIN wms_enderecos e ON e.id=s.endereco_id JOIN wms_zonas z ON z.id=e.zona_id JOIN wms_armazens a ON a.id=s.armazem_id LEFT JOIN wms_lotes l ON l.id=s.lote_id
+      WHERE s.empresa=$1 AND s.produto_id=$3 AND s.qtd>0 GROUP BY 1,2,3,4,5,6,7,8 ORDER BY 2 DESC,9 DESC LIMIT 4`,[ctx.emp,x.armazem_id,it.produto_id])).rows;
+  if(!r.length)return' (sem saldo deste produto em nenhum endereço)';
+  const por=y=>!y.mesmo?'no armazém '+y.armazem:y.estado!=='disponivel'?y.estado:y.st_end!=='ativo'?'endereço '+y.st_end
+    :it.lote&&y.lote!==it.lote?'lote '+(y.lote||'sem lote'):y.tipo==='doca'&&y.palete?'palete na doca aguardando armazenagem':['avaria','quarentena','devolucao'].includes(y.tipo)?'zona '+y.tipo:'disponível';
+  return' (há '+r.map(y=>fmt(y.qtd,3).replace(/,?0+$/,'')+' em '+y.codigo+': '+por(y)).join('; ')+')';
+}
 async function reservarExpedicao(c,ctx,id){
   const x=(await c.query('SELECT * FROM wms_expedicoes WHERE id=$1 AND empresa=$2 FOR UPDATE',[id,ctx.emp])).rows[0];
   if(!x)throw erro(404,'Expedição não encontrada.');
@@ -940,12 +950,13 @@ async function reservarExpedicao(c,ctx,id){
     let falta=+it.qtd_nf*+it.fator;
     const rs=(await c.query(`SELECT s.id,s.endereco_id,s.lote_id,s.lpn_id,s.qtd::float AS qtd FROM wms_saldos s JOIN wms_enderecos e ON e.id=s.endereco_id JOIN wms_zonas z ON z.id=e.zona_id
         LEFT JOIN wms_lotes l ON l.id=s.lote_id
-      WHERE s.empresa=$1 AND s.armazem_id=$2 AND s.produto_id=$3 AND s.cliente_id=$4 AND s.estado='disponivel' AND e.status='ativo' AND z.tipo=ANY($5::text[])
+      WHERE s.empresa=$1 AND s.armazem_id=$2 AND s.produto_id=$3 AND s.cliente_id=$4 AND s.estado='disponivel' AND e.status='ativo'
+        AND (z.tipo=ANY($5::text[]) OR z.tipo IN ('cross_docking','expedicao') OR (z.tipo='doca' AND s.lpn_id IS NULL))
         AND ($6='' OR l.lote=$6)
-      ORDER BY l.validade NULLS LAST,(z.tipo='picking') DESC,s.lpn_id NULLS FIRST,e.distancia_m,s.id FOR UPDATE OF s`,[ctx.emp,x.armazem_id,it.produto_id,x.cliente_id,ZONAS_GUARDA,it.lote||''])).rows;
+      ORDER BY l.validade NULLS LAST,(z.tipo=ANY($5::text[])) DESC,(z.tipo='picking') DESC,s.lpn_id NULLS FIRST,e.distancia_m,s.id FOR UPDATE OF s`,[ctx.emp,x.armazem_id,it.produto_id,x.cliente_id,ZONAS_GUARDA,it.lote||''])).rows;
     const tirar=[];
     for(const s of rs){if(falta<=1e-9)break;const q=Math.min(falta,s.qtd);falta-=q;tirar.push({s,q})}
-    if(falta>1e-9){faltas.push(it.sku+(it.lote?' lote '+it.lote:'')+': faltam '+fmt(falta,3).replace(/,?0+$/,''));continue}
+    if(falta>1e-9){faltas.push(it.sku+(it.lote?' lote '+it.lote:'')+': faltam '+fmt(falta,3).replace(/,?0+$/,'')+(await ondeEsta(c,ctx,x,it)));continue}
     for(const{s,q}of tirar){
       await mover(c,ctx,{operacao:op,tipo:'reserva',armazem_id:x.armazem_id,produto_id:it.produto_id,cliente_id:x.cliente_id,lote_id:s.lote_id,qtd:q,
         de:{endereco_id:s.endereco_id,estado:'disponivel',lpn_id:s.lpn_id},para:{endereco_id:s.endereco_id,estado:'reservado',lpn_id:s.lpn_id},motivo:'reserva para expedição',documento:'NF '+(x.nf_numero||x.id)});
