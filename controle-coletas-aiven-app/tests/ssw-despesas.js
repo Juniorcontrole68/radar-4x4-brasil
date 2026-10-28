@@ -79,7 +79,8 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
   await limparExtras();
   x=await api('GET','/api/ssw/despesas475?abertas=1');
   const st2=await (await fetch(M+'/__mock/stats')).json();
-  check('listagem de abertas: sem período, Situação T, só a listagem',x.status===200&&x.j.despesas?.length===5&&st2.despesasProibidas===0&&st2.ultimaListagem?.f7===''&&st2.ultimaListagem.f8===''&&st2.ultimaListagem.f12==='T',{n:x.j.despesas?.length,l:st2.ultimaListagem});
+  const d6=n=>{const d=new Date(Date.now()+n*86400000).toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});return d.slice(8,10)+d.slice(5,7)+d.slice(2,4)};
+  check('listagem de abertas: pagamento de 2 anos atrás a 1 ano à frente, Situação T, só a listagem',x.status===200&&x.j.despesas?.length===5&&st2.despesasProibidas===0&&st2.ultimaListagem?.f7===d6(-730)&&st2.ultimaListagem.f8===d6(365)&&st2.ultimaListagem.f12==='T',{n:x.j.despesas?.length,l:st2.ultimaListagem});
   const lancs=j=>j.despesas.map(d=>d.lancamento);
   let bx=await dre.baixarPelaListagem(pg,lancs(x.j),lancs(x.j),'2026-10-28');
   check('  ...tudo ainda em aberto no SSW: nada é baixado',bx.baixadas===0&&!bx.erro,bx);
