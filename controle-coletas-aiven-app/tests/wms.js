@@ -727,6 +727,44 @@ function nfe({chave,itens}){
     check('depois de mudar a zona a reserva usa o saldo',r.status===200&&r.json.linhas===1,r.json);
   }
 
+  console.log('Limpeza do estoque (administrador, com backup)');
+  {
+    let r=await call('GET','/api/wms/estoque/limpeza',{cookie:gest});
+    check('gestão sem ser administrador não vê a limpeza',r.status===403,r.status);
+    r=await call('POST','/api/wms/estoque/limpar',{cookie:gest,body:{modo:'tudo',confirmar:'LIMPAR'}});
+    check('gestão sem ser administrador não limpa',r.status===403,r.status);
+    r=await call('GET','/api/wms/status',{cookie:adm});
+    check('status avisa que é administrador',r.json.admin===true,r.json);
+    r=await call('GET','/api/wms/estoque/limpeza',{cookie:adm});
+    const antes=r.json.resumo;
+    check('resumo mostra o que será apagado',r.status===200&&antes.wms_saldos>0&&antes.wms_recebimentos>0&&antes.wms_movimentos>0&&antes.unidades_em_estoque>0,antes);
+    r=await call('POST','/api/wms/estoque/limpar',{cookie:adm,body:{modo:'tudo',confirmar:'sim'}});
+    check('sem digitar LIMPAR não limpa',r.status===400&&r.json.code==='CONFIRMAR',r.json);
+    r=await call('POST','/api/wms/estoque/limpar',{cookie:adm,body:{confirmar:'LIMPAR'}});
+    check('sem escolher o modo não limpa',r.status===400,r.json);
+    r=await call('GET','/api/wms/estoque/backup',{cookie:adm});
+    check('backup para baixar traz as tabelas de estoque',r.status===200&&/attachment/.test(r.headers.get('content-disposition')||'')&&r.json.tabelas?.wms_saldos?.length===antes.wms_saldos&&r.json.tabelas.wms_movimentos.length===antes.wms_movimentos,[r.status,Object.keys(r.json.tabelas||{})]);
+    // só o saldo: quantidades zeradas por ajuste, histórico fica, expedições abertas canceladas
+    r=await call('POST','/api/wms/estoque/limpar',{cookie:adm,body:{modo:'saldo',confirmar:'limpar'}});
+    const bk1=r.json.backup_id;
+    check('zerar saldo: estoque fica zerado',r.status===200&&r.json.depois.unidades_em_estoque===0&&r.json.depois.wms_saldos===0,r.json);
+    check('zerar saldo: recebimentos e expedições ficam como histórico',r.json.depois.wms_recebimentos===antes.wms_recebimentos&&r.json.depois.wms_expedicoes===antes.wms_expedicoes&&r.json.depois.wms_movimentos>antes.wms_movimentos,r.json.depois);
+    r=await call('GET','/api/wms/expedicoes?status=abertas',{cookie:gest});
+    check('zerar saldo: nenhuma expedição aberta',r.status===200&&r.json.rows.length===0,r.json.rows);
+    r=await call('GET','/api/wms/estoque/backup?id='+bk1,{cookie:adm});
+    check('cópia de segurança guardada no banco antes de limpar',r.status===200&&r.json.tabelas.wms_saldos.length===antes.wms_saldos,r.status);
+    // começar do zero: só os cadastros ficam
+    const prodAntes=(await call('GET','/api/wms/produtos?cliente_id='+cli,{cookie:gest})).json.rows.length;
+    r=await call('POST','/api/wms/estoque/limpar',{cookie:adm,body:{modo:'tudo',confirmar:'LIMPAR'}});
+    const d=r.json.depois||{};
+    check('começar do zero: tabelas de estoque vazias (fica só o registro da limpeza na auditoria)',r.status===200&&Object.entries(d).filter(([k])=>k.startsWith('wms_')&&k!=='wms_auditoria').every(([,v])=>v===0)&&d.wms_auditoria===1,r.json);
+    check('começar do zero: produtos e endereços continuam',(await call('GET','/api/wms/produtos?cliente_id='+cli,{cookie:gest})).json.rows.length===prodAntes&&(await call('GET','/api/wms/enderecos?armazem_id='+arm,{cookie:gest})).json.rows.length>0);
+    r=await call('GET','/api/wms/estoque/limpeza',{cookie:adm});
+    check('as duas cópias de segurança aparecem na lista',r.json.backups?.length===2,r.json.backups);
+    r=await call('GET','/api/wms/auditoria',{cookie:sup});
+    check('auditoria registra a limpeza',r.json.rows?.some(x=>x.acao==='limpar_estoque'),r.json.rows?.slice(0,2));
+  }
+
   console.log(`\n${pass} OK, ${fail} falha(s)`);
   process.exit(fail?1:0);
 })().catch(e=>{console.error(e);process.exit(1)});
