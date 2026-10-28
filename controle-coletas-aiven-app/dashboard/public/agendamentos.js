@@ -68,7 +68,7 @@ function preencher(r){
   atual=r;
   q('#agRem').value=r?.remetente||'';q('#agDest').value=r?.destinatario||'';
   q('#agCid').value=r?[r.cidade,r.uf].filter(Boolean).join('/'):'';q('#agPeso').value=r&&r.peso?kg(r.peso):'';
-  q('#agProd').value=r?.produto||r?.mercadoria||'';q('#agProd').title=q('#agProd').value;q('#agCte').value=r?.ctrc||'';
+  q('#agProd').value=r&&r.produto_fonte==='operador'?r.produto||'':'';q('#agCte').value=r?.ctrc||'';
   q('#agRem').title=r?.endereco?'Entrega: '+r.endereco:'';q('#agDest').title=r?.endereco?'Entrega: '+r.endereco:'';
   q('#agSalvar').disabled=!r;
 }
@@ -118,8 +118,8 @@ async function salvar(ev){
   const data=q('#agData').value;if(!data){msg('Informe a data do agendamento.','err');q('#agData').focus();return}
   const b=q('#agSalvar');b.disabled=true;
   try{
-    const body={data_agendada:data,observacao:q('#agObs').value};
-    if(atual.nota_id)body.nota_id=atual.nota_id;else body.nota=atual;
+    const body={data_agendada:data,observacao:q('#agObs').value,produto:q('#agProd').value};
+    if(atual.nota_id)body.nota_id=atual.nota_id;else body.nota={...atual,produto:'',mercadoria:''};
     await api('/api/painel/agendamentos',{method:'POST',body});
     const nf=atual.nf;limparForm();msg('NF '+nf+' agendada para '+br(data)+'.','ok');
     if(aba==='sem'||aba==='agendadas')carregarLista();carregarPainel()
@@ -200,8 +200,8 @@ async function acao(b){
   }
   if(ac==='hist')return historico(b.dataset.nota);
   const r=(ultimaLista?.rows||[]).find(x=>x.agendamento_id===b.dataset.id);if(!r)return;
-  if(ac==='alterar')return dialogo('<h3>Alterar / reagendar • NF '+esc(r.nf)+'</h3><div class="muted">'+esc(r.destinatario||'')+' • '+esc(r.cidade||'')+'</div><label>Data do agendamento<input name="data" type="date" required value="'+esc(r.data_agendada)+'"></label><label>Motivo do reagendamento (opcional)<input name="motivo" maxlength="300"></label><label>Observação<textarea name="obs" rows="3" maxlength="1000">'+esc(r.observacao||'')+'</textarea></label>',
-    async fd=>{await api('/api/painel/agendamentos/'+r.agendamento_id,{method:'PATCH',body:{data_agendada:fd.get('data'),observacao:fd.get('obs'),motivo:fd.get('motivo')}})},'Salvar');
+  if(ac==='alterar')return dialogo('<h3>Alterar / reagendar • NF '+esc(r.nf)+'</h3><div class="muted">'+esc(r.destinatario||'')+' • '+esc(r.cidade||'')+'</div><label>Data do agendamento<input name="data" type="date" required value="'+esc(r.data_agendada)+'"></label><label>Produto<input name="prod" maxlength="600" value="'+esc(r.produto||'')+'"></label><label>Motivo do reagendamento (opcional)<input name="motivo" maxlength="300"></label><label>Observação<textarea name="obs" rows="3" maxlength="1000">'+esc(r.observacao||'')+'</textarea></label>',
+    async fd=>{await api('/api/painel/agendamentos/'+r.agendamento_id,{method:'PATCH',body:{data_agendada:fd.get('data'),observacao:fd.get('obs'),produto:fd.get('prod'),motivo:fd.get('motivo')}})},'Salvar');
   if(ac==='cancelar')return dialogo('<h3>Cancelar agendamento • NF '+esc(r.nf)+'</h3><div class="muted">Agendada para '+esc(br(r.data_agendada))+'. O cancelamento vale só aqui: a entrega continua no SSW e a nota volta para "Sem Agendamento".</div><label>Motivo<input name="motivo" maxlength="300"></label>',
     async fd=>{await api('/api/painel/agendamentos/'+r.agendamento_id+'/cancelar',{method:'POST',body:{motivo:fd.get('motivo')}})},'Cancelar agendamento',true);
 }
@@ -221,7 +221,7 @@ async function historico(notaId){
   dialogo('<h3>Histórico</h3><div class="ag-hist">Carregando…</div>');
   try{
     const j=await api('/api/painel/agendamentos/historico/'+encodeURIComponent(notaId)),n=j.nota;
-    const T={agendado:'Agendado',reagendado:'Reagendado',observacao:'Observação alterada',cancelado:'Agendamento cancelado',entregue:'Entregue (SSW)',devolvida:'Devolvida (SSW)',status:'Situação no SSW'};
+    const T={agendado:'Agendado',reagendado:'Reagendado',observacao:'Observação alterada',cancelado:'Agendamento cancelado',entregue:'Entregue',produto:'Produto alterado',devolvida:'Devolvida (SSW)',status:'Situação no SSW'};
     q('#agDlg h3').textContent='Histórico • NF '+n.nf+(n.ctrc?' • CT-e '+n.ctrc:'');
     q('#agDlg .ag-hist').innerHTML='<div style="margin-bottom:6px">'+esc(n.remetente||'')+' → '+esc(n.destinatario||'')+' • '+esc([n.cidade,n.uf].filter(Boolean).join('/'))+' • '+kg(n.peso)+' kg • '+st(n.situacao)+(n.status_ssw?' <span class="muted">'+esc(n.status_ssw)+'</span>':'')+'</div>'+
       (n.endereco?'<div class="muted" style="margin-bottom:6px">Entrega: '+esc(n.endereco)+'</div>':'')+

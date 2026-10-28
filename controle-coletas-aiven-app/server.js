@@ -39,7 +39,6 @@ const sswExemplo = require('./ssw-exemplo');
 const esquemasDemo = require('./esquemas-demo');
 const exemploDados = require('./exemplo-dados');
 const agendamento = require('./agendamento');
-const nfeProdutos = require('./nfe-produtos');
 const movitGuia = require('./movit-guia');
 const veic = require('./veic');
 const wms = require('./wms');
@@ -1112,12 +1111,6 @@ function agendamentoLerSswDoUsuario(user,req){
     return agendamento.postJson(p.porta,'/api/agendamentos/ssw-snapshot',headers,{alvos});
   };
 }
-// Produtos das notas do agendamento (nome dos itens da NF-e): o painel lê o CT-e no SSW e a NF-e. Só a Construlog
-// (na demonstração cada empresa tem o próprio SSW e não há certificado A1).
-function agendamentoLerProdutosInterno(notas){
-  return agendamento.postJson(DASH_INTERNAL_PORT,'/api/agendamentos/produtos',{'X-Internal-Key':INTERNAL_KEY},{notas});
-}
-function agendamentoLerProdutosDoUsuario(user){return movitDemo.clienteDemo(user)?null:agendamentoLerProdutosInterno}
 // Aceita sessão de usuário OU chamada interna do dashboard. Sem nenhuma das duas: 401.
 // O dashboard já conferiu a permissão do usuário antes de fazer a chamada interna.
 async function sessionOrInternal(req){
@@ -2118,10 +2111,10 @@ async function start() {
   const agendamentoClientes=async()=>{const cq=await pool.query("SELECT id::text FROM movit_clients WHERE lower(slug)='construlog' LIMIT 1").catch(()=>({rows:[]}));return [cq.rows[0]?cq.rows[0].id:null]};
   // varredura noturna do agendamento (02:00 por padrão, horário na tela): o painel lê o SSW, aqui grava
   if(!TEST_MODE&&!movitDemo.ATIVA&&process.env.AGENDAMENTO_SSW_AUTO!=='0')agendamento.iniciarVarreduraAutomatica({pool,
-    lerSsw:(cli,alvos)=>agendamentoLerSswInterno(alvos),lerProdutos:agendamentoLerProdutosInterno,
+    lerSsw:(cli,alvos)=>agendamentoLerSswInterno(alvos),
     clientes:agendamentoClientes});
-  // produtos das notas (itens da NF-e) que ainda faltam: a cada 15 min
-  if(!TEST_MODE&&!movitDemo.ATIVA&&process.env.AGENDAMENTO_SSW_AUTO!=='0')agendamento.iniciarProdutosAutomaticos({pool,lerProdutos:agendamentoLerProdutosInterno,clientes:agendamentoClientes});
+  // baixas dos motoristas no app (entregue) -> entregue no agendamento: de hora em hora, das 07:00 às 19:00
+  if(!TEST_MODE)agendamento.iniciarBaixasMotoristas({pool});
   await lotacaoRastreio.ensureSchema(pool);
   await lotacaoClientes.ensureSchema(pool);
   await entregas.ensureSchema(pool);
@@ -3339,7 +3332,7 @@ async function start() {
       // Lançamentos da operação (substitui a aba de lançamentos da planilha): ver lancamentos.js
       if (await lancamentos.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,sessionOrInternal,dashboardSession,dashboardHas,spToday})) return;
       // Agendamento de entregas (notas pendentes no SSW, com e sem agendamento): ver agendamento.js
-      if (await agendamento.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,lerSswDoUsuario:agendamentoLerSswDoUsuario,lerProdutosDoUsuario:agendamentoLerProdutosDoUsuario})) return;
+      if (await agendamento.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,lerSswDoUsuario:agendamentoLerSswDoUsuario})) return;
       // Despesas (DRE) do Financeiro, com os holerites da conta Salários: ver dre.js
       if (await dre.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
       // Roteirizador de Cargas (substitui o Roteirizador Teste e o Roteirizador V02): ver roteirizador-cargas.js
@@ -5641,16 +5634,6 @@ async function start() {
           return sendJson(res, 200, { ok: true, imported });
         } catch (e) {
           return sendJson(res, e.status || 500, { ok: false, error: e.message || 'Não foi possível importar os XMLs.' });
-        }
-      }
-
-      // Produtos da nota pela chave da NF-e (SEFAZ) ou pelo XML/DANFE que o SSW guarda: nfe-produtos.js
-      if (req.method === 'POST' && u.pathname === '/api/painel/nf-materiais/produtos') {
-        try {
-          await sessionOrInternal(req);
-          return sendJson(res, 200, await nfeProdutos.produtos(pool, await readJsonBodyLimited(req, 6 * 1024 * 1024)));
-        } catch (e) {
-          return sendJson(res, e.status || 500, { ok: false, error: e.message || 'Não foi possível ler os produtos da nota.' });
         }
       }
 

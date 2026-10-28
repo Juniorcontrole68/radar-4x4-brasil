@@ -159,6 +159,9 @@ async function ensureSchema(pool) {
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS produto_fonte TEXT');
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS produtos_em TIMESTAMPTZ');
   await pool.query('ALTER TABLE ag_config ADD COLUMN IF NOT EXISTS parceiros TEXT');   // NULL = lista padrão
+  // baixa de entregue feita pelo motorista no app (entregas_comprovantes): a varredura do SSW não reabre a nota
+  await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS baixa_motorista_em TIMESTAMPTZ');
+  await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS baixa_comprovante_id BIGINT');
   // varredura que ficou "rodando" porque o servidor reiniciou no meio
   await pool.query("UPDATE ag_sincronizacoes SET status='erro',erro='Interrompida (o servidor reiniciou durante a varredura).',finalizado_em=NOW() WHERE status='rodando' AND iniciado_em<NOW()-INTERVAL '20 minutes'");
 }
@@ -194,14 +197,14 @@ async function evento(db, cli, notaId, agId, tipo, de, para, detalhe, usuario) {
 async function gravarNota(db, cli, r, { origem = 'sync', syncId = null, pendente = true, situacaoNova = '' } = {}) {
   const nf = normNf(r.nf), ctrc = normCtrc(r.ctrc), serie = limpo(r.serie, 5), emitente = limpo(r.emitente, 20);
   if (!nf) return null;
-  const ex = await db.query(`SELECT id,situacao FROM ag_notas WHERE client_id IS NOT DISTINCT FROM $1 AND tipo_operacao='entrega' AND nf=$2
+  const ex = await db.query(`SELECT id,situacao,(baixa_motorista_em IS NOT NULL AND situacao='entregue') AS travada FROM ag_notas WHERE client_id IS NOT DISTINCT FROM $1 AND tipo_operacao='entrega' AND nf=$2
       AND (ctrc=$3 OR ctrc='' OR $3='') AND (serie=$4 OR serie='' OR $4='')
       ORDER BY (ctrc=$3) DESC, (serie=$4) DESC, id LIMIT 1`, [cli, nf, ctrc, serie]);
   const fonte = FONTES_PRODUTO.includes(r.produtos_fonte) ? r.produtos_fonte : '';
   const v = [limpo(r.remetente), limpo(r.destinatario ?? r.cliente), limpo(r.cidade, 80), limpo(r.uf, 2).toUpperCase(), limpo(r.endereco, 300),
     numero(r.peso), numero(r.volumes), limpo((fonte ? r.produto : limparProduto(r.produto)) || r.mercadoria, 600), limpo(r.status_ssw ?? r.status, 300), limpo(r.previsao, 20), dataBr(r.data_emissao || r.emissao) || null];
   if (ex.rows[0]) {
-    const id = ex.rows[0].id, antes = ex.rows[0].situacao;
+    const id = ex.rows[0].id, antes = ex.rows[0].situacao, travada = !!ex.rows[0].travada;
     await db.query(`UPDATE ag_notas SET ctrc=CASE WHEN ctrc='' THEN $2 ELSE ctrc END, serie=CASE WHEN serie='' THEN $3 ELSE serie END, emitente=CASE WHEN emitente='' THEN $4 ELSE emitente END,
         remetente=COALESCE(NULLIF($5,''),remetente), destinatario=COALESCE(NULLIF($6,''),destinatario), cidade=COALESCE(NULLIF($7,''),cidade), uf=COALESCE(NULLIF($8,''),uf),
         endereco=COALESCE(NULLIF($9,''),endereco), peso=CASE WHEN $10::numeric>0 THEN $10::numeric ELSE peso END, volumes=CASE WHEN $11::numeric>0 THEN $11::numeric ELSE volumes END,
@@ -210,8 +213,8 @@ async function gravarNota(db, cli, r, { origem = 'sync', syncId = null, pendente
         situacao=CASE WHEN $16 THEN 'pendente' ELSE situacao END, concluido_em=CASE WHEN $16 THEN NULL ELSE concluido_em END,
         erro_integracao=CASE WHEN $16 THEN NULL ELSE erro_integracao END, ultima_consulta=NOW(), ultimo_sync_id=COALESCE($17,ultimo_sync_id), atualizado_em=NOW(),
         pagador=COALESCE(NULLIF($18,''),pagador)
-      WHERE id=$1`, [id, ctrc, serie, emitente, ...v, !!pendente, syncId, limpo(r.pagador), fonte]);
-    return { id, nova: false, situacaoAntes: antes };
+      WHERE id=$1`, [id, ctrc, serie, emitente, ...v, !!pendente && !travada, syncId, limpo(r.pagador), fonte]);
+    return { id, nova: false, situacaoAntes: antes, travada };
   }
   const q = await db.query(`INSERT INTO ag_notas(client_id,nf,ctrc,serie,emitente,remetente,destinatario,cidade,uf,endereco,peso,volumes,produto,status_ssw,previsao,data_emissao,
       situacao,data_entrada,ultima_consulta,ultimo_sync_id,origem,pagador,produto_fonte,produtos_em)
@@ -250,6 +253,7 @@ async function aplicarSnapshot(db, cli, snap, syncId = null) {
     if (g.nova) c.novas++;
     else {
       c.atualizadas++;
+      if (g.travada) continue;   // o motorista deu baixa no app; o SSW ainda não
       if (FINAIS.includes(g.situacaoAntes)) { c.retornaram++; await evento(db, cli, g.id, null, 'status', ROTULO[g.situacaoAntes], 'Pendente', 'Voltou a constar como pendente no SSW', 'SSW'); }
       else if (g.situacaoAntes && g.situacaoAntes !== 'pendente') await evento(db, cli, g.id, null, 'status', ROTULO[g.situacaoAntes], 'Pendente', null, 'SSW');
     }
@@ -282,47 +286,58 @@ async function aplicarSnapshot(db, cli, snap, syncId = null) {
   return c;
 }
 
-// Produtos das notas pendentes dos parceiros que ainda não têm o nome dos itens da NF-e. lerProdutos(notas) é o
-// painel (dashboard/server.js, /api/agendamentos/produtos): CT-e na opção 101 -> NF-e na SEFAZ ou DANFE do SSW.
-// Nota sem resultado (ou só com o produto predominante do CT-e) é tentada de novo depois de 20 horas.
-async function completarProdutos(pool, cli, lerProdutos, limite = 40) {
-  const params = [cli, OPERACIONAIS], fp = parceiroSql(await termosDe(pool, cli), params);
-  const q = await pool.query(`SELECT id,nf,ctrc FROM ag_notas n WHERE client_id IS NOT DISTINCT FROM $1 AND tipo_operacao='entrega' AND situacao=ANY($2) AND ctrc<>''
-      AND (produto_fonte IS NULL OR produto_fonte='cte') AND (produtos_em IS NULL OR produtos_em<NOW()-INTERVAL '20 hours')` + (fp ? ' AND ' + fp : '') +
-    ` ORDER BY (produtos_em IS NULL) DESC, id DESC LIMIT ${Math.max(1, Math.min(60, Number(limite) || 40))}`, params);
-  const c = { lidas: q.rowCount, achadas: 0 };
-  if (!q.rowCount) return c;
-  const r = await lerProdutos(q.rows.map(n => ({ nf: n.nf, ctrc: n.ctrc })));
-  for (const n of q.rows) {
-    const p = ((r && r.produtos) || {})[n.nf + '|' + n.ctrc];
-    if (!p) continue;   // não deu tempo nesta rodada
-    const lista = (Array.isArray(p.produtos) ? p.produtos : []).map(x => limpo(x)).filter(Boolean);
-    if (lista.length) {
-      c.achadas++;
-      await pool.query('UPDATE ag_notas SET produto=$2,produto_fonte=$3,produtos_em=NOW(),atualizado_em=NOW() WHERE id=$1',
-        [n.id, limpo(lista.slice(0, 8).join('; '), 600), FONTES_PRODUTO.includes(p.fonte) ? p.fonte : 'nfe']);
-    } else await pool.query('UPDATE ag_notas SET produtos_em=NOW() WHERE id=$1', [n.id]);
+// Baixa pelo app do motorista: comprovante "entregue" (entregas.js, tabela entregas_comprovantes) da mesma NF
+// (e do mesmo CT-e, quando o comprovante tem) registrado depois da entrada da nota -> nota entregue no agendamento.
+// O comprovante mais recente da parada vale (um "não entregue" depois do "entregue" desfaz).
+async function baixasDosMotoristas(pool) {
+  const c = { conferidas: 0, entregues: 0 };
+  const q = await pool.query(`SELECT n.id,n.client_id,n.nf,n.ctrc,n.situacao,x.id AS comp_id,x.ctrc AS comp_ctrc,x.resultado,x.driver_name,x.registrado_em
+      FROM ag_notas n
+      JOIN LATERAL (
+        SELECT c.* FROM entregas_comprovantes c
+         WHERE (c.client_id IS NOT DISTINCT FROM n.client_id OR (c.client_id IS NULL AND n.client_id IN (SELECT id FROM movit_clients WHERE lower(slug)='construlog')))
+           AND n.nf IN (SELECT ltrim(t,'0') FROM regexp_split_to_table(c.nf,'\\D+') t)
+           AND c.registrado_em >= COALESCE(n.data_entrada,n.data_emissao,CURRENT_DATE) - INTERVAL '2 days'
+         ORDER BY c.registrado_em DESC LIMIT 5) x ON TRUE
+     WHERE n.tipo_operacao='entrega' AND n.situacao=ANY($1)
+     ORDER BY n.id, x.registrado_em DESC`, [OPERACIONAIS]);
+  const porNota = new Map();
+  for (const r of q.rows) {
+    if (r.ctrc && r.comp_ctrc && normCtrc(r.comp_ctrc) !== r.ctrc) continue;   // outra nota com o mesmo número
+    if (!porNota.has(r.id)) porNota.set(r.id, r);
   }
-  console.log('AGENDAMENTO produtos: ' + JSON.stringify(c));
+  for (const r of porNota.values()) {
+    c.conferidas++;
+    if (r.resultado !== 'entregue') continue;
+    const db = await pool.connect();
+    try {
+      await db.query('BEGIN');
+      const n = (await db.query("SELECT id,situacao FROM ag_notas WHERE id=$1 AND situacao=ANY($2) FOR UPDATE", [r.id, OPERACIONAIS])).rows[0];
+      if (!n) { await db.query('ROLLBACK'); continue; }
+      const quando = new Date(r.registrado_em), texto = 'Baixa no app pelo motorista ' + limpo(r.driver_name, 80) + ' em ' +
+        quando.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+      await db.query("UPDATE ag_notas SET situacao='entregue',status_ssw=$2,concluido_em=$3,erro_integracao=NULL,baixa_motorista_em=$4,baixa_comprovante_id=$5,atualizado_em=NOW() WHERE id=$1",
+        [n.id, texto, quando.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }), quando.toISOString(), r.comp_id]);
+      const ag = await db.query("UPDATE ag_agendamentos SET status='concluido',concluido_em=NOW(),atualizado_em=NOW() WHERE nota_id=$1 AND status='ativo' RETURNING id", [n.id]);
+      await evento(db, r.client_id, n.id, ag.rows[0]?.id || null, 'entregue', ROTULO[n.situacao] || n.situacao, ROTULO.entregue, texto, 'App do motorista');
+      await db.query('COMMIT');
+      c.entregues++;
+    } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
+  }
+  if (c.entregues) console.log('AGENDAMENTO baixas dos motoristas: ' + JSON.stringify(c));
   return c;
 }
-// A cada 15 minutos (e logo depois de cada varredura): completa os produtos que faltam, uma rodada por vez.
-const COMPLETANDO = new Set();
-function completarProdutosAgora(pool, cli, lerProdutos) {
-  const k = String(cli || 0);
-  if (!lerProdutos || COMPLETANDO.has(k)) return Promise.resolve(null);
-  COMPLETANDO.add(k);
-  return completarProdutos(pool, cli, lerProdutos).catch(e => { console.log('AGENDAMENTO produtos ERRO: ' + (e.message || e)); return null; })
-    .finally(() => COMPLETANDO.delete(k));
-}
-function iniciarProdutosAutomaticos({ pool, clientes, lerProdutos }) {
-  const tick = async () => { try { for (const cli of await clientes()) await completarProdutosAgora(pool, cli, lerProdutos); } catch (e) { console.log('AGENDAMENTO produtos automáticos ERRO: ' + (e.message || e)); } };
-  // depois de uma atualização do sistema, as notas ainda sem os itens da NF-e tentam de novo na primeira rodada
-  setTimeout(async () => {
-    try { await pool.query("UPDATE ag_notas SET produtos_em=NULL WHERE produtos_em IS NOT NULL AND (produto_fonte IS NULL OR produto_fonte='cte')"); } catch (e) { console.log('AGENDAMENTO produtos: ' + (e.message || e)); }
-    tick();
-  }, 90 * 1000);
-  return setInterval(tick, 15 * 60 * 1000);
+// De hora em hora, das 07:00 às 19:00 (Brasília): uma rodada no começo de cada hora.
+function iniciarBaixasMotoristas({ pool }) {
+  let ultima = '';
+  const tick = async () => {
+    const h = Number(horaSp().slice(0, 2)), k = hojeSp() + ' ' + h;
+    if (h < 7 || h > 19 || k === ultima) return;
+    ultima = k;
+    try { await baixasDosMotoristas(pool); } catch (e) { console.log('AGENDAMENTO baixas dos motoristas ERRO: ' + (e.message || e)); }
+  };
+  setTimeout(tick, 60 * 1000);
+  return setInterval(tick, 60 * 1000);
 }
 
 // Notas que a varredura precisa conferir no SSW (as operacionais que já conhecemos).
@@ -334,7 +349,7 @@ async function alvosDaVarredura(db, cli) {
 
 const RODANDO = new Map();   // empresa -> promessa da varredura em andamento (uma por vez)
 // Roda uma varredura completa. lerSsw(alvos) devolve a leitura do SSW (ou lança erro).
-async function sincronizar({ pool, cli, origem, usuario, lerSsw, lerProdutos }) {
+async function sincronizar({ pool, cli, origem, usuario, lerSsw }) {
   const k = String(cli || 0);
   if (RODANDO.has(k)) { const e = new Error('Já existe uma sincronização com o SSW em andamento.'); e.status = 409; e.emAndamento = true; throw e; }
   const s = await pool.query('INSERT INTO ag_sincronizacoes(client_id,origem,usuario) VALUES($1,$2,$3) RETURNING id', [cli, origem, usuario || null]);
@@ -356,7 +371,6 @@ async function sincronizar({ pool, cli, origem, usuario, lerSsw, lerProdutos }) 
         await db.query('COMMIT');
       } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
       console.log('AGENDAMENTO sincronização ' + syncId + ' ok: ' + JSON.stringify(c));
-      completarProdutosAgora(pool, cli, lerProdutos);   // em segundo plano: notas novas ganham o nome dos produtos
       return { id: syncId, status: 'ok', ...c };
     } catch (e) {
       const msg = limpo(e && e.message || e, 500);
@@ -371,7 +385,7 @@ async function sincronizar({ pool, cli, origem, usuario, lerSsw, lerProdutos }) 
 
 // Varredura automática: confere a cada minuto se chegou o horário configurado (padrão 02:00, Brasília).
 // Se falhar, tenta de novo a cada 30 min, até 3 tentativas no dia.
-function iniciarVarreduraAutomatica({ pool, clientes, lerSsw, lerProdutos }) {
+function iniciarVarreduraAutomatica({ pool, clientes, lerSsw }) {
   const tick = async () => {
     try {
       const agora = horaSp(), hoje = hojeSp();
@@ -383,7 +397,7 @@ function iniciarVarreduraAutomatica({ pool, clientes, lerSsw, lerProdutos }) {
           AND (iniciado_em AT TIME ZONE 'America/Sao_Paulo')::date=$2 ORDER BY iniciado_em DESC`, [cli, hoje]);
         if (q.rows.some(r => r.status === 'ok' || r.status === 'rodando') || q.rows.length >= 3) continue;
         if (q.rows[0] && Date.now() - new Date(q.rows[0].iniciado_em).getTime() < 30 * 60 * 1000) continue;
-        await sincronizar({ pool, cli, origem: 'automatica', usuario: 'Varredura ' + cfg.hora_sync, lerSsw: alvos => lerSsw(cli, alvos), lerProdutos }).catch(e => console.log('AGENDAMENTO varredura: ' + e.message));
+        await sincronizar({ pool, cli, origem: 'automatica', usuario: 'Varredura ' + cfg.hora_sync, lerSsw: alvos => lerSsw(cli, alvos) }).catch(e => console.log('AGENDAMENTO varredura: ' + e.message));
       }
     } catch (e) { console.log('AGENDAMENTO varredura automática ERRO: ' + (e.message || e)); }
   };
@@ -416,9 +430,8 @@ const SEL_AG = `a.id::text AS agendamento_id,to_char(a.data_agendada,'YYYY-MM-DD
 const DIAS_SEM_SQL = "((NOW() AT TIME ZONE 'America/Sao_Paulo')::date-COALESCE(n.data_entrada,n.data_emissao,(n.primeiro_visto AT TIME ZONE 'America/Sao_Paulo')::date))";
 const HOJE_SQL = "(NOW() AT TIME ZONE 'America/Sao_Paulo')::date";
 
-// Notas gravadas antes da limpeza do produto ainda trazem o cabeçalho da relação do SSW: mostra só os nomes.
-// (o nome dos itens da NF-e fica como veio)
-const comProdutoLimpo = r => (r.produto && !r.produto_fonte ? { ...r, produto: limparProduto(r.produto) } : r);
+// O produto é o que o operador digitou ao agendar; o que veio do SSW/BI2 não aparece (vem ilegível).
+const comProdutoLimpo = r => (r.produto_fonte === 'operador' ? r : { ...r, produto: '' });
 
 function filtrosEntrega(f, params, aba) {
   const w = [];
@@ -434,7 +447,7 @@ function filtrosEntrega(f, params, aba) {
   if (normNf(f.nf)) w.push('n.nf=' + p(normNf(f.nf)));
   if (SITUACOES.includes(f.status)) w.push('n.situacao=' + p(f.status));
   if (Number(f.dias_min) > 0) w.push(DIAS_SEM_SQL + '>=' + p(Math.floor(Number(f.dias_min))));
-  if (f.q) { const t = p(like(limpo(f.q, 80))); w.push(`(n.nf ILIKE ${t} OR n.ctrc ILIKE ${t} OR n.remetente ILIKE ${t} OR n.destinatario ILIKE ${t} OR n.cidade ILIKE ${t} OR n.produto ILIKE ${t})`); }
+  if (f.q) { const t = p(like(limpo(f.q, 80))); w.push(`(n.nf ILIKE ${t} OR n.ctrc ILIKE ${t} OR n.remetente ILIKE ${t} OR n.destinatario ILIKE ${t} OR n.cidade ILIKE ${t} OR (n.produto_fonte='operador' AND n.produto ILIKE ${t}))`); }
   if (aba === 'agendadas' || aba === 'pendentes') {
     if (f.card === 'hoje') w.push('a.data_agendada=' + HOJE_SQL);
     if (f.card === 'amanha') w.push('a.data_agendada=' + HOJE_SQL + '+1');
@@ -580,6 +593,8 @@ async function agendar(pool, cli, user, b) {
     if (FINAIS.includes(n.situacao)) throw erro(409, 'A NF ' + n.nf + ' já está ' + ROTULO[n.situacao].toLowerCase() + ' no SSW e não pode ser agendada.');
     const at = await db.query("SELECT id,to_char(data_agendada,'YYYY-MM-DD') AS data FROM ag_agendamentos WHERE nota_id=$1 AND status='ativo'", [notaId]);
     if (at.rowCount) throw erro(409, 'A NF ' + n.nf + ' já está agendada para ' + brData(at.rows[0].data) + '. Use Reagendar na lista.');
+    const produto = limpo(b.produto, 600);
+    if (produto) await db.query("UPDATE ag_notas SET produto=$2,produto_fonte='operador',atualizado_em=NOW() WHERE id=$1", [notaId, produto]);
     const q = await db.query("INSERT INTO ag_agendamentos(client_id,nota_id,data_agendada,observacao,criado_por,criado_por_nome) VALUES($1,$2,$3,$4,$5,$6) RETURNING id::text",
       [cli, notaId, data, obs || null, /^\d+$/.test(String(user.id || '')) ? user.id : null, limpo(user.username, 80)]);
     await evento(db, cli, notaId, q.rows[0].id, 'agendado', null, brData(data), obs, limpo(user.username, 80));
@@ -607,6 +622,15 @@ async function alterar(pool, cli, user, id, b) {
         await evento(db, cli, a.nota_id, id, 'reagendado', brData(a.data), brData(d), b.motivo || null, quem);
       }
     }
+    if (b.produto !== undefined) {
+      const pr = limpo(b.produto, 600);
+      const n = (await db.query('SELECT produto,produto_fonte FROM ag_notas WHERE id=$1', [a.nota_id])).rows[0] || {};
+      const antes = n.produto_fonte === 'operador' ? n.produto || '' : '';
+      if (pr !== antes) {
+        await db.query("UPDATE ag_notas SET produto=$2,produto_fonte=CASE WHEN $2::text IS NULL THEN NULL ELSE 'operador' END,atualizado_em=NOW() WHERE id=$1", [a.nota_id, pr || null]);
+        await evento(db, cli, a.nota_id, id, 'produto', antes, pr, null, quem);
+      }
+    }
     if (b.observacao !== undefined) {
       const o = limpo(b.observacao, 1000);
       if (o !== (a.observacao || '')) {
@@ -632,7 +656,7 @@ async function handle(req, res, u, ctx) {
   await atender(req, res, u, ctx);
   return true;
 }
-async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashboardSession, dashboardHas, lerSswDoUsuario, lerProdutosDoUsuario }) {
+async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashboardSession, dashboardHas, lerSswDoUsuario }) {
   const p = u.pathname.slice('/api/painel/agendamentos'.length) || '/';
   try {
     const user = await dashboardSession(req, false);
@@ -685,7 +709,7 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
       const rec = await pool.query("SELECT 1 FROM ag_sincronizacoes WHERE client_id IS NOT DISTINCT FROM $1 AND origem='manual' AND iniciado_em>NOW()-INTERVAL '2 minutes' LIMIT 1", [cli]);
       if (rec.rowCount && !RODANDO.has(String(cli || 0))) return sendJson(res, 429, { ok: false, error: 'Uma sincronização manual acabou de rodar. Aguarde 2 minutos para pedir outra.' });
       try {
-        const s = await sincronizar({ pool, cli, origem: 'manual', usuario: limpo(user.username, 80), lerSsw: lerSswDoUsuario(user, req), lerProdutos: lerProdutosDoUsuario ? lerProdutosDoUsuario(user) : null });
+        const s = await sincronizar({ pool, cli, origem: 'manual', usuario: limpo(user.username, 80), lerSsw: lerSswDoUsuario(user, req) });
         return sendJson(res, 202, { ok: true, id: String(s.id), rodando: true });
       } catch (e) { if (e.emAndamento) return sendJson(res, 409, { ok: false, error: e.message, rodando: true }); throw e; }
     }
@@ -701,5 +725,5 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
   }
 }
 
-module.exports = { completarProdutos, iniciarProdutosAutomaticos, OPERACIONAIS, FINAIS, ROTULO, PARCEIROS_PADRAO, normNf, normCtrc, dataBr, termosParceiros, ehParceiro, ensureSchema, lerConfig, gravarConfig, gravarNota, aplicarSnapshot, alvosDaVarredura,
+module.exports = { baixasDosMotoristas, iniciarBaixasMotoristas, OPERACIONAIS, FINAIS, ROTULO, PARCEIROS_PADRAO, normNf, normCtrc, dataBr, termosParceiros, ehParceiro, ensureSchema, lerConfig, gravarConfig, gravarNota, aplicarSnapshot, alvosDaVarredura,
   sincronizar, iniciarVarreduraAutomatica, postJson, listar, indicadores, buscarNf, historicoNota, agendar, alterar, cancelar, handle };
