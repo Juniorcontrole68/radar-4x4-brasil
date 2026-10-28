@@ -104,7 +104,7 @@ function render(){
  {const med=medias(db.fuel),n2=v=>v?Number(v).toLocaleString('pt-BR',{maximumFractionDigits:2}):'';
   $('#tbFuel').innerHTML=db.fuel.map(x=>{const m=med.get(x.id)||{};return '<tr'+(x.source==='veic'?' title="Importado do Veic"':'')+'><td>'+esc(x.date)+'</td><td>'+esc(x.time||'')+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.driver)+'</td><td>'+esc(x.fuelType||'')+'</td><td>'+esc(x.km)+'</td><td>'+esc(n2(m.kmDriven))+'</td><td>'+esc(n2(x.liters))+'</td><td>'+(m.kmPerLiter?'<b>'+esc(n2(m.kmPerLiter))+'</b>':'')+'</td><td>'+(x.price?money(x.price):'')+'</td><td>'+money(x.total)+'</td><td>'+esc(x.station||'')+(x.source==='veic'?' <span class="tag">Veic</span>':'')+'</td><td>'+delBtn('fuel',x.id)+'</td></tr>'}).join('')}
  relatorio();
- $('#tbMaint').innerHTML=db.maintenance.map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.service)+'</td><td>'+esc(x.km)+'</td><td>'+esc(x.workshop)+'</td><td>'+money(x.total)+'</td><td>'+esc(x.nextKm||x.nextDate)+'</td><td>'+(x.attachmentName?'<button class="btn sec" type="button" data-file="'+esc(x.id)+'">🧾 Ver</button>':'<span class="muted">Sem comprovante</span>')+'</td><td style="display:flex;gap:5px"><button class="btn sec" type="button" data-maint-edit="'+esc(x.id)+'">✏️ Editar</button><button class="btn sec" type="button" data-maint-proof="'+esc(x.id)+'">📎 Comprovante</button>'+delBtn('maintenance',x.id)+'</td></tr>').join('');
+ $('#tbMaint').innerHTML=db.maintenance.map(x=>'<tr><td>'+esc(x.date)+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.service)+'</td><td>'+esc(x.km)+'</td><td>'+esc(x.workshop)+'</td><td>'+money(x.total)+'</td><td>'+esc(x.nextKm||x.nextDate)+'</td><td>'+esc(x.warranty||'')+'</td><td>'+(x.attachmentName?'<button class="btn sec" type="button" data-file="'+esc(x.id)+'">🧾 Ver</button>':'<span class="muted">Sem comprovante</span>')+'</td><td style="display:flex;gap:5px"><button class="btn sec" type="button" data-maint-edit="'+esc(x.id)+'">✏️ Editar</button><button class="btn sec" type="button" data-maint-proof="'+esc(x.id)+'">📎 Comprovante</button>'+delBtn('maintenance',x.id)+'</td></tr>').join('');
  $('#tbTire').innerHTML=db.tires.map(x=>'<tr><td>'+esc(x.code)+'</td><td>'+esc(x.brand)+'</td><td>'+esc(x.size)+'</td><td>'+esc(x.plate)+'</td><td>'+esc(x.position)+'</td><td>'+esc(x.kmInstall)+'</td><td>'+money(x.cost)+'</td><td>'+delBtn('tires',x.id)+'</td></tr>').join('');
  $('#tbPeople').innerHTML=db.people.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+esc(x.role)+'</td><td>'+esc(x.cnh)+'</td><td>'+esc(x.cnhExpiry)+'</td><td>'+esc(x.phone)+'</td><td>'+esc(x.status)+'</td><td>'+delBtn('people',x.id)+'</td></tr>').join('');
  $('#tbDoc').innerHTML=db.documents.map(x=>'<tr><td>'+esc(x.plate)+'</td><td>'+esc(x.type)+'</td><td>'+esc(x.expiry)+'</td><td>'+esc(x.note)+'</td><td>'+delBtn('documents',x.id)+'</td></tr>').join('');
@@ -173,6 +173,8 @@ $('#fMaint').onsubmit=async e=>{
      await save();msg('Manutenção atualizada')
    }else{
      x=await add('maintenance',values);
+     // add() salva e troca o db pelo que voltou do servidor: o anexo vai no item que está no db agora
+     x=db.maintenance.find(m=>m.id===x.id)||x;
      if(file){await uploadMaintenanceFile(x,file);await save()}
      msg('Manutenção salva')
    }

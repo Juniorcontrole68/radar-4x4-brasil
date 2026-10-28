@@ -339,6 +339,21 @@ async function call(method,path,{body,cookie,bearer,headers}={}){
   check('  ...sem o campo "romaneio" da rota (a simulação nunca vira rota oficial) e sem baixas',!('romaneio' in rd)&&rd.simulation===true&&rd.stops.every(x=>x.entregue===false),JSON.stringify({romaneio:rd.romaneio,sim:rd.simulation}));
   r=await call('GET','/movit/rota/'+exp.token); check('página do link lista as entregas, abre o MOVIT e oferece o download',r.status===200&&r.text.includes('href="movit://route/'+exp.token+'"')&&r.text.includes('CLIENTE NOVA ODESSA')&&r.text.includes('/downloads/MOVIT.apk'),r.status+' '+r.text.slice(0,100));
   r=await call('GET','/api/router-app/company/today',{bearer:ctk2}); check('rota do dia do motorista de verdade não muda',r.status===200&&r.json?.stops?.length===2&&r.json.stops[0].destinatario==='CLIENTE A',r.status+' '+r.text.slice(0,120));
+  // Frota: comprovante gravado continua aparecendo mesmo se a manutenção perdeu o nome do anexo
+  {
+    const antes=(await call('GET','/api/painel/frota-state',{cookie})).json?.data||{};
+    const mid='m-e2e-'+Date.now();
+    r=await call('PUT','/api/painel/frota-state',{cookie,body:{data:{...antes,maintenance:[{id:mid,date:'2026-10-27',plate:'ABC1D23',service:'Troca de lâmpada',total:85.7},...(antes.maintenance||[])]}}});
+    check('Frota: salva manutenção sem anexo',r.status===200&&!r.json.data.maintenance.find(m=>m.id===mid).attachmentName,r.status+' '+r.text.slice(0,160));
+    r=await call('POST','/api/painel/frota-maintenance-file',{cookie,body:{maintenance_id:mid,name:'nf-lampada.pdf',mime:'application/pdf',data:'data:application/pdf;base64,'+Buffer.from('%PDF-1.4 teste').toString('base64')}});
+    check('Frota: grava o comprovante',r.status===200,r.status+' '+r.text.slice(0,160));
+    r=await call('GET','/api/painel/frota-state',{cookie});
+    check('Frota: manutenção mostra o comprovante gravado (nome vem do anexo)',r.json?.data?.maintenance?.find(m=>m.id===mid)?.attachmentName==='nf-lampada.pdf',r.text.slice(0,200));
+    r=await call('GET','/api/painel/frota-maintenance-file/'+mid,{cookie});
+    check('Frota: comprovante abre',r.status===200&&r.text.startsWith('%PDF'),r.status);
+    await call('DELETE','/api/painel/frota-maintenance-file/'+mid,{cookie});
+    await call('PUT','/api/painel/frota-state',{cookie,body:{data:antes}});
+  }
   if(db)await db.end();
   console.log('\nResultado: '+pass+' OK, '+fail+' falha(s)');
   process.exit(fail?1:0);

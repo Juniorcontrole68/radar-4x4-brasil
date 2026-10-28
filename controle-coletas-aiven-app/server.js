@@ -3362,11 +3362,21 @@ async function start() {
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha nas flags do SLA.'})}
       }
 
+      // o comprovante fica em fleet_maintenance_files; a manutenção que perdeu o nome do anexo volta a mostrá-lo
+      const frotaComAnexos=async data=>{
+        const ms=Array.isArray(data.maintenance)?data.maintenance:[];
+        const ids=ms.map(m=>String(m&&m.id||'')).filter(Boolean);
+        if(!ids.length)return data;
+        const r=await pool.query('SELECT maintenance_id,nome_arquivo FROM fleet_maintenance_files WHERE maintenance_id=ANY($1::text[])',[ids]).catch(()=>({rows:[]}));
+        const nomes=new Map(r.rows.map(x=>[x.maintenance_id,x.nome_arquivo]));
+        for(const m of ms)if(m&&!m.attachmentName&&nomes.has(String(m.id)))m.attachmentName=nomes.get(String(m.id))||'comprovante';
+        return data;
+      };
       if (u.pathname === '/api/painel/frota-state' && req.method === 'GET') {
         try {
           if(!dashboardHas(await dashboardSession(req),'frota'))return sendJson(res,403,{ok:false,error:FROTA_SEM_ACESSO});
           const q=await pool.query('SELECT data,updated_at FROM fleet_state WHERE id=1 LIMIT 1');
-          return sendJson(res,200,{ok:true,data:q.rows[0]?.data||{},updated_at:q.rows[0]?.updated_at||null});
+          return sendJson(res,200,{ok:true,data:await frotaComAnexos(q.rows[0]?.data||{}),updated_at:q.rows[0]?.updated_at||null});
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao carregar Frota.'})}
       }
 
@@ -3385,7 +3395,7 @@ async function start() {
             checklists:Array.isArray(data.checklists)?data.checklists:[]
           };
           const q=await pool.query('UPDATE fleet_state SET data=$1::jsonb,updated_at=NOW() WHERE id=1 RETURNING updated_at',[JSON.stringify(out)]);
-          return sendJson(res,200,{ok:true,data:out,updated_at:q.rows[0]?.updated_at||null});
+          return sendJson(res,200,{ok:true,data:await frotaComAnexos(out),updated_at:q.rows[0]?.updated_at||null});
         } catch(e){return sendJson(res,e.status||500,{ok:false,error:e.message||'Falha ao salvar Frota.'})}
       }
 
