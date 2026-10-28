@@ -324,7 +324,7 @@ async function baixasDosMotoristas(pool) {
       c.entregues++;
     } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
   }
-  if (c.entregues) console.log('AGENDAMENTO baixas dos motoristas: ' + JSON.stringify(c));
+  console.log('AGENDAMENTO baixas dos motoristas: ' + JSON.stringify(c));
   return c;
 }
 // De hora em hora, das 07:00 às 19:00 (Brasília): uma rodada no começo de cada hora.
@@ -336,7 +336,8 @@ function iniciarBaixasMotoristas({ pool }) {
     ultima = k;
     try { await baixasDosMotoristas(pool); } catch (e) { console.log('AGENDAMENTO baixas dos motoristas ERRO: ' + (e.message || e)); }
   };
-  setTimeout(tick, 60 * 1000);
+  // logo depois de subir, confere uma vez (qualquer hora); depois só no começo de cada hora, das 07:00 às 19:00
+  setTimeout(async () => { ultima = hojeSp() + ' ' + Number(horaSp().slice(0, 2)); try { await baixasDosMotoristas(pool); } catch (e) { console.log('AGENDAMENTO baixas dos motoristas ERRO: ' + (e.message || e)); } }, 60 * 1000);
   return setInterval(tick, 60 * 1000);
 }
 
@@ -713,6 +714,8 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
         return sendJson(res, 202, { ok: true, id: String(s.id), rodando: true });
       } catch (e) { if (e.emAndamento) return sendJson(res, 409, { ok: false, error: e.message, rodando: true }); throw e; }
     }
+    // botão "Atualizar baixas": confere agora as baixas dos motoristas no app (a rotina roda de hora em hora)
+    if (p === '/baixas' && req.method === 'POST') return sendJson(res, 200, { ok: true, ...(await baixasDosMotoristas(pool)) });
     if (p === '/config' && req.method === 'GET') return sendJson(res, 200, { ok: true, config: await lerConfig(pool, cli) });
     if (p === '/config' && req.method === 'PUT') {
       if (!user.is_admin) return sendJson(res, 403, { ok: false, error: 'Só o administrador altera a configuração do agendamento.' });

@@ -56,6 +56,12 @@ function clicarCard(b){
   else if(a==='entregue'||a==='devolvida'){aba='historico';q('#agFSt').value=a;const u=painel?.indicadores?.sync?.ultimaOk;if(u){const d=new Date(u.iniciado_em).toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});q('#agFDe').value=d;q('#agFAte').value=d}}
   marcarAba();page=1;carregarLista();carregarPainel()
 }
+async function atualizarBaixas(){
+  const b=q('#agBaixasBtn');b.disabled=true;
+  try{const j=await api('/api/painel/agendamentos/baixas',{method:'POST'});msg(j.entregues?j.entregues+' nota(s) baixada(s) como entregue pelo app dos motoristas.':'Nenhuma baixa nova dos motoristas.','ok');carregarLista();carregarPainel()}
+  catch(e){msg(e.message,'err')}
+  b.disabled=false
+}
 async function sincronizar(){
   const b=q('#agSyncBtn');b.disabled=true;
   try{await api('/api/painel/agendamentos/sincronizar',{method:'POST'});msg('Sincronização com o SSW iniciada. A tela continua liberada; as listas se atualizam ao terminar.','ok')}
@@ -295,7 +301,7 @@ function setup(){
   q('#agNf').addEventListener('input',()=>{if(atual)preencher(null)});
   q('#agForm').onsubmit=salvar;
   q('#agLimpar').onclick=limparForm;
-  q('#agSyncBtn').onclick=sincronizar;
+  q('#agSyncBtn').onclick=sincronizar;q('#agBaixasBtn').onclick=atualizarBaixas;
   q('#agLogBtn').onclick=logSync;
   q('#agCfgBtn').onclick=configurar;
   q('#agCards').onclick=e=>{const b=e.target.closest('[data-card]');if(b)clicarCard(b)};

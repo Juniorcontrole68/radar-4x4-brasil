@@ -190,6 +190,9 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     c=await ag.aplicarSnapshot(pool,cli,{pendentes:[{nf:'7003',ctrc:'AMR000703-3',remetente:'FABRICA DELTA',pagador:'LANGBHEN TRANSPORTES'}],verificados:{}},null);
     check('  ...a varredura do SSW (ainda sem a baixa) não reabre a nota',(await sit('7003')).situacao==='entregue'&&c.retornaram===0,c);
     check('  ...rodar de novo não duplica',(await ag.baixasDosMotoristas(pool)).entregues===0);
+    x=await api('POST','/api/painel/agendamentos/baixas');
+    check('  ...botão "Atualizar baixas" confere na hora',x.status===200&&x.j.ok&&x.j.entregues===0,x);
+    check('  ...e exige login',(await fetch(B+'/api/painel/agendamentos/baixas',{method:'POST'})).status===401);
   }
   check('volta sem filtro de parceiros para o resto do teste',(await api('PUT','/api/painel/agendamentos/config',{parceiros:''})).status===200);
 
