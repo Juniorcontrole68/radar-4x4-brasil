@@ -143,7 +143,7 @@ async function dashboardUserFromReq(req){
   // a situação das sobras em galpão (conferência de hora em hora, das 05:00 às 20:00), a varredura e os produtos do agendamento.
   const ik=String(req.headers['x-internal-key']||'');
   if(INTERNAL_KEY&&ik.length===INTERNAL_KEY.length&&crypto.timingSafeEqual(Buffer.from(ik),Buffer.from(INTERNAL_KEY))
-     &&(String(req.url||'').startsWith('/api/tracking/planned-route')||String(req.url||'').startsWith('/api/ssw/despesas475?')||String(req.url||'').startsWith('/api/programacao-entregas/status-nfs?')||['/api/agendamentos/ssw-snapshot','/api/agendamentos/produtos'].includes(String(req.url||'').split('?')[0])))
+     &&(String(req.url||'').startsWith('/api/tracking/planned-route')||String(req.url||'').startsWith('/api/ssw/despesas475?')||String(req.url||'').startsWith('/api/programacao-entregas/status-nfs?')||['/api/agendamentos/ssw-snapshot'].includes(String(req.url||'').split('?')[0])))
     return{token:'',id:0,username:'servidor',is_admin:true,permissions:['*'],internal:true};
   const token=dashboardRequestToken(req);
   if(!token){const e=new Error('Não autenticado.');e.status=401;throw e}
@@ -1659,52 +1659,6 @@ function sswCteStore(ctrc,value){
   if(value?.cte?.chave&&value.ctrc){SSW_CHAVE_CTRC.set(value.cte.chave,value.ctrc);if(SSW_CHAVE_CTRC.size>8000)SSW_CHAVE_CTRC.delete(SSW_CHAVE_CTRC.keys().next().value)}
   SSW_CTE_CACHE.set(sswCteKey(ctrc),{at:Date.now(),ttl:value?.cte?24*60*60*1000:(value?10*60*1000:3*60*1000),value});
   if(SSW_CTE_CACHE.size>4000)SSW_CTE_CACHE.delete(SSW_CTE_CACHE.keys().next().value)
-}
-// Agendamento: produtos da nota (descrição dos itens, como no DANFE). Lê o CT-e na opção 101 (chaves das NF-e e
-// produto predominante) e, na mesma tela, o que a ação "DANFEs" (act A) oferece; o servidor principal busca o XML
-// da NF-e na SEFAZ pela chave (A1 da casa) ou lê o XML/DANFE baixado do SSW (nfe-produtos.js).
-// Devolve {produtos:[...], fonte:'xml'|'nfe'|'ssw_xml'|'danfe'|'cte'|'', avisos:[...]}.
-async function agendamentoProdutos(nf,ctrc,prio=1){
-  const out={produtos:[],fonte:'',avisos:[]};
-  ctrc=String(ctrc||'').toUpperCase().trim();
-  if(!/^[A-Z]{3}0*\d+-\d$/.test(ctrc)||!internalSswConfigured()){out.avisos.push('nota sem CT-e no SSW');return out}
-  let lido=null,arquivo=null,telaA='';
-  await sswCteEnqueue('agp:'+sswCteKey(ctrc),prio,async()=>{
-    const s=await sswCteSession();
-    try{lido=await sswCteLer(s,ctrc)}catch(e){SSW_CTE_SESSION=null;throw e}
-    try{
-      const p=deliveryProgramFormParams(lido.html);p.set('act','A');
-      const r=await sswPost101(s,p);telaA=r.html||'';
-      let f=await sswAbrirArquivo(s,r.html);
-      // tela com a lista de DANFEs: abre o primeiro link de XML/DANFE/PDF
-      if(!f.buf){
-        const a=sswDiagActions(r.html).find(x=>/xml|danfe|pdf|nf-?e/i.test(x.call+' '+x.text+' '+x.label)&&/ajaxEnvia/i.test(x.call));
-        const mm=a&&a.call.match(/ajaxEnvia\(\s*['"]([^'"]+)['"]/i);
-        if(mm){const pp=deliveryProgramFormParams(r.html);pp.set('act',mm[1]);f=await sswAbrirArquivo(s,(await sswPost101(s,pp)).html)}
-      }
-      if(f.buf&&f.buf.length)arquivo=f;
-    }catch(e){out.avisos.push('DANFE do SSW: '+String(e.message||e).slice(0,160))}
-  }).catch(e=>out.avisos.push('CT-e no SSW: '+String(e.message||e).slice(0,160)));
-  const info=sswCteFromLido(lido,ctrc);if(info)sswCteStore(ctrc,info);
-  // a chave da NF-e: no XML do CT-e (infNFe) ou escrita na tela do CT-e / na lista de DANFEs do SSW
-  // (CT-e de redespacho e subcontratação nem sempre traz infNFe)
-  const chaves=[...new Set([...(info?.cte?.nfChaves||[]),...sswCte.chavesNfe(lido?.xml),...sswCte.chavesNfe(lido?.html),...sswCte.chavesNfe(telaA)])],daNf=chaves.filter(c=>Number(c.slice(25,34))===Number(String(nf||'').replace(/\D/g,'')));
-  const body={chaves:(daNf.length?daNf:chaves).slice(0,5)};
-  if(arquivo){
-    const x=sswCte.xmlFromDownload(arquivo.buf);
-    if(x?.xml&&/<(?:\w+:)?infNFe\b/.test(x.xml))body.xml=x.xml;
-    else if(arquivo.buf.slice(0,5).toString()==='%PDF-'&&arquivo.buf.length<5*1024*1024)body.pdf_base64=arquivo.buf.toString('base64');
-  }
-  if(body.chaves.length||body.xml||body.pdf_base64){
-    try{
-      const j=await portalJson('/api/painel/nf-materiais/produtos',{method:'POST',body,timeout:70000});
-      out.produtos=Array.isArray(j.produtos)?j.produtos:[];out.fonte=out.produtos.length?j.fonte:'';out.avisos.push(...(j.avisos||[]));
-    }catch(e){out.avisos.push('produtos da NF-e: '+String(e.message||e).slice(0,160))}
-  }else out.avisos.push('CT-e sem a chave da NF-e (tela '+(lido?'lida':'não lida')+', XML do CT-e '+(lido?.xml?'baixado':(lido?.arquivo?'não abriu: '+(lido.arquivo.erro||lido.arquivo.tipo||lido.arquivo.status):'não oferecido'))+
-    ', DANFEs: '+(telaA?sswDiagActions(telaA).map(a=>(a.text||a.label||a.call).slice(0,30)).slice(0,6).join('/')||htmlText38(telaA).slice(0,120):'sem resposta')+')');
-  if(!out.produtos.length&&info?.cte?.produtoPredominante){out.produtos=[info.cte.produtoPredominante];out.fonte='cte'}
-  if(!out.produtos.length)console.log('AGENDAMENTO PRODUTOS '+ctrc+' NF '+nf+': '+out.avisos.join(' | '));
-  return out
 }
 // Agendamento: nota entregue ou devolvida não entra.
 function agendamentoBloqueio(textos){return sswCte.situacaoBloqueiaAgendamento(textos)}
@@ -6435,24 +6389,6 @@ if(u.pathname==='/api/agendamentos/nf'&&req.method==='GET'){try{
     }catch(e){console.log('AGENDAMENTO NF regra cidade: '+String(e.message||e))}
   }
 
-  // Produtos da NF: 1º os XMLs de NF-e já importados (nf_materiais); sem eles, a NF-e pela chave do CT-e (SEFAZ)
-  // ou o XML/DANFE que o SSW guarda (agendamentoProdutos). A "relação de produtos" do SSW não serve: traz
-  // destinatário e endereço no lugar dos itens.
-  let produtos=[],produtosFonte='',produtosAvisos=[];
-  try{
-    const m=await portalJson('/api/painel/nf-materiais?nf='+encodeURIComponent(nf)+'&limit=5',{timeout:15000});
-    const seen=new Set();
-    for(const r of (m?.rows||[]))for(const p of (Array.isArray(r.produtos)?r.produtos:[])){const t=String(p||'').trim();if(t&&!seen.has(t)){seen.add(t);produtos.push(t)}}
-    if(produtos.length)produtosFonte='xml';
-  }catch(e){console.log('AGENDAMENTO NF produtos: '+String(e.message||e))}
-  if(!produtos.length&&row.ctrc){
-    try{
-      const p=await Promise.race([agendamentoProdutos(row.nf||nf,row.ctrc,3),new Promise(r=>setTimeout(()=>r(null),45000))]);
-      if(p){produtos=p.produtos;produtosFonte=p.fonte;produtosAvisos=p.avisos}else produtosAvisos=['a leitura dos produtos demorou demais']
-    }catch(e){produtosAvisos=[String(e.message||e)]}
-  }
-  const produtosDiag=produtos.length?'':(!row.ctrc?'NF sem CT-e (CTRC) no SSW':(produtosAvisos.join(' | ')||'produtos não encontrados'));
-
   // Endereço de entrega pelo CT-e (XML ou tela 101), quando vier rápido.
   let endereco='';
   if(row.ctrc){
@@ -6468,8 +6404,6 @@ if(u.pathname==='/api/agendamentos/nf'&&req.method==='GET'){try{
     ok:true,
     row:{
       destinatario:row.cliente||'',endereco,data_emissao:row.emissao||'',
-      produto:produtos.slice(0,8).join('; ')||row.tipoMercadoria||row.mercadoria||row.especieMercadoria||'',
-      produtos,produtos_fonte:produtosFonte,produtos_diag:produtosDiag,
       nf:row.nf||nf,ctrc:row.ctrc||'',remetente:row.remetente||'',pagador:row.pagador||'',cliente:row.cliente||'',cidade:row.cidade||'',uf:row.uf||'SP',
       status_ssw:row.situacao101||row.status||'',mercadoria:row.tipoMercadoria||row.mercadoria||row.especieMercadoria||'',
       peso:Number(row.peso||0),volumes:Number(row.volumes||0),previsao_ssw:row.previsao||'',
@@ -6484,19 +6418,6 @@ if(u.pathname==='/api/agendamentos/nf'&&req.method==='GET'){try{
   res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))
 }}
-// Produtos das notas do agendamento (servidor principal, agendamento.js completarProdutos): uma nota por vez
-// na fila do SSW. Corpo {notas:[{nf,ctrc}]} -> {ok, produtos:{'nf|ctrc':{produtos,fonte,avisos}}}.
-if(u.pathname==='/api/agendamentos/produtos'&&req.method==='POST'){try{
-  if(!dashboardHasAny(authUser,['agendamentos','dashboard']))return dashboardDeny(res);
-  const body=await readJsonLimited(req,256*1024);
-  const notas=(Array.isArray(body.notas)?body.notas:[]).slice(0,60),fim=Date.now()+8*60*1000,produtos={};
-  for(const n of notas){
-    if(Date.now()>fim)break;
-    try{produtos[String(n.nf||'')+'|'+String(n.ctrc||'')]=await agendamentoProdutos(n.nf,n.ctrc,0)}catch(e){produtos[String(n.nf||'')+'|'+String(n.ctrc||'')]={produtos:[],fonte:'',avisos:[String(e.message||e).slice(0,200)]}}
-  }
-  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
-  return res.end(JSON.stringify({ok:true,produtos}))
-}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 // Varredura do agendamento (só leitura no SSW): pendências da opção 38 (com peso e mercadoria do BI2) e, para as
 // notas que o servidor principal já conhece e saíram das pendências, a situação do CT-e na opção 101
 // (entregue, devolvida ou ainda em rota). Chamado pelo servidor principal: varredura das 02h00 e botão manual.
