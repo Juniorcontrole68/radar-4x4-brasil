@@ -1389,6 +1389,22 @@ async function handle(req,res,u,deps){
       });
       return json(200,{ok:true,...r});
     }
+    // Passa os endereços de uma zona para outra do mesmo armazém (ex.: gerados por engano na quarentena); o saldo fica onde está.
+    if(p==='/api/wms/enderecos/zona'&&M==='POST'){
+      const ctx=await contexto(deps,req,'gestao'),b=await corpo();
+      const arm=await doEmpresa(pool,ctx,'wms_armazens',b.armazem_id,'Armazém não encontrado.');
+      const zonas=(await pool.query('SELECT id::text,codigo,tipo FROM wms_zonas WHERE armazem_id=$1 AND id::text=ANY($2::text[])',[arm.id,[String(b.de_zona_id||''),String(b.para_zona_id||'')]])).rows;
+      const de=zonas.find(z=>z.id===String(b.de_zona_id)),para=zonas.find(z=>z.id===String(b.para_zona_id));
+      if(!de||!para)throw erro(400,'Escolha a zona de origem e a de destino neste armazém.');
+      if(de.id===para.id)throw erro(400,'A zona de destino é a mesma de origem.');
+      const pref=limpo(b.prefixo,20).toUpperCase();
+      const r=await tx(pool,async c=>{
+        const q=await c.query(`UPDATE wms_enderecos SET zona_id=$3 WHERE armazem_id=$1 AND zona_id=$2 AND left(upper(codigo),length($4))=$4 RETURNING codigo`,[arm.id,de.id,para.id,pref]);
+        await auditar(c,ctx,'mudar_zona','enderecos',arm.id,{de:de.codigo,para:para.codigo,prefixo:pref,movidos:q.rowCount});
+        return q.rows.map(x=>x.codigo).sort();
+      });
+      return json(200,{ok:true,movidos:r.length,primeiro:r[0],ultimo:r[r.length-1]});
+    }
     m=p.match(/^\/api\/wms\/enderecos\/(\d+)$/);
     if(m&&M==='PATCH'){
       const ctx=await contexto(deps,req,'supervisor'),b=await corpo();

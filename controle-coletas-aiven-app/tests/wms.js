@@ -678,6 +678,34 @@ function nfe({chave,itens}){
     check('reserva o estoque inicial que está no cross docking',r.status===200&&r.json.linhas===1,r.json);
   }
 
+  console.log('Endereços gerados na quarentena passam para uma zona Blocado');
+  {
+    r=await call('POST','/api/wms/produtos',{cookie:gest,body:{cliente_id:cli,sku:'QZ1',descricao:'Produto na quarentena'}});
+    const zs=(await call('GET','/api/wms/armazens',{cookie:gest})).json.rows.find(a=>a.id===String(arm)).zonas;
+    const zq=zs.find(z=>z.tipo==='quarentena').id;
+    r=await call('POST','/api/wms/enderecos/lote',{cookie:gest,body:{armazem_id:arm,zona_id:zq,tipo:'chao',rua_de:'Q',colunas:{de:1,ate:2}}});
+    const ajq=await criarUser('ajq',['wms','wms_ajuste']);
+    r=await call('POST','/api/wms/ajuste',{cookie:ajq,body:{uuid:'ajq-'+sufixo,armazem_id:arm,cliente_id:cli,produto:'QZ1',endereco:'Q-01-01-01',qtd:30,motivo:'Estoque inicial'}});
+    check('estoque inicial de 30 na quarentena',r.status===200,r.json);
+    const pq=(await call('GET','/api/wms/produtos?cliente_id='+cli+'&q=QZ1',{cookie:gest})).json.rows.find(p=>p.sku==='QZ1');
+    r=await call('POST','/api/wms/expedicoes',{cookie:gest,body:{armazem_id:arm,cliente_id:cli,nf_numero:'7101',itens:[{produto_id:pq.id,qtd:5}]}});
+    const exq=r.json.id;
+    r=await call('POST','/api/wms/expedicoes/'+exq+'/reservar',{cookie:gest});
+    check('na quarentena a reserva recusa e diz a zona',r.status===409&&/zona quarentena/.test(r.json.error),r.json);
+    r=await call('POST','/api/wms/armazens/'+arm+'/zonas',{cookie:gest,body:{codigo:'BLQZ',nome:'Blocado QZ',tipo:'blocado'}});
+    const zb=r.json.id;
+    r=await call('POST','/api/wms/enderecos/zona',{cookie:op,body:{armazem_id:arm,de_zona_id:zq,para_zona_id:zb}});
+    check('operador não muda zona de endereço',r.status===403,r.status);
+    r=await call('POST','/api/wms/enderecos/zona',{cookie:gest,body:{armazem_id:arm,de_zona_id:zq,para_zona_id:zq}});
+    check('mesma zona -> 400',r.status===400,r.json);
+    r=await call('POST','/api/wms/enderecos/zona',{cookie:gest,body:{armazem_id:arm,de_zona_id:zq,para_zona_id:zb,prefixo:'q-01-01'}});
+    check('só os endereços com o prefixo mudam de zona',r.status===200&&r.json.movidos===1&&r.json.primeiro==='Q-01-01-01',r.json);
+    const ends=(await call('GET','/api/wms/enderecos?armazem_id='+arm,{cookie:gest})).json.rows;
+    check('Q-01-01-01 no blocado e Q-02-01-01 na quarentena',ends.find(e=>e.codigo==='Q-01-01-01')?.tipo&&ends.find(e=>e.codigo==='Q-01-01-01').zona==='Blocado QZ'&&ends.find(e=>e.codigo==='Q-02-01-01')?.zona!=='Blocado QZ',ends.filter(e=>/^Q-/.test(e.codigo)).map(e=>e.codigo+':'+e.zona));
+    r=await call('POST','/api/wms/expedicoes/'+exq+'/reservar',{cookie:gest});
+    check('depois de mudar a zona a reserva usa o saldo',r.status===200&&r.json.linhas===1,r.json);
+  }
+
   console.log(`\n${pass} OK, ${fail} falha(s)`);
   process.exit(fail?1:0);
 })().catch(e=>{console.error(e);process.exit(1)});
