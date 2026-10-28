@@ -125,8 +125,10 @@ const DESPESAS475=[
   ['104530','AMR','0101 - SALARIOS','FOLHA DE PAGAMENTO','05/10/26','05/10/26','25.000,00','LIQUIDADA'],
   ['104541','AMR','0777 - MATERIAL DE ESCRITORIO','PAPELARIA CENTRAL','06/10/26','20/10/26','89,90','A VENCER']
 ];
+// liquidada na 476 no SSW real: some da listagem (que só traz vencidas e a vencer)
+const SUMIDAS475=new Set();
 const lista475=()=>'<html><body><table><tr><th>Lan&ccedil;amento</th><th>Unid</th><th>Evento</th><th>Fornecedor</th><th>Inclus&atilde;o</th><th>Pagamento</th><th>Valor</th><th>Situa&ccedil;&atilde;o</th></tr>'+
-  DESPESAS475.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'<tr><td colspan=6>Total geral</td><td>27.733,05</td><td></td></tr></table></body></html>';
+  DESPESAS475.filter(r=>!SUMIDAS475.has(r[0])).map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'<tr><td colspan=6>Total geral</td><td>27.733,05</td><td></td></tr></table></body></html>';
 // ---------------------------------------------------------------- WebAPI do BI2 (https://ssw.inf.br/api/bi2/<sigla>/<pasta>?codigo=N)
 // Têm BI2: a sigla "tsta" (empresa A, acesso próprio do BI2) e a "lgc" (empresa C, mesma sigla e senha
 // do login do SSW, o caso do BI2 automático). Autorização: "Basic " + md5 da senha, como no SSW.
@@ -177,7 +179,9 @@ http.createServer(async(req,res)=>{
   if(u.pathname==='/__mock/despesa'){
     const l=DESPESAS475.find(r=>r[0]===u.searchParams.get('lanc'));
     if(!l)return send(404,'{}');
-    l[7]=u.searchParams.get('sit')||'';return send(200,JSON.stringify({lanc:l[0],sit:l[7]}),{'Content-Type':'application/json'})
+    if(u.searchParams.has('sumir')){if(u.searchParams.get('sumir')==='1')SUMIDAS475.add(l[0]);else SUMIDAS475.delete(l[0])}
+    if(u.searchParams.has('sit'))l[7]=u.searchParams.get('sit')||'';
+    return send(200,JSON.stringify({lanc:l[0],sit:l[7]}),{'Content-Type':'application/json'})
   }
   if(u.pathname==='/__mock/romaneio'){
     const linha=[...DATA.AMR,...DATA.TBT].find(r=>r[0]===u.searchParams.get('rom'));

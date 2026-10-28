@@ -355,6 +355,29 @@ async function sincronizarContas(pool,despesas,hojeIso){
   }
   return out
 }
+// A listagem da 475 só traz despesas em aberto (Situação: V-vencidas, A-a vencer, T-todas): a liquidada na 476
+// some dela. Com a listagem sem período (todas as abertas), a conta pendente ligada a um lançamento que não
+// está mais lá recebe a baixa, com a data de hoje. Nunca desfaz um pagamento; a despesa excluída no SSW também some.
+// Proteção contra listagem cortada ou com erro: os lançamentos lidos agora no mês atual têm que estar todos nela,
+// e não baixa nada se mais da metade das contas pendentes sumiria de uma vez.
+async function baixarPelaListagem(pool,abertas,doMes,hojeIso){
+  const out={pendentes:0,baixadas:0};
+  const set=new Set((abertas||[]).map(x=>limpo(x,40)).filter(Boolean));
+  if(!set.size)return{...out,erro:'listagem de abertas vazia'};
+  const faltam=(doMes||[]).map(x=>limpo(x,40)).filter(x=>x&&!set.has(x));
+  if(faltam.length)return{...out,erro:faltam.length+' lançamento(s) do mês fora da listagem de abertas'};
+  const tem=await pool.query("SELECT 1 FROM information_schema.columns WHERE table_name='bills' AND column_name='ssw_lancamento'");
+  if(!tem.rowCount)return out;
+  const pq=await pool.query("SELECT DISTINCT ssw_lancamento AS l FROM bills WHERE status='pending' AND ssw_lancamento IS NOT NULL AND ssw_lancamento<>''");
+  out.pendentes=pq.rowCount;
+  const sumiram=pq.rows.map(r=>r.l).filter(l=>!set.has(l));
+  if(sumiram.length*2>out.pendentes&&sumiram.length>5)return{...out,erro:sumiram.length+' de '+out.pendentes+' contas sumiriam de uma vez; nada baixado'};
+  if(sumiram.length){
+    const u=await pool.query("UPDATE bills SET status='paid',payment_date=$2,updated_at=NOW() WHERE status='pending' AND ssw_lancamento = ANY($1)",[sumiram,hojeIso]);
+    out.baixadas=u.rowCount;out.lancamentos=sumiram.slice(0,50)
+  }
+  return out
+}
 // Grava a leitura da 475 de um mês: troca as linhas da DRE desse mês e acompanha o Contas a Pagar.
 async function gravarDespesasSsw(pool,cli,c,lista,quem,{contas=true}={}){
   const linhas=[];
@@ -376,18 +399,26 @@ async function gravarDespesasSsw(pool,cli,c,lista,quem,{contas=true}={}){
 }
 // Leitura automática (servidor principal, fora do modo teste): mês atual e anterior a cada 30 minutos,
 // pedida ao painel com a chave interna. Só a CONSTRULOG tem o SSW interno.
-function iniciarLeituraAutomatica({pool,buscar,intervaloMs=30*60*1000}){
+function iniciarLeituraAutomatica({pool,buscar,buscarAbertas,intervaloMs=30*60*1000}){
   const rodar=async()=>{
     try{
       const cq=await pool.query("SELECT id::text FROM movit_clients WHERE lower(slug)='construlog' LIMIT 1").catch(()=>({rows:[]}));
       const cli=cq.rows[0]?.id||null,hoje=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
       const [y,m]=hoje.split('-').map(Number),meses=[[y,m],m===1?[y-1,12]:[y,m-1]];
+      let doMes=null;
       for(const[a,mm]of meses){
         const c=a+'-'+String(mm).padStart(2,'0'),fim=new Date(Date.UTC(a,mm,0)).toISOString().slice(0,10);
         const j=await buscar(c+'-01',fim);
         if(!j||!j.ok||!Array.isArray(j.despesas)||!j.despesas.length)continue;
+        if(!doMes)doMes=j.despesas.map(d=>d.lancamento);
         const g=await gravarDespesasSsw(pool,cli,c,j.despesas,'leitura automática');
         console.log('DRE SSW475 automático: '+JSON.stringify({mes:c,...g}))
+      }
+      // baixa no Contas a Pagar do que foi liquidado na 476 (só com o mês atual lido, para conferir a listagem)
+      if(buscarAbertas&&doMes){
+        const j=await buscarAbertas();
+        if(j&&j.ok&&Array.isArray(j.despesas))console.log('Contas a Pagar baixa pela 475: '+JSON.stringify(await baixarPelaListagem(pool,j.despesas.map(d=>d.lancamento),doMes,hoje)))
+        else console.log('Contas a Pagar baixa pela 475: listagem de abertas falhou '+JSON.stringify(j&&j.error||null))
       }
     }catch(e){console.error('DRE SSW475 automático ERRO: '+(e.message||e))}
   };
@@ -590,4 +621,4 @@ async function atender(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSes
   }
 }
 
-module.exports={GRUPOS,CONTAS,IGNORAR,liquidada,sincronizarContas,gravarDespesasSsw,iniciarLeituraAutomatica,contaSugerida,eventoChave,numero,competencia,montarDre,lerHolerite,paginasDoPdf,holeritesDoPdf,recibosDaPagina,tipoHolerite,paginaDoPdf,dataPagamentoPadrao,ensureSchema,handle};
+module.exports={GRUPOS,CONTAS,IGNORAR,liquidada,sincronizarContas,baixarPelaListagem,gravarDespesasSsw,iniciarLeituraAutomatica,contaSugerida,eventoChave,numero,competencia,montarDre,lerHolerite,paginasDoPdf,holeritesDoPdf,recibosDaPagina,tipoHolerite,paginaDoPdf,dataPagamentoPadrao,ensureSchema,handle};

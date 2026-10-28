@@ -2082,6 +2082,9 @@ async function start() {
   if(!TEST_MODE&&process.env.DRE_SSW_AUTO!=='0'&&process.env.SSW_INTERNAL_USUARIO)dre.iniciarLeituraAutomatica({pool,buscar:async(from,to)=>{
     const r=await fetch('http://'+DASH_INTERNAL_HOST+':'+DASH_INTERNAL_PORT+'/api/ssw/despesas475?'+new URLSearchParams({from,to}),{headers:{'X-Internal-Key':INTERNAL_KEY,'Accept':'application/json'},signal:AbortSignal.timeout(120000)});
     return r.json().catch(()=>null)
+  },buscarAbertas:async()=>{
+    const r=await fetch('http://'+DASH_INTERNAL_HOST+':'+DASH_INTERNAL_PORT+'/api/ssw/despesas475?abertas=1',{headers:{'X-Internal-Key':INTERNAL_KEY,'Accept':'application/json'},signal:AbortSignal.timeout(120000)});
+    return r.json().catch(()=>null)
   }});
   if(!TEST_MODE)veic.iniciarImportacaoAutomatica(pool);
   await roteirizadorCargas.ensureSchema(pool);
