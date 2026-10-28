@@ -256,6 +256,9 @@ async function ensureSchema(pool){
     estoque_min NUMERIC NOT NULL DEFAULT 0, estoque_max NUMERIC NOT NULL DEFAULT 0, ponto_reposicao NUMERIC NOT NULL DEFAULT 0,
     ativo BOOLEAN NOT NULL DEFAULT TRUE, criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(cliente_id,sku))`);
   await q("CREATE INDEX IF NOT EXISTS idx_wms_produtos_ean ON wms_produtos (empresa,ean) WHERE ean<>''");
+  // SKU sempre em maiúsculo: converte os antigos (se já existir o mesmo SKU em maiúsculo no cliente, aquele fica como está)
+  await q(`UPDATE wms_produtos p SET sku=UPPER(sku),atualizado_em=NOW() WHERE sku<>UPPER(sku)
+    AND NOT EXISTS (SELECT 1 FROM wms_produtos o WHERE o.cliente_id=p.cliente_id AND o.sku=UPPER(p.sku) AND o.id<>p.id)`);
   await q(`CREATE TABLE IF NOT EXISTS wms_lotes (id BIGSERIAL PRIMARY KEY, produto_id BIGINT NOT NULL REFERENCES wms_produtos(id), lote TEXT NOT NULL,
     fabricacao DATE, validade DATE, UNIQUE(produto_id,lote))`);
   await q('CREATE SEQUENCE IF NOT EXISTS wms_lpn_seq');
@@ -1571,7 +1574,7 @@ async function handle(req,res,u,deps){
     if(p==='/api/wms/produtos'&&M==='POST'){
       const ctx=await contexto(deps,req,'gestao'),b=await corpo();
       const cli=await doEmpresa(pool,ctx,'wms_clientes',b.cliente_id,'Cliente não encontrado.');
-      const sku=limpo(b.sku,60);
+      const sku=codigo(b.sku,60); // SKU sempre em maiúsculo
       if(!sku)throw erro(400,'Informe o SKU.');
       const f=camposProduto(b,true);
       const cols=['empresa','cliente_id','sku',...Object.keys(f)],vals=[ctx.emp,cli.id,sku,...Object.values(f)];
