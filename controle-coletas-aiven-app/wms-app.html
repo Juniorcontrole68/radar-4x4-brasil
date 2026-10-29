@@ -194,14 +194,19 @@ function mostrarTarefas(rows){
 function armazenar(t){
   render(voltar+'<div class="card"><small>1. Palete</small><b style="font-size:20px">'+esc(t.lpn)+'</b><small>'+esc(t.conteudo||'')+'</small></div>'+
     '<div class="destaque"><small>2. Leve até o endereço</small><div class="end" id="aSug">'+esc(t.sugerido||'—')+'</div><small id="aMot">'+esc(t.motivo_sugestao||'')+'</small></div>'+
-    campo('aLpn','Leia a etiqueta do palete')+campo('aEnd','3. Leia a etiqueta do endereço')+
+    campo('aLpn','3. Leia a etiqueta do PALETE (começa com LPN)','placeholder="'+esc(t.lpn)+'"')+campo('aEnd','4. Leia a etiqueta do ENDEREÇO','placeholder="'+esc(t.sugerido||'')+'"')+
     '<label id="aJustBox" hidden>Por que outro endereço?<input id="aJust" autocomplete="off"></label>'+
     '<div class="dupla"><button class="btn" id="aOutro" type="button">Endereço cheio</button><button class="btn p" id="aOk" type="button">Confirmar</button></div>');
   $('#aLpn').focus();
-  aoLer('aLpn',v=>{if(v.toUpperCase()!==t.lpn){aviso('Este não é o palete da tarefa ('+t.lpn+').','err');$('#aLpn').select();return}$('#aEnd').focus()});
+  // código de endereço lido no campo do palete: vai para o campo do endereço (só o LPN começa com "LPN")
+  const trocou=()=>{const v=$('#aLpn').value.trim();if(!v||/^LPN/i.test(v))return false;
+    if(!$('#aEnd').value.trim())$('#aEnd').value=v;$('#aLpn').value='';
+    aviso('Isso é um endereço. No campo do palete leia a etiqueta do palete ('+t.lpn+').','warn');$('#aLpn').focus();return true};
+  aoLer('aLpn',v=>{if(trocou())return;if(v.toUpperCase()!==t.lpn){aviso('Este não é o palete da tarefa ('+t.lpn+').','err');$('#aLpn').select();return}$('#aEnd').focus()});
   aoLer('aEnd',v=>{if(!v)return;if(v.toUpperCase()!==String(t.sugerido||'').toUpperCase()){$('#aJustBox').hidden=false;aviso('Endereço diferente do sugerido: explique o motivo (precisa de permissão de supervisor).','warn');$('#aJust').focus()}else $('#aOk').click()});
   $('#aOutro').onclick=async()=>{try{const j=await api('POST','/api/wms/tarefas/'+t.id+'/sugerir',{motivo:'endereço cheio na hora da armazenagem'});t.sugerido=j.sugerido;t.motivo_sugestao=j.motivo;$('#aSug').textContent=j.sugerido||'—';$('#aMot').textContent=j.motivo;aviso('Nova sugestão: '+(j.sugerido||'nenhuma'),'ok')}catch(e){aviso(e.status?e.message:'Sem sinal para pedir outra sugestão.','err')}};
   $('#aOk').onclick=async()=>{
+    if(trocou())return;
     try{const r=await enviar('armazenagem',{tarefa_id:t.id,lpn:$('#aLpn').value.trim(),endereco:$('#aEnd').value.trim(),justificativa:$('#aJust').value.trim()});
       if(r.offline){aviso('Sem sinal: armazenagem guardada na fila.','warn');setTimeout(listaTarefas,1500);return}
       aviso('Armazenado: '+r.lpn+' em '+r.endereco+'.','ok');setTimeout(listaTarefas,1200);
