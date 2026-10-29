@@ -157,11 +157,13 @@ function valor(r,k){
   if(k==='cidade')return [r.cidade,r.uf].filter(Boolean).join('/');
   if(['data_agendada','data_emissao','data_entrada','concluido_em','data_coleta'].includes(k))return br(r[k]);
   if(k==='situacao')return ROT[r.situacao]||r.situacao||'';
+  if(k==='remetente'&&aba!=='coletas')return String(r.remetente||'').trim().split(/\s+/)[0]||'';   // só o primeiro nome
   return r[k]??''
 }
 function classe(r){
   const hoje=painel?.hoje||new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}),cfg=painel?.config||{dias_amarelo:2,dias_vermelho:5};
   if(aba==='pendentes'&&!r.data_agendada){if(r.dias_sem>cfg.dias_vermelho)return'vermelho';if(r.dias_sem>cfg.dias_amarelo)return'amarelo';return''}
+  if(aba==='agendadas'&&r.situacao==='entregue')return'verde';
   if(aba==='agendadas'||aba==='pendentes'){if(r.data_agendada<hoje)return'vermelho';if(r.data_agendada===hoje)return'azul'}
   if(aba==='sem'){if(r.dias_sem>cfg.dias_vermelho)return'vermelho';if(r.dias_sem>cfg.dias_amarelo)return'amarelo'}
   if(aba==='historico'){if(r.situacao==='entregue')return'verde';if(r.situacao==='devolvida')return'cinza'}
@@ -169,7 +171,7 @@ function classe(r){
 }
 function celula(r,k,num){
   if(k==='acoes'){
-    if(aba==='agendadas'||(aba==='pendentes'&&r.agendamento_id))return'<td class="acoes"><button type="button" class="ag-mini" data-ac="alterar" data-id="'+esc(r.agendamento_id)+'">Alterar</button><button type="button" class="ag-mini perigo" data-ac="cancelar" data-id="'+esc(r.agendamento_id)+'">Cancelar</button><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
+    if((aba==='agendadas'&&r.status_agendamento!=='concluido')||(aba==='pendentes'&&r.agendamento_id))return'<td class="acoes"><button type="button" class="ag-mini" data-ac="alterar" data-id="'+esc(r.agendamento_id)+'">Alterar</button><button type="button" class="ag-mini perigo" data-ac="cancelar" data-id="'+esc(r.agendamento_id)+'">Cancelar</button><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
     if(aba==='sem'||aba==='pendentes')return'<td class="acoes"><button type="button" class="ag-mini primary" data-ac="agendar" data-nota="'+esc(r.nota_id)+'">Agendar</button><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
     return'<td class="acoes"><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>'
   }

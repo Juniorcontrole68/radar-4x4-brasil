@@ -194,6 +194,14 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     check('  ...botão "Atualizar baixas" confere na hora',x.status===200&&x.j.ok&&x.j.entregues===0,x);
     check('  ...e exige login',(await fetch(B+'/api/painel/agendamentos/baixas',{method:'POST'})).status===401);
   }
+  console.log('Datas anteriores na aba Agendadas');
+  {
+    await pool.query("UPDATE ag_agendamentos a SET data_agendada=$1 FROM ag_notas n WHERE n.id=a.nota_id AND n.nf='7010'",[dia(-1)]);
+    let x=await api('GET','/api/painel/agendamentos/lista?aba=agendadas&de='+dia(-1)+'&ate='+dia(-1));
+    check('período de ontem mostra a agendada que já foi entregue',x.status===200&&x.j.rows.some(r=>r.nf==='7010'&&r.situacao==='entregue'&&r.status_agendamento==='concluido'),x.j);
+    x=await api('GET','/api/painel/agendamentos/lista?aba=agendadas');
+    check('  ...sem período (ou a partir de hoje) só as ativas',!x.j.rows.some(r=>r.nf==='7010'),x.j.rows.map(r=>r.nf));
+  }
   console.log('Baixa do motorista no rastreio do SSW');
   {
     await ag.aplicarSnapshot(pool,cli,{pendentes:[
