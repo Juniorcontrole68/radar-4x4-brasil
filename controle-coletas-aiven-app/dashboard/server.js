@@ -1663,6 +1663,15 @@ function sswCteStore(ctrc,value){
 // Agendamento: nota entregue ou devolvida não entra.
 function agendamentoBloqueio(textos){return sswCte.situacaoBloqueiaAgendamento(textos)}
 // Nome cortado pelo SSW na lista (ex.: "LUCIANA DE .."): vale o nome completo de outra fonte.
+// CT-e sem a série ("000885-1", como vem do BI2): a opção 101 só abre com a série. Completa pela
+// opção 101 da NF (mesmo número) ou, na falta, pela unidade do SSW.
+async function agendamentoCtrcComSerie(ctrc,nf){
+  const c=String(ctrc||'').toUpperCase().trim();
+  if(!c||/^[A-Z]{3}/.test(c))return c;
+  try{const d=nf?await fetchSsw101ByNf(nf):null;if(d&&/^[A-Z]{3}/i.test(d.ctrc||'')&&normCtrcLoose(d.ctrc)===normCtrcLoose(c))return String(d.ctrc).toUpperCase()}catch{}
+  const m=c.match(/^0*(\d{1,9})-(\d)$/);
+  return m?(SSW_UNIDADES_CFG[0]||'AMR')+m[1].padStart(6,'0')+'-'+m[2]:c
+}
 function agendamentoNomeCortado(v){const t=String(v||'').trim();return !t||/\.\.\)?\s*$/.test(t)||/\bNome:|Destinat/i.test(t)}
 function agendamentoNome(atual,novo){return agendamentoNomeCortado(atual)&&String(novo||'').trim()?String(novo).trim():String(atual||'')}
 function sswCteFromLido(lido,ctrc){
@@ -6341,6 +6350,7 @@ if(u.pathname==='/api/agendamentos/nf'&&req.method==='GET'){try{
     return res.end(JSON.stringify({ok:false,error:'NF '+nf+' não foi localizada na opção 38, nos relatórios BI2 nem na opção 101 do SSW.'}))
   }
 
+  if(row.ctrc)row.ctrc=await agendamentoCtrcComSerie(row.ctrc,nf);
   const statusFonte=row.status||'';   // situação da opção 38/BI2, antes do texto solto da tela 101
   // Se temos CTRC, enriquece produto/tipo de mercadoria pela opção 101.
   if(row.ctrc){
@@ -6362,12 +6372,14 @@ if(u.pathname==='/api/agendamentos/nf'&&req.method==='GET'){try{
         row.produtosDiag=det.productDiag||'';
       }
     }catch(e){console.log('AGENDAMENTO NF detalhe 101: '+String(e.message||e))}
-    // Nomes do remetente e do destinatário pelo XML do CT-e, quando a tela não trouxe.
-    if(agendamentoNomeCortado(row.remetente)||agendamentoNomeCortado(row.cliente)){
+    // Nomes do remetente e do destinatário (e a cidade) pelo XML do CT-e, quando a tela não trouxe.
+    if(agendamentoNomeCortado(row.remetente)||agendamentoNomeCortado(row.cliente)||!row.cidade){
       try{
         const info=await Promise.race([sswCteInfo(row.ctrc,2),new Promise(r=>setTimeout(()=>r(null),20000))]);
         row.remetente=agendamentoNome(row.remetente,info?.cte?.remetente?.nome);
         row.cliente=agendamentoNome(row.cliente,info?.cte?.destinatario?.nome);
+        const dest=info?.cte?.destinatario||{};
+        if(!row.cidade&&(dest.cidade||info?.cte?.cidadeFim)){row.cidade=dest.cidade||info.cte.cidadeFim;row.uf=dest.uf||info.cte.ufFim||row.uf}
       }catch(e){console.log('AGENDAMENTO NF XML do CT-e: '+String(e.message||e))}
     }
   }
@@ -6457,15 +6469,19 @@ if(u.pathname==='/api/agendamentos/ssw-snapshot'&&req.method==='POST'){try{
         let ctrc=String(a.ctrc||'').toUpperCase().trim();
         if(!ctrc){ctrc=(await fetchSsw101ByNf(a.nf))?.ctrc||''}
         if(!ctrc)return{situacao:'desconhecida',erro:'NF sem CT-e no SSW'};
+        ctrc=await agendamentoCtrcComSerie(ctrc,a.nf);
         const k=sswCteKey(ctrc);SSW_CTE_CACHE.delete(k);   // a situação muda: lê de novo
         let lido;try{lido=await sswCteLer(await sswCteSession(),ctrc)}catch(e){SSW_CTE_SESSION=null;throw e}
+        // o que faltar na nota (CT-e com a série, cidade, destinatário inteiro) vem junto
+        const dest=lido?.cte?.destinatario||{};
+        const extra={ctrc,cidade:dest.cidade||lido?.cte?.cidadeFim||'',uf:dest.uf||lido?.cte?.ufFim||'',destinatario:dest.nome||''};
         const sit=String(lido?.resumo?.situacao||'').trim();
-        if(!sit)return{situacao:'desconhecida',ctrc,erro:'situação do CT-e não lida na opção 101'};
+        if(!sit)return{...extra,situacao:'desconhecida',erro:'situação do CT-e não lida na opção 101'};
         const b=agendamentoBloqueio([sit]);
         const em=(sit.match(/(\d{2}\/\d{2}\/\d{2,4})/)||[])[1]||'';
-        if(/devolvida/.test(b))return{situacao:'devolvida',ctrc,texto:sit.slice(0,200),em};
-        if(b)return{situacao:'entregue',ctrc,texto:sit.slice(0,200),em};
-        return{situacao:'em_rota',ctrc,texto:sit.slice(0,200)}
+        if(/devolvida/.test(b))return{...extra,situacao:'devolvida',texto:sit.slice(0,200),em};
+        if(b)return{...extra,situacao:'entregue',texto:sit.slice(0,200),em};
+        return{...extra,situacao:'em_rota',texto:sit.slice(0,200)}
       })
     }catch(e){verificados[a.chave]={situacao:'desconhecida',erro:String(e.message||e).slice(0,200)}}
   }

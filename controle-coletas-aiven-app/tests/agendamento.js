@@ -218,6 +218,21 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     let erro='';try{await ag.baixasDosMotoristas(pool,{lerBaixas:async()=>({ok:false,error:'SSW fora'})})}catch(e){erro=e.message}
     check('  ...SSW fora: erro, nada muda',erro==='SSW fora'&&(await sit('7102')).situacao!=='entregue',erro);
   }
+  console.log('CT-e sem a série e cidade em branco');
+  {
+    const nota=async nf=>(await pool.query('SELECT id,ctrc,cidade,uf,destinatario,situacao FROM ag_notas WHERE nf=$1 ORDER BY id',[nf])).rows;
+    await ag.aplicarSnapshot(pool,cli,{pendentes:[{nf:'7201',ctrc:'000885-1',remetente:'CONSTRUDECOR S.A - CUMBIC',destinatario:'LUIZ PEREIRA DA SILVA',cidade:'INDAIATUBA',uf:'SP'}],verificados:{}},null);
+    await ag.aplicarSnapshot(pool,cli,{pendentes:[{nf:'7201',ctrc:'AMR000885-1',remetente:'CONSTRUDECOR S.A - CUMBIC',destinatario:'LUIZ PEREIRA DA SILVA',cidade:'INDAIATUBA',uf:'SP'}],verificados:{}},null);
+    let n=await nota('7201');
+    check('CT-e do BI2 sem a série e o mesmo CT-e da opção 38: uma nota só, com a série',n.length===1&&n[0].ctrc==='AMR000885-1',n);
+    await ag.aplicarSnapshot(pool,cli,{pendentes:[{nf:'7201',ctrc:'AMS000885-1',remetente:'CONSTRUDECOR S.A - CUMBIC'}],verificados:{}},null);
+    check('  ...série diferente com o mesmo número é outra nota',(await nota('7201')).length===2);
+    await ag.aplicarSnapshot(pool,cli,{pendentes:[{nf:'7202',ctrc:'000886-0',remetente:'CONSTRUDECOR S.A - CUMBIC',destinatario:'PATRICIA BARBOSA ..',cidade:'',uf:'SP'}],verificados:{}},null);
+    await ag.aplicarSnapshot(pool,cli,{pendentes:[{nf:'9999',ctrc:'AMR009999-9',remetente:'CONSTRUDECOR S.A - CUMBIC'}],
+      verificados:{'7202|000886-0':{situacao:'em_rota',ctrc:'AMR000886-0',texto:'85-SAIDA PARA ENTREGA',cidade:'SOROCABA',uf:'SP',destinatario:'PATRICIA BARBOSA DE SOUZA'}}},null);
+    n=(await nota('7202'))[0];
+    check('  ...a conferência no SSW completa o CT-e com a série, a cidade e o nome cortado',n.situacao==='em_rota'&&n.ctrc==='AMR000886-0'&&n.cidade==='SOROCABA'&&n.destinatario==='PATRICIA BARBOSA DE SOUZA',n);
+  }
   check('volta sem filtro de parceiros para o resto do teste',(await api('PUT','/api/painel/agendamentos/config',{parceiros:''})).status===200);
 
   console.log('Configuração, coletas e exportação');

@@ -192,20 +192,23 @@ async function evento(db, cli, notaId, agId, tipo, de, para, detalhe, usuario) {
     [cli, notaId, agId, tipo, de == null ? null : String(de), para == null ? null : String(para), detalhe ? limpo(detalhe, 500) : null, usuario || null]);
 }
 
+// Mesmo número de CT-e com ou sem a série ("000885-1" do BI2 = "AMR000885-1" da opção 38); $3 é o CT-e lido.
+const MESMO_NUMERO_CTE = "ltrim(regexp_replace(ctrc,'\\D','','g'),'0')=ltrim(regexp_replace($3,'\\D','','g'),'0')";
 // Nota do SSW -> linha de ag_notas. Procura pela NF + CT-e; uma linha antiga da mesma NF ainda sem CT-e é
 // completada (não duplica). Devolve {id, nova, situacaoAntes}.
 async function gravarNota(db, cli, r, { origem = 'sync', syncId = null, pendente = true, situacaoNova = '' } = {}) {
   const nf = normNf(r.nf), ctrc = normCtrc(r.ctrc), serie = limpo(r.serie, 5), emitente = limpo(r.emitente, 20);
   if (!nf) return null;
   const ex = await db.query(`SELECT id,situacao,(baixa_motorista_em IS NOT NULL AND situacao='entregue') AS travada FROM ag_notas WHERE client_id IS NOT DISTINCT FROM $1 AND tipo_operacao='entrega' AND nf=$2
-      AND (ctrc=$3 OR ctrc='' OR $3='') AND (serie=$4 OR serie='' OR $4='')
+      AND (ctrc=$3 OR ctrc='' OR $3='' OR ((ctrc !~ '^[A-Z]{3}' OR $3 !~ '^[A-Z]{3}') AND ${MESMO_NUMERO_CTE}))
+      AND (serie=$4 OR serie='' OR $4='')
       ORDER BY (ctrc=$3) DESC, (serie=$4) DESC, id LIMIT 1`, [cli, nf, ctrc, serie]);
   const fonte = FONTES_PRODUTO.includes(r.produtos_fonte) ? r.produtos_fonte : '';
   const v = [limpo(r.remetente), limpo(r.destinatario ?? r.cliente), limpo(r.cidade, 80), limpo(r.uf, 2).toUpperCase(), limpo(r.endereco, 300),
     numero(r.peso), numero(r.volumes), limpo((fonte ? r.produto : limparProduto(r.produto)) || r.mercadoria, 600), limpo(r.status_ssw ?? r.status, 300), limpo(r.previsao, 20), dataBr(r.data_emissao || r.emissao) || null];
   if (ex.rows[0]) {
     const id = ex.rows[0].id, antes = ex.rows[0].situacao, travada = !!ex.rows[0].travada;
-    await db.query(`UPDATE ag_notas SET ctrc=CASE WHEN ctrc='' THEN $2 ELSE ctrc END, serie=CASE WHEN serie='' THEN $3 ELSE serie END, emitente=CASE WHEN emitente='' THEN $4 ELSE emitente END,
+    await db.query(`UPDATE ag_notas SET ctrc=CASE WHEN ctrc='' OR (ctrc !~ '^[A-Z]{3}' AND $2 ~ '^[A-Z]{3}') THEN $2 ELSE ctrc END, serie=CASE WHEN serie='' THEN $3 ELSE serie END, emitente=CASE WHEN emitente='' THEN $4 ELSE emitente END,
         remetente=COALESCE(NULLIF($5,''),remetente), destinatario=COALESCE(NULLIF($6,''),destinatario), cidade=COALESCE(NULLIF($7,''),cidade), uf=COALESCE(NULLIF($8,''),uf),
         endereco=COALESCE(NULLIF($9,''),endereco), peso=CASE WHEN $10::numeric>0 THEN $10::numeric ELSE peso END, volumes=CASE WHEN $11::numeric>0 THEN $11::numeric ELSE volumes END,
         produto=CASE WHEN $19='' AND produto_fonte IS NOT NULL THEN produto ELSE COALESCE(NULLIF($12,''),produto) END,
@@ -264,6 +267,14 @@ async function aplicarSnapshot(db, cli, snap, syncId = null) {
   for (const n of ops.rows) {
     if (vistos.has(n.nf + '|' + n.ctrc) || (!n.ctrc && vistosNf.has(n.nf))) continue;
     const v = ver[n.nf + '|' + n.ctrc] || ver[n.nf + '|'] || null;
+    // a conferência no SSW completa o que faltava: CT-e com a série, cidade e o nome inteiro do destinatário
+    if (v && (v.ctrc || v.cidade || v.destinatario)) {
+      const ctrcSerie = /^[A-Z]{3}/.test(normCtrc(v.ctrc)) ? normCtrc(v.ctrc) : '';
+      await db.query(`UPDATE ag_notas SET ctrc=CASE WHEN $2<>'' AND (ctrc='' OR (ctrc !~ '^[A-Z]{3}' AND ${MESMO_NUMERO_CTE.replace(/\$3/g, () => '$2')})) THEN $2 ELSE ctrc END,
+          uf=CASE WHEN COALESCE(cidade,'')='' AND $3<>'' AND $4<>'' THEN $4 ELSE uf END, cidade=CASE WHEN COALESCE(cidade,'')='' THEN COALESCE(NULLIF($3,''),cidade) ELSE cidade END,
+          destinatario=CASE WHEN $5<>'' AND (COALESCE(destinatario,'')='' OR destinatario ~ '\\.\\.\\)?\\s*$') THEN $5 ELSE destinatario END WHERE id=$1`,
+        [n.id, ctrcSerie, limpo(v.cidade, 80), limpo(v.uf, 2).toUpperCase(), limpo(v.destinatario)]);
+    }
     if (v && (v.situacao === 'entregue' || v.situacao === 'devolvida')) {
       await concluirNota(db, cli, n, v.situacao, v.texto, v.em, syncId);
       c[v.situacao === 'entregue' ? 'entregues' : 'devolvidas']++;
