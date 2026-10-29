@@ -518,7 +518,12 @@ async function listar(db, cli, aba, f) {
   const params = [cli, OPERACIONAIS];
   let base, ordem, sel = SEL_NOTA + ',' + SEL_AG;
   if (aba === 'agendadas') {
-    base = "FROM ag_notas n JOIN ag_agendamentos a ON a.nota_id=n.id AND a.status='ativo' WHERE n.client_id IS NOT DISTINCT FROM $1 AND n.tipo_operacao='entrega' AND n.situacao=ANY($2)";
+    // as ativas; com o período começando antes de hoje, também as já entregues daqueles dias (consulta de datas anteriores)
+    const passadas = !!dataIso(f.de) && dataIso(f.de) < hojeSp();
+    base = passadas
+      ? `FROM ag_notas n JOIN ag_agendamentos a ON a.nota_id=n.id AND (a.status='ativo' OR (a.status='concluido' AND a.data_agendada<${HOJE_SQL}))
+      WHERE n.client_id IS NOT DISTINCT FROM $1 AND n.tipo_operacao='entrega' AND (n.situacao=ANY($2) OR a.status='concluido')`
+      : "FROM ag_notas n JOIN ag_agendamentos a ON a.nota_id=n.id AND a.status='ativo' WHERE n.client_id IS NOT DISTINCT FROM $1 AND n.tipo_operacao='entrega' AND n.situacao=ANY($2)";
     ordem = 'a.data_agendada, n.nf';
   } else if (aba === 'sem') {
     base = "FROM ag_notas n LEFT JOIN ag_agendamentos a ON a.nota_id=n.id AND a.status='ativo' WHERE n.client_id IS NOT DISTINCT FROM $1 AND n.tipo_operacao='entrega' AND n.situacao=ANY($2) AND a.id IS NULL";

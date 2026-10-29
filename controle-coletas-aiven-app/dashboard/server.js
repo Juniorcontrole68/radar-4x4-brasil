@@ -6474,7 +6474,11 @@ if(u.pathname==='/api/agendamentos/ssw-snapshot'&&req.method==='POST'){try{
         let lido;try{lido=await sswCteLer(await sswCteSession(),ctrc)}catch(e){SSW_CTE_SESSION=null;throw e}
         // o que faltar na nota (CT-e com a série, cidade, destinatário inteiro) vem junto
         const dest=lido?.cte?.destinatario||{};
-        const extra={ctrc,cidade:dest.cidade||lido?.cte?.cidadeFim||'',uf:dest.uf||lido?.cte?.ufFim||'',destinatario:dest.nome||''};
+        const mapa=Object.values(lido?.mapas||{}).find(m=>m&&m.cidade)||{},ent=lido?.entrega||{};
+        const cidade=dest.cidade||lido?.cte?.cidadeFim||ent.cidade||mapa.cidade||'';
+        const extra={ctrc,cidade,uf:(dest.cidade?dest.uf:'')||(lido?.cte?.cidadeFim?lido.cte.ufFim:'')||(ent.cidade?ent.uf:'')||mapa.uf||'',
+          destinatario:dest.nome||(agendamentoNomeCortado(lido?.resumo?.destinatario)?'':lido?.resumo?.destinatario)||ent.nome||''};
+        if(!cidade)console.log('AGENDAMENTO varredura sem cidade: '+JSON.stringify({ctrc,xml:!!lido?.cte,arquivo:lido?.arquivo?.erro||lido?.arquivo?.status||null,entrega:!!lido?.entrega,mapas:Object.keys(lido?.mapas||{})}));
         const sit=String(lido?.resumo?.situacao||'').trim();
         if(!sit)return{...extra,situacao:'desconhecida',erro:'situação do CT-e não lida na opção 101'};
         const b=agendamentoBloqueio([sit]);
