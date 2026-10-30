@@ -83,7 +83,7 @@ async function importarFaixa(e){
     const p=[j.novas+' nota(s) importada(s)'];
     if(j.ja_existiam)p.push(j.ja_existiam+' já estavam no agendamento');
     if(j.finalizados.length)p.push(j.finalizados.length+' já entregue(s)/devolvida(s): '+j.finalizados.slice(0,5).join(', '));
-    if(j.fora_parceiros.length)p.push(j.fora_parceiros.length+' de outros clientes (fora dos parceiros)');
+    if(j.fora_parceiros.length)p.push(j.fora_parceiros.length+' de outros clientes (fora dos parceiros'+(j.fora_nomes&&j.fora_nomes.length?': '+j.fora_nomes.slice(0,3).join('; '):'')+')');
     if(j.nao_encontrados.length)p.push(j.nao_encontrados.length+' não encontrado(s) no SSW: '+j.nao_encontrados.slice(0,5).join(', '));
     if(j.erros.length)p.push(j.erros.length+' com erro de leitura (tente de novo)');
     msg(p.join(' • ')+'.',j.novas||j.ja_existiam?'ok':'err');

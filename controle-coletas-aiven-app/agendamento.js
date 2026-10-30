@@ -438,6 +438,7 @@ async function importarFaixa(pool, cli, user, b, lerFaixa, progresso = () => {})
     c.lidos = Math.min(ctes.length, i + 10);
     progresso(c);
   }
+  if (c.fora_nomes) c.fora_nomes = Object.entries(c.fora_nomes).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, n]) => k + ' (' + n + ')');
   console.log('AGENDAMENTO importação de CT-es: ' + JSON.stringify({ ...c, nao_encontrados: c.nao_encontrados.length, finalizados: c.finalizados.length, fora_parceiros: c.fora_parceiros.length, erros: c.erros.length }));
   return c;
 }
@@ -446,7 +447,13 @@ async function gravarFaixa(pool, cli, user, rows, termos, c) {
     if (x.situacao === 'nao_encontrado' || !normNf(x.nf)) { c.nao_encontrados.push(x.ctrc); continue; }
     if (x.situacao === 'erro') { c.erros.push(x.ctrc); continue; }
     if (x.situacao === 'entregue' || x.situacao === 'devolvida') { c.finalizados.push(x.ctrc + ' (' + ROTULO[x.situacao].toLowerCase() + ')'); continue; }
-    if (!ehParceiro(termos, x.remetente, x.pagador)) { c.fora_parceiros.push(x.ctrc); continue; }
+    if (!ehParceiro(termos, x.remetente, x.pagador)) {
+      c.fora_parceiros.push(x.ctrc);
+      // quem são (para conferir a lista de parceiros): remetente / pagador mais frequentes
+      const k = limpo(x.remetente, 60) + ' / ' + limpo(x.pagador, 60);
+      c.fora_nomes = c.fora_nomes || {}; c.fora_nomes[k] = (c.fora_nomes[k] || 0) + 1;
+      continue;
+    }
     const db = await pool.connect();
     try {
       await db.query('BEGIN');
