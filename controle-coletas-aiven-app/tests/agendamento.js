@@ -263,6 +263,18 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     const r2=await ag.importarFaixa(pool,cli,{username:'admin_teste'},{de:'AMR017301-1',ate:'AMR017305-3'},lerFaixa);
     check('  ...importar de novo não duplica',r2.novas===0&&r2.ja_existiam===2,r2);
     check('  ...rota recusa dígito errado (400)',(await api('POST','/api/painel/agendamentos/importar',{de:'AMR017301-2',ate:'AMR017305-3'})).status===400);
+    const r3=await ag.importarFaixa(pool,cli,{username:'admin_teste'},{de:'AMR017304-5',pagador:'langb'},async()=>({ok:true,rows:[{ctrc:'AMR017304-5',nf:'7304',remetente:'NAVAS E CIA LTDA',pagador:'NAVAS E CIA LTDA',destinatario:'ANA',cidade:'ITU',uf:'SP',situacao:'aberta'}]}));
+    x=await api('GET','/api/painel/agendamentos/lista?aba=sem&nf=7304');
+    check('  ...com o pagador escolhido, o subcontrato entra atrelado ao parceiro',r3.novas===1&&x.j.rows[0]?.pagador==='LANGB',[r3,x.j.rows]);
+    { const db=await pool.connect(); try{await ag.gravarNota(db,cli,{nf:'7304',ctrc:'AMR017304-5',remetente:'NAVAS E CIA LTDA',pagador:'NAVAS E CIA LTDA'})}finally{db.release()} }
+    x=await api('GET','/api/painel/agendamentos/lista?aba=sem&nf=7304');
+    check('  ...a sincronização do SSW não troca o pagador escolhido',x.j.rows[0]?.pagador==='LANGB',x.j.rows);
+    check('  ...pagador que não é parceiro é recusado (400)',(await api('POST','/api/painel/agendamentos/importar',{de:'AMR017301-1',pagador:'NAVAS'})).status===400);
+    x=await api('GET','/api/painel/agendamentos/parceiros');
+    check('  ...lista de parceiros para o campo Pagador',x.status===200&&x.j.parceiros.includes('LANGB'),x.j);
+    const lento=async o=>{await sleep(50);return lerFaixa(o)};
+    const ini=ag.iniciarImportacao(pool,cli,{username:'admin_teste'},{de:'AMR017301-1',ate:'AMR017305-3'},lento);
+    check('  ...a importação roda em segundo plano e devolve o total',ini.total===5&&!!ini.id,ini);
     check('  ...sem SSW neste servidor responde 503',(await api('POST','/api/painel/agendamentos/importar',{de:'AMR017301-1',ate:'AMR017305-3'})).status===503);
   }
   check('volta sem filtro de parceiros para o resto do teste',(await api('PUT','/api/painel/agendamentos/config',{parceiros:''})).status===200);

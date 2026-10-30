@@ -162,6 +162,8 @@ async function ensureSchema(pool) {
   // baixa de entregue feita pelo motorista no app (entregas_comprovantes): a varredura do SSW não reabre a nota
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS baixa_motorista_em TIMESTAMPTZ');
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS baixa_comprovante_id BIGINT');
+  // pagador escolhido pelo operador na importação (subcontrato): o SSW não troca mais
+  await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS pagador_fixo BOOLEAN NOT NULL DEFAULT FALSE');
   // varredura que ficou "rodando" porque o servidor reiniciou no meio
   await pool.query("UPDATE ag_sincronizacoes SET status='erro',erro='Interrompida (o servidor reiniciou durante a varredura).',finalizado_em=NOW() WHERE status='rodando' AND iniciado_em<NOW()-INTERVAL '20 minutes'");
 }
@@ -196,7 +198,7 @@ async function evento(db, cli, notaId, agId, tipo, de, para, detalhe, usuario) {
 const MESMO_NUMERO_CTE = "ltrim(regexp_replace(ctrc,'\\D','','g'),'0')=ltrim(regexp_replace($3,'\\D','','g'),'0')";
 // Nota do SSW -> linha de ag_notas. Procura pela NF + CT-e; uma linha antiga da mesma NF ainda sem CT-e é
 // completada (não duplica). Devolve {id, nova, situacaoAntes}.
-async function gravarNota(db, cli, r, { origem = 'sync', syncId = null, pendente = true, situacaoNova = '' } = {}) {
+async function gravarNota(db, cli, r, { origem = 'sync', syncId = null, pendente = true, situacaoNova = '', fixarPagador = false } = {}) {
   const nf = normNf(r.nf), ctrc = normCtrc(r.ctrc), serie = limpo(r.serie, 5), emitente = limpo(r.emitente, 20);
   if (!nf) return null;
   const ex = await db.query(`SELECT id,situacao,(baixa_motorista_em IS NOT NULL AND situacao='entregue') AS travada FROM ag_notas WHERE client_id IS NOT DISTINCT FROM $1 AND tipo_operacao='entrega' AND nf=$2
@@ -215,15 +217,15 @@ async function gravarNota(db, cli, r, { origem = 'sync', syncId = null, pendente
         produto_fonte=CASE WHEN $19<>'' AND $12<>'' THEN $19 ELSE produto_fonte END, status_ssw=COALESCE(NULLIF($13,''),status_ssw), previsao=COALESCE(NULLIF($14,''),previsao), data_emissao=COALESCE(data_emissao,$15::date),
         situacao=CASE WHEN $16 THEN 'pendente' ELSE situacao END, concluido_em=CASE WHEN $16 THEN NULL ELSE concluido_em END,
         erro_integracao=CASE WHEN $16 THEN NULL ELSE erro_integracao END, ultima_consulta=NOW(), ultimo_sync_id=COALESCE($17,ultimo_sync_id), atualizado_em=NOW(),
-        pagador=COALESCE(NULLIF($18,''),pagador)
-      WHERE id=$1`, [id, ctrc, serie, emitente, ...v, !!pendente && !travada, syncId, limpo(r.pagador), fonte]);
+        pagador=CASE WHEN $20 THEN $18 WHEN pagador_fixo THEN pagador ELSE COALESCE(NULLIF($18,''),pagador) END, pagador_fixo=pagador_fixo OR $20
+      WHERE id=$1`, [id, ctrc, serie, emitente, ...v, !!pendente && !travada, syncId, limpo(r.pagador), fonte, !!fixarPagador]);
     return { id, nova: false, situacaoAntes: antes, travada };
   }
   const q = await db.query(`INSERT INTO ag_notas(client_id,nf,ctrc,serie,emitente,remetente,destinatario,cidade,uf,endereco,peso,volumes,produto,status_ssw,previsao,data_emissao,
-      situacao,data_entrada,ultima_consulta,ultimo_sync_id,origem,pagador,produto_fonte,produtos_em)
+      situacao,data_entrada,ultima_consulta,ultimo_sync_id,origem,pagador,produto_fonte,produtos_em,pagador_fixo)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,(NOW() AT TIME ZONE 'America/Sao_Paulo')::date,NOW(),$18,$19,NULLIF($20,''),NULLIF($21,''),
-      CASE WHEN $21<>'' THEN NOW() END) RETURNING id`,
-    [cli, nf, ctrc, serie, emitente, ...v, situacaoNova || (pendente ? 'pendente' : 'verificar'), syncId, origem, limpo(r.pagador), v[7] ? fonte : '']);
+      CASE WHEN $21<>'' THEN NOW() END,$22) RETURNING id`,
+    [cli, nf, ctrc, serie, emitente, ...v, situacaoNova || (pendente ? 'pendente' : 'verificar'), syncId, origem, limpo(r.pagador), v[7] ? fonte : '', !!fixarPagador]);
   return { id: q.rows[0].id, nova: true, situacaoAntes: null };
 }
 
@@ -425,29 +427,67 @@ function faixaCtes(b) {
 }
 // Importa uma faixa de CT-es (ou subcontratos) do SSW para o agendamento: entram como pendentes, sem agendamento.
 // lerFaixa({ctes}) devolve {rows:[{ctrc,nf,remetente,pagador,destinatario,cidade,uf,peso,volumes,previsao,emissao,status,situacao}]}.
-async function importarFaixa(pool, cli, user, b, lerFaixa) {
+async function importarFaixa(pool, cli, user, b, lerFaixa, progresso = () => {}) {
   const ctes = faixaCtes(b);
   if (!lerFaixa) { const e = new Error('A leitura do SSW não está disponível neste servidor.'); e.status = 503; throw e; }
-  const r = await lerFaixa({ ctes });
-  if (!r || r.ok === false) throw new Error((r && r.error) || 'O SSW não respondeu.');
-  const c = { pedidos: ctes.length, novas: 0, ja_existiam: 0, nao_encontrados: [], finalizados: [], fora_parceiros: [], erros: [] };
-  const termos = await termosDe(pool, cli);
-  for (const x of r.rows || []) {
+  const c = { pedidos: ctes.length, lidos: 0, novas: 0, ja_existiam: 0, nao_encontrados: [], finalizados: [], fora_parceiros: [], erros: [] };
+  const termos = await termosDe(pool, cli), pagador = await pagadorEscolhido(pool, cli, b);
+  // em blocos de 10: o que já foi lido fica gravado mesmo se o SSW cair no meio
+  for (let i = 0; i < ctes.length; i += 10) {
+    const r = await lerFaixa({ ctes: ctes.slice(i, i + 10) });
+    if (!r || r.ok === false) throw new Error((r && r.error) || 'O SSW não respondeu.');
+    await gravarFaixa(pool, cli, user, r.rows || [], termos, c, pagador);
+    c.lidos = Math.min(ctes.length, i + 10);
+    progresso(c);
+  }
+  if (c.fora_nomes) c.fora_nomes = Object.entries(c.fora_nomes).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, n]) => k + ' (' + n + ')');
+  console.log('AGENDAMENTO importação de CT-es: ' + JSON.stringify({ ...c, nao_encontrados: c.nao_encontrados.length, finalizados: c.finalizados.length, fora_parceiros: c.fora_parceiros.length, erros: c.erros.length }));
+  return c;
+}
+// Pagador escolhido na tela (subcontratos: o CT-e do SSW vem com o contratante, não com o parceiro).
+// Precisa ser um dos parceiros do agendamento; vazio = usa o remetente/pagador do próprio CT-e.
+async function pagadorEscolhido(db, cli, b) {
+  const pag = limpo(b && b.pagador, 120).toUpperCase();
+  if (pag && !ehParceiro(await termosDe(db, cli), pag)) { const e = new Error(pag + ' não é um dos parceiros do agendamento (⚙ Configurar).'); e.status = 400; throw e; }
+  return pag;
+}
+async function gravarFaixa(pool, cli, user, rows, termos, c, pagador = '') {
+  for (const x0 of rows) {
+    const x = pagador ? { ...x0, pagador } : x0;
     if (x.situacao === 'nao_encontrado' || !normNf(x.nf)) { c.nao_encontrados.push(x.ctrc); continue; }
     if (x.situacao === 'erro') { c.erros.push(x.ctrc); continue; }
     if (x.situacao === 'entregue' || x.situacao === 'devolvida') { c.finalizados.push(x.ctrc + ' (' + ROTULO[x.situacao].toLowerCase() + ')'); continue; }
-    if (!ehParceiro(termos, x.remetente, x.pagador)) { c.fora_parceiros.push(x.ctrc); continue; }
+    if (!pagador && !ehParceiro(termos, x.remetente, x.pagador)) {
+      c.fora_parceiros.push(x.ctrc);
+      // quem são (para conferir a lista de parceiros): remetente / pagador mais frequentes
+      const k = limpo(x.remetente, 60) + ' / ' + limpo(x.pagador, 60);
+      c.fora_nomes = c.fora_nomes || {}; c.fora_nomes[k] = (c.fora_nomes[k] || 0) + 1;
+      continue;
+    }
     const db = await pool.connect();
     try {
       await db.query('BEGIN');
-      const g = await gravarNota(db, cli, x, { origem: 'importacao', pendente: false, situacaoNova: 'pendente' });
-      if (g && g.nova) { c.novas++; await evento(db, cli, g.id, null, 'importada', null, ROTULO.pendente, 'Importada do SSW pela faixa de CT-es (' + x.ctrc + ')', limpo(user.username, 80)); }
+      const g = await gravarNota(db, cli, x, { origem: 'importacao', pendente: false, situacaoNova: 'pendente', fixarPagador: !!pagador });
+      if (g && g.nova) { c.novas++; await evento(db, cli, g.id, null, 'importada', null, ROTULO.pendente, 'Importada do SSW pela faixa de CT-es (' + x.ctrc + ')' + (pagador ? ', pagador ' + pagador : ''), limpo(user.username, 80)); }
       else if (g) c.ja_existiam++;
       await db.query('COMMIT');
     } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
   }
-  console.log('AGENDAMENTO importação de CT-es: ' + JSON.stringify({ ...c, nao_encontrados: c.nao_encontrados.length, finalizados: c.finalizados.length, fora_parceiros: c.fora_parceiros.length, erros: c.erros.length }));
-  return c;
+}
+// Importações em andamento (a leitura leva alguns segundos por CT-e): a tela acompanha pelo id.
+const IMPORTACOES = new Map();
+function iniciarImportacao(pool, cli, user, b, lerFaixa) {
+  const total = faixaCtes(b).length;   // valida antes de começar
+  if (!lerFaixa) { const e = new Error('A leitura do SSW não está disponível neste servidor.'); e.status = 503; throw e; }
+  for (const [k, v] of IMPORTACOES) if (v.fim && Date.now() - v.fim > 3600 * 1000) IMPORTACOES.delete(k);
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const job = { id, cli: String(cli || 0), status: 'rodando', total, lidos: 0, resultado: null, erro: null, fim: 0 };
+  IMPORTACOES.set(id, job);
+  importarFaixa(pool, cli, user, b, lerFaixa, c => { job.lidos = c.lidos; job.resultado = c; })
+    .then(c => { job.status = 'ok'; job.resultado = c; job.lidos = c.lidos; })
+    .catch(e => { job.status = 'erro'; job.erro = limpo(e.message || e, 300); console.log('AGENDAMENTO importação de CT-es ERRO: ' + job.erro); })
+    .finally(() => { job.fim = Date.now(); });
+  return { id, total };
 }
 
 // Notas que a varredura precisa conferir no SSW (as operacionais que já conhecemos).
@@ -831,7 +871,16 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
     // importar uma faixa de CT-es / subcontratos do SSW (do número inicial ao final, com dígito)
     if (p === '/importar' && req.method === 'POST') {
       const b = await readJsonBodyLimited(req, 16 * 1024);
-      return sendJson(res, 200, { ok: true, ...(await importarFaixa(pool, cli, user, b, lerFaixaDoUsuario ? lerFaixaDoUsuario(user) : null)) });
+      await pagadorEscolhido(pool, cli, b);   // recusa antes de começar
+      return sendJson(res, 202, { ok: true, ...iniciarImportacao(pool, cli, user, b, lerFaixaDoUsuario ? lerFaixaDoUsuario(user) : null) });
+    }
+    // parceiros para o campo "Pagador" da importação
+    if (p === '/parceiros' && req.method === 'GET') return sendJson(res, 200, { ok: true, parceiros: await termosDe(pool, cli) });
+    m = p.match(/^\/importar\/([a-z0-9]+)$/);
+    if (m && req.method === 'GET') {
+      const j = IMPORTACOES.get(m[1]);
+      if (!j || j.cli !== String(cli || 0)) return sendJson(res, 404, { ok: false, error: 'Importação não encontrada.' });
+      return sendJson(res, 200, { ok: true, id: j.id, status: j.status, total: j.total, lidos: j.lidos, resultado: j.resultado, erro: j.erro });
     }
     // botão "Atualizar baixas": confere agora as baixas dos motoristas no app (a rotina roda de hora em hora)
     if (p === '/baixas' && req.method === 'POST') return sendJson(res, 200, { ok: true, ...(await baixasDosMotoristas(pool, { lerBaixas: lerBaixasDoUsuario ? lerBaixasDoUsuario(user) : null, ontem: true })) });
@@ -847,5 +896,5 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
   }
 }
 
-module.exports = { dvCtrc, faixaCtes, importarFaixa, baixasDosMotoristas, iniciarBaixasMotoristas, OPERACIONAIS, FINAIS, ROTULO, PARCEIROS_PADRAO, normNf, normCtrc, dataBr, termosParceiros, ehParceiro, ensureSchema, lerConfig, gravarConfig, gravarNota, aplicarSnapshot, alvosDaVarredura,
+module.exports = { dvCtrc, faixaCtes, importarFaixa, iniciarImportacao, baixasDosMotoristas, iniciarBaixasMotoristas, OPERACIONAIS, FINAIS, ROTULO, PARCEIROS_PADRAO, normNf, normCtrc, dataBr, termosParceiros, ehParceiro, ensureSchema, lerConfig, gravarConfig, gravarNota, aplicarSnapshot, alvosDaVarredura,
   sincronizar, iniciarVarreduraAutomatica, postJson, listar, indicadores, buscarNf, historicoNota, agendar, alterar, cancelar, handle };

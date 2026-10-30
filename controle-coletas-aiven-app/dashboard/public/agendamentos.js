@@ -65,15 +65,25 @@ async function atualizarBaixas(){
 // Importa uma faixa de CT-es / subcontratos do SSW: as notas entram em "Sem Agendamento" para agendar depois.
 async function importarFaixa(e){
   e.preventDefault();
-  const de=q('#agImpDe').value.trim(),ate=q('#agImpAte').value.trim()||de;
+  const de=q('#agImpDe').value.trim(),ate=q('#agImpAte').value.trim()||de,pagador=q('#agImpPag').value.trim();
   if(!de){msg('Informe o CT-e inicial (com o dígito).','err');q('#agImpDe').focus();return}
-  const b=q('#agImpBtn');b.disabled=true;msg('Lendo os CT-es no SSW, um por vez… pode levar alguns minutos.');
+  const b=q('#agImpBtn');b.disabled=true;
   try{
-    const j=await api('/api/painel/agendamentos/importar',{method:'POST',body:{de,ate}});
+    const ini=await api('/api/painel/agendamentos/importar',{method:'POST',body:{de,ate,pagador}});
+    msg('Lendo os CT-es no SSW, um por vez: 0 de '+ini.total+'…');
+    let st;
+    for(;;){
+      await new Promise(r=>setTimeout(r,3000));
+      st=await api('/api/painel/agendamentos/importar/'+ini.id);
+      if(st.status!=='rodando')break;
+      msg('Lendo os CT-es no SSW, um por vez: '+st.lidos+' de '+st.total+(st.resultado?' • '+st.resultado.novas+' importada(s) até agora':'')+'…');
+    }
+    if(st.status==='erro')throw new Error('Importação parou: '+st.erro+(st.resultado?' ('+st.resultado.novas+' nota(s) já importada(s))':''));
+    const j=st.resultado;
     const p=[j.novas+' nota(s) importada(s)'];
     if(j.ja_existiam)p.push(j.ja_existiam+' já estavam no agendamento');
     if(j.finalizados.length)p.push(j.finalizados.length+' já entregue(s)/devolvida(s): '+j.finalizados.slice(0,5).join(', '));
-    if(j.fora_parceiros.length)p.push(j.fora_parceiros.length+' de outros clientes (fora dos parceiros)');
+    if(j.fora_parceiros.length)p.push(j.fora_parceiros.length+' de outros clientes (fora dos parceiros'+(j.fora_nomes&&j.fora_nomes.length?': '+j.fora_nomes.slice(0,3).join('; '):'')+')');
     if(j.nao_encontrados.length)p.push(j.nao_encontrados.length+' não encontrado(s) no SSW: '+j.nao_encontrados.slice(0,5).join(', '));
     if(j.erros.length)p.push(j.erros.length+' com erro de leitura (tente de novo)');
     msg(p.join(' • ')+'.',j.novas||j.ja_existiam?'ok':'err');
@@ -323,6 +333,7 @@ function setup(){
   q('#agForm').onsubmit=salvar;
   q('#agLimpar').onclick=limparForm;
   q('#agSyncBtn').onclick=sincronizar;q('#agBaixasBtn').onclick=atualizarBaixas;q('#agImpForm').onsubmit=importarFaixa;
+  api('/api/painel/agendamentos/parceiros').then(j=>{q('#agImpParc').innerHTML=(j.parceiros||[]).map(t=>'<option value="'+esc(t)+'">').join('')}).catch(()=>{});
   q('#agLogBtn').onclick=logSync;
   q('#agCfgBtn').onclick=configurar;
   q('#agCards').onclick=e=>{const b=e.target.closest('[data-card]');if(b)clicarCard(b)};
