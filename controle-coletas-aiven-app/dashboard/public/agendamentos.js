@@ -65,11 +65,11 @@ async function atualizarBaixas(){
 // Importa uma faixa de CT-es / subcontratos do SSW: as notas entram em "Sem Agendamento" para agendar depois.
 async function importarFaixa(e){
   e.preventDefault();
-  const de=q('#agImpDe').value.trim(),ate=q('#agImpAte').value.trim()||de;
+  const de=q('#agImpDe').value.trim(),ate=q('#agImpAte').value.trim()||de,pagador=q('#agImpPag').value.trim();
   if(!de){msg('Informe o CT-e inicial (com o dígito).','err');q('#agImpDe').focus();return}
   const b=q('#agImpBtn');b.disabled=true;
   try{
-    const ini=await api('/api/painel/agendamentos/importar',{method:'POST',body:{de,ate}});
+    const ini=await api('/api/painel/agendamentos/importar',{method:'POST',body:{de,ate,pagador}});
     msg('Lendo os CT-es no SSW, um por vez: 0 de '+ini.total+'…');
     let st;
     for(;;){
@@ -333,6 +333,7 @@ function setup(){
   q('#agForm').onsubmit=salvar;
   q('#agLimpar').onclick=limparForm;
   q('#agSyncBtn').onclick=sincronizar;q('#agBaixasBtn').onclick=atualizarBaixas;q('#agImpForm').onsubmit=importarFaixa;
+  api('/api/painel/agendamentos/parceiros').then(j=>{q('#agImpParc').innerHTML=(j.parceiros||[]).map(t=>'<option value="'+esc(t)+'">').join('')}).catch(()=>{});
   q('#agLogBtn').onclick=logSync;
   q('#agCfgBtn').onclick=configurar;
   q('#agCards').onclick=e=>{const b=e.target.closest('[data-card]');if(b)clicarCard(b)};
