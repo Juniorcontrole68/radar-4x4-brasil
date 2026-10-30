@@ -62,6 +62,25 @@ async function atualizarBaixas(){
   catch(e){msg(e.message,'err')}
   b.disabled=false
 }
+// Importa uma faixa de CT-es / subcontratos do SSW: as notas entram em "Sem Agendamento" para agendar depois.
+async function importarFaixa(e){
+  e.preventDefault();
+  const de=q('#agImpDe').value.trim(),ate=q('#agImpAte').value.trim()||de;
+  if(!de){msg('Informe o CT-e inicial (com o dígito).','err');q('#agImpDe').focus();return}
+  const b=q('#agImpBtn');b.disabled=true;msg('Lendo os CT-es no SSW, um por vez… pode levar alguns minutos.');
+  try{
+    const j=await api('/api/painel/agendamentos/importar',{method:'POST',body:{de,ate}});
+    const p=[j.novas+' nota(s) importada(s)'];
+    if(j.ja_existiam)p.push(j.ja_existiam+' já estavam no agendamento');
+    if(j.finalizados.length)p.push(j.finalizados.length+' já entregue(s)/devolvida(s): '+j.finalizados.slice(0,5).join(', '));
+    if(j.fora_parceiros.length)p.push(j.fora_parceiros.length+' de outros clientes (fora dos parceiros)');
+    if(j.nao_encontrados.length)p.push(j.nao_encontrados.length+' não encontrado(s) no SSW: '+j.nao_encontrados.slice(0,5).join(', '));
+    if(j.erros.length)p.push(j.erros.length+' com erro de leitura (tente de novo)');
+    msg(p.join(' • ')+'.',j.novas||j.ja_existiam?'ok':'err');
+    aba='sem';card='';page=1;marcarAba();carregarLista();carregarPainel()
+  }catch(err){msg(err.message,'err')}
+  b.disabled=false
+}
 async function sincronizar(){
   const b=q('#agSyncBtn');b.disabled=true;
   try{await api('/api/painel/agendamentos/sincronizar',{method:'POST'});msg('Sincronização com o SSW iniciada. A tela continua liberada; as listas se atualizam ao terminar.','ok')}
@@ -229,7 +248,7 @@ async function historico(notaId){
   dialogo('<h3>Histórico</h3><div class="ag-hist">Carregando…</div>');
   try{
     const j=await api('/api/painel/agendamentos/historico/'+encodeURIComponent(notaId)),n=j.nota;
-    const T={agendado:'Agendado',reagendado:'Reagendado',observacao:'Observação alterada',cancelado:'Agendamento cancelado',entregue:'Entregue',produto:'Produto alterado',devolvida:'Devolvida (SSW)',status:'Situação no SSW'};
+    const T={agendado:'Agendado',reagendado:'Reagendado',observacao:'Observação alterada',cancelado:'Agendamento cancelado',entregue:'Entregue',produto:'Produto alterado',importada:'Importada do SSW',devolvida:'Devolvida (SSW)',status:'Situação no SSW'};
     q('#agDlg h3').textContent='Histórico • NF '+n.nf+(n.ctrc?' • CT-e '+n.ctrc:'');
     q('#agDlg .ag-hist').innerHTML='<div style="margin-bottom:6px">'+esc(n.remetente||'')+' → '+esc(n.destinatario||'')+' • '+esc([n.cidade,n.uf].filter(Boolean).join('/'))+' • '+kg(n.peso)+' kg • '+st(n.situacao)+(n.status_ssw?' <span class="muted">'+esc(n.status_ssw)+'</span>':'')+'</div>'+
       (n.endereco?'<div class="muted" style="margin-bottom:6px">Entrega: '+esc(n.endereco)+'</div>':'')+
@@ -303,7 +322,7 @@ function setup(){
   q('#agNf').addEventListener('input',()=>{if(atual)preencher(null)});
   q('#agForm').onsubmit=salvar;
   q('#agLimpar').onclick=limparForm;
-  q('#agSyncBtn').onclick=sincronizar;q('#agBaixasBtn').onclick=atualizarBaixas;
+  q('#agSyncBtn').onclick=sincronizar;q('#agBaixasBtn').onclick=atualizarBaixas;q('#agImpForm').onsubmit=importarFaixa;
   q('#agLogBtn').onclick=logSync;
   q('#agCfgBtn').onclick=configurar;
   q('#agCards').onclick=e=>{const b=e.target.closest('[data-card]');if(b)clicarCard(b)};

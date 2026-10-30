@@ -241,6 +241,30 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     n=(await nota('7202'))[0];
     check('  ...a conferência no SSW completa o CT-e com a série, a cidade e o nome cortado',n.situacao==='em_rota'&&n.ctrc==='AMR000886-0'&&n.cidade==='SOROCABA'&&n.destinatario==='PATRICIA BARBOSA DE SOUZA',n);
   }
+  console.log('Importar faixa de CT-es do SSW');
+  {
+    check('dígito do CT-e (módulo 11 do SSW)',['017002-0','017007-1','017016-0','017035-6','000885-1','000876-1'].every(x=>ag.dvCtrc(x.slice(0,6))===Number(x.slice(-1))));
+    check('faixa do inicial ao final, com o dígito de cada um',JSON.stringify(ag.faixaCtes({de:'AMR017002-0',ate:'017005-4'}))===JSON.stringify(['AMR017002-0','AMR017003-8','AMR017004-6','AMR017005-4']));
+    let erro='';try{ag.faixaCtes({de:'AMR017002-1',ate:'AMR017005-4'})}catch(e){erro=e.message}
+    check('  ...dígito errado é recusado e mostra o certo',/017002-0/.test(erro),erro);
+    erro='';try{ag.faixaCtes({de:'AMR017002-0',ate:'AMR019000-4'})}catch(e){erro=e.message}
+    check('  ...faixa grande demais é recusada',/no máximo/.test(erro),erro);
+    let pedido=null;
+    const lerFaixa=async o=>{pedido=o;return{ok:true,rows:[
+      {ctrc:'AMR017301-1',nf:'7301',remetente:'CONSTRUDECOR S.A - CUMBICA CD',pagador:'CONSTRUDECOR S.A',destinatario:'MARIA SOUZA',cidade:'CAMPINAS',uf:'SP',peso:12.5,volumes:2,situacao:'aberta'},
+      {ctrc:'AMR017302-9',nf:'7302',remetente:'FABRICA DELTA',pagador:'LANGBHEN TRANSPORTES',destinatario:'JOSE',cidade:'JUNDIAI',uf:'SP',situacao:'aberta'},
+      {ctrc:'AMR017303-7',nf:'7303',remetente:'CONSTRUDECOR S.A',situacao:'entregue'},
+      {ctrc:'AMR017304-5',nf:'7304',remetente:'NAVAS E CIA LTDA',pagador:'NAVAS E CIA LTDA',situacao:'aberta'},
+      {ctrc:'AMR017305-3',situacao:'nao_encontrado'}]}};
+    const r1=await ag.importarFaixa(pool,cli,{username:'admin_teste'},{de:'AMR017301-1',ate:'AMR017305-3'},lerFaixa);
+    check('importa a faixa: parceiros entram como pendentes sem agendamento',r1.novas===2&&pedido.ctes.length===5&&r1.finalizados.length===1&&r1.fora_parceiros.length===1&&r1.nao_encontrados.length===1,r1);
+    x=await api('GET','/api/painel/agendamentos/lista?aba=sem&nf=7301');
+    check('  ...a nota aparece em Sem Agendamento com cidade e destinatário',x.j.rows[0]?.cidade==='CAMPINAS'&&x.j.rows[0]?.destinatario==='MARIA SOUZA'&&x.j.rows[0]?.situacao==='pendente',x.j.rows);
+    const r2=await ag.importarFaixa(pool,cli,{username:'admin_teste'},{de:'AMR017301-1',ate:'AMR017305-3'},lerFaixa);
+    check('  ...importar de novo não duplica',r2.novas===0&&r2.ja_existiam===2,r2);
+    check('  ...rota recusa dígito errado (400)',(await api('POST','/api/painel/agendamentos/importar',{de:'AMR017301-2',ate:'AMR017305-3'})).status===400);
+    check('  ...sem SSW neste servidor responde 503',(await api('POST','/api/painel/agendamentos/importar',{de:'AMR017301-1',ate:'AMR017305-3'})).status===503);
+  }
   check('volta sem filtro de parceiros para o resto do teste',(await api('PUT','/api/painel/agendamentos/config',{parceiros:''})).status===200);
 
   console.log('Configuração, coletas e exportação');

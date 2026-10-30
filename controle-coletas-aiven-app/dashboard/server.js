@@ -143,7 +143,7 @@ async function dashboardUserFromReq(req){
   // a situação das sobras em galpão (conferência de hora em hora, das 05:00 às 20:00), a varredura e os produtos do agendamento.
   const ik=String(req.headers['x-internal-key']||'');
   if(INTERNAL_KEY&&ik.length===INTERNAL_KEY.length&&crypto.timingSafeEqual(Buffer.from(ik),Buffer.from(INTERNAL_KEY))
-     &&(String(req.url||'').startsWith('/api/tracking/planned-route')||String(req.url||'').startsWith('/api/ssw/despesas475?')||String(req.url||'').startsWith('/api/programacao-entregas/status-nfs?')||['/api/agendamentos/ssw-snapshot','/api/agendamentos/baixas-ssw'].includes(String(req.url||'').split('?')[0])))
+     &&(String(req.url||'').startsWith('/api/tracking/planned-route')||String(req.url||'').startsWith('/api/ssw/despesas475?')||String(req.url||'').startsWith('/api/programacao-entregas/status-nfs?')||['/api/agendamentos/ssw-snapshot','/api/agendamentos/baixas-ssw','/api/agendamentos/ctes-faixa'].includes(String(req.url||'').split('?')[0])))
     return{token:'',id:0,username:'servidor',is_admin:true,permissions:['*'],internal:true};
   const token=dashboardRequestToken(req);
   if(!token){const e=new Error('Não autenticado.');e.status=401;throw e}
@@ -6433,6 +6433,29 @@ if(u.pathname==='/api/agendamentos/nf'&&req.method==='GET'){try{
 // Varredura do agendamento (só leitura no SSW): pendências da opção 38 (com peso e mercadoria do BI2) e, para as
 // notas que o servidor principal já conhece e saíram das pendências, a situação do CT-e na opção 101
 // (entregue, devolvida ou ainda em rota). Chamado pelo servidor principal: varredura das 02h00 e botão manual.
+// Importação de uma faixa de CT-es para o agendamento: lê cada um na opção 101 (só consulta), um por vez na fila do SSW.
+if(u.pathname==='/api/agendamentos/ctes-faixa'&&req.method==='POST'){try{
+  if(!dashboardHasAny(authUser,['agendamentos','dashboard']))return dashboardDeny(res);
+  const body=await readJsonLimited(req,64*1024);
+  const ctes=(Array.isArray(body.ctes)?body.ctes:[]).map(x=>String(x||'').toUpperCase().trim()).filter(x=>/^[A-Z]{3}\d{1,9}-\d$/.test(x)).slice(0,200);
+  const rows=[];
+  for(const c of ctes){
+    try{
+      const lido=await sswCteEnqueue('agf:'+c,1,async()=>{try{return await sswCteLer(await sswCteSession(),c)}catch(e){SSW_CTE_SESSION=null;throw e}});
+      const r=lido?.resumo||{},x=lido?.cte||{},dest=x.destinatario||{},ent=lido?.entrega||{};
+      if(!r.ctrc&&!r.nf&&!x.chave){rows.push({ctrc:c,situacao:'nao_encontrado'});continue}
+      const nfChave=(x.nfChaves||[])[0]||'',sit=String(r.situacao||'').trim(),b=agendamentoBloqueio([sit]);
+      rows.push({ctrc:r.ctrc||c,nf:r.nf||(nfChave?String(Number(nfChave.slice(25,34))):''),
+        remetente:x.remetente?.nome||r.remetente||'',pagador:x.tomador||'',destinatario:dest.nome||r.destinatario||'',
+        cidade:dest.cidade||x.cidadeFim||ent.cidade||'',uf:dest.uf||x.ufFim||ent.uf||'',endereco:[dest.logradouro,dest.numero].filter(Boolean).join(', '),
+        peso:Number(r.peso||0),volumes:Number(r.volumes||0),previsao:r.previsao||'',emissao:x.emissao||'',status:sit.slice(0,200),
+        situacao:/devolvida/.test(b)?'devolvida':b?'entregue':'aberta'})
+    }catch(e){rows.push({ctrc:c,situacao:'erro',erro:String(e.message||e).slice(0,200)})}
+  }
+  console.log('AGENDAMENTO importação de CT-es: '+JSON.stringify({pedidos:ctes.length,lidos:rows.filter(x=>x.nf).length}));
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:true,rows}))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 // Baixas dos motoristas (ocorrência 01 do rastreio do SSW) para o agendamento: só as entregues do dia (e da véspera, se pedido).
 if(u.pathname==='/api/agendamentos/baixas-ssw'&&req.method==='POST'){try{
   if(!dashboardHasAny(authUser,['agendamentos','dashboard']))return dashboardDeny(res);

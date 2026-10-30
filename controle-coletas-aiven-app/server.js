@@ -1107,6 +1107,9 @@ function agendamentoLerSswInterno(alvos){
 function agendamentoLerBaixasInterno(opcoes){
   return agendamento.postJson(DASH_INTERNAL_PORT,'/api/agendamentos/baixas-ssw',{'X-Internal-Key':INTERNAL_KEY},opcoes||{});
 }
+// Importação de uma faixa de CT-es: o painel lê cada CT-e na opção 101 (fora da demonstração e dos testes).
+const agendamentoLerFaixaDoUsuario=user=>(TEST_MODE||movitDemo.ATIVA||movitDemo.clienteDemo(user))?null:
+  (corpo=>agendamento.postJson(DASH_INTERNAL_PORT,'/api/agendamentos/ctes-faixa',{'X-Internal-Key':INTERNAL_KEY},corpo));
 // Na demonstração não há SSW da Construlog: só os comprovantes do app.
 const agendamentoLerBaixasDoUsuario=user=>(TEST_MODE||movitDemo.ATIVA||movitDemo.clienteDemo(user))?null:agendamentoLerBaixasInterno;
 function agendamentoLerSswDoUsuario(user,req){
@@ -3338,7 +3341,7 @@ async function start() {
       // Lançamentos da operação (substitui a aba de lançamentos da planilha): ver lancamentos.js
       if (await lancamentos.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,sessionOrInternal,dashboardSession,dashboardHas,spToday})) return;
       // Agendamento de entregas (notas pendentes no SSW, com e sem agendamento): ver agendamento.js
-      if (await agendamento.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,lerSswDoUsuario:agendamentoLerSswDoUsuario,lerBaixasDoUsuario:agendamentoLerBaixasDoUsuario})) return;
+      if (await agendamento.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,lerSswDoUsuario:agendamentoLerSswDoUsuario,lerBaixasDoUsuario:agendamentoLerBaixasDoUsuario,lerFaixaDoUsuario:agendamentoLerFaixaDoUsuario})) return;
       // Despesas (DRE) do Financeiro, com os holerites da conta Salários: ver dre.js
       if (await dre.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
       // Roteirizador de Cargas (substitui o Roteirizador Teste e o Roteirizador V02): ver roteirizador-cargas.js

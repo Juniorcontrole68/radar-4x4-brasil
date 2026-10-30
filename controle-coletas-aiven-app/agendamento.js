@@ -396,6 +396,60 @@ function iniciarBaixasMotoristas({ pool, lerBaixas }) {
   return setInterval(tick, 60 * 1000);
 }
 
+// Dígito do CT-e no SSW: módulo 11, pesos 2 a 9 a partir da direita; resto 0 -> 1, resto 1 -> 0.
+function dvCtrc(numero) {
+  const ds = String(numero || '').replace(/\D/g, '').split('').reverse();
+  const r = ds.reduce((s, d, i) => s + Number(d) * (2 + (i % 8)), 0) % 11;
+  return r === 0 ? 1 : r === 1 ? 0 : 11 - r;
+}
+// "AMR017002-0" ou "017002-0" (com a série à parte) -> {serie, numero}; confere o dígito.
+function lerNumeroCte(v, serie) {
+  const m = String(v || '').toUpperCase().replace(/\s+/g, '').match(/^([A-Z]{3})?0*(\d{1,9})-?(\d)$/);
+  if (!m) return { erro: 'Informe o CT-e com o dígito, ex.: AMR017002-0.' };
+  const s = m[1] || String(serie || 'AMR').toUpperCase().trim();
+  if (!/^[A-Z]{3}$/.test(s)) return { erro: 'Série do CT-e inválida (3 letras, ex.: AMR).' };
+  if (dvCtrc(m[2]) !== Number(m[3])) return { erro: 'Dígito errado em ' + v + ': o certo é ' + s + m[2].padStart(6, '0') + '-' + dvCtrc(m[2]) + '.' };
+  return { serie: s, numero: Number(m[2]) };
+}
+const MAX_FAIXA = 200;
+// Lista dos CT-es de uma faixa (do inicial ao final, os dois com dígito).
+function faixaCtes(b) {
+  const a = lerNumeroCte(b.de, b.serie), z = lerNumeroCte(b.ate || b.de, b.serie);
+  const erro = a.erro || z.erro || (a.serie !== z.serie ? 'O CT-e inicial e o final precisam ser da mesma série.' : '') ||
+    (z.numero < a.numero ? 'O CT-e final é menor que o inicial.' : '') ||
+    (z.numero - a.numero + 1 > MAX_FAIXA ? 'Faixa grande demais: no máximo ' + MAX_FAIXA + ' CT-es por vez.' : '');
+  if (erro) { const e = new Error(erro); e.status = 400; throw e; }
+  const out = [];
+  for (let n = a.numero; n <= z.numero; n++) out.push(a.serie + String(n).padStart(6, '0') + '-' + dvCtrc(n));
+  return out;
+}
+// Importa uma faixa de CT-es (ou subcontratos) do SSW para o agendamento: entram como pendentes, sem agendamento.
+// lerFaixa({ctes}) devolve {rows:[{ctrc,nf,remetente,pagador,destinatario,cidade,uf,peso,volumes,previsao,emissao,status,situacao}]}.
+async function importarFaixa(pool, cli, user, b, lerFaixa) {
+  const ctes = faixaCtes(b);
+  if (!lerFaixa) { const e = new Error('A leitura do SSW não está disponível neste servidor.'); e.status = 503; throw e; }
+  const r = await lerFaixa({ ctes });
+  if (!r || r.ok === false) throw new Error((r && r.error) || 'O SSW não respondeu.');
+  const c = { pedidos: ctes.length, novas: 0, ja_existiam: 0, nao_encontrados: [], finalizados: [], fora_parceiros: [], erros: [] };
+  const termos = await termosDe(pool, cli);
+  for (const x of r.rows || []) {
+    if (x.situacao === 'nao_encontrado' || !normNf(x.nf)) { c.nao_encontrados.push(x.ctrc); continue; }
+    if (x.situacao === 'erro') { c.erros.push(x.ctrc); continue; }
+    if (x.situacao === 'entregue' || x.situacao === 'devolvida') { c.finalizados.push(x.ctrc + ' (' + ROTULO[x.situacao].toLowerCase() + ')'); continue; }
+    if (!ehParceiro(termos, x.remetente, x.pagador)) { c.fora_parceiros.push(x.ctrc); continue; }
+    const db = await pool.connect();
+    try {
+      await db.query('BEGIN');
+      const g = await gravarNota(db, cli, x, { origem: 'importacao', pendente: false, situacaoNova: 'pendente' });
+      if (g && g.nova) { c.novas++; await evento(db, cli, g.id, null, 'importada', null, ROTULO.pendente, 'Importada do SSW pela faixa de CT-es (' + x.ctrc + ')', limpo(user.username, 80)); }
+      else if (g) c.ja_existiam++;
+      await db.query('COMMIT');
+    } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
+  }
+  console.log('AGENDAMENTO importação de CT-es: ' + JSON.stringify({ ...c, nao_encontrados: c.nao_encontrados.length, finalizados: c.finalizados.length, fora_parceiros: c.fora_parceiros.length, erros: c.erros.length }));
+  return c;
+}
+
 // Notas que a varredura precisa conferir no SSW (as operacionais que já conhecemos).
 async function alvosDaVarredura(db, cli) {
   const params = [cli, OPERACIONAIS], f = parceiroSql(await termosDe(db, cli), params);
@@ -717,7 +771,7 @@ async function handle(req, res, u, ctx) {
   await atender(req, res, u, ctx);
   return true;
 }
-async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashboardSession, dashboardHas, lerSswDoUsuario, lerBaixasDoUsuario }) {
+async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashboardSession, dashboardHas, lerSswDoUsuario, lerBaixasDoUsuario, lerFaixaDoUsuario }) {
   const p = u.pathname.slice('/api/painel/agendamentos'.length) || '/';
   try {
     const user = await dashboardSession(req, false);
@@ -774,6 +828,11 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
         return sendJson(res, 202, { ok: true, id: String(s.id), rodando: true });
       } catch (e) { if (e.emAndamento) return sendJson(res, 409, { ok: false, error: e.message, rodando: true }); throw e; }
     }
+    // importar uma faixa de CT-es / subcontratos do SSW (do número inicial ao final, com dígito)
+    if (p === '/importar' && req.method === 'POST') {
+      const b = await readJsonBodyLimited(req, 16 * 1024);
+      return sendJson(res, 200, { ok: true, ...(await importarFaixa(pool, cli, user, b, lerFaixaDoUsuario ? lerFaixaDoUsuario(user) : null)) });
+    }
     // botão "Atualizar baixas": confere agora as baixas dos motoristas no app (a rotina roda de hora em hora)
     if (p === '/baixas' && req.method === 'POST') return sendJson(res, 200, { ok: true, ...(await baixasDosMotoristas(pool, { lerBaixas: lerBaixasDoUsuario ? lerBaixasDoUsuario(user) : null, ontem: true })) });
     if (p === '/config' && req.method === 'GET') return sendJson(res, 200, { ok: true, config: await lerConfig(pool, cli) });
@@ -788,5 +847,5 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
   }
 }
 
-module.exports = { baixasDosMotoristas, iniciarBaixasMotoristas, OPERACIONAIS, FINAIS, ROTULO, PARCEIROS_PADRAO, normNf, normCtrc, dataBr, termosParceiros, ehParceiro, ensureSchema, lerConfig, gravarConfig, gravarNota, aplicarSnapshot, alvosDaVarredura,
+module.exports = { dvCtrc, faixaCtes, importarFaixa, baixasDosMotoristas, iniciarBaixasMotoristas, OPERACIONAIS, FINAIS, ROTULO, PARCEIROS_PADRAO, normNf, normCtrc, dataBr, termosParceiros, ehParceiro, ensureSchema, lerConfig, gravarConfig, gravarNota, aplicarSnapshot, alvosDaVarredura,
   sincronizar, iniciarVarreduraAutomatica, postJson, listar, indicadores, buscarNf, historicoNota, agendar, alterar, cancelar, handle };
