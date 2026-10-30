@@ -67,9 +67,19 @@ async function importarFaixa(e){
   e.preventDefault();
   const de=q('#agImpDe').value.trim(),ate=q('#agImpAte').value.trim()||de;
   if(!de){msg('Informe o CT-e inicial (com o dígito).','err');q('#agImpDe').focus();return}
-  const b=q('#agImpBtn');b.disabled=true;msg('Lendo os CT-es no SSW, um por vez… pode levar alguns minutos.');
+  const b=q('#agImpBtn');b.disabled=true;
   try{
-    const j=await api('/api/painel/agendamentos/importar',{method:'POST',body:{de,ate}});
+    const ini=await api('/api/painel/agendamentos/importar',{method:'POST',body:{de,ate}});
+    msg('Lendo os CT-es no SSW, um por vez: 0 de '+ini.total+'…');
+    let st;
+    for(;;){
+      await new Promise(r=>setTimeout(r,3000));
+      st=await api('/api/painel/agendamentos/importar/'+ini.id);
+      if(st.status!=='rodando')break;
+      msg('Lendo os CT-es no SSW, um por vez: '+st.lidos+' de '+st.total+(st.resultado?' • '+st.resultado.novas+' importada(s) até agora':'')+'…');
+    }
+    if(st.status==='erro')throw new Error('Importação parou: '+st.erro+(st.resultado?' ('+st.resultado.novas+' nota(s) já importada(s))':''));
+    const j=st.resultado;
     const p=[j.novas+' nota(s) importada(s)'];
     if(j.ja_existiam)p.push(j.ja_existiam+' já estavam no agendamento');
     if(j.finalizados.length)p.push(j.finalizados.length+' já entregue(s)/devolvida(s): '+j.finalizados.slice(0,5).join(', '));

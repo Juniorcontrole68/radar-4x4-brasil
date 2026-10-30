@@ -263,6 +263,9 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     const r2=await ag.importarFaixa(pool,cli,{username:'admin_teste'},{de:'AMR017301-1',ate:'AMR017305-3'},lerFaixa);
     check('  ...importar de novo não duplica',r2.novas===0&&r2.ja_existiam===2,r2);
     check('  ...rota recusa dígito errado (400)',(await api('POST','/api/painel/agendamentos/importar',{de:'AMR017301-2',ate:'AMR017305-3'})).status===400);
+    const lento=async o=>{await sleep(50);return lerFaixa(o)};
+    const ini=ag.iniciarImportacao(pool,cli,{username:'admin_teste'},{de:'AMR017301-1',ate:'AMR017305-3'},lento);
+    check('  ...a importação roda em segundo plano e devolve o total',ini.total===5&&!!ini.id,ini);
     check('  ...sem SSW neste servidor responde 503',(await api('POST','/api/painel/agendamentos/importar',{de:'AMR017301-1',ate:'AMR017305-3'})).status===503);
   }
   check('volta sem filtro de parceiros para o resto do teste',(await api('PUT','/api/painel/agendamentos/config',{parceiros:''})).status===200);

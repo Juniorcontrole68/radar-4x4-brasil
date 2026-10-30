@@ -425,14 +425,24 @@ function faixaCtes(b) {
 }
 // Importa uma faixa de CT-es (ou subcontratos) do SSW para o agendamento: entram como pendentes, sem agendamento.
 // lerFaixa({ctes}) devolve {rows:[{ctrc,nf,remetente,pagador,destinatario,cidade,uf,peso,volumes,previsao,emissao,status,situacao}]}.
-async function importarFaixa(pool, cli, user, b, lerFaixa) {
+async function importarFaixa(pool, cli, user, b, lerFaixa, progresso = () => {}) {
   const ctes = faixaCtes(b);
   if (!lerFaixa) { const e = new Error('A leitura do SSW não está disponível neste servidor.'); e.status = 503; throw e; }
-  const r = await lerFaixa({ ctes });
-  if (!r || r.ok === false) throw new Error((r && r.error) || 'O SSW não respondeu.');
-  const c = { pedidos: ctes.length, novas: 0, ja_existiam: 0, nao_encontrados: [], finalizados: [], fora_parceiros: [], erros: [] };
+  const c = { pedidos: ctes.length, lidos: 0, novas: 0, ja_existiam: 0, nao_encontrados: [], finalizados: [], fora_parceiros: [], erros: [] };
   const termos = await termosDe(pool, cli);
-  for (const x of r.rows || []) {
+  // em blocos de 10: o que já foi lido fica gravado mesmo se o SSW cair no meio
+  for (let i = 0; i < ctes.length; i += 10) {
+    const r = await lerFaixa({ ctes: ctes.slice(i, i + 10) });
+    if (!r || r.ok === false) throw new Error((r && r.error) || 'O SSW não respondeu.');
+    await gravarFaixa(pool, cli, user, r.rows || [], termos, c);
+    c.lidos = Math.min(ctes.length, i + 10);
+    progresso(c);
+  }
+  console.log('AGENDAMENTO importação de CT-es: ' + JSON.stringify({ ...c, nao_encontrados: c.nao_encontrados.length, finalizados: c.finalizados.length, fora_parceiros: c.fora_parceiros.length, erros: c.erros.length }));
+  return c;
+}
+async function gravarFaixa(pool, cli, user, rows, termos, c) {
+  for (const x of rows) {
     if (x.situacao === 'nao_encontrado' || !normNf(x.nf)) { c.nao_encontrados.push(x.ctrc); continue; }
     if (x.situacao === 'erro') { c.erros.push(x.ctrc); continue; }
     if (x.situacao === 'entregue' || x.situacao === 'devolvida') { c.finalizados.push(x.ctrc + ' (' + ROTULO[x.situacao].toLowerCase() + ')'); continue; }
@@ -446,8 +456,21 @@ async function importarFaixa(pool, cli, user, b, lerFaixa) {
       await db.query('COMMIT');
     } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
   }
-  console.log('AGENDAMENTO importação de CT-es: ' + JSON.stringify({ ...c, nao_encontrados: c.nao_encontrados.length, finalizados: c.finalizados.length, fora_parceiros: c.fora_parceiros.length, erros: c.erros.length }));
-  return c;
+}
+// Importações em andamento (a leitura leva alguns segundos por CT-e): a tela acompanha pelo id.
+const IMPORTACOES = new Map();
+function iniciarImportacao(pool, cli, user, b, lerFaixa) {
+  const total = faixaCtes(b).length;   // valida antes de começar
+  if (!lerFaixa) { const e = new Error('A leitura do SSW não está disponível neste servidor.'); e.status = 503; throw e; }
+  for (const [k, v] of IMPORTACOES) if (v.fim && Date.now() - v.fim > 3600 * 1000) IMPORTACOES.delete(k);
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const job = { id, cli: String(cli || 0), status: 'rodando', total, lidos: 0, resultado: null, erro: null, fim: 0 };
+  IMPORTACOES.set(id, job);
+  importarFaixa(pool, cli, user, b, lerFaixa, c => { job.lidos = c.lidos; job.resultado = c; })
+    .then(c => { job.status = 'ok'; job.resultado = c; job.lidos = c.lidos; })
+    .catch(e => { job.status = 'erro'; job.erro = limpo(e.message || e, 300); console.log('AGENDAMENTO importação de CT-es ERRO: ' + job.erro); })
+    .finally(() => { job.fim = Date.now(); });
+  return { id, total };
 }
 
 // Notas que a varredura precisa conferir no SSW (as operacionais que já conhecemos).
@@ -831,7 +854,13 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
     // importar uma faixa de CT-es / subcontratos do SSW (do número inicial ao final, com dígito)
     if (p === '/importar' && req.method === 'POST') {
       const b = await readJsonBodyLimited(req, 16 * 1024);
-      return sendJson(res, 200, { ok: true, ...(await importarFaixa(pool, cli, user, b, lerFaixaDoUsuario ? lerFaixaDoUsuario(user) : null)) });
+      return sendJson(res, 202, { ok: true, ...iniciarImportacao(pool, cli, user, b, lerFaixaDoUsuario ? lerFaixaDoUsuario(user) : null) });
+    }
+    m = p.match(/^\/importar\/([a-z0-9]+)$/);
+    if (m && req.method === 'GET') {
+      const j = IMPORTACOES.get(m[1]);
+      if (!j || j.cli !== String(cli || 0)) return sendJson(res, 404, { ok: false, error: 'Importação não encontrada.' });
+      return sendJson(res, 200, { ok: true, id: j.id, status: j.status, total: j.total, lidos: j.lidos, resultado: j.resultado, erro: j.erro });
     }
     // botão "Atualizar baixas": confere agora as baixas dos motoristas no app (a rotina roda de hora em hora)
     if (p === '/baixas' && req.method === 'POST') return sendJson(res, 200, { ok: true, ...(await baixasDosMotoristas(pool, { lerBaixas: lerBaixasDoUsuario ? lerBaixasDoUsuario(user) : null, ontem: true })) });
@@ -847,5 +876,5 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
   }
 }
 
-module.exports = { dvCtrc, faixaCtes, importarFaixa, baixasDosMotoristas, iniciarBaixasMotoristas, OPERACIONAIS, FINAIS, ROTULO, PARCEIROS_PADRAO, normNf, normCtrc, dataBr, termosParceiros, ehParceiro, ensureSchema, lerConfig, gravarConfig, gravarNota, aplicarSnapshot, alvosDaVarredura,
+module.exports = { dvCtrc, faixaCtes, importarFaixa, iniciarImportacao, baixasDosMotoristas, iniciarBaixasMotoristas, OPERACIONAIS, FINAIS, ROTULO, PARCEIROS_PADRAO, normNf, normCtrc, dataBr, termosParceiros, ehParceiro, ensureSchema, lerConfig, gravarConfig, gravarNota, aplicarSnapshot, alvosDaVarredura,
   sincronizar, iniciarVarreduraAutomatica, postJson, listar, indicadores, buscarNf, historicoNota, agendar, alterar, cancelar, handle };
