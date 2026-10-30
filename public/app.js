@@ -4444,7 +4444,7 @@ async function agtBuscar(){
     agtVal('#agtF_Volumes',Number(j.row.volumes||0).toLocaleString('pt-BR',{maximumFractionDigits:0}));agtVal('#agtF_Previsao',j.row.previsao_ssw);
     if($('#agtF_Agendado'))$('#agtF_Agendado').value='nao';if($('#agtF_Data')){$('#agtF_Data').value='';$('#agtF_Data').disabled=true}
     if($('#agtForm'))$('#agtForm').style.display='block';
-    if(msg)msg.textContent='✓ Dados preenchidos pelo SSW. O operador precisa informar apenas se houve agendamento e a data.';
+    if(msg)msg.textContent='✓ Dados preenchidos pelo SSW. Complete os produtos se quiser e informe se houve agendamento.';
   }catch(e){
     AGT_CURRENT=null;if($('#agtForm'))$('#agtForm').style.display='none';if(msg)msg.textContent='Erro: '+e.message
   }finally{if(btn){btn.disabled=false;btn.textContent='Buscar no SSW'}}
@@ -4455,11 +4455,12 @@ async function agtSalvar(e){
   if(agendado&&!data){if(msg)msg.textContent='Informe a data do agendamento.';return}
   if(btn){btn.disabled=true;btn.textContent='Salvando…'}
   try{
-    const body={...AGT_CURRENT,agendado,data_agendamento:agendado?data:null};
+    const produtos=String($('#agtF_Mercadoria')?.value||'').trim();
+    const body={...AGT_CURRENT,mercadoria:produtos,produtos,agendado,data_agendamento:agendado?data:null};
     const r=await fetch('/api/agendamento-teste',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Não foi possível salvar.');
-    if(msg)msg.textContent='✓ Registro salvo no ambiente de teste.';
+    AGT_CURRENT.mercadoria=produtos;if(msg)msg.textContent='✓ Registro salvo'+(agendado?'.':' (sem agendamento, só com as informações complementares).');
     await agtLista();
   }catch(e){if(msg)msg.textContent='Erro ao salvar: '+e.message}
   finally{if(btn){btn.disabled=false;btn.textContent='Salvar teste'}}
@@ -4470,8 +4471,8 @@ async function agtLista(){
     const r=await fetch('/api/agendamento-teste?limit=100&t='+Date.now(),{cache:'no-store'}),j=await r.json().catch(()=>({}));
     if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao carregar.');
     const rows=j.rows||[];
-    const body=rows.length?rows.map(x=>'<tr><td><b>'+safe(x.nf||'')+'</b></td><td>'+safe(x.cliente||'')+'</td><td>'+safe(x.cidade||'')+'</td><td>'+safe(x.dia_rota||'')+'</td><td>'+safe(x.status_ssw||'')+'</td><td>'+programFmtNumber(Number(x.peso||0),0)+' kg</td><td>'+(x.agendado?'SIM':'NÃO')+'</td><td>'+safe(x.data_agendamento?String(x.data_agendamento).slice(0,10).split('-').reverse().join('/'):'—')+'</td></tr>').join(''):'<tr><td colspan="8" class="muted">Nenhum registro de teste salvo.</td></tr>';
-    table.innerHTML='<thead><tr><th>NF</th><th>Cliente</th><th>Cidade</th><th>Dia rota</th><th>Status SSW</th><th>Peso</th><th>Agendado</th><th>Data</th></tr></thead><tbody>'+body+'</tbody>'
+    const body=rows.length?rows.map(x=>'<tr><td><b>'+safe(x.nf||'')+'</b></td><td>'+safe(x.cliente||'')+'</td><td>'+safe(x.cidade||'')+'</td><td>'+safe(x.dia_rota||'')+'</td><td>'+safe(x.status_ssw||'')+'</td><td>'+programFmtNumber(Number(x.peso||0),0)+' kg</td><td>'+safe(x.produtos||x.mercadoria||'—')+'</td><td>'+(x.agendado?'SIM':'NÃO')+'</td><td>'+safe(x.data_agendamento?String(x.data_agendamento).slice(0,10).split('-').reverse().join('/'):'—')+'</td></tr>').join(''):'<tr><td colspan="9" class="muted">Nenhum registro de teste salvo.</td></tr>';
+    table.innerHTML='<thead><tr><th>NF</th><th>Cliente</th><th>Cidade</th><th>Dia rota</th><th>Status SSW</th><th>Peso</th><th>Produtos</th><th>Agendado</th><th>Data</th></tr></thead><tbody>'+body+'</tbody>'
   }catch(e){table.innerHTML='<tbody><tr><td class="muted">Erro: '+safe(e.message)+'</td></tr></tbody>'}
 }
 function setupAgendamentoTeste(){
