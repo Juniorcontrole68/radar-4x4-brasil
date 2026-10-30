@@ -112,8 +112,17 @@ function parseCteXml(xml){
     valorPrestacao:Number(xmlValue(xmlBlock(xml,'vPrest'),'vTPrest'))||0,valorCarga:Number(xmlValue(xmlBlock(xml,'infCarga'),'vCarga'))||0,
     produtoPredominante:xmlValue(xmlBlock(xml,'infCarga'),'proPred'),
     nfChaves:[...xml.matchAll(/<(?:\w+:)?infNFe\b[^>]*>\s*<(?:\w+:)?chave>(\d{44})<\//gi)].map(m=>m[1]),
-    observacoes:obs
+    observacoes:obs,
+    tomador:cteTomador(xml,ide)
   }
+}
+// Quem paga o frete: toma3 aponta uma das partes (0 rem, 1 exped, 2 receb, 3 dest); toma4 traz o nome.
+function cteTomador(xml,ide){
+  const t4=xmlBlock(ide,'toma4');
+  if(t4)return xmlValue(t4.replace(xmlBlock(t4,'enderToma'),''),'xNome');
+  const t=xmlValue(xmlBlock(ide,'toma3')||xmlBlock(ide,'toma0'),'toma');
+  const parte={'0':['rem','enderReme'],'1':['exped','enderExped'],'2':['receb','enderReceb'],'3':['dest','enderDest']}[t];
+  return parte?(xmlParty(xml,parte[0],parte[1])||{}).nome||'':''
 }
 
 // ---------------------------------------------------------------- tela da opção 101
