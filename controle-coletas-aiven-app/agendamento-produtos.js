@@ -53,6 +53,11 @@ function formatarFone(v) {
   return d;
 }
 
+// Até dois telefones, formatados: "(19) 99888-7766 / (19) 3333-4444"
+function fonesTexto(lista) {
+  return [...new Set((lista || []).map(formatarFone).filter(x => so(x).length >= 8))].slice(0, 2).join(' / ');
+}
+
 // Lista de itens -> texto da coluna Produto (até 600 caracteres; o que não couber vira "+N itens").
 function formatar(itens) {
   const lista = (itens || []).map(x => limpo(x, 200)).filter(Boolean);
@@ -102,7 +107,7 @@ async function buscarProdutos({ nf, ctrc }, lerSsw) {
   const chave = chaveDaNf(base.chaves, nf);
   const s = await itensDaSefaz(chave);
   // telefone do destinatário: o do CT-e; na falta, o da NF-e
-  const telefone = formatarFone(so(base.fone) || s.fone || '');
+  const telefone = fonesTexto(base.fones && base.fones.length ? base.fones : [base.fone || s.fone]);
   if (s.itens.length) return { produto: formatar(s.itens), fonte: 'nfe', chave, ctrc: base.ctrc || ctrc || '', itens: s.itens, telefone };
   if (s.motivo) motivos.push(s.motivo);
   const r = await lerSsw({ nf, ctrc: base.ctrc || ctrc, relacao: true });
@@ -113,7 +118,7 @@ async function buscarProdutos({ nf, ctrc }, lerSsw) {
 // Só o telefone (nota que já tem produto): lê o CT-e, sem SEFAZ nem relação de produtos.
 async function buscarTelefone({ nf, ctrc }, lerSsw) {
   const base = await lerSsw({ nf, ctrc, relacao: false });
-  return formatarFone(base.fone || '');
+  return fonesTexto(base.fones && base.fones.length ? base.fones : [base.fone]);
 }
 
 // Grava na nota (nunca por cima do que o operador digitou). Sem resultado, só marca a tentativa.
@@ -174,5 +179,5 @@ function iniciarProdutos({ pool, lerSsw, situacoes, clientes }) {
   return setInterval(tick, 2 * 60 * 1000);
 }
 
-module.exports = { FONTES_AUTO, FONTES_VISIVEIS, ROTULO_FONTE, itensDaNfe, foneDaNfe, formatarFone, formatar, chaveDaNf, buscarProdutos, buscarTelefone, gravar, completarPendentes, iniciarProdutos,
+module.exports = { FONTES_AUTO, FONTES_VISIVEIS, ROTULO_FONTE, itensDaNfe, foneDaNfe, formatarFone, fonesTexto, formatar, chaveDaNf, buscarProdutos, buscarTelefone, gravar, completarPendentes, iniciarProdutos,
   _reset() { SEFAZ_PAUSA_ATE = 0; SEFAZ_RECUSADA.clear(); } };

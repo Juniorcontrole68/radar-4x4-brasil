@@ -160,6 +160,14 @@ function parseMapaCall(call){
 }
 // A tela tem duas colunas lado a lado (Expedidor | Entrega), então no texto corrido cada
 // rótulo aparece duas vezes: a segunda ocorrência é a da coluna "Entrega".
+// Telefones da coluna da direita (destinatário / entrega) num bloco de duas colunas da tela 101:
+// "Telefone: <esq> Celular: <esq> Telefone: <dir> Celular: <dir>". Devolve só dígitos.
+const RE_FONE_TELA=/(Telefone|Celular|Fone)\s*:\s*((?:\(?\d{2}\)?\s*)?\d{4,5}[-\s]?\d{4})?/gi;
+function fonesDaDireita(seg){
+  const tel=[],cel=[];
+  for(const m of String(seg||'').matchAll(RE_FONE_TELA))(/^cel/i.test(m[1])?cel:tel).push((m[2]||'').replace(/\D/g,''));
+  return[cel[1]||'',tel[1]||''].filter(Boolean)
+}
 function parseTela101(html){
   html=String(html||'');
   const mapas={};
@@ -184,6 +192,8 @@ function parseTela101(html){
       const nm=seg.match(/Nome:\s*.*?\s*Nome:\s*(.*?)\s*CNPJ:/i);
       if(nm)entrega.nome=nm[1]
     }
+    const fe=fonesDaDireita(seg.split(/Pagador:/i)[0]);
+    if(fe.length){if(!entrega)entrega={};entrega.fones=fe}
   }
   // Dados da carga, para a lista de carregamento.
   const num=v=>{const n=Number(String(v||'').replace(/\./g,'').replace(',','.'));return Number.isFinite(n)?n:0};
@@ -203,6 +213,8 @@ function parseTela101(html){
     previsao:(plain.match(/Previs[aã]o de entrega:\s*(\d{2}\/\d{2}\/\d{2,4})/i)||[])[1]||'',
     pedido:(plain.match(/Pedido:\s*([A-Z0-9.\/-]{1,30})/i)||[])[1]||'',
     // "CNG AMR 09/10/26 06:45 85-SAIDA PARA ENTREGA": última ocorrência do CT-e
+    // telefones do destinatário (coluna da direita do bloco Remetente/Destinatário)
+    fonesDestinatario:(()=>{const a=plain.search(/Remetente:\s*Destinat[aá]rio:/i);if(a<0)return[];const b=plain.slice(a).search(/Expedidor:/i);return fonesDaDireita(plain.slice(a,b>0?a+b:a+1800))})(),
     situacao:((plain.match(/Situa[cç][aã]o Atual:\s*(.{0,140}?)\s+(?:O\s?corr[eê]ncias|Fr\s?e\s?te|D\s?ANFEs)/i)||[])[1]||'').replace(/^[A-Z]{3}\s+[A-Z]{3}\s+/,'').trim()
   };
   return{entrega,mapas,resumo}

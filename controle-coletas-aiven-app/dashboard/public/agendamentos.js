@@ -231,7 +231,7 @@ function celula(r,k,num){
 }
 // Aviso sobre o destinatário: nome do cliente, cidade e telefone (do XML do CT-e/NF-e).
 function textoFone(r){
-  if(r.telefone)return'<a href="tel:'+esc(String(r.telefone).replace(/\D/g,''))+'">'+esc(r.telefone)+'</a>';
+  if(r.telefone)return String(r.telefone).split(/\s*\/\s*/).filter(Boolean).map(f=>'<a href="tel:'+esc(f.replace(/\D/g,''))+'">'+esc(f)+'</a>').join(' &nbsp;·&nbsp; ');
   return'<span class="muted">'+(r.telefone===''?'não informado na nota':'buscando no SSW…')+'</span>'
 }
 let popTimer=null;

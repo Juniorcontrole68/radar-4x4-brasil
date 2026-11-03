@@ -163,6 +163,8 @@ async function ensureSchema(pool) {
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS produtos_erro TEXT');
   // telefone do destinatário (XML do CT-e ou da NF-e) para o aviso sobre o nome na lista; '' = procurado e não veio
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS telefone TEXT');
+  // procurados só no XML do CT-e e não achados: procura de novo (agora também na tela 101 do SSW)
+  await pool.query("UPDATE ag_notas SET telefone=NULL WHERE telefone=''");
   // relação do SSW gravada com a linha do CT-e ("AMS001050-2 - REM: ... - QVOL: 1 - 0,0 M3"): apaga e busca de novo
   await pool.query("UPDATE ag_notas SET produto=NULL,produto_fonte=NULL,produtos_em=NULL,produtos_erro=NULL WHERE produto_fonte='ssw' AND (produto ILIKE '%REM:%' OR produto ILIKE '%QVOL:%' OR produto ILIKE '%KGREAL%' OR produto ILIKE '%KGCALC%' OR produto ILIKE '%NCM%' OR produto ILIKE '%EAN%PRODUTO%')");
   // tentativa que falhou na leitura (não por falta de produto) volta para a fila

@@ -112,6 +112,9 @@ console.log('Tela da opção 101 (como o SSW mostra)');
     const r=cte.parseTela101('<div>Remetente:</div><div>Destinat&aacute;rio:</div><div>Nome:</div><div>BENTER COMERCIO LTDA (..)</div><div>Nome:</div><div>BENEDITO DE OLIVEIRA MENDES ..</div><div>CNPJ:</div>').resumo;
     check('nome cortado "(..)" vira " .."',r.remetente==='BENTER COMERCIO LTDA ..'&&r.destinatario==='BENEDITO DE OLIVEIRA MENDES ..',r)
   }
+  check('telefone da entrega (coluna da direita) na tela 101',JSON.stringify(t.entrega.fones)===JSON.stringify(['1936236644']),t.entrega.fones);
+  {const r=cte.parseTela101('<div>Remetente: Destinat&aacute;rio: Nome: A LTDA Nome: JOAO CNPJ: 1 CEP: 1 Telefone: (11) 40001000 Celular: Telefone: (19) 3333-4444 Celular: (19) 99888-7766 Expedidor: Entrega: x</div>').resumo;
+   check('telefone e celular do destinatário na tela 101',JSON.stringify(r.fonesDestinatario)===JSON.stringify(['19998887766','1933334444']),r.fonesDestinatario)}
   check('bloco Entrega: nome de quem recebe',t.entrega.nome==='3056207 WAGNO ABREU DE JESUZ',t.entrega.nome);
   check('ponto do mapa da entrega (vírgula decimal do SSW)',t.mapas.ent&&t.mapas.ent.lat===-21.9777401&&t.mapas.ent.lon===-46.7894998,t.mapas.ent);
   check('ponto do mapa do destinatário, com a rua inteira',t.mapas.dest.logradouro==='SITIO BAIRRO OLARIA'&&t.mapas.dest.numero==='3'&&t.mapas.dest.cidade==='SAO JOAO DA BOA VISTA'&&t.mapas.dest.uf==='SP',t.mapas.dest);
