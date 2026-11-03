@@ -273,6 +273,22 @@ function nfe({chave,itens}){
   r=await call('GET','/api/wms/saldos?armazem_id='+arm+'&q=REJ1&estado=disponivel',{cookie:op});
   const naOrigem=r.json.rows.filter(x=>x.endereco===tR.sugerido).reduce((a,x)=>a+x.qtd,0),noDestino=r.json.rows.filter(x=>x.endereco==='B-04-01-01').reduce((a,x)=>a+x.qtd,0);
   check('20 movimentações simultâneas: '+okN+' passaram, '+recusa+' recusadas, saldo nunca negativo e total preservado',okN===7&&recusa===13&&naOrigem===2&&noDestino===35,{okN,recusa,naOrigem,noDestino,erros:res.filter(x=>x.status>=500).map(x=>x.text)});
+  {
+    const hojeSp=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}),amanha=new Date(Date.now()+86400000).toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+    const sal=await call('GET','/api/wms/saldos?q=REJ1',{cookie:op});
+    const total=sal.json.rows.filter(x=>x.sku==='REJ1').reduce((a,x)=>a+x.qtd,0);
+    r=await call('GET','/api/wms/rastreio?produto=REJ1&de='+hojeSp+'&ate='+hojeSp,{cookie:op});
+    const e=r.json.extrato&&r.json.extrato[0];
+    check('movimentação por produto e período: extrato com saldo inicial, entradas, saídas e saldo final',r.status===200&&!!e&&Math.abs(e.saldo_inicial+e.entradas-e.saidas-e.saldo_final)<1e-6&&e.movimentos===r.json.rows.length,r.json.extrato);
+    check('  ...saldo final do extrato bate com o estoque do produto',!!e&&Math.abs(e.saldo_final-total)<1e-6,{saldo_final:e&&e.saldo_final,total});
+    check('  ...transferência não mexe no saldo (entrada e saída em zero)',r.json.rows.filter(x=>x.tipo==='transferencia').every(x=>x.delta===0),r.json.rows.map(x=>[x.tipo,x.delta]));
+    check('  ...saldo de cada linha acumula os movimentos',r.json.rows.length>0&&Math.abs(r.json.rows[r.json.rows.length-1].saldo-e.saldo_final)<1e-6);
+    r=await call('GET','/api/wms/rastreio?produto=REJ1&de='+amanha,{cookie:op});
+    const e2=r.json.extrato&&r.json.extrato[0];
+    check('  ...período sem movimento: nenhuma linha, saldo inicial = saldo final = estoque',r.status===200&&r.json.rows.length===0&&!!e2&&Math.abs(e2.saldo_inicial-total)<1e-6&&e2.saldo_final===e2.saldo_inicial,r.json);
+    r=await call('GET','/api/wms/rastreio?produto=REJ1&de='+amanha+'&ate='+hojeSp,{cookie:op});
+    check('  ...data inicial depois da final -> 400',r.status===400);
+  }
   r=await call('POST','/api/wms/bloquear',{cookie:op,body:{uuid:uuid(),lpn:tA.lpn,motivo:'x'}});
   check('operador não bloqueia estoque',r.status===403);
   r=await call('POST','/api/wms/bloquear',{cookie:sup,body:{uuid:uuid(),lpn:tA.lpn,motivo:'suspeita de umidade'}});

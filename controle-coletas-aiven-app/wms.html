@@ -143,7 +143,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}dialog form,dialog .in{padding:18
       <div class="grid" id="estTot" style="margin-top:12px"></div>
       <div class="tw" id="estLista" style="margin-top:8px"></div>
     </div>
-    <div class="card"><h2>Rastreio (trajetória completa)</h2><div class="bar"><label>LPN<input id="raLpn"></label><label>Produto (SKU/EAN)<input id="raProd"></label><label>Lote<input id="raLote"></label><button class="btn p" id="raIr">Rastrear</button></div><div class="tw" id="raLista" style="margin-top:10px"></div></div>
+    <div class="card"><h2>Movimentação por produto e período</h2><p class="muted" style="margin:0 0 8px">Informe o produto (ou o palete/lote) e o período. Pelo produto, mostra o saldo no início, as entradas, as saídas e o saldo depois de cada movimento.</p><div class="bar"><label>Produto (SKU/EAN)<input id="raProd"></label><label>De<input id="raDe" type="date"></label><label>Até<input id="raAte" type="date"></label><label>LPN<input id="raLpn"></label><label>Lote<input id="raLote"></label><button class="btn p" id="raIr">Consultar</button><button class="btn" id="raMes" type="button">Este mês</button><button class="btn" id="raCsv" type="button" disabled>Exportar CSV</button></div><div id="raResumo" style="margin-top:10px"></div><div class="tw" id="raLista" style="margin-top:10px"></div></div>
   </section>
 
   <section data-sec="produtos" hidden>
@@ -604,12 +604,33 @@ async function carregarEstoque(){
 }
 $('#estIr').onclick=tenta(carregarEstoque);$('#estQ').onkeydown=e=>{if(e.key==='Enter')tenta(carregarEstoque)()};
 $('#estLista').addEventListener('click',e=>{const a=e.target.closest('[data-lpn]');if(a){e.preventDefault();$('#raLpn').value=a.dataset.lpn;$('#raProd').value='';$('#raLote').value='';rastrear()}});
+let raUltimo=null;
 const rastrear=tenta(async()=>{
-  const q=new URLSearchParams();for(const[k,s]of[['lpn','#raLpn'],['produto','#raProd'],['lote','#raLote']])if($(s).value.trim())q.set(k,$(s).value.trim());
+  const q=new URLSearchParams();for(const[k,s]of[['lpn','#raLpn'],['produto','#raProd'],['lote','#raLote'],['de','#raDe'],['ate','#raAte']])if($(s).value.trim())q.set(k,$(s).value.trim());
   const j=await api('GET','/api/wms/rastreio?'+q);
-  $('#raLista').innerHTML=tabela([['Quando',r=>dt(r.criado_em)],['Tipo',r=>esc(MOV[r.tipo]||r.tipo)],['Produto',r=>esc(r.sku)],['Lote',r=>esc(r.lote||'')],['LPN',r=>esc(r.lpn||'')],['Qtd',r=>n(r.qtd)],['De',r=>esc((r.origem||'—')+(r.estado_origem?' ('+r.estado_origem+')':''))],['Para',r=>esc((r.destino||'—')+(r.estado_destino?' ('+r.estado_destino+')':''))],['Motivo / documento',r=>esc([r.motivo,r.documento].filter(Boolean).join(' · '))],['Usuário',r=>esc(r.usuario)]],j.rows,'Nenhum movimento.');
-  $('#raLista').scrollIntoView({behavior:'smooth',block:'center'});
+  raUltimo=j;$('#raCsv').disabled=!j.rows.length;
+  const per=(j.de||j.ate)?(j.de?dBR(j.de):'início')+' a '+(j.ate?dBR(j.ate):'hoje'):'todo o período';
+  $('#raResumo').innerHTML=(j.extrato||[]).map(x=>'<div class="card" style="margin:0 0 8px"><b>'+esc(x.sku+' · '+x.descricao)+'</b> <span class="muted">('+esc(per)+', '+n(x.movimentos)+' movimento(s))</span>'+
+    '<div class="bar" style="margin-top:6px;gap:18px"><span>Saldo no início: <b>'+n(x.saldo_inicial)+'</b></span><span style="color:#16a34a">Entradas: <b>+'+n(x.entradas)+'</b></span><span style="color:#dc2626">Saídas: <b>−'+n(x.saidas)+'</b></span><span>Saldo no fim: <b>'+n(x.saldo_final)+' '+esc(x.unidade)+'</b></span></div></div>').join('')||(j.rows.length?'':'');
+  const ext=!!j.extrato;
+  $('#raLista').innerHTML=tabela([['Quando',r=>dt(r.criado_em)],['Tipo',r=>esc(MOV[r.tipo]||r.tipo)],['Produto',r=>esc(r.sku)],['Lote',r=>esc(r.lote||'')],['LPN',r=>esc(r.lpn||'')],
+    ...(ext?[['Entrada',r=>r.delta>0?'<span style="color:#16a34a">+'+n(r.delta)+'</span>':''],['Saída',r=>r.delta<0?'<span style="color:#dc2626">−'+n(-r.delta)+'</span>':''],['Saldo',r=>'<b>'+n(r.saldo)+'</b>']]:[['Qtd',r=>n(r.qtd)]]),
+    ['De',r=>esc((r.origem||'—')+(r.estado_origem?' ('+r.estado_origem+')':''))],['Para',r=>esc((r.destino||'—')+(r.estado_destino?' ('+r.estado_destino+')':''))],['Motivo / documento',r=>esc([r.motivo,r.documento].filter(Boolean).join(' · '))],['Usuário',r=>esc(r.usuario||'')]],j.rows,'Nenhum movimento neste período.');
+  $('#raResumo').scrollIntoView({behavior:'smooth',block:'start'});
 });
+$('#raMes').onclick=()=>{const d=new Date(),z=x=>String(x).padStart(2,'0');$('#raDe').value=d.getFullYear()+'-'+z(d.getMonth()+1)+'-01';$('#raAte').value=d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate());if($('#raProd').value.trim()||$('#raLpn').value.trim()||$('#raLote').value.trim())rastrear()};
+$('#raCsv').onclick=()=>{
+  if(!raUltimo||!raUltimo.rows.length)return;
+  const c=v=>'"'+String(v??'').replace(/"/g,'""')+'"',ext=!!raUltimo.extrato;
+  const cab=['Quando','Tipo','SKU','Descrição','Lote','LPN'].concat(ext?['Entrada','Saída','Saldo']:['Qtd']).concat(['De','Para','Motivo','Documento','Usuário']);
+  const dtc=t=>t?new Date(t).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}):'';
+  const lin=raUltimo.rows.map(r=>[dtc(r.criado_em),MOV[r.tipo]||r.tipo,r.sku,r.descricao,r.lote||'',r.lpn||''].concat(ext?[r.delta>0?r.delta:'',r.delta<0?-r.delta:'',r.saldo]:[r.qtd]).concat([r.origem||'',r.destino||'',r.motivo||'',r.documento||'',r.usuario||'']).map(v=>typeof v==='number'?String(v).replace('.',','):v));
+  const txt='\ufeff'+[cab].concat(lin).map(l=>l.map(c).join(';')).join('\r\n');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type:'text/csv;charset=utf-8'}));
+  a.download='movimentacao-'+($('#raProd').value.trim()||$('#raLpn').value.trim()||'wms').replace(/[^\w-]+/g,'_')+(raUltimo.de?'-'+raUltimo.de:'')+(raUltimo.ate?'-a-'+raUltimo.ate:'')+'.csv';
+  document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},500);
+};
+for(const k of['#raProd','#raLpn','#raLote'])$(k).onkeydown=e=>{if(e.key==='Enter')rastrear()};
 $('#raIr').onclick=rastrear;
 $('#estMover').onclick=()=>{
   abrir('<h2>Movimentação interna</h2><p class="muted">Palete inteiro: informe o LPN. Parte de um saldo: informe origem, produto e quantidade.</p><div class="cols"><label>LPN<input id="mvLpn"></label><label>Origem<input id="mvOri"></label><label>Produto (SKU/EAN)<input id="mvProd"></label><label>Lote<input id="mvLote"></label><label>Quantidade<input id="mvQtd" type="number" min="0" step="any"></label><label>Destino<input id="mvDest" required></label></div><label>Motivo<input id="mvMot"></label><div class="bar"><button class="btn p" id="mvOk">Movimentar</button><button class="btn" data-fechar>Cancelar</button></div>');

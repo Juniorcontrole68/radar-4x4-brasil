@@ -1284,11 +1284,47 @@ async function rastreio(pool,ctx,u){
   if(prod){params.push(limpo(prod,80));w.push(`(upper(p.sku)=upper($${params.length}) OR p.ean=$${params.length})`)}
   if(lote){params.push(limpo(lote,40));w.push('l.lote=$'+params.length)}
   if(!w.length)throw erro(400,'Informe o palete (LPN), o produto ou o lote.');
-  const r=await pool.query(`SELECT m.id::text,m.criado_em,m.tipo,p.sku,p.descricao,l.lote,lp.codigo AS lpn,m.qtd::float,eo.codigo AS origem,ed.codigo AS destino,
-      m.estado_origem,m.estado_destino,m.motivo,m.documento,m.usuario FROM wms_movimentos m JOIN wms_produtos p ON p.id=m.produto_id
+  // período (datas de Brasília); sem datas, a trajetória inteira
+  const de=dataIso(u.searchParams.get('de')),ate=dataIso(u.searchParams.get('ate'));
+  if(de&&ate&&de>ate)throw erro(400,'A data inicial é depois da final.');
+  const dia="(m.criado_em AT TIME ZONE 'America/Sao_Paulo')::date";
+  const wp=[];
+  if(de){params.push(de);wp.push(dia+'>=$'+params.length+'::date')}
+  if(ate){params.push(ate);wp.push(dia+'<=$'+params.length+'::date')}
+  // efeito no estoque físico do produto: entra no destino (+), sai da origem (-); transferência e bloqueio dão zero
+  const DELTA='((CASE WHEN m.destino_id IS NOT NULL THEN m.qtd ELSE 0 END)-(CASE WHEN m.origem_id IS NOT NULL THEN m.qtd ELSE 0 END))';
+  const r=await pool.query(`SELECT m.id::text,m.criado_em,m.tipo,m.produto_id::text,p.sku,p.descricao,p.unidade,l.lote,lp.codigo AS lpn,m.qtd::float,eo.codigo AS origem,ed.codigo AS destino,
+      m.estado_origem,m.estado_destino,m.motivo,m.documento,m.usuario,${DELTA}::float AS delta FROM wms_movimentos m JOIN wms_produtos p ON p.id=m.produto_id
       LEFT JOIN wms_lotes l ON l.id=m.lote_id LEFT JOIN wms_lpns lp ON lp.id=m.lpn_id LEFT JOIN wms_enderecos eo ON eo.id=m.origem_id LEFT JOIN wms_enderecos ed ON ed.id=m.destino_id
-    WHERE m.empresa=$1 AND ${w.join(' AND ')} ORDER BY m.id LIMIT 2000`,params);
-  return r.rows;
+    WHERE m.empresa=$1 AND ${w.concat(wp).join(' AND ')} ORDER BY m.id LIMIT 2000`,params);
+  const rows=r.rows;
+  // extrato por produto (filtro pelo produto, sem palete): saldo antes do período, entradas, saídas e saldo a cada movimento
+  if(!prod||lpn)return{rows,extrato:null};
+  const ids=[...new Set(rows.map(x=>x.produto_id))];
+  const ini=new Map();
+  if(de){
+    const pq=[ctx.emp,limpo(prod,80)];let wl='';
+    if(lote){pq.push(limpo(lote,40));wl=' AND l.lote=$3'}
+    pq.push(de);
+    const s=await pool.query(`SELECT m.produto_id::text AS id,COALESCE(SUM(${DELTA}),0)::float AS saldo FROM wms_movimentos m JOIN wms_produtos p ON p.id=m.produto_id
+        LEFT JOIN wms_lotes l ON l.id=m.lote_id
+      WHERE m.empresa=$1 AND (upper(p.sku)=upper($2) OR p.ean=$2)${wl} AND ${dia}<$${pq.length}::date GROUP BY m.produto_id`,pq);
+    for(const x of s.rows){ini.set(x.id,x.saldo);if(!ids.includes(x.id))ids.push(x.id)}
+  }
+  const r3=v=>Math.round(v*1000)/1000;
+  const corrente=new Map(ids.map(id=>[id,ini.get(id)||0]));
+  for(const x of rows){const v=corrente.get(x.produto_id)+x.delta;corrente.set(x.produto_id,v);x.saldo=r3(v)}
+  const info=new Map(rows.map(x=>[x.produto_id,x]));
+  if(ids.some(id=>!info.has(id))){
+    const p2=(await pool.query('SELECT id::text,sku,descricao,unidade FROM wms_produtos WHERE id=ANY($1::bigint[])',[ids])).rows;
+    for(const x of p2)if(!info.has(x.id))info.set(x.id,x);
+  }
+  const extrato=ids.map(id=>{
+    const ms=rows.filter(x=>x.produto_id===id),p=info.get(id)||{};
+    const ent=ms.reduce((a,x)=>a+(x.delta>0?x.delta:0),0),sai=ms.reduce((a,x)=>a+(x.delta<0?-x.delta:0),0),si=ini.get(id)||0;
+    return{produto_id:id,sku:p.sku||'',descricao:p.descricao||'',unidade:p.unidade||'',saldo_inicial:r3(si),entradas:r3(ent),saidas:r3(sai),saldo_final:r3(si+ent-sai),movimentos:ms.length};
+  });
+  return{rows,extrato,de:de||'',ate:ate||''};
 }
 async function painel(pool,ctx,armazemId){
   const arm=armazemId&&/^\d+$/.test(String(armazemId))?armazemId:null;
@@ -1917,7 +1953,7 @@ async function handle(req,res,u,deps){
     }
     if(p==='/api/wms/rastreio'&&M==='GET'){
       const ctx=await contexto(deps,req,'operador');
-      return json(200,{ok:true,rows:await rastreio(pool,ctx,u)});
+      return json(200,{ok:true,...await rastreio(pool,ctx,u)});
     }
     if(p==='/api/wms/movimentar'&&M==='POST'){
       const ctx=await contexto(deps,req,'operador'),b=await corpo();
