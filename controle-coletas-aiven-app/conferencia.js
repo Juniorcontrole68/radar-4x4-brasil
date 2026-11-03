@@ -57,6 +57,8 @@ async function ensureSchema(pool) {
   await pool.query('ALTER TABLE conf_sessoes ADD COLUMN IF NOT EXISTS motorista_link_em TIMESTAMPTZ');
   await pool.query('ALTER TABLE conf_sessoes ADD COLUMN IF NOT EXISTS motorista_terminou_em TIMESTAMPTZ');
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS uq_conf_motorista_token ON conf_sessoes (motorista_token_hash) WHERE motorista_token_hash IS NOT NULL');
+  // DACTE do parceiro (Transbarbosa): a chave do CT-e dele, que bipamos no lugar do nosso
+  await pool.query("ALTER TABLE conf_esperado ADD COLUMN IF NOT EXISTS chave_parceiro TEXT NOT NULL DEFAULT ''");
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS uq_conf_leitura_uuid ON conf_leituras (sessao_id, uuid) WHERE uuid IS NOT NULL');
   await pool.query('CREATE INDEX IF NOT EXISTS idx_conf_leitura_sessao ON conf_leituras (sessao_id, id)');
 }
@@ -129,10 +131,11 @@ async function carregarEsperado(pool, cli, sessaoId, rows, { acrescentar = false
     for (const r of rows || []) {
       const ctrc = limpo(r.ctrc, 20).toUpperCase();
       if (!ctrc) continue;
-      await db.query(`INSERT INTO conf_esperado(sessao_id,ctrc,nf,volumes,chave,destinatario,cidade,parceiro,nomes,emitido_em)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (sessao_id,ctrc) DO NOTHING`,
+      const cp = [r.chave_parceiro, ...(Array.isArray(r.ctes_parceiro) ? r.ctes_parceiro : [])].map(c => String(c || '').replace(/\D/g, '')).filter(c => c.length === 44);
+      await db.query(`INSERT INTO conf_esperado(sessao_id,ctrc,nf,volumes,chave,destinatario,cidade,parceiro,nomes,emitido_em,chave_parceiro)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (sessao_id,ctrc) DO UPDATE SET chave_parceiro=CASE WHEN conf_esperado.chave_parceiro='' THEN EXCLUDED.chave_parceiro ELSE conf_esperado.chave_parceiro END`,
         [sessaoId, ctrc, limpo(r.nf, 20), Math.max(0, Math.round(Number(r.volumes) || 0)), String(r.chave || '').replace(/\D/g, '').slice(0, 44),
-          limpo(r.destinatario, 80), limpo(r.cidade, 60), parceiroDoCte(fs, r.nomes), (r.nomes || []).map(x => limpo(x, 80)).join(' | ').slice(0, 600), r.emitido_em || null]);
+          limpo(r.destinatario, 80), limpo(r.cidade, 60), parceiroDoCte(fs, r.nomes), (r.nomes || []).map(x => limpo(x, 80)).join(' | ').slice(0, 600), r.emitido_em || null, cp[0] || '']);
     }
     await db.query('UPDATE conf_sessoes SET carregado_em=NOW() WHERE id=$1', [sessaoId]);
     await db.query('COMMIT');
@@ -184,7 +187,7 @@ async function recarregar(pool, cli, id, lerSsw, b = {}) {
   else if (s.tipo === 'descarga') rows = (await lerSsw('ssw-esperado', { inicio: new Date(s.janela_ini).toISOString(), fim: new Date(s.janela_fim).toISOString() })).rows || [];
   else if (s.modo === 'romaneio') rows = (await lerSsw('ssw-romaneio', { romaneio: s.referencia })).rows || [];
   else {
-    const chaves = (await pool.query("SELECT chave FROM conf_esperado WHERE sessao_id=$1 AND chave<>''", [id])).rows.map(r => r.chave);
+    const chaves = (await pool.query("SELECT CASE WHEN chave<>'' THEN chave ELSE chave_parceiro END AS chave FROM conf_esperado WHERE sessao_id=$1 AND (chave<>'' OR chave_parceiro<>'')", [id])).rows.map(r => r.chave);
     rows = chaves.length ? (await lerSsw('ssw-ctes', { chaves })).rows || [] : [];
   }
   // guarda os DACTEs já lidos
@@ -242,13 +245,14 @@ async function ler(pool, cli, user, id, b, lerSsw) {
     const s0 = await sessao(pool, cli, id);
     const bruto = String(b.codigo || '').replace(/[\s\r\n\t]+/g, '');
     if (!b.motorista && s0.tipo === 'carregamento' && s0.status === 'aberta' && /^\d{44}$/.test(bruto) && bruto.slice(20, 22) === '57') {
-      const tem = (await pool.query('SELECT 1 FROM conf_esperado WHERE sessao_id=$1 AND chave=$2', [id, bruto])).rowCount;
+      const tem = (await pool.query('SELECT 1 FROM conf_esperado WHERE sessao_id=$1 AND (chave=$2 OR chave_parceiro=$2)', [id, bruto])).rowCount;
       if (!tem) {
-        if (b.testMode && b.cte_teste) novoCte = { ...b.cte_teste, chave: bruto };
+        if (b.testMode && b.cte_teste) novoCte = b.cte_teste.chave ? { ...b.cte_teste, chave_parceiro: bruto } : { ...b.cte_teste, chave: bruto };
         else if (lerSsw) { const r = await lerSsw('ssw-ctes', { chaves: [bruto] }); novoCte = (r.rows || [])[0] || null; }
         if (novoCte) {
           const ja = (await pool.query('SELECT 1 FROM conf_esperado WHERE sessao_id=$1 AND ctrc=$2', [id, limpo(novoCte.ctrc, 20).toUpperCase()])).rowCount;
           if (!ja) await carregarEsperado(pool, cli, id, [novoCte], { acrescentar: true });
+          else if (novoCte.chave_parceiro) await pool.query("UPDATE conf_esperado SET chave_parceiro=$3 WHERE sessao_id=$1 AND ctrc=$2", [id, limpo(novoCte.ctrc, 20).toUpperCase(), bruto]);
           else await pool.query("UPDATE conf_esperado SET chave=$3 WHERE sessao_id=$1 AND ctrc=$2 AND chave=''", [id, limpo(novoCte.ctrc, 20).toUpperCase(), bruto]);
         }
       }
@@ -270,7 +274,7 @@ async function ler(pool, cli, user, id, b, lerSsw) {
     if (c.tipo === 'vazio') throw erro(400, 'Código vazio.');
     let situacao = 'nao_reconhecido', parceiro = '', ctrc = '';
     if (c.tipo === 'dacte') {
-      const e = (await db.query('SELECT ctrc,parceiro FROM conf_esperado WHERE sessao_id=$1 AND chave=$2', [id, c.codigo])).rows[0];
+      const e = (await db.query('SELECT ctrc,parceiro FROM conf_esperado WHERE sessao_id=$1 AND (chave=$2 OR chave_parceiro=$2) ORDER BY (chave=$2) DESC LIMIT 1', [id, c.codigo])).rows[0];
       if (e) { situacao = novoCte ? 'cte_adicionado' : 'dacte'; ctrc = e.ctrc; parceiro = e.parceiro; await db.query('UPDATE conf_esperado SET dacte_lido_em=COALESCE(dacte_lido_em,NOW()) WHERE sessao_id=$1 AND ctrc=$2', [id, e.ctrc]); }
       else situacao = b.motorista ? 'dacte_fora' : s.tipo === 'carregamento' ? 'cte_nao_achado' : 'dacte_parceiro';   // descarga: DACTE de outra transportadora (ex.: Transbarbosa) fica registrado
     } else if (c.tipo === 'danfe') {

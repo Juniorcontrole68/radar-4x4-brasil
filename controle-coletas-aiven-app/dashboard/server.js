@@ -6518,8 +6518,17 @@ function confLinha174(r){
     volumes:Number(String(pickField(r,'qtde_volume','VOLUMES','QTDE VOLUMES')||'0').replace(/\./g,'').replace(',','.'))||0,
     chave:String(pickField(r,'nro_chave_acesso_cte')||'').replace(/\D/g,''),
     destinatario:String(pickField(r,'destinatario_nome','DESTINATARIO')||'').slice(0,80),cidade:String(pickField(r,'cidade_destino','dest_cidade')||'').slice(0,60),
-    subcontrato:String(pickField(r,'ctrc/subcontr')||'').slice(0,40),nomes:[...new Set(nomes)].slice(0,8)}
+    subcontrato:String(pickField(r,'ctrc/subcontr')||'').slice(0,40),nomes:[...new Set(nomes)].slice(0,8),
+    // DACTE do parceiro (Transbarbosa): chave de CT-e de outra transportadora citada em qualquer coluna do 174
+    ctes_parceiro:confChavesCitadas(r)}
 }
+function confChavesCitadas(r){
+  const propria=String(pickField(r,'nro_chave_acesso_cte')||'').replace(/\D/g,''),out=new Set();
+  for(const v of Object.values(r||{}))for(const m of String(v||'').replace(/[ .\-\/]/g,'').matchAll(/(?<!\d)(\d{44})(?!\d)/g))if(m[1]!==propria&&m[1].slice(20,22)==='57')out.add(m[1]);
+  return[...out].slice(0,10)
+}
+// número do CT-e dentro da chave (posições 26 a 34) e o CNPJ do emitente (7 a 20)
+const confNumeroDaChave=ch=>String(Number(String(ch).slice(25,34))||''),confCnpjDaChave=ch=>String(ch).slice(6,20);
 // linhas do 174: pastas dos dias pedidos + relatório atual (as mais novas primeiro)
 async function confLinhas174(dias){
   const linhas=[],fontes=[];
@@ -6538,7 +6547,7 @@ async function confCteDo101(ctrc){
   if(!info)return null;
   const c=info.cte||{},rs=info.resumo||{};
   return{ctrc:String(info.ctrc||ctrc).toUpperCase(),nf:String((sswCteNfs(info)||[])[0]||rs.nf||'').replace(/^0+/,''),volumes:Number(rs.volumes||0)||0,chave:String(c.chave||'').replace(/\D/g,''),
-    destinatario:String(c.destinatario?.nome||rs.destinatario||'').slice(0,80),cidade:String(c.destinatario?.cidade||c.cidadeFim||'').slice(0,60),subcontrato:'',
+    destinatario:String(c.destinatario?.nome||rs.destinatario||'').slice(0,80),cidade:String(c.destinatario?.cidade||c.cidadeFim||'').slice(0,60),subcontrato:'',ctes_parceiro:Array.isArray(c.ctesAnteriores)?c.ctesAnteriores:[],
     nomes:[...new Set([c.remetente?.nome,c.expedidor?.nome,c.tomador,rs.remetente].map(x=>String(x||'').trim()).filter(Boolean))].slice(0,8)}
 }
 if(u.pathname.startsWith('/api/conferencia/ssw-')&&req.method==='POST'){try{
@@ -6592,12 +6601,23 @@ if(u.pathname.startsWith('/api/conferencia/ssw-')&&req.method==='POST'){try{
   if(rota==='ssw-ctes'){
     const chaves=[...new Set((Array.isArray(body.chaves)?body.chaves:[]).map(c=>String(c||'').replace(/\D/g,'')).filter(c=>c.length===44))].slice(0,200);
     const {linhas}=await confLinhas174(confDiasAtras(10));
-    const por=new Map();for(const r of linhas){const x=confLinha174(r);if(x.chave&&!por.has(x.chave))por.set(x.chave,x)}
+    const por=new Map(),porParc=new Map(),todas=[];
+    for(const r of linhas){const x=confLinha174(r);todas.push(x);if(x.chave&&!por.has(x.chave))por.set(x.chave,x);for(const c of x.ctes_parceiro)if(!porParc.has(c))porParc.set(c,x)}
+    const nossos=new Set([...por.keys()].map(confCnpjDaChave));
     const rows=[],nao=[];
     for(const ch of chaves){
-      let x=por.get(ch);
+      let x=por.get(ch),parc=false;
+      if(!x&&porParc.has(ch)){x=porParc.get(ch);parc=true}
+      if(!x&&!nossos.has(confCnpjDaChave(ch))){
+        // DACTE de outra transportadora (Transbarbosa): nosso CT-e que cita o número dele no campo do subcontrato
+        const n=confNumeroDaChave(ch),dig=v=>String(v||'').replace(/\D/g,'').replace(/^0+/,'');
+        const ach=n?todas.filter(t=>{const d=dig(t.subcontrato);return d&&(d===n||d.slice(0,-1)===n)}):[];
+        if(ach.length===1){x=ach[0];parc=true}
+        else console.log('CONFERENCIA DACTE PARCEIRO '+JSON.stringify({chave:ch,cnpj:confCnpjDaChave(ch),numero:n,achados:ach.length,
+          amostra:linhas.filter(r=>/TRANSBARB/i.test(Object.values(r).join(' '))).slice(0,3).map(r=>Object.fromEntries(Object.entries(r).filter(([k,v])=>String(v||'').trim()).slice(0,60)))}).slice(0,6000));
+      }
       if(!x){try{const info=await sswCtePorChave(ch);if(info)x=await confCteDo101(info.ctrc)}catch{}}
-      if(x)rows.push({...x,chave:x.chave||ch});else nao.push(ch);
+      if(x)rows.push({...x,chave:x.chave||(parc?'':ch),chave_parceiro:parc||(x.chave&&x.chave!==ch)?ch:''});else nao.push(ch);
     }
     res.writeHead(200,CONF_JSON);
     return res.end(JSON.stringify({ok:true,rows,nao_encontradas:nao}))

@@ -111,10 +111,17 @@ function parseCteXml(xml){
     recebedor:xmlParty(xml,'receb','enderReceb'),destinatario:xmlParty(xml,'dest','enderDest'),
     valorPrestacao:Number(xmlValue(xmlBlock(xml,'vPrest'),'vTPrest'))||0,valorCarga:Number(xmlValue(xmlBlock(xml,'infCarga'),'vCarga'))||0,
     produtoPredominante:xmlValue(xmlBlock(xml,'infCarga'),'proPred'),
+    // CT-es de outra transportadora citados neste (subcontratação/redespacho: o DACTE do parceiro, ex.: Transbarbosa)
+    ctesAnteriores:cteChavesCitadas(xml),
     nfChaves:[...xml.matchAll(/<(?:\w+:)?infNFe\b[^>]*>\s*<(?:\w+:)?chave>(\d{44})<\//gi)].map(m=>m[1]),
     observacoes:obs,
     tomador:cteTomador(xml,ide)
   }
+}
+function cteChavesCitadas(xml){
+  const propria=((xml.match(/<(?:\w+:)?infCte\b[^>]*\bId=["']CTe(\d{44})["']/i)||[])[1])||'';
+  const sem=xml.replace(/<(?:\w+:)?protCTe\b[\s\S]*?<\/(?:\w+:)?protCTe>/gi,'');
+  return[...new Set([...sem.matchAll(/(?<!\d)(\d{44})(?!\d)/g)].map(m=>m[1]).filter(c=>c!==propria&&c.slice(20,22)==='57'))].slice(0,10)
 }
 // Quem paga o frete: toma3 aponta uma das partes (0 rem, 1 exped, 2 receb, 3 dest); toma4 traz o nome.
 function cteTomador(xml,ide){

@@ -91,6 +91,13 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
   r=await lt('35261012345678000199570010000999991000099999');check('DACTE que o SSW não acha',r.j.situacao==='cte_nao_achado'&&r.j.sinal==='erro',r.j);
   r=await api('DELETE','/api/painel/conferencia/sessoes/'+cc+'/ctes/AMS001050-2');
   check('tirar CT-e bipado por engano',r.status===200&&r.j.esperado.length===0,r.j.esperado);
+  // Transbarbosa: bipamos o DACTE dele (chave de outra transportadora), que aponta para o nosso CT-e
+  const dacteTb='35261099888777000166570010000456781000045678',nossoTb='35261012345678000199570010000123471000012347';
+  r=await lt(dacteTb,{cte_teste:{ctrc:'AMS001051-0',nf:'556677',volumes:3,chave:nossoTb,nomes:['TRANSBARBOSA TRANSPORTES']}});
+  check('DACTE da Transbarbosa coloca o nosso CT-e na carga',r.j.situacao==='cte_adicionado'&&r.j.ctrc==='AMS001051-0'&&r.j.parceiro==='Transbarbosa',r.j);
+  r=await lt(dacteTb);check('  ...bipar de novo o DACTE dele reconhece o CT-e',r.j.situacao==='dacte'&&r.j.ctrc==='AMS001051-0',r.j);
+  r=await lt(nossoTb);check('  ...o nosso DACTE também reconhece',r.j.situacao==='dacte'&&r.j.ctrc==='AMS001051-0',r.j);
+  r=await api('DELETE','/api/painel/conferencia/sessoes/'+cc+'/ctes/AMS001051-0');
   // link do motorista: só bipa e acompanha
   r=await lt(dacte2,{cte_teste:{ctrc:'AMS001050-2',nf:'112899',volumes:2,nomes:['CONASID IND']}});
   r=await api('POST','/api/painel/conferencia/sessoes/'+id+'/link-motorista',{});

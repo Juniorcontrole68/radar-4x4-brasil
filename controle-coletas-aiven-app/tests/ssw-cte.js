@@ -258,5 +258,12 @@ console.log('Tela de comprovantes do romaneio (opção 38)');
   check('chave de CT-e (modelo 57) não passa',cte.chavesNfe(cteKey).length===0)
 }
 
+{
+  const own='35261012345678000199570010000123471000012347',tb='35261099888777000166570010000456781000045678';
+  const x='<CTe><infCte Id="CTe'+own+'"><ide><nCT>1</nCT></ide><infCTeNorm><docAnt><emiDocAnt><idDocAnt><idDocAntEle><chCTe>'+tb+'</chCTe></idDocAntEle></idDocAnt></emiDocAnt></docAnt></infCTeNorm></infCte><protCTe><chCTe>'+own+'</chCTe></protCTe></CTe>';
+  const p=cte.parseCteXml(x);
+  check('CT-e do parceiro citado no XML (subcontratação)',p.ctesAnteriores.length===1&&p.ctesAnteriores[0]===tb,p.ctesAnteriores);
+}
+
 console.log('\n'+ok+' ok, '+bad+' falha(s)');
 process.exit(bad?1:0);
