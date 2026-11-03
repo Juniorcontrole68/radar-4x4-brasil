@@ -67,6 +67,15 @@ function chave(n){
   await pr.gravar(db,'7',{produto:'',motivo:'nada'});
   check('sem produto: só marca a tentativa',/produtos_em=NOW\(\),produtos_erro=\$2/.test(qs[1].sql)&&qs[1].p[1]==='nada');
 
+  // falha na leitura do SSW (ex.: chave interna recusada): não marca nenhuma nota e para a rodada
+  const upd=[];const pool={query:async(sql,p)=>{if(/^SELECT/.test(sql.trim()))return{rows:[{id:'1',nf:'10',ctrc:''},{id:'2',nf:'11',ctrc:''}]};upd.push(sql);return{rowCount:1}}};
+  let chamadasLer=0;
+  const cc=await pr.completarPendentes(pool,async()=>{chamadasLer++;throw new Error('Não autenticado.')},{cli:null});
+  check('falha na leitura não marca a nota nem continua a rodada',upd.length===0&&chamadasLer===1&&cc.tentadas===0&&cc.erro==='Não autenticado.',JSON.stringify(cc));
+  // o painel só aceita a chave interna nas rotas da lista: a de produtos tem de estar nela
+  const fonte=require('fs').readFileSync(require('path').join(__dirname,'..','dashboard','server.js'),'utf8');
+  const lista=(fonte.match(/\[('\/api\/agendamentos\/ssw-snapshot'[^\]]*)\]\.includes/)||[])[1]||'';
+  check('rota de produtos liberada para a chave interna do servidor',lista.includes("'/api/agendamentos/produtos-ssw'"),lista);
   Object.assign(sefaz,orig);
   console.log('\n'+pass+' ok, '+fail+' falha(s)');
   process.exit(fail?1:0);

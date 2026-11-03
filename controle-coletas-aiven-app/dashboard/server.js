@@ -143,7 +143,7 @@ async function dashboardUserFromReq(req){
   // a situação das sobras em galpão (conferência de hora em hora, das 05:00 às 20:00), a varredura e os produtos do agendamento.
   const ik=String(req.headers['x-internal-key']||'');
   if(INTERNAL_KEY&&ik.length===INTERNAL_KEY.length&&crypto.timingSafeEqual(Buffer.from(ik),Buffer.from(INTERNAL_KEY))
-     &&(String(req.url||'').startsWith('/api/tracking/planned-route')||String(req.url||'').startsWith('/api/ssw/despesas475?')||String(req.url||'').startsWith('/api/programacao-entregas/status-nfs?')||['/api/agendamentos/ssw-snapshot','/api/agendamentos/baixas-ssw','/api/agendamentos/ctes-faixa'].includes(String(req.url||'').split('?')[0])))
+     &&(String(req.url||'').startsWith('/api/tracking/planned-route')||String(req.url||'').startsWith('/api/ssw/despesas475?')||String(req.url||'').startsWith('/api/programacao-entregas/status-nfs?')||['/api/agendamentos/ssw-snapshot','/api/agendamentos/baixas-ssw','/api/agendamentos/ctes-faixa','/api/agendamentos/produtos-ssw'].includes(String(req.url||'').split('?')[0])))
     return{token:'',id:0,username:'servidor',is_admin:true,permissions:['*'],internal:true};
   const token=dashboardRequestToken(req);
   if(!token){const e=new Error('Não autenticado.');e.status=401;throw e}

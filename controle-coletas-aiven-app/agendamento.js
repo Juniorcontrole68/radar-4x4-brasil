@@ -161,6 +161,8 @@ async function ensureSchema(pool) {
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS produtos_em TIMESTAMPTZ');
   // por que a busca automática dos produtos (XML da NF-e / SSW) não achou nada; tenta de novo depois de 24 h
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS produtos_erro TEXT');
+  // tentativa que falhou na leitura (não por falta de produto) volta para a fila
+  await pool.query("UPDATE ag_notas SET produtos_em=NULL,produtos_erro=NULL WHERE produtos_erro IS NOT NULL AND (produtos_erro ILIKE '%autenticad%' OR produtos_erro ILIKE '%Leitura do SSW respondeu%' OR produtos_erro ILIKE '%demorou demais%' OR produtos_erro ILIKE '%ECONNREFUSED%')");
   await pool.query('ALTER TABLE ag_config ADD COLUMN IF NOT EXISTS parceiros TEXT');   // NULL = lista padrão
   // baixa de entregue feita pelo motorista no app (entregas_comprovantes): a varredura do SSW não reabre a nota
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS baixa_motorista_em TIMESTAMPTZ');

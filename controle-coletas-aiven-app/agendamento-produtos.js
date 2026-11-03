@@ -115,11 +115,13 @@ async function completarPendentes(pool, lerSsw, { cli = null, limite = 10, situa
   for (const n of q.rows) {
     c.tentadas++;
     let r;
-    try { r = await buscarProdutos(n, lerSsw); } catch (e) { r = { produto: '', motivo: limpo(e.message || e, 300) }; }
+    // falha na leitura (painel fora do ar, sessão do SSW, chave interna): não marca a nota, para na rodada
+    try { r = await buscarProdutos(n, lerSsw); } catch (e) { c.tentadas--; c.erro = limpo(e.message || e, 200); break; }
     await gravar(pool, n.id, r);
+    if (!r.produto && !c.motivo) c.motivo = r.motivo;
     if (r.produto) c[r.fonte]++; else c.sem++;
   }
-  if (c.tentadas) console.log('AGENDAMENTO produtos: ' + JSON.stringify(c));
+  if (c.tentadas || c.erro) console.log('AGENDAMENTO produtos: ' + JSON.stringify(c));
   return c;
 }
 // clientes(): empresas que leem o SSW da casa (as da demonstração não entram)
