@@ -119,6 +119,7 @@ async function completarPendentes(pool, lerSsw, { cli = null, limite = 10, situa
     try { r = await buscarProdutos(n, lerSsw); } catch (e) { c.tentadas--; c.erro = limpo(e.message || e, 200); break; }
     await gravar(pool, n.id, r);
     if (!r.produto && !c.motivo) c.motivo = r.motivo;
+    if (r.produto && (c.amostra = c.amostra || []).length < 4) c.amostra.push(n.nf + ' [' + r.fonte + '] ' + r.produto.slice(0, 90));
     if (r.produto) c[r.fonte]++; else c.sem++;
   }
   if (c.tentadas || c.erro) console.log('AGENDAMENTO produtos: ' + JSON.stringify(c));
