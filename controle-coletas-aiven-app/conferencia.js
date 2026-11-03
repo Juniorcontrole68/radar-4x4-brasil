@@ -275,7 +275,7 @@ async function handle(req, res, u, deps) {
     if (!(user.is_admin || dashboardHas(user, 'conferencia') || dashboardHas(user, 'dashboard') || dashboardHas(user, 'agendamentos')))
       return sendJson(res, 403, { ok: false, error: 'Seu usuário não tem acesso à Conferência de carga. Peça a liberação a um administrador.' }), true;
     const cli = user.client_id ? String(user.client_id) : null;
-    const ler = lerEsperadoDoUsuario ? lerEsperadoDoUsuario(user) : null;
+    const lerSsw = lerEsperadoDoUsuario ? lerEsperadoDoUsuario(user) : null;
     let m;
     if (p === '/formatos' && req.method === 'GET') return sendJson(res, 200, { ok: true, formatos: await formatos(pool, cli), pode_editar: !!user.is_admin }), true;
     if (p === '/formatos' && req.method === 'PUT') {
@@ -287,7 +287,7 @@ async function handle(req, res, u, deps) {
     if (p === '/sessoes' && req.method === 'GET') return sendJson(res, 200, { ok: true, rows: await listar(pool, cli, u.searchParams.get('tipo')), hoje: hojeSp() }), true;
     if (p === '/sessoes' && req.method === 'POST') {
       const b = await readJsonBodyLimited(req, 2 * 1024 * 1024);
-      const r = await criarSessao(pool, cli, user, { ...b, testMode: !!testMode }, ler);
+      const r = await criarSessao(pool, cli, user, { ...b, testMode: !!testMode }, lerSsw);
       return sendJson(res, 201, { ok: true, id: r.id, fontes: r.fontes, ...(await resumo(pool, cli, r.id)) }), true;
     }
     if ((m = p.match(/^\/sessoes\/(\d+)$/)) && req.method === 'GET')
@@ -302,7 +302,7 @@ async function handle(req, res, u, deps) {
     }
     if ((m = p.match(/^\/sessoes\/(\d+)\/recarregar$/)) && req.method === 'POST') {
       const b = await readJsonBodyLimited(req, 2 * 1024 * 1024);
-      await recarregar(pool, cli, m[1], ler, { ...b, testMode: !!testMode });
+      await recarregar(pool, cli, m[1], lerSsw, { ...b, testMode: !!testMode });
       return sendJson(res, 200, { ok: true, ...(await resumo(pool, cli, m[1])) }), true;
     }
     if ((m = p.match(/^\/sessoes\/(\d+)\/fechar$/)) && req.method === 'POST') {
