@@ -162,7 +162,7 @@ async function ensureSchema(pool) {
   // por que a busca automática dos produtos (XML da NF-e / SSW) não achou nada; tenta de novo depois de 24 h
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS produtos_erro TEXT');
   // relação do SSW gravada com a linha do CT-e ("AMS001050-2 - REM: ... - QVOL: 1 - 0,0 M3"): apaga e busca de novo
-  await pool.query("UPDATE ag_notas SET produto=NULL,produto_fonte=NULL,produtos_em=NULL,produtos_erro=NULL WHERE produto_fonte='ssw' AND (produto ILIKE '%REM:%' OR produto ILIKE '%QVOL:%' OR produto ILIKE '%KGREAL%' OR produto ILIKE '%KGCALC%')");
+  await pool.query("UPDATE ag_notas SET produto=NULL,produto_fonte=NULL,produtos_em=NULL,produtos_erro=NULL WHERE produto_fonte='ssw' AND (produto ILIKE '%REM:%' OR produto ILIKE '%QVOL:%' OR produto ILIKE '%KGREAL%' OR produto ILIKE '%KGCALC%' OR produto ILIKE '%NCM%' OR produto ILIKE '%EAN%PRODUTO%')");
   // tentativa que falhou na leitura (não por falta de produto) volta para a fila
   await pool.query("UPDATE ag_notas SET produtos_em=NULL,produtos_erro=NULL WHERE produtos_erro IS NOT NULL AND (produtos_erro ILIKE '%autenticad%' OR produtos_erro ILIKE '%Leitura do SSW respondeu%' OR produtos_erro ILIKE '%demorou demais%' OR produtos_erro ILIKE '%ECONNREFUSED%')");
   await pool.query('ALTER TABLE ag_config ADD COLUMN IF NOT EXISTS parceiros TEXT');   // NULL = lista padrão

@@ -320,12 +320,47 @@ function limparProduto(v){
 
 // Relação de produtos do CT-e na opção 101 (ação RELPROD): arquivo que o SSW monta com os itens das
 // notas fiscais. Pode vir como texto de relatório, CSV (;) ou HTML; devolve só as descrições dos itens.
+// Relação em forma de tabela com cabeçalho ("CODIGO(*) EAN(*) PRODUTO UNID QUANTIDADE CODIGO NCM ONU", como a
+// da MADESA): só a coluna PRODUTO de cada linha abaixo do cabeçalho. Nome da empresa e cabeçalho ficam de fora.
+// Colunas separadas por ";" (grade da tela) ou por espaço (relatório de largura fixa). Sem cabeçalho: null.
+const LOG_TABELA={n:0};
+function produtosDaTabela(src){
+  const linhas=String(src||'').replace(/\t/g,'    ').split(/\r?\n/);
+  const ehCab=l=>{const n=semAcento(l);return /\b(?:PRODUTO|DESCRICAO)\b/.test(n)&&/\b(?:UNID|UN|QUANTIDADE|QTDE?)\b/.test(n)&&/\b(?:CODIGO|COD|EAN|NCM|ITEM)\b/.test(n)};
+  const h=linhas.findIndex(ehCab);
+  if(h<0)return null;
+  if(LOG_TABELA.n++<3)console.log('SSW RELACAO tabela: '+JSON.stringify(linhas.slice(Math.max(0,h-1),h+4).map(l=>l.slice(0,240))));
+  const cab=linhas[h],out=[],vistos=new Set();
+  const add=t=>{t=String(t||'').replace(/\s+/g,' ').trim();if(!t||ehCab(t)||!pareceProduto(t))return;const n=semAcento(t);if(!vistos.has(n)){vistos.add(n);out.push(t.slice(0,200))}};
+  if(cab.includes(';')){
+    const cols=cab.split(';').map(semAcento),i=cols.findIndex(c=>/\b(?:PRODUTO|DESCRICAO)\b/.test(c)&&!/\b(?:CODIGO|COD)\b/.test(c));
+    const iP=i>=0?i:cols.findIndex(c=>/\b(?:PRODUTO|DESCRICAO)\b/.test(c));
+    for(const l of linhas.slice(h+1)){if(ehCab(l))continue;const f=l.split(';');if(f.length>iP)add(f[iP])}
+    return out;
+  }
+  // largura fixa: a descrição fica entre o início de PRODUTO e o início de UNID/QUANTIDADE no cabeçalho
+  const cabU=cab.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();
+  const ini=cabU.search(/\b(?:PRODUTO|DESCRICAO)\b/);
+  const fimRel=cabU.slice(ini+7).search(/\b(?:UNID|UN|QUANTIDADE|QTDE?)\b/);
+  const fim=fimRel>=0?ini+7+fimRel:-1;
+  // linha do item: código, EAN opcional, descrição, unidade, quantidade (o resto: NCM, ONU)
+  const RE_ITEM=/^\s*(?:[\w.\/-]*\d[\w.\/-]*\s+){1,2}(?:(?:\d{8,14}|SEM GTIN)\s+)?(.+)\s+(?:[A-Za-z]{1,4}\s+\d[\d.,]*|\d[\d.,]*\s+[A-Za-z]{1,4})(?:\s+[\d.,\/-]+)*\s*$/;
+  for(const l of linhas.slice(h+1)){
+    if(!l.trim()||ehCab(l))continue;
+    const m=l.match(RE_ITEM);
+    if(m){add(m[1]);continue}
+    if(ini>=0&&fim>ini&&l.length>ini)add(l.slice(ini,fim));
+  }
+  return out;
+}
 function parseRelacaoProdutos(body){
   let src=String(body||'');
   if(/<(?:tr|td|table|br|div|p)\b/i.test(src)){
     src=src.replace(/<\/(?:tr|p|div|li)>|<br\s*\/?>/gi,'\n').replace(/<\/t[dh]>/gi,';').replace(/<[^>]+>/g,' ')
       .replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#39;/gi,"'")
   }
+  const tabela=produtosDaTabela(src);
+  if(tabela)return tabela;
   const out=[],vistos=new Set();
   for(const linha of src.split(/\r?\n/)){
     let t=linha.replace(/\s+/g,' ').trim();

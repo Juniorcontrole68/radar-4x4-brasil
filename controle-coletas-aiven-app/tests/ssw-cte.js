@@ -222,6 +222,10 @@ console.log('Tela de comprovantes do romaneio (opção 38)');
   const html=cte.parseRelacaoProdutos('<table><tr><th>Descrição</th><th>Qtde</th></tr><tr><td>PISO CERAMICO 60X60</td><td>30</td></tr></table>');
   check('HTML: a descrição de cada item',html.join('|')==='PISO CERAMICO 60X60',html);
   check('arquivo vazio: lista vazia',cte.parseRelacaoProdutos('').length===0)
+  {const r=cte.parseRelacaoProdutos('M D MOVEIS\nCODIGO(*) EAN(*)        PRODUTO                                   UNID QUANTIDADE CODIGO NCM ONU\n1093091   7898587801234  GUARDA ROUPA CASAL 6 PORTAS BRANCO        UN   1,000      94035000\n1093092   SEM GTIN       KIT 2 PCS CAMA BOX                        PC   2          94035000');
+   check('relação em tabela (MADESA): só a coluna PRODUTO, sem empresa nem cabeçalho',JSON.stringify(r)===JSON.stringify(['GUARDA ROUPA CASAL 6 PORTAS BRANCO','KIT 2 PCS CAMA BOX']),JSON.stringify(r))}
+  {const r=cte.parseRelacaoProdutos('M D MOVEIS;\nCODIGO;EAN;PRODUTO;UNID;QUANTIDADE;CODIGO NCM;ONU\n1093091;7898587801234;GUARDA ROUPA CASAL;UN;1;94035000;');
+   check('  ...também na grade separada por ponto e vírgula',JSON.stringify(r)===JSON.stringify(['GUARDA ROUPA CASAL']),JSON.stringify(r))}
   check('linha real do SSW (REM/QVOL/M3/KGREAL/KGCALC) não vira produto',cte.parseRelacaoProdutos('AMS001049-9 - REM: QUADRI COMERCIO ELETRONICO LTD - QVOL: 2 - 0,0 M3 - KGREAL: 71,400 - KGCALC: 71,400').length===0);
   check('linha do CT-e (REM/QVOL/M3) não vira produto',cte.parseRelacaoProdutos('AMS001050-2 - REM: QUADRI COMERCIO ELETRONICO LTD - QVOL: 1 - 0,0 M3 - ...').length===0);
   {const r=cte.parseRelacaoProdutos('AMS001045-6 - REM: QUADRI COMERCIO ELETRONICO LTD - QVOL: 8 - 0,0 M3 - CADEIRA GAMER PRETA - 194,6 KG\n1;10020;MESA DE ESCRITORIO;1;UN');
