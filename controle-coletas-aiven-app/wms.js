@@ -485,10 +485,12 @@ async function doEmpresa(c,ctx,tabela,id,msg){
   if(!r.rowCount)throw erro(404,msg||'Registro não encontrado.');
   return r.rows[0];
 }
-async function enderecoPorCodigo(c,ctx,armazemId,cod){
+// papel: 'de origem' / 'de destino', para a mensagem dizer qual dos endereços está errado
+async function enderecoPorCodigo(c,ctx,armazemId,cod,papel=''){
   const s=codigo(cod);
+  if(!s)throw erro(400,'Informe o endereço'+(papel?' '+papel:'')+'.','ENDERECO_VAZIO');
   const r=await c.query(`SELECT e.*,z.tipo AS zona_tipo FROM wms_enderecos e JOIN wms_zonas z ON z.id=e.zona_id WHERE e.empresa=$1 AND e.armazem_id=$2 AND (e.codigo=$3 OR e.id::text=$3)`,[ctx.emp,armazemId,s]);
-  if(!r.rowCount)throw erro(404,'Endereço '+s+' não existe neste armazém.','ENDERECO_INEXISTENTE');
+  if(!r.rowCount)throw erro(404,'Endereço'+(papel?' '+papel:'')+' '+s+' não existe neste armazém.','ENDERECO_INEXISTENTE');
   return r.rows[0];
 }
 async function produtoPorCodigo(c,ctx,clienteId,cod){
@@ -760,7 +762,7 @@ async function confirmarArmazenagem(pool,ctx,tarefaId,b){
 async function movimentar(pool,ctx,b){
   return operacao(pool,ctx,b.uuid,'movimentacao',async(c,op)=>{
     const arm=await doEmpresa(c,ctx,'wms_armazens',b.armazem_id,'Armazém não encontrado.');
-    const dest=await enderecoPorCodigo(c,ctx,arm.id,b.destino);
+    const dest=await enderecoPorCodigo(c,ctx,arm.id,b.destino,'de destino');
     await c.query('SELECT id FROM wms_enderecos WHERE id=$1 FOR UPDATE',[dest.id]);
     let linhas=[],origem,lpn=null,carga;
     if(b.lpn){
@@ -773,7 +775,8 @@ async function movimentar(pool,ctx,b){
       linhas=(await c.query('SELECT * FROM wms_saldos WHERE lpn_id=$1 ORDER BY id',[lpn.id])).rows.map(s=>({s,q:+s.qtd,lpnDestino:lpn.id}));
       carga=await cargaDoLpn(c,lpn.id);
     }else{
-      origem=await enderecoPorCodigo(c,ctx,arm.id,b.origem);
+      if(!codigo(b.origem))throw erro(400,'Leia o palete (LPN) ou informe o endereço de origem.','ENDERECO_VAZIO');
+      origem=await enderecoPorCodigo(c,ctx,arm.id,b.origem,'de origem');
       const prod=await produtoPorCodigo(c,ctx,null,b.produto);
       let falta=num(b.qtd);
       if(!qtdOk(falta))throw erro(400,'Quantidade inválida.');

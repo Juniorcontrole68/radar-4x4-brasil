@@ -217,6 +217,13 @@ function telaMov(){
   render(voltar+'<b>Movimentação</b><div class="muted">Palete inteiro: leia o LPN. Parte do saldo: leia origem e produto e informe a quantidade.</div>'+campo('mLpn','Palete (LPN)')+'<div class="muted">ou</div>'+campo('mOri','Endereço de origem')+campo('mProd','Produto (EAN ou SKU)')+'<label>Quantidade<input id="mQtd" inputmode="decimal"></label>'+campo('mDest','Endereço de destino')+'<button class="btn p" id="mOk" type="button">Confirmar</button>');
   $('#mLpn').focus();aoLer('mLpn',()=>$('#mDest').focus());aoLer('mOri',()=>$('#mProd').focus());aoLer('mProd',()=>$('#mQtd').focus());aoLer('mDest',()=>$('#mOk').click());
   $('#mOk').onclick=async()=>{
+    // confere antes de enviar (inclusive sem sinal, para não guardar na fila uma movimentação incompleta)
+    const vz=k=>!$(k).value.trim(),lpnLido=!vz('#mLpn');
+    const falta=vz('#mDest')?['Informe o endereço de destino (para onde vai a mercadoria).','#mDest']
+      :!lpnLido&&vz('#mOri')?['Leia o palete (LPN) ou informe o endereço de origem (onde a mercadoria está).','#mOri']
+      :!lpnLido&&vz('#mProd')?['Leia o produto (EAN ou SKU).','#mProd']
+      :!lpnLido&&vz('#mQtd')?['Informe a quantidade.','#mQtd']:null;
+    if(falta){aviso(falta[0],'err');$(falta[1]).focus();return}
     try{const r=await enviar('movimentacao',{armazem_id:S.arm,lpn:$('#mLpn').value.trim(),origem:$('#mOri').value.trim(),produto:$('#mProd').value.trim(),qtd:$('#mQtd').value.trim(),destino:$('#mDest').value.trim()});
       aviso(r.offline?'Sem sinal: movimentação guardada na fila.':'Movido '+n(r.qtd)+' de '+r.origem+' para '+r.destino+'.',r.offline?'warn':'ok');
       for(const k of['#mLpn','#mOri','#mProd','#mQtd','#mDest'])$(k).value='';$('#mLpn').focus();

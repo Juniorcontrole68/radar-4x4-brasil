@@ -259,6 +259,12 @@ function nfe({chave,itens}){
   check('mapa: posição ocupada, livre e doca vazia',r.json.rows.find(e=>e.codigo==='A-01-01-01').situacao==='ocupado'&&r.json.rows.find(e=>e.codigo==='A-02-01-01').situacao==='livre');
 
   console.log('Movimentação, bloqueio, concorrência e falhas');
+  r=await call('POST','/api/wms/movimentar',{cookie:op,body:{uuid:uuid(),armazem_id:arm,origem:tR.sugerido,produto:'REJ1',qtd:1,destino:''}});
+  check('destino em branco: pede o endereço de destino',r.status===400&&r.json.code==='ENDERECO_VAZIO'&&/destino/.test(r.json.error),r.json);
+  r=await call('POST','/api/wms/movimentar',{cookie:op,body:{uuid:uuid(),armazem_id:arm,origem:tR.sugerido,produto:'REJ1',qtd:1,destino:'Z-99-99-99'}});
+  check('destino que não existe: a mensagem diz que é o de destino e qual código',r.status===404&&r.json.error==='Endereço de destino Z-99-99-99 não existe neste armazém.',r.json);
+  r=await call('POST','/api/wms/movimentar',{cookie:op,body:{uuid:uuid(),armazem_id:arm,origem:'',produto:'REJ1',qtd:1,destino:'B-04-01-01'}});
+  check('sem palete e sem origem: pede um dos dois',r.status===400&&/origem/.test(r.json.error),r.json);
   r=await call('POST','/api/wms/movimentar',{cookie:op,body:{uuid:uuid(),armazem_id:arm,origem:tR.sugerido,produto:'REJ1',qtd:1000,destino:'B-04-01-01'}});
   check('estoque insuficiente: recusado sem mexer em nada',r.status===409&&r.json.code==='ESTOQUE_INSUFICIENTE',r.json);
   // 20 pedidos simultâneos de 5 un cada sobre 37 un: só 7 passam, nunca fica negativo
