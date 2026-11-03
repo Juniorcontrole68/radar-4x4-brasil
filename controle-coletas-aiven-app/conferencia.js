@@ -133,13 +133,13 @@ async function criarSessao(pool, cli, user, b, lerSsw) {
   const tipo = TIPOS.includes(b.tipo) ? b.tipo : 'descarga';
   if (tipo === 'contagem') throw erro(400, 'A contagem do galpão ainda não está disponível.');
   const teste = Array.isArray(b.rows) && b.testMode;   // testes: carga esperada informada
-  if (!teste && !lerSsw && !(tipo === 'carregamento' && b.modo === 'ctes')) throw erro(503, 'A leitura do SSW não está disponível neste servidor.');
+  const semSsw = () => erro(503, 'A leitura do SSW não está disponível neste servidor.');
   let rows = [], fontes = [], titulo, ini = null, fim = null, modo = '', referencia = '';
   if (tipo === 'descarga') {
     const j = janelaDescarga(b.data, /^\d{2}:\d{2}$/.test(b.hora_inicio || '') ? b.hora_inicio : '19:00', /^\d{2}:\d{2}$/.test(b.hora_fim || '') ? b.hora_fim : '04:00');
     ini = j.inicio; fim = j.fim; titulo = 'Descarga ' + j.data.split('-').reverse().join('/');
     if (teste) rows = b.rows;
-    else { const r = await lerSsw('ssw-esperado', { inicio: ini.toISOString(), fim: fim.toISOString() }); rows = r.rows || []; fontes = r.fontes || []; }
+    else { if (!lerSsw) throw semSsw(); const r = await lerSsw('ssw-esperado', { inicio: ini.toISOString(), fim: fim.toISOString() }); rows = r.rows || []; fontes = r.fontes || []; }
   } else {
     modo = b.modo === 'ctes' ? 'ctes' : 'romaneio';
     const quando = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -148,7 +148,7 @@ async function criarSessao(pool, cli, user, b, lerSsw) {
       if (!/^[A-Z]{3}\d+-\d$/.test(referencia)) throw erro(400, 'Escolha o romaneio (ex.: AMR001186-0).');
       let placa = limpo(b.placa, 10).toUpperCase(), motorista = limpo(b.motorista, 60);
       if (teste) rows = b.rows;
-      else { const r = await lerSsw('ssw-romaneio', { romaneio: referencia, ctes: Number(b.ctes) || 0 }); rows = r.rows || []; fontes = r.fontes || []; placa = placa || limpo(r.placa, 10); }
+      else { if (!lerSsw) throw semSsw(); const r = await lerSsw('ssw-romaneio', { romaneio: referencia, ctes: Number(b.ctes) || 0 }); rows = r.rows || []; fontes = r.fontes || []; placa = placa || limpo(r.placa, 10); }
       if (!rows.length) throw erro(404, 'O SSW não devolveu nenhum CT-e para o romaneio ' + referencia + '.');
       titulo = 'Carregamento ' + referencia + (placa ? ' · ' + placa : '') + (motorista ? ' · ' + motorista.split(' ')[0] : '');
     } else {
