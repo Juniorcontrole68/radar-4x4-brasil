@@ -6470,6 +6470,32 @@ if(u.pathname==='/api/agendamentos/baixas-ssw'&&req.method==='POST'){try{
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify({ok:true,dias,rows}))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+// Produtos da NF para o agendamento (só consulta): chaves das NF-e no XML do CT-e e, com relacao=true,
+// a relação de produtos do CT-e na opção 101. Chamado pelo servidor principal (agendamento-produtos.js),
+// que baixa o XML da NF-e na SEFAZ pela chave e só cai na relação do SSW quando a SEFAZ não libera.
+if(u.pathname==='/api/agendamentos/produtos-ssw'&&req.method==='POST'){try{
+  if(!dashboardHasAny(authUser,['agendamentos','dashboard']))return dashboardDeny(res);
+  const body=await readJsonLimited(req,16*1024);
+  const nf=normNf(body.nf||'');
+  let ctrc=String(body.ctrc||'').toUpperCase().trim();
+  if(!ctrc&&nf){try{ctrc=(await fetchSsw101ByNf(nf))?.ctrc||''}catch(e){console.log('AGENDAMENTO produtos NF '+nf+': '+String(e.message||e))}}
+  if(ctrc)ctrc=await agendamentoCtrcComSerie(ctrc,nf);
+  const out={ok:true,ctrc,chaves:[],produtos:[],diag:''};
+  if(!ctrc)out.diag='NF sem CT-e no SSW';
+  else{
+    const hit=sswCteCached(ctrc);
+    const info=hit!==undefined?hit:await Promise.race([sswCteInfo(ctrc,1),new Promise(r=>setTimeout(()=>r(null),30000))]);
+    out.chaves=(info?.cte?.nfChaves||[]).slice(0,50);
+    if(body.relacao){
+      const session=await deliveryProgramCreateSsw101Session();
+      const det=await deliveryProgramFetchSsw101Detail(session,{ctrc,frete:0},false);
+      out.produtos=Array.isArray(det?.productLines)?det.productLines.slice(0,60):[];
+      out.diag=det?.productDiag||(det?'':'CT-e não lido na opção 101');
+    }
+  }
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify(out))
+}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/agendamentos/ssw-snapshot'&&req.method==='POST'){try{
   if(!dashboardHasAny(authUser,['agendamentos','dashboard']))return dashboardDeny(res);
   const body=await readJsonLimited(req,4*1024*1024);

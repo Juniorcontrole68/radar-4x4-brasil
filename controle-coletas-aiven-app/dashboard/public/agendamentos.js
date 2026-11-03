@@ -101,11 +101,27 @@ async function sincronizar(){
 }
 
 // ------------------------------------------------------------------ formulário: NF + data + observação
+// Produtos: digitado pelo operador ou lidos da NF-e (XML na SEFAZ) / relação do SSW.
+const FONTES_PROD=['operador','nfe','ssw'],ORIGEM_PROD={nfe:'XML da NF-e (SEFAZ)',ssw:'relação de produtos do SSW',operador:'digitado pelo operador'};
+let prodAuto=null,prodSeq=0;
+// Busca os itens da nota quando o campo Produto veio vazio (alguns segundos; o operador pode digitar antes)
+async function carregarProdutos(r){
+  if(!r||q('#agProd').value.trim())return;
+  const seq=++prodSeq,campo=q('#agProd'),ph=campo.placeholder;
+  campo.placeholder='Buscando produtos da NF…';
+  try{
+    const j=await api('/api/painel/agendamentos/produtos?nf='+encodeURIComponent(r.nf)+(r.ctrc?'&ctrc='+encodeURIComponent(r.ctrc):'')+(r.nota_id?'&nota_id='+encodeURIComponent(r.nota_id):''));
+    if(seq!==prodSeq||atual!==r)return;
+    if(j.produto&&!campo.value.trim()){campo.value=j.produto;campo.title='Produtos: '+(j.origem||'');prodAuto={texto:j.produto,fonte:j.fonte}}
+    else if(!j.produto&&j.motivo)campo.title='Produtos não encontrados automaticamente: '+j.motivo;
+  }catch(e){if(seq===prodSeq)campo.title='Falha ao buscar os produtos: '+e.message}
+  finally{if(seq===prodSeq)campo.placeholder=ph}
+}
 function preencher(r){
   atual=r;
   q('#agRem').value=r?.remetente||'';q('#agDest').value=r?.destinatario||'';
   q('#agCid').value=r?[r.cidade,r.uf].filter(Boolean).join('/'):'';q('#agPeso').value=r&&r.peso?kg(r.peso):'';
-  q('#agProd').value=r&&r.produto_fonte==='operador'?r.produto||'':'';q('#agCte').value=r?.ctrc||'';
+  q('#agProd').value=r&&FONTES_PROD.includes(r.produto_fonte)?r.produto||'':'';q('#agProd').title=r&&ORIGEM_PROD[r.produto_fonte]?'Produtos: '+ORIGEM_PROD[r.produto_fonte]:'';prodAuto=r&&r.produto_fonte!=='operador'&&FONTES_PROD.includes(r.produto_fonte)?{texto:r.produto||'',fonte:r.produto_fonte}:null;q('#agCte').value=r?.ctrc||'';
   q('#agRem').title=r?.endereco?'Entrega: '+r.endereco:'';q('#agDest').title=r?.endereco?'Entrega: '+r.endereco:'';
   q('#agSalvar').disabled=!r;
 }
@@ -120,7 +136,7 @@ function escolher(lista,origem){
 function usarLocal(r){
   if(r.agendamento_id){preencher(null);msg('A NF '+r.nf+' já está agendada para '+br(r.data_agendada)+'. Use "Alterar" na lista Agendadas para reagendar.','err');return}
   if(r.situacao==='entregue'||r.situacao==='devolvida'){preencher(null);msg('A NF '+r.nf+' já está '+ROT[r.situacao].toLowerCase()+' no SSW e não entra no agendamento.','err');return}
-  preencher(r);msg('NF '+r.nf+' carregada ('+(ROT[r.situacao]||'')+' no SSW, consultada em '+dh(r.ultima_consulta)+'). Informe a data e clique em Agendar.','ok');q('#agData').focus()
+  preencher(r);carregarProdutos(r);msg('NF '+r.nf+' carregada ('+(ROT[r.situacao]||'')+' no SSW, consultada em '+dh(r.ultima_consulta)+'). Informe a data e clique em Agendar.','ok');q('#agData').focus()
 }
 async function buscarNf(){
   const nf=String(q('#agNf').value||'').replace(/\D/g,'').replace(/^0+(?=\d)/,'');
@@ -142,7 +158,7 @@ async function buscarSsw(nf,ctrc,conhecidas=[]){
     const j=await api('/api/agendamentos/nf?nf='+encodeURIComponent(nf)+(ctrc?'&ctrc='+encodeURIComponent(ctrc):''));
     if(j.varias)return escolher(j.opcoes,'ssw');
     const r=j.row;r.nf=r.nf||nf;r.destinatario=r.destinatario||r.cliente||'';
-    preencher(r);q('#agNf').value=r.nf;
+    preencher(r);q('#agNf').value=r.nf;carregarProdutos(r);
     msg('NF '+r.nf+' encontrada no SSW'+(r.status_ssw?' ('+r.status_ssw+')':'')+'. Informe a data e clique em Agendar.','ok');q('#agData').focus()
   }catch(e){
     const fin=conhecidas.find(r=>r.situacao==='entregue'||r.situacao==='devolvida');
@@ -156,6 +172,7 @@ async function salvar(ev){
   const b=q('#agSalvar');b.disabled=true;
   try{
     const body={data_agendada:data,observacao:q('#agObs').value,produto:q('#agProd').value};
+    if(prodAuto&&body.produto.trim()===prodAuto.texto.trim())body.produto_fonte=prodAuto.fonte;
     if(atual.nota_id)body.nota_id=atual.nota_id;else body.nota={...atual,produto:'',mercadoria:''};
     await api('/api/painel/agendamentos',{method:'POST',body});
     const nf=atual.nf;limparForm();msg('NF '+nf+' agendada para '+br(data)+'.','ok');
@@ -208,7 +225,7 @@ function celula(r,k,num){
   }
   if(k==='situacao')return'<td>'+st(r.situacao,r)+(r.erro_integracao&&r.situacao==='verificar'?'<div style="font-size:10px;color:#92400e">'+esc(r.erro_integracao)+'</div>':'')+'</td>';
   const v=valor(r,k);
-  return'<td class="'+(num?'n':'')+(k==='produto'?' prod':k==='observacao'?' obs':'')+'" title="'+esc(k==='produto'||k==='observacao'||k==='remetente'||k==='destinatario'?v:'')+'">'+(k==='nf'?'<b>'+esc(v)+'</b>':k==='produto'?'<div class="ag-prod">'+esc(v)+'</div>':esc(v))+'</td>'
+  return'<td class="'+(num?'n':'')+(k==='produto'?' prod':k==='observacao'?' obs':'')+'" title="'+esc(k==='produto'&&v&&ORIGEM_PROD[r.produto_fonte]?v+' ('+ORIGEM_PROD[r.produto_fonte]+')':k==='produto'||k==='observacao'||k==='remetente'||k==='destinatario'?v:'')+'">'+(k==='nf'?'<b>'+esc(v)+'</b>':k==='produto'?'<div class="ag-prod">'+esc(v)+'</div>':esc(v))+'</td>'
 }
 // A lista ocupa o resto da altura da janela (os indicadores e o formulário ficam em faixas finas acima).
 function ajustarAltura(){

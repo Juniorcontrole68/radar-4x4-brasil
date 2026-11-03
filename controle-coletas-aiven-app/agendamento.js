@@ -21,6 +21,7 @@
 
 const http = require('http');
 const { limparProduto } = require('./dashboard/ssw-cte');
+const produtos = require('./agendamento-produtos');
 
 const OPERACIONAIS = ['pendente', 'em_rota', 'verificar'];
 const FINAIS = ['entregue', 'devolvida'];
@@ -158,6 +159,8 @@ async function ensureSchema(pool) {
   // de onde veio o nome dos produtos (xml/nfe/ssw_xml/danfe = itens da NF-e; cte = produto predominante) e quando foi buscado
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS produto_fonte TEXT');
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS produtos_em TIMESTAMPTZ');
+  // por que a busca automática dos produtos (XML da NF-e / SSW) não achou nada; tenta de novo depois de 24 h
+  await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS produtos_erro TEXT');
   await pool.query('ALTER TABLE ag_config ADD COLUMN IF NOT EXISTS parceiros TEXT');   // NULL = lista padrão
   // baixa de entregue feita pelo motorista no app (entregas_comprovantes): a varredura do SSW não reabre a nota
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS baixa_motorista_em TIMESTAMPTZ');
@@ -585,8 +588,9 @@ const SEL_AG = `a.id::text AS agendamento_id,to_char(a.data_agendada,'YYYY-MM-DD
 const DIAS_SEM_SQL = "((NOW() AT TIME ZONE 'America/Sao_Paulo')::date-COALESCE(n.data_entrada,n.data_emissao,(n.primeiro_visto AT TIME ZONE 'America/Sao_Paulo')::date))";
 const HOJE_SQL = "(NOW() AT TIME ZONE 'America/Sao_Paulo')::date";
 
-// O produto é o que o operador digitou ao agendar; o que veio do SSW/BI2 não aparece (vem ilegível).
-const comProdutoLimpo = r => (r.produto_fonte === 'operador' ? r : { ...r, produto: '' });
+// O produto que aparece: o digitado pelo operador ou os itens da NF-e (XML na SEFAZ ou relação do SSW).
+// O texto antigo do SSW/BI2 (produto predominante, ilegível) não aparece.
+const comProdutoLimpo = r => (produtos.FONTES_VISIVEIS.includes(r.produto_fonte) ? r : { ...r, produto: '' });
 
 function filtrosEntrega(f, params, aba) {
   const w = [];
@@ -602,7 +606,7 @@ function filtrosEntrega(f, params, aba) {
   if (normNf(f.nf)) w.push('n.nf=' + p(normNf(f.nf)));
   if (SITUACOES.includes(f.status)) w.push('n.situacao=' + p(f.status));
   if (Number(f.dias_min) > 0) w.push(DIAS_SEM_SQL + '>=' + p(Math.floor(Number(f.dias_min))));
-  if (f.q) { const t = p(like(limpo(f.q, 80))); w.push(`(n.nf ILIKE ${t} OR n.ctrc ILIKE ${t} OR n.remetente ILIKE ${t} OR n.destinatario ILIKE ${t} OR n.cidade ILIKE ${t} OR (n.produto_fonte='operador' AND n.produto ILIKE ${t}))`); }
+  if (f.q) { const t = p(like(limpo(f.q, 80))); w.push(`(n.nf ILIKE ${t} OR n.ctrc ILIKE ${t} OR n.remetente ILIKE ${t} OR n.destinatario ILIKE ${t} OR n.cidade ILIKE ${t} OR (n.produto_fonte IN ('operador','nfe','ssw') AND n.produto ILIKE ${t}))`); }
   if (aba === 'agendadas' || aba === 'pendentes') {
     if (f.card === 'hoje') w.push('a.data_agendada=' + HOJE_SQL);
     if (f.card === 'amanha') w.push('a.data_agendada=' + HOJE_SQL + '+1');
@@ -754,7 +758,9 @@ async function agendar(pool, cli, user, b) {
     const at = await db.query("SELECT id,to_char(data_agendada,'YYYY-MM-DD') AS data FROM ag_agendamentos WHERE nota_id=$1 AND status='ativo'", [notaId]);
     if (at.rowCount) throw erro(409, 'A NF ' + n.nf + ' já está agendada para ' + brData(at.rows[0].data) + '. Use Reagendar na lista.');
     const produto = limpo(b.produto, 600);
-    if (produto) await db.query("UPDATE ag_notas SET produto=$2,produto_fonte='operador',atualizado_em=NOW() WHERE id=$1", [notaId, produto]);
+    // veio preenchido da NF-e/SSW e o operador não mexeu: guarda a origem automática
+    const fonteProd = produtos.FONTES_AUTO.includes(b.produto_fonte) ? b.produto_fonte : 'operador';
+    if (produto) await db.query("UPDATE ag_notas SET produto=$2,produto_fonte=$3,produtos_em=CASE WHEN $3<>'operador' THEN NOW() ELSE produtos_em END,atualizado_em=NOW() WHERE id=$1", [notaId, produto, fonteProd]);
     const q = await db.query("INSERT INTO ag_agendamentos(client_id,nota_id,data_agendada,observacao,criado_por,criado_por_nome) VALUES($1,$2,$3,$4,$5,$6) RETURNING id::text",
       [cli, notaId, data, obs || null, /^\d+$/.test(String(user.id || '')) ? user.id : null, limpo(user.username, 80)]);
     await evento(db, cli, notaId, q.rows[0].id, 'agendado', null, brData(data), obs, limpo(user.username, 80));
@@ -785,7 +791,7 @@ async function alterar(pool, cli, user, id, b) {
     if (b.produto !== undefined) {
       const pr = limpo(b.produto, 600);
       const n = (await db.query('SELECT produto,produto_fonte FROM ag_notas WHERE id=$1', [a.nota_id])).rows[0] || {};
-      const antes = n.produto_fonte === 'operador' ? n.produto || '' : '';
+      const antes = produtos.FONTES_VISIVEIS.includes(n.produto_fonte) ? n.produto || '' : '';
       if (pr !== antes) {
         await db.query("UPDATE ag_notas SET produto=$2,produto_fonte=CASE WHEN $2::text IS NULL THEN NULL ELSE 'operador' END,atualizado_em=NOW() WHERE id=$1", [a.nota_id, pr || null]);
         await evento(db, cli, a.nota_id, id, 'produto', antes, pr, null, quem);
@@ -816,7 +822,7 @@ async function handle(req, res, u, ctx) {
   await atender(req, res, u, ctx);
   return true;
 }
-async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashboardSession, dashboardHas, lerSswDoUsuario, lerBaixasDoUsuario, lerFaixaDoUsuario }) {
+async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashboardSession, dashboardHas, lerSswDoUsuario, lerBaixasDoUsuario, lerFaixaDoUsuario, lerProdutosDoUsuario }) {
   const p = u.pathname.slice('/api/painel/agendamentos'.length) || '/';
   try {
     const user = await dashboardSession(req, false);
@@ -836,6 +842,22 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
     if (p === '/buscar-nf' && req.method === 'GET') {
       if (!normNf(f.nf)) return sendJson(res, 400, { ok: false, error: 'Informe a nota fiscal.' });
       return sendJson(res, 200, { ok: true, rows: await buscarNf(pool, cli, f.nf) });
+    }
+    // Produtos da NF (XML da NF-e na SEFAZ ou relação do SSW) para preencher o campo ao digitar a nota.
+    if (p === '/produtos' && req.method === 'GET') {
+      if (!normNf(f.nf)) return sendJson(res, 400, { ok: false, error: 'Informe a nota fiscal.' });
+      const ler = lerProdutosDoUsuario ? lerProdutosDoUsuario(user) : null;
+      let notaId = '', nota = null;
+      if (/^\d+$/.test(String(f.nota_id || ''))) {
+        nota = (await pool.query('SELECT id::text AS id,nf,ctrc,produto,produto_fonte FROM ag_notas WHERE id=$1 AND client_id IS NOT DISTINCT FROM $2', [f.nota_id, cli])).rows[0] || null;
+        if (nota) notaId = nota.id;
+      }
+      if (nota && produtos.FONTES_VISIVEIS.includes(nota.produto_fonte) && nota.produto)
+        return sendJson(res, 200, { ok: true, produto: nota.produto, fonte: nota.produto_fonte, origem: produtos.ROTULO_FONTE[nota.produto_fonte] || '' });
+      if (!ler) return sendJson(res, 200, { ok: true, produto: '', fonte: '', motivo: 'Leitura automática dos produtos indisponível aqui.' });
+      const r = await produtos.buscarProdutos({ nf: normNf(f.nf), ctrc: limpo(f.ctrc || (nota && nota.ctrc), 20) }, ler);
+      if (notaId) await produtos.gravar(pool, notaId, r);
+      return sendJson(res, 200, { ok: true, produto: r.produto || '', fonte: r.fonte || '', origem: produtos.ROTULO_FONTE[r.fonte] || '', motivo: r.motivo || '' });
     }
     if (p === '/' && req.method === 'POST') {
       const b = await readJsonBodyLimited(req, 64 * 1024);

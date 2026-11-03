@@ -1110,6 +1110,12 @@ function agendamentoLerBaixasInterno(opcoes){
 // Importação de uma faixa de CT-es: o painel lê cada CT-e na opção 101 (fora da demonstração e dos testes).
 const agendamentoLerFaixaDoUsuario=user=>(TEST_MODE||movitDemo.ATIVA||movitDemo.clienteDemo(user))?null:
   (corpo=>agendamento.postJson(DASH_INTERNAL_PORT,'/api/agendamentos/ctes-faixa',{'X-Internal-Key':INTERNAL_KEY},corpo));
+// Produtos da NF no agendamento: o painel lê o XML do CT-e e a relação de produtos do SSW (só consulta);
+// o XML da NF-e vem da SEFAZ aqui mesmo (agendamento-produtos.js). Fora da demonstração e dos testes.
+function agendamentoLerProdutosInterno(corpo){
+  return agendamento.postJson(DASH_INTERNAL_PORT,'/api/agendamentos/produtos-ssw',{'X-Internal-Key':INTERNAL_KEY},corpo||{},90*1000);
+}
+const agendamentoLerProdutosDoUsuario=user=>(TEST_MODE||movitDemo.ATIVA||movitDemo.clienteDemo(user))?null:agendamentoLerProdutosInterno;
 // Na demonstração não há SSW da Construlog: só os comprovantes do app.
 const agendamentoLerBaixasDoUsuario=user=>(TEST_MODE||movitDemo.ATIVA||movitDemo.clienteDemo(user))?null:agendamentoLerBaixasInterno;
 function agendamentoLerSswDoUsuario(user,req){
@@ -2123,6 +2129,9 @@ async function start() {
     lerSsw:(cli,alvos)=>agendamentoLerSswInterno(alvos),
     clientes:agendamentoClientes});
   // baixas dos motoristas (rastreio do SSW e app) -> entregue no agendamento: de hora em hora, das 07:00 às 19:00
+  // produtos das notas em aberto (XML da NF-e na SEFAZ ou relação do SSW), aos poucos em segundo plano
+  if(!TEST_MODE&&!movitDemo.ATIVA&&process.env.AGENDAMENTO_PRODUTOS_AUTO!=='0')require('./agendamento-produtos').iniciarProdutos({pool,
+    lerSsw:agendamentoLerProdutosInterno,clientes:agendamentoClientes});
   if(!TEST_MODE)agendamento.iniciarBaixasMotoristas({pool,lerBaixas:movitDemo.ATIVA?null:agendamentoLerBaixasInterno});
   await lotacaoRastreio.ensureSchema(pool);
   await lotacaoClientes.ensureSchema(pool);
@@ -3341,7 +3350,7 @@ async function start() {
       // Lançamentos da operação (substitui a aba de lançamentos da planilha): ver lancamentos.js
       if (await lancamentos.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,sessionOrInternal,dashboardSession,dashboardHas,spToday})) return;
       // Agendamento de entregas (notas pendentes no SSW, com e sem agendamento): ver agendamento.js
-      if (await agendamento.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,lerSswDoUsuario:agendamentoLerSswDoUsuario,lerBaixasDoUsuario:agendamentoLerBaixasDoUsuario,lerFaixaDoUsuario:agendamentoLerFaixaDoUsuario})) return;
+      if (await agendamento.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,lerSswDoUsuario:agendamentoLerSswDoUsuario,lerBaixasDoUsuario:agendamentoLerBaixasDoUsuario,lerFaixaDoUsuario:agendamentoLerFaixaDoUsuario,lerProdutosDoUsuario:agendamentoLerProdutosDoUsuario})) return;
       // Despesas (DRE) do Financeiro, com os holerites da conta Salários: ver dre.js
       if (await dre.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
       // Roteirizador de Cargas (substitui o Roteirizador Teste e o Roteirizador V02): ver roteirizador-cargas.js

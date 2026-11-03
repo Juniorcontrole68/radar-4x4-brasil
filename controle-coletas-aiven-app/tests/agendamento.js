@@ -292,6 +292,30 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   check('tela nova no painel (formulário, abas e filtros) e a antiga removida',html.includes('id="agendamento-entregas"')&&html.includes('id="agNf"')&&html.includes('data-aba="sem"')&&!html.includes('agendamento-teste'),'');
   check('rota antiga removida',(await api('GET','/api/painel/agendamento-teste')).status===404||(await api('GET','/api/painel/agendamento-teste')).status===405);
 
+  console.log('Produtos da NF (XML da NF-e / SSW)');
+  {
+    const pr=require('../agendamento-produtos.js');
+    const n=(await pool.query("SELECT id::text AS id,nf,ctrc FROM ag_notas WHERE client_id IS NOT DISTINCT FROM $1 AND situacao='pendente' AND tipo_operacao='entrega' ORDER BY id LIMIT 1",[cli])).rows[0];
+    check('há nota em aberto para o teste de produtos',!!n);
+    if(n){
+      await pool.query("UPDATE ag_notas SET produto='LIXO DO BI2',produto_fonte=NULL,produtos_em=NULL WHERE id=$1",[n.id]);
+      x=await api('GET','/api/painel/agendamentos/produtos?nf='+n.nf+'&nota_id='+n.id);
+      check('rota de produtos responde sem SSW neste servidor (vazio, sem erro)',x.status===200&&x.j.produto==='',x.j);
+      x=await api('GET','/api/painel/agendamentos/buscar-nf?nf='+n.nf);
+      check('texto antigo do SSW/BI2 continua escondido',x.status===200&&x.j.rows.every(r=>r.produto===''),x.j.rows);
+      const ler=async b=>b.relacao?{ctrc:n.ctrc,produtos:['BOBINA DE PAPEL 120G','CAIXA DE PAPELAO']}:{ctrc:n.ctrc,chaves:[]};
+      const c=await pr.completarPendentes(pool,ler,{cli,limite:500});
+      check('segundo plano completa as notas em aberto pela relação do SSW',c.tentadas>=1&&c.ssw>=1,c);
+      x=await api('GET','/api/painel/agendamentos/buscar-nf?nf='+n.nf);
+      const r=x.j.rows.find(z=>z.nota_id===n.id);
+      check('  ...produto da relação do SSW aparece na tela',!!r&&r.produto==='BOBINA DE PAPEL 120G; CAIXA DE PAPELAO'&&r.produto_fonte==='ssw',r);
+      check('  ...nota já resolvida não é buscada de novo',(await pr.completarPendentes(pool,ler,{cli,limite:500})).tentadas===0);
+      await pool.query("UPDATE ag_notas SET produto='DIGITADO',produto_fonte='operador',produtos_em=NULL WHERE id=$1",[n.id]);
+      await pr.gravar(pool,n.id,{produto:'OUTRO',fonte:'nfe',ctrc:''});
+      check('  ...o que o operador digitou nunca é trocado',(await pool.query('SELECT produto FROM ag_notas WHERE id=$1',[n.id])).rows[0].produto==='DIGITADO');
+    }
+  }
+
   await pool.end();
   console.log('\n'+pass+' ok, '+fail+' falha(s)');
   process.exit(fail?1:0)
