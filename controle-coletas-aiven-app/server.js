@@ -3353,10 +3353,10 @@ async function start() {
       // Lançamentos da operação (substitui a aba de lançamentos da planilha): ver lancamentos.js
       if (await lancamentos.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,sessionOrInternal,dashboardSession,dashboardHas,spToday})) return;
       // Agendamento de entregas (notas pendentes no SSW, com e sem agendamento): ver agendamento.js
-      // Conferência de carga por código de barras (descarga): carga esperada lida do SSW pelo painel
+      // Conferência de carga por código de barras (descarga e carregamento): carga esperada lida do SSW pelo painel
       if (await conferencia.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,testMode:TEST_MODE,
-        lerEsperadoDoUsuario:user=>(TEST_MODE||movitDemo.ATIVA||movitDemo.clienteDemo(user))?null:
-          (corpo=>agendamento.postJson(DASH_INTERNAL_PORT,'/api/conferencia/ssw-esperado',{'X-Internal-Key':INTERNAL_KEY},corpo,3*60*1000))})) return;
+        lerSswDoUsuario:user=>(TEST_MODE||movitDemo.ATIVA||movitDemo.clienteDemo(user))?null:
+          ((rota,corpo)=>agendamento.postJson(DASH_INTERNAL_PORT,'/api/conferencia/'+rota,{'X-Internal-Key':INTERNAL_KEY},corpo||{},3*60*1000))})) return;
       if (await agendamento.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,lerSswDoUsuario:agendamentoLerSswDoUsuario,lerBaixasDoUsuario:agendamentoLerBaixasDoUsuario,lerFaixaDoUsuario:agendamentoLerFaixaDoUsuario,lerProdutosDoUsuario:agendamentoLerProdutosDoUsuario})) return;
       // Despesas (DRE) do Financeiro, com os holerites da conta Salários: ver dre.js
       if (await dre.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;

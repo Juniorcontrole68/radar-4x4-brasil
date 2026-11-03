@@ -143,7 +143,7 @@ async function dashboardUserFromReq(req){
   // a situação das sobras em galpão (conferência de hora em hora, das 05:00 às 20:00), a varredura e os produtos do agendamento.
   const ik=String(req.headers['x-internal-key']||'');
   if(INTERNAL_KEY&&ik.length===INTERNAL_KEY.length&&crypto.timingSafeEqual(Buffer.from(ik),Buffer.from(INTERNAL_KEY))
-     &&(String(req.url||'').startsWith('/api/tracking/planned-route')||String(req.url||'').startsWith('/api/ssw/despesas475?')||String(req.url||'').startsWith('/api/programacao-entregas/status-nfs?')||['/api/agendamentos/ssw-snapshot','/api/agendamentos/baixas-ssw','/api/agendamentos/ctes-faixa','/api/agendamentos/produtos-ssw','/api/conferencia/ssw-esperado'].includes(String(req.url||'').split('?')[0])))
+     &&(String(req.url||'').startsWith('/api/tracking/planned-route')||String(req.url||'').startsWith('/api/ssw/despesas475?')||String(req.url||'').startsWith('/api/programacao-entregas/status-nfs?')||['/api/agendamentos/ssw-snapshot','/api/agendamentos/baixas-ssw','/api/agendamentos/ctes-faixa','/api/agendamentos/produtos-ssw','/api/conferencia/ssw-esperado','/api/conferencia/ssw-romaneios','/api/conferencia/ssw-romaneio','/api/conferencia/ssw-ctes'].includes(String(req.url||'').split('?')[0])))
     return{token:'',id:0,username:'servidor',is_admin:true,permissions:['*'],internal:true};
   const token=dashboardRequestToken(req);
   if(!token){const e=new Error('Não autenticado.');e.status=401;throw e}
@@ -6499,50 +6499,111 @@ if(u.pathname==='/api/agendamentos/produtos-ssw'&&req.method==='POST'){try{
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(out))
 }catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
-// Carga esperada da conferência de descarga (só consulta): CT-es emitidos no SSW dentro da janela
-// (padrão: 19:00 da véspera até 04:00 do dia da descarga), pelo relatório 174 do BI2 (pastas dos dois dias e o atual).
-// Devolve CT-e, NF, volumes, chave e os nomes (remetente, pagador, tomador, expedidor) para achar o parceiro.
-// Chamado pelo servidor principal (conferencia.js).
-if(u.pathname==='/api/conferencia/ssw-esperado'&&req.method==='POST'){try{
-  if(!dashboardHasAny(authUser,['conferencia','agendamentos','dashboard']))return dashboardDeny(res);
-  const body=await readJsonLimited(req,16*1024);
-  const ini=new Date(body.inicio),fim=new Date(body.fim);
-  if(!Number.isFinite(ini.getTime())||!Number.isFinite(fim.getTime())||fim<=ini)throw Object.assign(new Error('Janela de emissão inválida.'),{status:400});
-  const dias=[...new Set([spDateISO(ini),spDateISO(fim)])];
+// Conferência de carga (só consulta no SSW): devolve os CT-es esperados para o servidor principal (conferencia.js).
+//   ssw-esperado   descarga: CT-es emitidos na janela (padrão 19:00 da véspera a 04:00 do dia), relatório 174 do BI2
+//   ssw-romaneios  carregamento: romaneios de hoje na opção 38
+//   ssw-romaneio   carregamento: CT-es de um romaneio (opção 38), com volumes e nomes pelo relatório 174
+//   ssw-ctes       carregamento: CT-es pelas chaves dos DACTEs bipados (relatório 174; na falta, opção 101)
+// Cada CT-e: ctrc, NF, volumes, chave e os nomes (remetente, pagador, tomador...) para achar o parceiro da etiqueta.
+const CONF_JSON={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'};
+function confCtrc174(r){
+  const sig=String(pickField(r,'sigla_ctrc')||'').trim().toUpperCase(),num=String(pickField(r,'numero_ctrc')||'').replace(/\D/g,'');
+  let ctrc=sig&&num?sig+num.padStart(7,'0'):String(pickField(r,'CTRC')||'').toUpperCase().trim();
+  const m=ctrc.match(/^([A-Z]{3})0*(\d+)(\d)$/);if(m&&!/-/.test(ctrc))ctrc=m[1]+m[2].padStart(6,'0')+'-'+m[3];
+  return ctrc
+}
+function confLinha174(r){
+  const nomes=Object.entries(r).filter(([k,v])=>/REMET|PAGAD|TOMAD|EXPED|CLIENTE|SUBCONTR/.test(normKey(k))&&!/CNPJ|CPF|CEP|CIDADE|UF|END|FONE|IE\b|INSCR|COD/.test(normKey(k))&&String(v||'').trim()).map(([k,v])=>String(v).trim().slice(0,80));
+  return{ctrc:confCtrc174(r),nf:String(pickField(r,'numero_nf','NF')||'').replace(/\D/g,'').replace(/^0+/,''),
+    volumes:Number(String(pickField(r,'qtde_volume','VOLUMES','QTDE VOLUMES')||'0').replace(/\./g,'').replace(',','.'))||0,
+    chave:String(pickField(r,'nro_chave_acesso_cte')||'').replace(/\D/g,''),
+    destinatario:String(pickField(r,'destinatario_nome','DESTINATARIO')||'').slice(0,80),cidade:String(pickField(r,'cidade_destino','dest_cidade')||'').slice(0,60),
+    subcontrato:String(pickField(r,'ctrc/subcontr')||'').slice(0,40),nomes:[...new Set(nomes)].slice(0,8)}
+}
+// linhas do 174: pastas dos dias pedidos + relatório atual (as mais novas primeiro)
+async function confLinhas174(dias){
   const linhas=[],fontes=[];
+  try{const t=parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text).rows||[];fontes.push({fonte:'relatório atual',linhas:t.length});linhas.push(...t)}
+  catch(e){fontes.push({fonte:'relatório atual',erro:String(e.message||e).slice(0,160)})}
   for(const d of dias){
     try{const x=await fetchBi2FolderDayParsed(174,'ctrc',d);fontes.push({fonte:'pasta '+d,ok:!!x.ok,linhas:(x.rows||[]).length});linhas.push(...(x.rows||[]))}
     catch(e){fontes.push({fonte:'pasta '+d,erro:String(e.message||e).slice(0,160)})}
   }
-  try{const t=parseBi2Csv((await fetchBi2ReportFolder(174,'','ctrc')).text).rows||[];fontes.push({fonte:'relatório atual',linhas:t.length});linhas.push(...t)}
-  catch(e){fontes.push({fonte:'relatório atual',erro:String(e.message||e).slice(0,160)})}
-  // data/hora de emissão em Brasília -> instante
-  const quando=r=>{
-    const dt=String(pickField(r,'data_emissao','DATA EMISSAO')||'').trim(),hr=String(pickField(r,'hora_emissao','HORA EMISSAO')||'').trim();
-    const iso=/^\d{4}-\d{2}-\d{2}/.test(dt)?dt.slice(0,10):brDateToIso(dt);
-    if(!iso)return null;
-    const h=(hr.match(/(\d{1,2}):(\d{2})/)||[]);
-    const t=new Date(iso+'T'+String(h[1]||'00').padStart(2,'0')+':'+(h[2]||'00')+':00-03:00');
-    return Number.isFinite(t.getTime())?t:null
-  };
-  const nomes=r=>Object.entries(r).filter(([k,v])=>/REMET|PAGAD|TOMAD|EXPED|CLIENTE|SUBCONTR/.test(normKey(k))&&!/CNPJ|CPF|CEP|CIDADE|UF|END|FONE|IE\b|INSCR|COD/.test(normKey(k))&&String(v||'').trim()).map(([k,v])=>String(v).trim().slice(0,80));
-  const vistos=new Set(),rows=[];
-  for(const r of linhas){
-    const sig=String(pickField(r,'sigla_ctrc')||'').trim().toUpperCase(),num=String(pickField(r,'numero_ctrc')||'').replace(/\D/g,'');
-    let ctrc=sig&&num?sig+num.padStart(7,'0'):String(pickField(r,'CTRC')||'').toUpperCase().trim();
-    const m=ctrc.match(/^([A-Z]{3})0*(\d+)(\d)$/);if(m&&!/-/.test(ctrc))ctrc=m[1]+m[2].padStart(6,'0')+'-'+m[3];
-    const k=normCtrc(ctrc);if(!k||vistos.has(k))continue;
-    const t=quando(r);if(!t||t<ini||t>fim)continue;
-    vistos.add(k);
-    rows.push({ctrc,emitido_em:t.toISOString(),nf:String(pickField(r,'numero_nf','NF')||'').replace(/\D/g,'').replace(/^0+/,''),
-      volumes:Number(String(pickField(r,'qtde_volume','VOLUMES','QTDE VOLUMES')||'0').replace(/\./g,'').replace(',','.'))||0,
-      chave:String(pickField(r,'nro_chave_acesso_cte')||'').replace(/\D/g,''),
-      destinatario:String(pickField(r,'destinatario_nome','DESTINATARIO')||'').slice(0,80),cidade:String(pickField(r,'cidade_destino','dest_cidade')||'').slice(0,60),
-      subcontrato:String(pickField(r,'ctrc/subcontr')||'').slice(0,40),nomes:[...new Set(nomes(r))].slice(0,8)});
+  return{linhas,fontes}
+}
+const confDiasAtras=n=>Array.from({length:n},(_,i)=>spDateISO(new Date(Date.now()-i*86400000)));
+// CT-e que não está no 174: lê a tela 101 + XML (volumes, nomes e chave)
+async function confCteDo101(ctrc){
+  const info=await Promise.race([sswCteInfo(ctrc,2),new Promise(r=>setTimeout(()=>r(null),30000))]);
+  if(!info)return null;
+  const c=info.cte||{},rs=info.resumo||{};
+  return{ctrc:String(info.ctrc||ctrc).toUpperCase(),nf:String((sswCteNfs(info)||[])[0]||rs.nf||'').replace(/^0+/,''),volumes:Number(rs.volumes||0)||0,chave:String(c.chave||'').replace(/\D/g,''),
+    destinatario:String(c.destinatario?.nome||rs.destinatario||'').slice(0,80),cidade:String(c.destinatario?.cidade||c.cidadeFim||'').slice(0,60),subcontrato:'',
+    nomes:[...new Set([c.remetente?.nome,c.expedidor?.nome,c.tomador,rs.remetente].map(x=>String(x||'').trim()).filter(Boolean))].slice(0,8)}
+}
+if(u.pathname.startsWith('/api/conferencia/ssw-')&&req.method==='POST'){try{
+  if(!dashboardHasAny(authUser,['conferencia','agendamentos','dashboard']))return dashboardDeny(res);
+  const body=await readJsonLimited(req,64*1024);
+  const rota=u.pathname.slice('/api/conferencia/'.length);
+  if(rota==='ssw-esperado'){
+    const ini=new Date(body.inicio),fim=new Date(body.fim);
+    if(!Number.isFinite(ini.getTime())||!Number.isFinite(fim.getTime())||fim<=ini)throw Object.assign(new Error('Janela de emissão inválida.'),{status:400});
+    const {linhas,fontes}=await confLinhas174([...new Set([spDateISO(ini),spDateISO(fim)])]);
+    // data/hora de emissão em Brasília -> instante
+    const quando=r=>{
+      const dt=String(pickField(r,'data_emissao','DATA EMISSAO')||'').trim(),hr=String(pickField(r,'hora_emissao','HORA EMISSAO')||'').trim();
+      const iso=/^\d{4}-\d{2}-\d{2}/.test(dt)?dt.slice(0,10):brDateToIso(dt);
+      if(!iso)return null;
+      const h=(hr.match(/(\d{1,2}):(\d{2})/)||[]);
+      const t=new Date(iso+'T'+String(h[1]||'00').padStart(2,'0')+':'+(h[2]||'00')+':00-03:00');
+      return Number.isFinite(t.getTime())?t:null
+    };
+    const vistos=new Set(),rows=[];
+    for(const r of linhas){
+      const x=confLinha174(r),k=normCtrc(x.ctrc);if(!k||vistos.has(k))continue;
+      const t=quando(r);if(!t||t<ini||t>fim)continue;
+      vistos.add(k);rows.push({...x,emitido_em:t.toISOString()});
+    }
+    res.writeHead(200,CONF_JSON);
+    return res.end(JSON.stringify({ok:true,rows,fontes,colunas:linhas[0]?Object.keys(linhas[0]).slice(0,80):[]}))
   }
-  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
-  return res.end(JSON.stringify({ok:true,rows,fontes,colunas:linhas[0]?Object.keys(linhas[0]).slice(0,80):[]}))
-}catch(e){res.writeHead(e.status||502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+  if(rota==='ssw-romaneios'){
+    const rows=(await lancRomaneiosDeHoje()).map(r=>({romaneio:String(r.romaneio||'').toUpperCase().trim(),motorista:String(r.motorista||'').trim(),placa:String(r.veiculo||'').trim().toUpperCase(),ctes:Number(r.qtdeCtrcs||0)||0}))
+      .filter(r=>r.romaneio);
+    res.writeHead(200,CONF_JSON);
+    return res.end(JSON.stringify({ok:true,rows:[...new Map(rows.map(r=>[r.romaneio,r])).values()]}))
+  }
+  if(rota==='ssw-romaneio'){
+    const rom=String(body.romaneio||'').toUpperCase().trim();
+    const det=await fetchSsw38RomaneioDetailDirect(rom,Number(body.ctes||0),'','');
+    const lista=[...new Set((det.ctrcs||[]).map(c=>String(c).toUpperCase().trim()).filter(Boolean))];
+    const {linhas,fontes}=await confLinhas174(confDiasAtras(10));
+    const por=new Map();for(const r of linhas){const x=confLinha174(r),k=normCtrc(x.ctrc);if(k&&!por.has(k))por.set(k,x)}
+    const rows=[];
+    for(const c of lista){
+      let x=por.get(normCtrc(c));
+      if(!x){try{x=await confCteDo101(c)}catch{}}
+      const meta=(det.ctrcMeta||[]).find(m=>normCtrc(m.ctrc)===normCtrc(c))||{};
+      rows.push(x?{...x,ctrc:x.ctrc||c,nf:x.nf||meta.nf||''}:{ctrc:c,nf:meta.nf||'',volumes:0,chave:'',destinatario:'',cidade:'',nomes:[],sem_dados:true});
+    }
+    res.writeHead(200,CONF_JSON);
+    return res.end(JSON.stringify({ok:true,romaneio:rom,motorista:det.motorista||'',placa:det.veiculo||'',rows,fontes}))
+  }
+  if(rota==='ssw-ctes'){
+    const chaves=[...new Set((Array.isArray(body.chaves)?body.chaves:[]).map(c=>String(c||'').replace(/\D/g,'')).filter(c=>c.length===44))].slice(0,200);
+    const {linhas}=await confLinhas174(confDiasAtras(10));
+    const por=new Map();for(const r of linhas){const x=confLinha174(r);if(x.chave&&!por.has(x.chave))por.set(x.chave,x)}
+    const rows=[],nao=[];
+    for(const ch of chaves){
+      let x=por.get(ch);
+      if(!x){try{const info=await sswCtePorChave(ch);if(info)x=await confCteDo101(info.ctrc)}catch{}}
+      if(x)rows.push({...x,chave:x.chave||ch});else nao.push(ch);
+    }
+    res.writeHead(200,CONF_JSON);
+    return res.end(JSON.stringify({ok:true,rows,nao_encontradas:nao}))
+  }
+  res.writeHead(404,CONF_JSON);return res.end(JSON.stringify({ok:false,error:'Rota não encontrada.'}))
+}catch(e){res.writeHead(e.status||502,CONF_JSON);return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
 if(u.pathname==='/api/agendamentos/ssw-snapshot'&&req.method==='POST'){try{
   if(!dashboardHasAny(authUser,['agendamentos','dashboard']))return dashboardDeny(res);
   const body=await readJsonLimited(req,4*1024*1024);

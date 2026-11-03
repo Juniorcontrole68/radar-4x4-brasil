@@ -10,6 +10,10 @@
 // A etiqueta não traz NF nem CT-e: a conferência fecha por parceiro (esperado = soma dos volumes dos CT-es dele).
 // DACTE (chave de 44 dígitos) também pode ser bipado: marca o CT-e como documento conferido, não conta volume.
 //
+// Carregamento: a carga esperada vem do romaneio de entregas (opção 38 do SSW) ou é montada bipando os DACTEs dos
+// CT-es que vão no caminhão (cada DACTE novo entra na carga). Depois os volumes: volume de parceiro sem CT-e na
+// carga ou a mais do que os CT-es dizem aparece em vermelho, "NÃO CARREGAR".
+//
 // Tabelas: conf_formatos (formatos de etiqueta por empresa, editáveis), conf_sessoes, conf_esperado, conf_leituras.
 // Testado em tests/conferencia.js.
 
@@ -39,6 +43,9 @@ async function ensureSchema(pool) {
   await pool.query(`CREATE TABLE IF NOT EXISTS conf_leituras (id BIGSERIAL PRIMARY KEY, sessao_id BIGINT NOT NULL REFERENCES conf_sessoes(id) ON DELETE CASCADE,
     uuid TEXT, codigo TEXT NOT NULL, tipo TEXT NOT NULL, parceiro TEXT NOT NULL DEFAULT '', ctrc TEXT NOT NULL DEFAULT '',
     situacao TEXT NOT NULL, usuario TEXT NOT NULL DEFAULT '', criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), desfeita_em TIMESTAMPTZ)`);
+  // carregamento: modo 'romaneio' (referencia = romaneio do SSW) ou 'ctes' (carga montada pelos DACTEs bipados)
+  await pool.query("ALTER TABLE conf_sessoes ADD COLUMN IF NOT EXISTS modo TEXT NOT NULL DEFAULT ''");
+  await pool.query("ALTER TABLE conf_sessoes ADD COLUMN IF NOT EXISTS referencia TEXT NOT NULL DEFAULT ''");
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS uq_conf_leitura_uuid ON conf_leituras (sessao_id, uuid) WHERE uuid IS NOT NULL');
   await pool.query('CREATE INDEX IF NOT EXISTS idx_conf_leitura_sessao ON conf_leituras (sessao_id, id)');
 }
@@ -102,12 +109,12 @@ function janelaDescarga(data, horaIni = '19:00', horaFim = '04:00') {
 function hojeSp(d = new Date()) { return d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }); }
 
 // ------------------------------------------------------------------ sessões
-async function carregarEsperado(pool, cli, sessaoId, rows) {
+async function carregarEsperado(pool, cli, sessaoId, rows, { acrescentar = false } = {}) {
   const fs = compilar(await formatos(pool, cli));
   const db = await pool.connect();
   try {
     await db.query('BEGIN');
-    await db.query('DELETE FROM conf_esperado WHERE sessao_id=$1', [sessaoId]);
+    if (!acrescentar) await db.query('DELETE FROM conf_esperado WHERE sessao_id=$1', [sessaoId]);
     for (const r of rows || []) {
       const ctrc = limpo(r.ctrc, 20).toUpperCase();
       if (!ctrc) continue;
@@ -121,33 +128,67 @@ async function carregarEsperado(pool, cli, sessaoId, rows) {
   } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
 }
 
-async function criarSessao(pool, cli, user, b, lerEsperado) {
+// lerSsw(rota, corpo): rotas /api/conferencia/<rota> do painel (ssw-esperado, ssw-romaneio, ssw-ctes, ssw-romaneios)
+async function criarSessao(pool, cli, user, b, lerSsw) {
   const tipo = TIPOS.includes(b.tipo) ? b.tipo : 'descarga';
-  if (tipo !== 'descarga') throw erro(400, 'Por enquanto só a conferência de descarga está disponível.');
-  const j = janelaDescarga(b.data, /^\d{2}:\d{2}$/.test(b.hora_inicio || '') ? b.hora_inicio : '19:00', /^\d{2}:\d{2}$/.test(b.hora_fim || '') ? b.hora_fim : '04:00');
-  let rows = null, fontes = [];
-  if (Array.isArray(b.rows) && b.testMode) rows = b.rows;   // testes: carga esperada informada
-  else if (lerEsperado) { const r = await lerEsperado({ inicio: j.inicio.toISOString(), fim: j.fim.toISOString() }); rows = r.rows || []; fontes = r.fontes || []; }
-  else throw erro(503, 'A leitura do SSW não está disponível neste servidor.');
-  const titulo = 'Descarga ' + j.data.split('-').reverse().join('/');
-  const s = await pool.query('INSERT INTO conf_sessoes(client_id,tipo,titulo,janela_ini,janela_fim,criado_por) VALUES($1,$2,$3,$4,$5,$6) RETURNING id::text',
-    [cli, tipo, titulo, j.inicio, j.fim, limpo(user.username, 80)]);
+  if (tipo === 'contagem') throw erro(400, 'A contagem do galpão ainda não está disponível.');
+  const teste = Array.isArray(b.rows) && b.testMode;   // testes: carga esperada informada
+  if (!teste && !lerSsw && !(tipo === 'carregamento' && b.modo === 'ctes')) throw erro(503, 'A leitura do SSW não está disponível neste servidor.');
+  let rows = [], fontes = [], titulo, ini = null, fim = null, modo = '', referencia = '';
+  if (tipo === 'descarga') {
+    const j = janelaDescarga(b.data, /^\d{2}:\d{2}$/.test(b.hora_inicio || '') ? b.hora_inicio : '19:00', /^\d{2}:\d{2}$/.test(b.hora_fim || '') ? b.hora_fim : '04:00');
+    ini = j.inicio; fim = j.fim; titulo = 'Descarga ' + j.data.split('-').reverse().join('/');
+    if (teste) rows = b.rows;
+    else { const r = await lerSsw('ssw-esperado', { inicio: ini.toISOString(), fim: fim.toISOString() }); rows = r.rows || []; fontes = r.fontes || []; }
+  } else {
+    modo = b.modo === 'ctes' ? 'ctes' : 'romaneio';
+    const quando = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    if (modo === 'romaneio') {
+      referencia = limpo(b.romaneio, 20).toUpperCase();
+      if (!/^[A-Z]{3}\d+-\d$/.test(referencia)) throw erro(400, 'Escolha o romaneio (ex.: AMR001186-0).');
+      let placa = limpo(b.placa, 10).toUpperCase(), motorista = limpo(b.motorista, 60);
+      if (teste) rows = b.rows;
+      else { const r = await lerSsw('ssw-romaneio', { romaneio: referencia, ctes: Number(b.ctes) || 0 }); rows = r.rows || []; fontes = r.fontes || []; placa = placa || limpo(r.placa, 10); }
+      if (!rows.length) throw erro(404, 'O SSW não devolveu nenhum CT-e para o romaneio ' + referencia + '.');
+      titulo = 'Carregamento ' + referencia + (placa ? ' · ' + placa : '') + (motorista ? ' · ' + motorista.split(' ')[0] : '');
+    } else {
+      referencia = limpo(b.placa, 10).toUpperCase();
+      titulo = 'Carregamento ' + (referencia ? referencia + ' · ' : '') + quando;
+      if (teste) rows = b.rows;
+    }
+  }
+  const s = await pool.query('INSERT INTO conf_sessoes(client_id,tipo,titulo,janela_ini,janela_fim,criado_por,modo,referencia) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id::text',
+    [cli, tipo, titulo, ini, fim, limpo(user.username, 80), modo, referencia]);
   const id = s.rows[0].id;
   await carregarEsperado(pool, cli, id, rows);
   return { id, fontes };
 }
 
-async function recarregar(pool, cli, id, lerEsperado, b = {}) {
+async function recarregar(pool, cli, id, lerSsw, b = {}) {
   const s = await sessao(pool, cli, id);
   if (s.status !== 'aberta') throw erro(409, 'Conferência já fechada.');
   let rows;
   if (Array.isArray(b.rows) && b.testMode) rows = b.rows;
-  else if (lerEsperado) rows = (await lerEsperado({ inicio: new Date(s.janela_ini).toISOString(), fim: new Date(s.janela_fim).toISOString() })).rows || [];
-  else throw erro(503, 'A leitura do SSW não está disponível neste servidor.');
+  else if (!lerSsw) throw erro(503, 'A leitura do SSW não está disponível neste servidor.');
+  else if (s.tipo === 'descarga') rows = (await lerSsw('ssw-esperado', { inicio: new Date(s.janela_ini).toISOString(), fim: new Date(s.janela_fim).toISOString() })).rows || [];
+  else if (s.modo === 'romaneio') rows = (await lerSsw('ssw-romaneio', { romaneio: s.referencia })).rows || [];
+  else {
+    const chaves = (await pool.query("SELECT chave FROM conf_esperado WHERE sessao_id=$1 AND chave<>''", [id])).rows.map(r => r.chave);
+    rows = chaves.length ? (await lerSsw('ssw-ctes', { chaves })).rows || [] : [];
+  }
   // guarda os DACTEs já lidos
   const lidos = (await pool.query('SELECT ctrc,dacte_lido_em FROM conf_esperado WHERE sessao_id=$1 AND dacte_lido_em IS NOT NULL', [id])).rows;
   await carregarEsperado(pool, cli, id, rows);
   for (const l of lidos) await pool.query('UPDATE conf_esperado SET dacte_lido_em=$3 WHERE sessao_id=$1 AND ctrc=$2', [id, l.ctrc, l.dacte_lido_em]);
+}
+
+// carregamento montado pelos DACTEs: tira um CT-e bipado por engano
+async function tirarCte(pool, cli, id, ctrc) {
+  const s = await sessao(pool, cli, id);
+  if (s.status !== 'aberta') throw erro(409, 'Conferência já fechada.');
+  if (s.tipo !== 'carregamento') throw erro(400, 'Só no carregamento dá para tirar um CT-e da carga.');
+  const q = await pool.query('DELETE FROM conf_esperado WHERE sessao_id=$1 AND ctrc=$2', [id, limpo(ctrc, 20).toUpperCase()]);
+  if (!q.rowCount) throw erro(404, 'CT-e não está nesta carga.');
 }
 
 async function sessao(db, cli, id) {
@@ -173,7 +214,7 @@ async function resumo(db, cli, id) {
   const outros = esp.filter(e => !e.parceiro);
   const t = k => parceiros.reduce((a, p) => a + p[k], 0);
   return {
-    sessao: { id: String(s.id), tipo: s.tipo, titulo: s.titulo, status: s.status, janela_ini: s.janela_ini, janela_fim: s.janela_fim, criado_por: s.criado_por, criado_em: s.criado_em, carregado_em: s.carregado_em, fechada_em: s.fechada_em, fechada_por: s.fechada_por, observacao: s.observacao || '' },
+    sessao: { id: String(s.id), tipo: s.tipo, modo: s.modo || '', referencia: s.referencia || '', titulo: s.titulo, status: s.status, janela_ini: s.janela_ini, janela_fim: s.janela_fim, criado_por: s.criado_por, criado_em: s.criado_em, carregado_em: s.carregado_em, fechada_em: s.fechada_em, fechada_por: s.fechada_por, observacao: s.observacao || '' },
     parceiros,
     outros: { ctes: outros.length, volumes: outros.reduce((a, e) => a + e.volumes, 0) },
     nao_reconhecidos: conta('', ['nao_reconhecido']),
@@ -183,7 +224,25 @@ async function resumo(db, cli, id) {
 }
 
 // Uma leitura. Uma de cada vez por conferência (vários coletores na mesma carga não estouram a contagem).
-async function ler(pool, cli, user, id, b) {
+async function ler(pool, cli, user, id, b, lerSsw) {
+  // carregamento: DACTE que ainda não está na carga é lido no SSW antes (fora da trava, pode levar alguns segundos)
+  let novoCte = null;
+  {
+    const s0 = await sessao(pool, cli, id);
+    const bruto = String(b.codigo || '').replace(/[\s\r\n\t]+/g, '');
+    if (s0.tipo === 'carregamento' && s0.status === 'aberta' && /^\d{44}$/.test(bruto) && bruto.slice(20, 22) === '57') {
+      const tem = (await pool.query('SELECT 1 FROM conf_esperado WHERE sessao_id=$1 AND chave=$2', [id, bruto])).rowCount;
+      if (!tem) {
+        if (b.testMode && b.cte_teste) novoCte = { ...b.cte_teste, chave: bruto };
+        else if (lerSsw) { const r = await lerSsw('ssw-ctes', { chaves: [bruto] }); novoCte = (r.rows || [])[0] || null; }
+        if (novoCte) {
+          const ja = (await pool.query('SELECT 1 FROM conf_esperado WHERE sessao_id=$1 AND ctrc=$2', [id, limpo(novoCte.ctrc, 20).toUpperCase()])).rowCount;
+          if (!ja) await carregarEsperado(pool, cli, id, [novoCte], { acrescentar: true });
+          else await pool.query("UPDATE conf_esperado SET chave=$3 WHERE sessao_id=$1 AND ctrc=$2 AND chave=''", [id, limpo(novoCte.ctrc, 20).toUpperCase(), bruto]);
+        }
+      }
+    }
+  }
   const db = await pool.connect();
   try {
     await db.query('BEGIN');
@@ -193,7 +252,7 @@ async function ler(pool, cli, user, id, b) {
     const uuid = b.uuid ? limpo(b.uuid, 60) : null;
     if (uuid) {
       const ja = await db.query('SELECT situacao,parceiro,ctrc,codigo FROM conf_leituras WHERE sessao_id=$1 AND uuid=$2', [id, uuid]);
-      if (ja.rowCount) { await db.query('COMMIT'); return { ...ja.rows[0], repetida_envio: true, ...(await mensagem(db, cli, id, ja.rows[0])) }; }
+      if (ja.rowCount) { await db.query('COMMIT'); return { ...ja.rows[0], repetida_envio: true, ...(await mensagem(db, cli, id, { ...ja.rows[0], tipo: s.tipo })) }; }
     }
     const fs = compilar(await formatos(db, cli));
     const c = classificar(fs, b.codigo);
@@ -201,8 +260,8 @@ async function ler(pool, cli, user, id, b) {
     let situacao = 'nao_reconhecido', parceiro = '', ctrc = '';
     if (c.tipo === 'dacte') {
       const e = (await db.query('SELECT ctrc,parceiro FROM conf_esperado WHERE sessao_id=$1 AND chave=$2', [id, c.codigo])).rows[0];
-      if (e) { situacao = 'dacte'; ctrc = e.ctrc; parceiro = e.parceiro; await db.query('UPDATE conf_esperado SET dacte_lido_em=COALESCE(dacte_lido_em,NOW()) WHERE sessao_id=$1 AND ctrc=$2', [id, e.ctrc]); }
-      else situacao = 'dacte_parceiro';   // DACTE de outra transportadora (ex.: Transbarbosa): fica registrado
+      if (e) { situacao = novoCte ? 'cte_adicionado' : 'dacte'; ctrc = e.ctrc; parceiro = e.parceiro; await db.query('UPDATE conf_esperado SET dacte_lido_em=COALESCE(dacte_lido_em,NOW()) WHERE sessao_id=$1 AND ctrc=$2', [id, e.ctrc]); }
+      else situacao = s.tipo === 'carregamento' ? 'cte_nao_achado' : 'dacte_parceiro';   // descarga: DACTE de outra transportadora (ex.: Transbarbosa) fica registrado
     } else if (c.tipo === 'danfe') {
       const e = (await db.query("SELECT ctrc,parceiro FROM conf_esperado WHERE sessao_id=$1 AND ltrim(nf,'0')=$2 LIMIT 1", [id, c.nf])).rows[0];
       situacao = e ? 'danfe' : 'danfe_fora'; if (e) { ctrc = e.ctrc; parceiro = e.parceiro; }
@@ -218,7 +277,7 @@ async function ler(pool, cli, user, id, b) {
     }
     const ins = await db.query('INSERT INTO conf_leituras(sessao_id,uuid,codigo,tipo,parceiro,ctrc,situacao,usuario) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id::text',
       [id, uuid, c.codigo, c.tipo, parceiro, ctrc, situacao, limpo(user.username, 80)]);
-    const out = { id: ins.rows[0].id, codigo: c.codigo, tipo: c.tipo, parceiro, ctrc, situacao, ...(await mensagem(db, cli, id, { situacao, parceiro, ctrc, codigo: c.codigo })) };
+    const out = { id: ins.rows[0].id, codigo: c.codigo, tipo: c.tipo, parceiro, ctrc, situacao, ...(await mensagem(db, cli, id, { situacao, parceiro, ctrc, codigo: c.codigo, tipo: s.tipo })) };
     await db.query('COMMIT');
     return out;
   } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
@@ -226,12 +285,16 @@ async function ler(pool, cli, user, id, b) {
 async function mensagem(db, cli, id, l) {
   const r = l.parceiro ? (await resumo(db, cli, id)).parceiros.find(p => p.parceiro === l.parceiro) : null;
   const prog = r ? r.lidos + ' de ' + r.esperado : '';
+  const carg = l.tipo === 'carregamento';
+  const cte = l.ctrc ? (await db.query('SELECT volumes,parceiro FROM conf_esperado WHERE sessao_id=$1 AND ctrc=$2', [id, l.ctrc])).rows[0] : null;
   const M = {
+    cte_adicionado: ['info', 'CT-e ' + l.ctrc + ' na carga' + (cte ? ' · ' + cte.volumes + ' volume(s)' + (cte.parceiro ? ' · ' + cte.parceiro : ' · sem etiqueta reconhecida') : '')],
+    cte_nao_achado: ['erro', 'CT-e deste DACTE não encontrado no SSW'],
     ok: [r && r.completo ? 'ok_completo' : 'ok', l.parceiro + ': ' + prog + (r && r.completo ? ' ✓ completo' : '')],
     duplicado: ['alerta', 'Volume já bipado (' + l.parceiro + ')'],
-    excesso: ['erro', 'A mais: ' + l.parceiro + ' já tem ' + prog + ' volumes'],
-    sobra: ['erro', l.parceiro + ' não tem CT-e nesta carga'],
-    nao_reconhecido: ['erro', 'Etiqueta não reconhecida'],
+    excesso: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + 'A mais: ' + l.parceiro + ' já tem ' + prog + ' volumes'],
+    sobra: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + l.parceiro + ' não tem CT-e nesta carga'],
+    nao_reconhecido: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + 'Etiqueta não reconhecida'],
     dacte: ['info', 'DACTE ' + l.ctrc + ' conferido'],
     dacte_parceiro: ['info', 'DACTE de outra transportadora registrado'],
     danfe: ['info', 'DANFE do CT-e ' + l.ctrc],
@@ -259,7 +322,7 @@ async function fechar(pool, cli, user, id, obs) {
 }
 
 async function listar(db, cli, tipo) {
-  return (await db.query(`SELECT s.id::text,s.tipo,s.titulo,s.status,s.criado_por,s.criado_em,s.fechada_em,
+  return (await db.query(`SELECT s.id::text,s.tipo,s.modo,s.referencia,s.titulo,s.status,s.criado_por,s.criado_em,s.fechada_em,
       (SELECT COALESCE(SUM(volumes),0)::int FROM conf_esperado e WHERE e.sessao_id=s.id) AS esperado,
       (SELECT COUNT(*)::int FROM conf_leituras l WHERE l.sessao_id=s.id AND l.situacao='ok' AND l.desfeita_em IS NULL) AS lidos
     FROM conf_sessoes s WHERE s.client_id IS NOT DISTINCT FROM $1 AND ($2::text IS NULL OR s.tipo=$2) ORDER BY s.id DESC LIMIT 60`, [cli, TIPOS.includes(tipo) ? tipo : null])).rows;
@@ -268,14 +331,14 @@ async function listar(db, cli, tipo) {
 // ------------------------------------------------------------------ rotas /api/painel/conferencia*
 async function handle(req, res, u, deps) {
   if (u.pathname !== '/api/painel/conferencia' && !u.pathname.startsWith('/api/painel/conferencia/')) return false;
-  const { pool, sendJson, readJsonBodyLimited, dashboardSession, dashboardHas, lerEsperadoDoUsuario, testMode } = deps;
+  const { pool, sendJson, readJsonBodyLimited, dashboardSession, dashboardHas, lerSswDoUsuario, testMode } = deps;
   const p = u.pathname.slice('/api/painel/conferencia'.length) || '/';
   try {
     const user = await dashboardSession(req, false);
     if (!(user.is_admin || dashboardHas(user, 'conferencia') || dashboardHas(user, 'dashboard') || dashboardHas(user, 'agendamentos')))
       return sendJson(res, 403, { ok: false, error: 'Seu usuário não tem acesso à Conferência de carga. Peça a liberação a um administrador.' }), true;
     const cli = user.client_id ? String(user.client_id) : null;
-    const lerSsw = lerEsperadoDoUsuario ? lerEsperadoDoUsuario(user) : null;
+    const lerSsw = lerSswDoUsuario ? lerSswDoUsuario(user) : null;
     let m;
     if (p === '/formatos' && req.method === 'GET') return sendJson(res, 200, { ok: true, formatos: await formatos(pool, cli), pode_editar: !!user.is_admin }), true;
     if (p === '/formatos' && req.method === 'PUT') {
@@ -283,6 +346,14 @@ async function handle(req, res, u, deps) {
       const b = await readJsonBodyLimited(req, 64 * 1024);
       await salvarFormatos(pool, cli, b.formatos);
       return sendJson(res, 200, { ok: true, formatos: await formatos(pool, cli) }), true;
+    }
+    if (p === '/romaneios' && req.method === 'GET') {
+      if (!lerSsw) return sendJson(res, 200, { ok: true, rows: [] }), true;
+      return sendJson(res, 200, { ok: true, rows: (await lerSsw('ssw-romaneios', {})).rows || [] }), true;
+    }
+    if ((m = p.match(/^\/sessoes\/(\d+)\/ctes\/([A-Za-z0-9-]+)$/)) && req.method === 'DELETE') {
+      await tirarCte(pool, cli, m[1], m[2]);
+      return sendJson(res, 200, { ok: true, ...(await resumo(pool, cli, m[1])) }), true;
     }
     if (p === '/sessoes' && req.method === 'GET') return sendJson(res, 200, { ok: true, rows: await listar(pool, cli, u.searchParams.get('tipo')), hoje: hojeSp() }), true;
     if (p === '/sessoes' && req.method === 'POST') {
@@ -294,7 +365,7 @@ async function handle(req, res, u, deps) {
       return sendJson(res, 200, { ok: true, ...(await resumo(pool, cli, m[1])), leituras: await leituras(pool, cli, m[1]) }), true;
     if ((m = p.match(/^\/sessoes\/(\d+)\/leituras$/)) && req.method === 'POST') {
       const b = await readJsonBodyLimited(req, 8 * 1024);
-      return sendJson(res, 200, { ok: true, ...(await ler(pool, cli, user, m[1], b)) }), true;
+      return sendJson(res, 200, { ok: true, ...(await ler(pool, cli, user, m[1], { ...b, testMode: !!testMode }, lerSsw)) }), true;
     }
     if ((m = p.match(/^\/sessoes\/(\d+)\/leituras\/(\d+)$/)) && req.method === 'DELETE') {
       await desfazer(pool, cli, user, m[1], m[2]);
