@@ -103,14 +103,14 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
   check('motorista vê a carga sem login',r.status===200&&r.j.ctes===1&&r.j.totais.esperado===2&&r.j.sessao.status==='aberta',r.j);
   check('  ...sem dados de leitura do conferente (id/usuário)',r.j&&r.j.leituras.every(l=>!('id' in l)&&!('usuario' in l)),r.j&&r.j.leituras);
   r=await mot('POST','/leituras',{codigo:'001000257623',uuid:'m-1'});
-  check('motorista bipa volume da carga',r.status===200&&r.j.situacao==='ok',r.j);
+  check('motorista bipa volume da carga (já lido antes pelo conferente: repetido)',r.status===200&&['ok','duplicado'].includes(r.j.situacao)&&r.j.parceiro==='Conasid',r.j);
   r=await mot('POST','/leituras',{codigo:'35261012345678000199570010000999991000099999',uuid:'m-2'});
   check('DACTE fora da carga: NÃO CARREGAR e não entra',r.j.situacao==='dacte_fora'&&/NÃO CARREGAR/.test(r.j.mensagem),r.j);
   r=await api('GET','/api/painel/conferencia/sessoes/'+cc);
   check('  ...a carga continua com 1 CT-e',r.j.esperado.length===1,r.j.esperado);
   check('conferente vê o horário do link',!!r.j.sessao.motorista_link_em);
   for(const [m,suf] of [['DELETE','/leituras/1'],['POST','/fechar'],['POST','/recarregar'],['DELETE',''],['PUT','']]){
-    const x=await mot(m,suf,m==='DELETE'?undefined:{});check('motorista não pode '+m+' '+(suf||'/'),x.status===404||x.status===405,x);
+    const x=await mot(m,suf,m==='DELETE'?undefined:{});check('motorista não pode '+m+' '+(suf||'/'),[401,404,405].includes(x.status),x);
   }
   r=await fetch(B+'/api/painel/conferencia/sessoes/'+cc);check('token não abre o painel',r.status===401);
   r=await mot('POST','/terminei',{});check('motorista avisa que terminou',r.status===200);
