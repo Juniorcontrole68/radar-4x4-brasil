@@ -85,3 +85,10 @@
 @media(max-width:1250px){.ag-cards{grid-template-columns:repeat(4,minmax(0,1fr))}.ag-form{grid-template-columns:92px repeat(5,minmax(0,1fr))}.ag-form .ag-btn{align-self:end}.ag-filtros{grid-template-columns:repeat(6,minmax(0,1fr))}.ag-filtros .ag-acoes{grid-column:1/-1}}
 @media(max-width:900px){.ag-form{grid-template-columns:repeat(3,minmax(0,1fr))}.ag-tabela-box{max-height:65vh}}
 @media(max-width:560px){.ag-cards{grid-template-columns:repeat(2,minmax(0,1fr))}.ag-form{grid-template-columns:1fr 1fr}.ag-l1 label:first-child{grid-column:1/-1}.ag-filtros{grid-template-columns:1fr 1fr}.ag-legenda{margin-left:0}}
+
+/* aviso do destinatário (nome, cidade, telefone) */
+td.ag-dest{cursor:help;text-decoration:underline dotted #94a3b8;text-underline-offset:3px}
+.ag-pop{position:fixed;z-index:1000;display:none;min-width:220px;max-width:360px;background:#fff;color:#0f172a;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 8px 24px rgba(15,23,42,.18);padding:9px 11px;font-size:12.5px;line-height:1.5}
+.ag-pop-nome{font-weight:800;font-size:13px;margin-bottom:3px}
+.ag-pop-rot{display:inline-block;min-width:62px;color:#64748b;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.02em}
+.ag-pop a{color:#0f766e;font-weight:700;text-decoration:none}

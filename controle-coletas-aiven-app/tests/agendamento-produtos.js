@@ -76,6 +76,13 @@ function chave(n){
   const fonte=require('fs').readFileSync(require('path').join(__dirname,'..','dashboard','server.js'),'utf8');
   const lista=(fonte.match(/\[('\/api\/agendamentos\/ssw-snapshot'[^\]]*)\]\.includes/)||[])[1]||'';
   check('rota de produtos liberada para a chave interna do servidor',lista.includes("'/api/agendamentos/produtos-ssw'"),lista);
+  // telefone do destinatário
+  check('telefone formatado (celular, fixo, com 55)',pr.formatarFone('19999998888')==='(19) 99999-8888'&&pr.formatarFone('1933334444')==='(19) 3333-4444'&&pr.formatarFone('5519999998888')==='(19) 99999-8888');
+  check('telefone do destinatário no XML da NF-e',pr.foneDaNfe('<emit><fone>1100000000</fone></emit><dest><enderDest><fone>11987654321</fone></enderDest></dest>')==='11987654321');
+  pr._reset();sefaz.configurado=()=>false;
+  r=await pr.buscarProdutos({nf:'1',ctrc:''},async b=>b.relacao?{produtos:['X Y Z']}:{chaves:[],fone:'19999998888'});
+  check('telefone do CT-e volta junto com os produtos',r.telefone==='(19) 99999-8888',JSON.stringify(r));
+  check('só o telefone (nota que já tem produto)',(await pr.buscarTelefone({nf:'1'},async()=>({fone:'1933334444'})))==='(19) 3333-4444');
   Object.assign(sefaz,orig);
   console.log('\n'+pass+' ok, '+fail+' falha(s)');
   process.exit(fail?1:0);

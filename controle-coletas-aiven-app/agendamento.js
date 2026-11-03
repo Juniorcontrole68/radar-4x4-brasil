@@ -161,6 +161,8 @@ async function ensureSchema(pool) {
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS produtos_em TIMESTAMPTZ');
   // por que a busca automática dos produtos (XML da NF-e / SSW) não achou nada; tenta de novo depois de 24 h
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS produtos_erro TEXT');
+  // telefone do destinatário (XML do CT-e ou da NF-e) para o aviso sobre o nome na lista; '' = procurado e não veio
+  await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS telefone TEXT');
   // relação do SSW gravada com a linha do CT-e ("AMS001050-2 - REM: ... - QVOL: 1 - 0,0 M3"): apaga e busca de novo
   await pool.query("UPDATE ag_notas SET produto=NULL,produto_fonte=NULL,produtos_em=NULL,produtos_erro=NULL WHERE produto_fonte='ssw' AND (produto ILIKE '%REM:%' OR produto ILIKE '%QVOL:%' OR produto ILIKE '%KGREAL%' OR produto ILIKE '%KGCALC%' OR produto ILIKE '%NCM%' OR produto ILIKE '%EAN%PRODUTO%')");
   // tentativa que falhou na leitura (não por falta de produto) volta para a fila
@@ -584,7 +586,7 @@ function postJson(porta, caminho, headers, corpo, timeoutMs = 12 * 60 * 1000) {
 }
 
 // ------------------------------------------------------------------ consultas das telas
-const SEL_NOTA = `n.id::text AS nota_id,n.nf,n.serie,n.ctrc,n.remetente,n.pagador,n.produto_fonte,n.destinatario,n.cidade,n.uf,n.endereco,n.peso::float8 AS peso,n.volumes::float8 AS volumes,
+const SEL_NOTA = `n.id::text AS nota_id,n.nf,n.serie,n.ctrc,n.remetente,n.pagador,n.produto_fonte,n.telefone,n.destinatario,n.cidade,n.uf,n.endereco,n.peso::float8 AS peso,n.volumes::float8 AS volumes,
   n.produto,n.situacao,n.status_ssw,n.previsao,to_char(n.data_emissao,'YYYY-MM-DD') AS data_emissao,to_char(n.data_entrada,'YYYY-MM-DD') AS data_entrada,
   n.ultima_consulta,n.erro_integracao,to_char(n.concluido_em,'YYYY-MM-DD') AS concluido_em,
   ((NOW() AT TIME ZONE 'America/Sao_Paulo')::date-COALESCE(n.data_entrada,n.data_emissao,(n.primeiro_visto AT TIME ZONE 'America/Sao_Paulo')::date))::int AS dias_sem`;
@@ -861,7 +863,7 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
       if (!ler) return sendJson(res, 200, { ok: true, produto: '', fonte: '', motivo: 'Leitura automática dos produtos indisponível aqui.' });
       const r = await produtos.buscarProdutos({ nf: normNf(f.nf), ctrc: limpo(f.ctrc || (nota && nota.ctrc), 20) }, ler);
       if (notaId) await produtos.gravar(pool, notaId, r);
-      return sendJson(res, 200, { ok: true, produto: r.produto || '', fonte: r.fonte || '', origem: produtos.ROTULO_FONTE[r.fonte] || '', motivo: r.motivo || '' });
+      return sendJson(res, 200, { ok: true, produto: r.produto || '', fonte: r.fonte || '', origem: produtos.ROTULO_FONTE[r.fonte] || '', motivo: r.motivo || '', telefone: r.telefone || '' });
     }
     if (p === '/' && req.method === 'POST') {
       const b = await readJsonBodyLimited(req, 64 * 1024);

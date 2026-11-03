@@ -6486,6 +6486,7 @@ if(u.pathname==='/api/agendamentos/produtos-ssw'&&req.method==='POST'){try{
     const hit=sswCteCached(ctrc);
     const info=hit!==undefined?hit:await Promise.race([sswCteInfo(ctrc,1),new Promise(r=>setTimeout(()=>r(null),30000))]);
     out.chaves=(info?.cte?.nfChaves||[]).slice(0,50);
+    out.fone=String(info?.cte?.destinatario?.fone||'').replace(/\D/g,'').slice(0,15);
     if(body.relacao){
       const session=await deliveryProgramCreateSsw101Session();
       const det=await deliveryProgramFetchSsw101Detail(session,{ctrc,frete:0},false);

@@ -37,6 +37,22 @@ function itensDaNfe(xml) {
   return out;
 }
 
+// Telefone do destinatário no XML da NF-e (dest/enderDest/fone).
+function foneDaNfe(xml) {
+  const dest = (String(xml || '').match(/<(?:\w+:)?dest\b[^>]*>([\s\S]*?)<\/(?:\w+:)?dest>/) || [])[1] || '';
+  return so((dest.match(/<(?:\w+:)?fone>([\s\S]*?)<\/(?:\w+:)?fone>/) || [])[1]).slice(0, 15);
+}
+// Telefone para mostrar: (19) 99999-9999 / (19) 3333-4444; sem DDD, como veio.
+function formatarFone(v) {
+  let d = so(v).replace(/^0+/, '');
+  if (d.length > 11 && d.startsWith('55')) d = d.slice(2);
+  if (d.length === 11) return '(' + d.slice(0, 2) + ') ' + d.slice(2, 7) + '-' + d.slice(7);
+  if (d.length === 10) return '(' + d.slice(0, 2) + ') ' + d.slice(2, 6) + '-' + d.slice(6);
+  if (d.length === 9) return d.slice(0, 5) + '-' + d.slice(5);
+  if (d.length === 8) return d.slice(0, 4) + '-' + d.slice(4);
+  return d;
+}
+
 // Lista de itens -> texto da coluna Produto (até 600 caracteres; o que não couber vira "+N itens").
 function formatar(itens) {
   const lista = (itens || []).map(x => limpo(x, 200)).filter(Boolean);
@@ -68,7 +84,7 @@ async function itensDaSefaz(chave) {
     const nota = await sefaz.baixarNfe(chave);
     if (nota.resumo) { SEFAZ_RECUSADA.set(chave, { em: Date.now(), motivo: 'SEFAZ liberou só o resumo da nota' }); return { itens: [], motivo: 'SEFAZ liberou só o resumo da nota' }; }
     const itens = itensDaNfe(nota.xml);
-    return { itens, motivo: itens.length ? '' : 'XML da NF-e sem itens' };
+    return { itens, fone: foneDaNfe(nota.xml), motivo: itens.length ? '' : 'XML da NF-e sem itens' };
   } catch (e) {
     const motivo = limpo('SEFAZ: ' + (e.message || e), 200);
     if (e.code === 'SEFAZ_LIMITE') SEFAZ_PAUSA_ATE = Date.now() + 65 * 60 * 1000;
@@ -85,16 +101,25 @@ async function buscarProdutos({ nf, ctrc }, lerSsw) {
   const base = await lerSsw({ nf, ctrc, relacao: false });
   const chave = chaveDaNf(base.chaves, nf);
   const s = await itensDaSefaz(chave);
-  if (s.itens.length) return { produto: formatar(s.itens), fonte: 'nfe', chave, ctrc: base.ctrc || ctrc || '', itens: s.itens };
+  // telefone do destinatário: o do CT-e; na falta, o da NF-e
+  const telefone = formatarFone(so(base.fone) || s.fone || '');
+  if (s.itens.length) return { produto: formatar(s.itens), fonte: 'nfe', chave, ctrc: base.ctrc || ctrc || '', itens: s.itens, telefone };
   if (s.motivo) motivos.push(s.motivo);
   const r = await lerSsw({ nf, ctrc: base.ctrc || ctrc, relacao: true });
-  if (r.produtos && r.produtos.length) return { produto: formatar(r.produtos), fonte: 'ssw', chave, ctrc: r.ctrc || base.ctrc || ctrc || '', itens: r.produtos };
+  if (r.produtos && r.produtos.length) return { produto: formatar(r.produtos), fonte: 'ssw', chave, ctrc: r.ctrc || base.ctrc || ctrc || '', itens: r.produtos, telefone };
   motivos.push(r.diag || 'SSW sem relação de produtos');
-  return { produto: '', fonte: '', chave, ctrc: base.ctrc || ctrc || '', motivo: limpo(motivos.join(' | '), 300) };
+  return { produto: '', fonte: '', chave, ctrc: base.ctrc || ctrc || '', telefone, motivo: limpo(motivos.join(' | '), 300) };
+}
+// Só o telefone (nota que já tem produto): lê o CT-e, sem SEFAZ nem relação de produtos.
+async function buscarTelefone({ nf, ctrc }, lerSsw) {
+  const base = await lerSsw({ nf, ctrc, relacao: false });
+  return formatarFone(base.fone || '');
 }
 
 // Grava na nota (nunca por cima do que o operador digitou). Sem resultado, só marca a tentativa.
 async function gravar(db, notaId, r) {
+  // telefone: '' marca que já foi procurado e não veio (não busca de novo só por ele)
+  if (r && r.telefone !== undefined) await db.query("UPDATE ag_notas SET telefone=COALESCE(NULLIF($2,''),telefone,'') WHERE id=$1", [notaId, limpo(r.telefone, 30)]);
   if (r && r.produto) {
     await db.query(`UPDATE ag_notas SET produto=$2,produto_fonte=$3,produtos_em=NOW(),produtos_erro=NULL,
         ctrc=CASE WHEN ctrc='' AND $4<>'' THEN $4 ELSE ctrc END
@@ -122,7 +147,19 @@ async function completarPendentes(pool, lerSsw, { cli = null, limite = 10, situa
     if (r.produto && (c.amostra = c.amostra || []).length < 4) c.amostra.push(n.nf + ' [' + r.fonte + '] ' + r.produto.slice(0, 90));
     if (r.produto) c[r.fonte]++; else c.sem++;
   }
-  if (c.tentadas || c.erro) console.log('AGENDAMENTO produtos: ' + JSON.stringify(c));
+  // notas que já têm produto mas ainda não tiveram o telefone procurado
+  if (!c.erro) {
+    const t = await pool.query(`SELECT id::text AS id,nf,ctrc FROM ag_notas
+      WHERE client_id IS NOT DISTINCT FROM $3 AND tipo_operacao='entrega' AND situacao=ANY($1) AND telefone IS NULL
+      ORDER BY id DESC LIMIT $2`, [situacoes, limite, cli]);
+    for (const n of t.rows) {
+      let tel;
+      try { tel = await buscarTelefone(n, lerSsw); } catch (e) { c.erro = limpo(e.message || e, 200); break; }
+      await gravar(pool, n.id, { telefone: tel });
+      c.telefones = (c.telefones || 0) + (tel ? 1 : 0);
+    }
+  }
+  if (c.tentadas || c.erro || c.telefones !== undefined) console.log('AGENDAMENTO produtos: ' + JSON.stringify(c));
   return c;
 }
 // clientes(): empresas que leem o SSW da casa (as da demonstração não entram)
@@ -137,5 +174,5 @@ function iniciarProdutos({ pool, lerSsw, situacoes, clientes }) {
   return setInterval(tick, 2 * 60 * 1000);
 }
 
-module.exports = { FONTES_AUTO, FONTES_VISIVEIS, ROTULO_FONTE, itensDaNfe, formatar, chaveDaNf, buscarProdutos, gravar, completarPendentes, iniciarProdutos,
+module.exports = { FONTES_AUTO, FONTES_VISIVEIS, ROTULO_FONTE, itensDaNfe, foneDaNfe, formatarFone, formatar, chaveDaNf, buscarProdutos, buscarTelefone, gravar, completarPendentes, iniciarProdutos,
   _reset() { SEFAZ_PAUSA_ATE = 0; SEFAZ_RECUSADA.clear(); } };

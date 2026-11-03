@@ -225,8 +225,34 @@ function celula(r,k,num){
   }
   if(k==='situacao')return'<td>'+st(r.situacao,r)+(r.erro_integracao&&r.situacao==='verificar'?'<div style="font-size:10px;color:#92400e">'+esc(r.erro_integracao)+'</div>':'')+'</td>';
   const v=valor(r,k);
+  // destinatário: o aviso com nome, cidade e telefone aparece ao passar o mouse (ver mostrarCliente)
+  if(k==='destinatario'&&r.nota_id)return'<td class="ag-dest" data-nota="'+esc(r.nota_id)+'">'+esc(v)+'</td>';
   return'<td class="'+(num?'n':'')+(k==='produto'?' prod':k==='observacao'?' obs':'')+'" title="'+esc(k==='produto'&&v&&ORIGEM_PROD[r.produto_fonte]?v+' ('+ORIGEM_PROD[r.produto_fonte]+')':k==='produto'||k==='observacao'||k==='remetente'||k==='destinatario'?v:'')+'">'+(k==='nf'?'<b>'+esc(v)+'</b>':k==='produto'?'<div class="ag-prod">'+esc(v)+'</div>':esc(v))+'</td>'
 }
+// Aviso sobre o destinatário: nome do cliente, cidade e telefone (do XML do CT-e/NF-e).
+function textoFone(r){
+  if(r.telefone)return'<a href="tel:'+esc(String(r.telefone).replace(/\D/g,''))+'">'+esc(r.telefone)+'</a>';
+  return'<span class="muted">'+(r.telefone===''?'não informado na nota':'buscando no SSW…')+'</span>'
+}
+let popTimer=null;
+function mostrarCliente(td){
+  const id=td.dataset.nota,r=(ultimaLista&&ultimaLista.rows||[]).find(x=>String(x.nota_id)===id);
+  if(!r)return;
+  let pop=q('#agPop');
+  if(!pop){pop=document.createElement('div');pop.id='agPop';pop.className='ag-pop';document.body.appendChild(pop);
+    pop.addEventListener('mouseenter',()=>clearTimeout(popTimer));pop.addEventListener('mouseleave',esconderCliente)}
+  clearTimeout(popTimer);
+  pop.innerHTML='<div class="ag-pop-nome">'+esc(r.destinatario||'—')+'</div>'+
+    '<div><span class="ag-pop-rot">Cidade</span>'+esc([r.cidade,r.uf].filter(Boolean).join('/')||'—')+'</div>'+
+    '<div><span class="ag-pop-rot">Telefone</span>'+textoFone(r)+'</div>';
+  pop.style.display='block';
+  const b=td.getBoundingClientRect(),w=pop.offsetWidth,h=pop.offsetHeight;
+  let top=b.bottom+6,left=Math.min(b.left,window.innerWidth-w-8);
+  if(top+h>window.innerHeight-8)top=b.top-h-6;
+  pop.style.top=Math.max(8,top)+'px';pop.style.left=Math.max(8,left)+'px';
+}
+function esconderCliente(){clearTimeout(popTimer);popTimer=setTimeout(()=>{const p=q('#agPop');if(p)p.style.display='none'},150)}
+
 // A lista ocupa o resto da altura da janela (os indicadores e o formulário ficam em faixas finas acima).
 function ajustarAltura(){
   const box=q('.ag-tabela-box');if(!box||!box.offsetParent)return;
@@ -351,6 +377,11 @@ function setup(){
   q('#agNf').addEventListener('input',()=>{if(atual)preencher(null)});
   q('#agForm').onsubmit=salvar;
   q('#agLimpar').onclick=limparForm;
+  {const box=q('.ag-tabela-box');if(box){
+    box.addEventListener('mouseover',e=>{const td=e.target.closest('td.ag-dest');if(td)mostrarCliente(td)});
+    box.addEventListener('mouseout',e=>{const td=e.target.closest('td.ag-dest');if(td&&!td.contains(e.relatedTarget))esconderCliente()});
+    box.addEventListener('scroll',()=>{const p=q('#agPop');if(p)p.style.display='none'},{passive:true});
+  }}
   q('#agSyncBtn').onclick=sincronizar;q('#agBaixasBtn').onclick=atualizarBaixas;q('#agImpForm').onsubmit=importarFaixa;
   api('/api/painel/agendamentos/parceiros').then(j=>{q('#agImpParc').innerHTML=(j.parceiros||[]).map(t=>'<option value="'+esc(t)+'">').join('')}).catch(()=>{});
   q('#agLogBtn').onclick=logSync;
