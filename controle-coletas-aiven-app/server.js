@@ -39,6 +39,7 @@ const sswExemplo = require('./ssw-exemplo');
 const esquemasDemo = require('./esquemas-demo');
 const exemploDados = require('./exemplo-dados');
 const agendamento = require('./agendamento');
+const conferencia = require('./conferencia');
 const movitGuia = require('./movit-guia');
 const veic = require('./veic');
 const wms = require('./wms');
@@ -50,6 +51,7 @@ const DRIVER_TEST_PAGE = path.join(__dirname, 'motorista-teste.html');
 const DRIVER_INSTALL_PAGE = path.join(__dirname, 'motorista-instalar.html');
 const DRIVER_TEST_INSTALL_PAGE = path.join(__dirname, 'motorista-teste-instalar.html');
 const LOTACAO_PAGE = path.join(__dirname, 'lotacao.html');
+const CONFERENCIA_PAGE = path.join(__dirname, 'conferencia.html');
 const FROTA_PAGE = path.join(__dirname, 'frota.html');
 const ROTEIRIZADOR_CARGAS_PAGE = path.join(__dirname, 'roteirizador-cargas.html');
 const PDF_UNIFIER_PAGE = path.join(__dirname, 'pdf-unificador.html');
@@ -2123,6 +2125,7 @@ async function start() {
       return (await pool.query("SELECT DISTINCT cliente FROM rc_docs WHERE colecao='op/main/sobras' AND cliente=ANY($1)",[ks])).rows.map(r=>r.cliente)
     }});
   await agendamento.ensureSchema(pool);
+  await conferencia.ensureSchema(pool);
   const agendamentoClientes=async()=>{const cq=await pool.query("SELECT id::text FROM movit_clients WHERE lower(slug)='construlog' LIMIT 1").catch(()=>({rows:[]}));return [cq.rows[0]?cq.rows[0].id:null]};
   // varredura noturna do agendamento (02:00 por padrão, horário na tela): o painel lê o SSW, aqui grava
   if(!TEST_MODE&&!movitDemo.ATIVA&&process.env.AGENDAMENTO_SSW_AUTO!=='0')agendamento.iniciarVarreduraAutomatica({pool,
@@ -3350,6 +3353,10 @@ async function start() {
       // Lançamentos da operação (substitui a aba de lançamentos da planilha): ver lancamentos.js
       if (await lancamentos.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,sessionOrInternal,dashboardSession,dashboardHas,spToday})) return;
       // Agendamento de entregas (notas pendentes no SSW, com e sem agendamento): ver agendamento.js
+      // Conferência de carga por código de barras (descarga): carga esperada lida do SSW pelo painel
+      if (await conferencia.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,testMode:TEST_MODE,
+        lerEsperadoDoUsuario:user=>(TEST_MODE||movitDemo.ATIVA||movitDemo.clienteDemo(user))?null:
+          (corpo=>agendamento.postJson(DASH_INTERNAL_PORT,'/api/conferencia/ssw-esperado',{'X-Internal-Key':INTERNAL_KEY},corpo,3*60*1000))})) return;
       if (await agendamento.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,lerSswDoUsuario:agendamentoLerSswDoUsuario,lerBaixasDoUsuario:agendamentoLerBaixasDoUsuario,lerFaixaDoUsuario:agendamentoLerFaixaDoUsuario,lerProdutosDoUsuario:agendamentoLerProdutosDoUsuario})) return;
       // Despesas (DRE) do Financeiro, com os holerites da conta Salários: ver dre.js
       if (await dre.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
@@ -4342,6 +4349,20 @@ async function start() {
           return sendHtml(res,FROTA_PAGE);
         } catch(e){
           res.writeHead(302,{Location:'/?login=1#frota','Cache-Control':'no-store'});
+          return res.end();
+        }
+      }
+
+      if (req.method === 'GET' && (u.pathname === '/conferencia' || u.pathname === '/conferencia/')) {
+        try {
+          const user=await dashboardSession(req,false);
+          if(!(user.is_admin||dashboardHas(user,'conferencia')||dashboardHas(user,'dashboard')||dashboardHas(user,'agendamentos'))){
+            res.writeHead(403,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+            return res.end('<!doctype html><meta charset="utf-8"><style>body{font-family:Segoe UI,Arial;padding:30px;color:#334155}h2{color:#991b1b}</style><h2>Acesso não autorizado</h2><p>Este usuário não possui permissão para a Conferência de carga.</p>');
+          }
+          return sendHtml(res,CONFERENCIA_PAGE);
+        } catch(e){
+          res.writeHead(302,{Location:'/?login=1#conferencia','Cache-Control':'no-store'});
           return res.end();
         }
       }

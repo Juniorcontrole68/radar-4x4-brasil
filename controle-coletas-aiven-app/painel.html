@@ -119,6 +119,7 @@ iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:12px;
       <button class="tab" data-group="operacao" data-module="dashboards" data-src="/dashboard/?embed=1&view=dashboards" data-name="Dashboards">📈 Dashboards</button>
       <button class="tab" data-group="operacao" data-module="parceiros" data-src="/dashboard/?embed=1&view=parceiros" data-name="Parceiros">🤝 Parceiros</button>
       <button class="tab" data-group="operacao" data-module="agendamento-entregas" data-src="/dashboard/?embed=1&view=agendamento-entregas" data-name="Agendamento">📅 Agendamento</button>
+      <button class="tab" data-group="operacao" data-module="conferencia" data-src="/conferencia?embed=1" data-name="Conferência de carga">📦 Conferência</button>
       <button class="tab" data-group="operacao" data-module="lancamentos" data-src="/dashboard/?embed=1&view=lancamentos" data-name="Lançamentos">📝 Lançamentos</button>
       <button class="tab" data-group="operacao" data-module="carga" data-src="/dashboard/?embed=1&view=carga" data-name="Montar carga">📦 Montar carga</button>
       <button class="tab" data-group="operacao" data-module="roteirizador-cargas" data-src="/roteirizador-cargas?embed=1" data-name="Roteirizador">🧭 Roteirizador</button>
@@ -217,6 +218,7 @@ function moduleAllowed(mod){
   if(mod==='despesas'||mod==='holerites')return licensed('dashboards')&&hasPerm('financeiro');
   if(mod==='lotacao')return licensed('lotacao')&&(moduleAllowed('coletas')||moduleAllowed('financeiro-lotacao'));
   if(mod==='agendamento-entregas')return licensed('agendamento')&&(hasPerm('agendamentos')||hasPerm('dashboard'));
+  if(mod==='conferencia')return licensed('agendamento')&&(hasPerm('conferencia')||hasPerm('agendamentos')||hasPerm('dashboard')||!!AUTH.is_admin);
   if(mod==='contas')return licensed('contas_pagar')&&hasPerm('contas_pagar');
   if(mod==='frota')return licensed('frota')&&hasPerm('frota');
   if(mod==='pdf-unificador')return !!AUTH;

@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="theme-color" content="#0f766e">
+<title>Conferência de carga</title>
+<style>
+:root{--bg:#0f172a;--card:#1e293b;--line:#334155;--txt:#f8fafc;--muted:#94a3b8;--teal:#0f766e;--ok:#14b8a6;--verde:#16a34a;--amarelo:#d97706;--vermelho:#dc2626}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--txt);font-family:Segoe UI,Roboto,Arial,sans-serif}
+header{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--card);position:sticky;top:0;background:var(--bg);z-index:5}
+header b{font-size:18px}header small{display:block;color:var(--muted);font-size:12px}
+.fila{padding:5px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#134e4a;color:#99f6e4;border:0;white-space:nowrap}.fila.off{background:#78350f;color:#fde68a}
+main{padding:14px 16px 40px;display:flex;flex-direction:column;gap:12px;max-width:760px;margin:0 auto}
+.btn{min-height:52px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--txt);font:700 16px Segoe UI,Roboto,Arial;cursor:pointer;padding:0 14px}
+.btn.p{background:var(--teal);border-color:var(--teal)}.btn.d{background:transparent;border-color:#b91c1c;color:#fca5a5}.btn:disabled{opacity:.5;cursor:default}
+.linha{display:flex;gap:10px;flex-wrap:wrap}.linha>*{flex:1;min-width:140px}
+.card{background:var(--card);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:6px;border:1px solid transparent}
+.muted{color:var(--muted);font-size:13px}
+label{display:flex;flex-direction:column;gap:6px;font-size:14px;color:#cbd5e1}
+input,textarea{min-height:52px;border-radius:10px;border:1px solid var(--line);background:#0b1220;color:#fff;font:600 18px Segoe UI,Roboto,Arial;padding:0 14px;width:100%}
+textarea{padding:10px 14px;font-size:15px;min-height:80px}
+input:focus{outline:none;border:2px solid var(--ok)}
+.leitura{display:flex;gap:8px}.leitura input{flex:1;font-size:22px;min-height:64px;letter-spacing:.5px}
+.leitura button{width:72px;flex:none;border-radius:10px;border:1px solid var(--line);background:#1e293b;color:#fff;font-size:26px;cursor:pointer}
+.leitura button.on{background:var(--teal);border-color:var(--teal)}
+/* resultado da última leitura: o conferente olha de longe */
+.sinal{border-radius:14px;padding:16px;font-size:20px;font-weight:800;text-align:center;min-height:76px;display:flex;flex-direction:column;justify-content:center;gap:4px;background:#1e293b;color:var(--muted)}
+.sinal small{font-size:13px;font-weight:600;opacity:.85}
+.sinal.ok,.sinal.ok_completo{background:#14532d;color:#bbf7d0}.sinal.ok_completo{background:var(--verde);color:#fff}
+.sinal.alerta{background:#78350f;color:#fde68a}.sinal.erro{background:#7f1d1d;color:#fecaca}.sinal.info{background:#1e3a8a;color:#bfdbfe}
+.totais{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.totais div{background:var(--card);border-radius:10px;padding:10px;text-align:center}.totais b{display:block;font-size:24px}.totais span{font-size:12px;color:var(--muted)}
+.parc{background:var(--card);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;border-left:5px solid var(--line)}
+.parc.completo{border-left-color:var(--verde)}.parc.falta{border-left-color:var(--amarelo)}.parc.mais{border-left-color:var(--vermelho)}
+.parc .topo{display:flex;justify-content:space-between;align-items:baseline;gap:10px}.parc .topo b{font-size:17px}.parc .num{font-size:22px;font-weight:800}
+.barra{height:10px;border-radius:99px;background:#0b1220;overflow:hidden}.barra i{display:block;height:100%;background:var(--ok)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}.chip{font-size:12px;font-weight:700;padding:3px 8px;border-radius:99px;background:#0b1220;color:var(--muted)}
+.chip.v{background:#14532d;color:#bbf7d0}.chip.a{background:#78350f;color:#fde68a}.chip.r{background:#7f1d1d;color:#fecaca}
+.lst{display:flex;flex-direction:column;gap:6px}
+.lei{display:flex;justify-content:space-between;align-items:center;gap:8px;background:var(--card);border-radius:10px;padding:8px 10px;font-size:14px}
+.lei code{font-size:14px;color:#e2e8f0}.lei small{color:var(--muted)}.lei button{background:none;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:6px 10px;cursor:pointer}
+.item{background:var(--card);border-radius:12px;padding:14px;border:1px solid var(--line);color:var(--txt);text-align:left;font:inherit;cursor:pointer;width:100%}
+.item b{font-size:16px}.item small{display:block;color:var(--muted);margin-top:4px}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left}th{color:var(--muted);font-weight:700}
+details summary{cursor:pointer;color:#cbd5e1;font-weight:700;padding:6px 0}
+.aviso{padding:12px 14px;border-radius:10px;font-size:15px;font-weight:600}.aviso.ok{background:#134e4a;color:#ccfbf1}.aviso.err{background:#450a0a;color:#fecaca}
+.voltar{background:none;border:0;color:var(--muted);font:600 15px Segoe UI,Roboto,Arial;padding:6px 0;text-align:left;cursor:pointer}
+video{width:100%;border-radius:12px;background:#000;max-height:34vh;object-fit:cover}
+[hidden]{display:none!important}
+@media(max-width:520px){.totais b{font-size:20px}}
+</style>
+</head>
+<body>
+<header><div><b id="titulo">Conferência de carga</b><small id="sub">carregando…</small></div><button class="fila" id="fila" type="button">Online</button></header>
+<main id="tela"></main>
+<script>
+'use strict';
+const $=s=>document.querySelector(s);
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const n=v=>Number(v||0).toLocaleString('pt-BR');
+const dh=t=>t?new Date(t).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'';
+const hr=t=>t?new Date(t).toLocaleTimeString('pt-BR',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit',second:'2-digit'}):'';
+const uuid=()=>(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2));
+async function api(m,url,body){
+  const r=await fetch(url,{method:m,credentials:'include',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined});
+  let j={};try{j=await r.json()}catch{}
+  if(r.status===401){location.href='/?login=1#conferencia';throw new Error('Sessão expirada.')}
+  if(!r.ok||j.ok===false){const e=new Error(j.error||('Erro '+r.status));e.status=r.status;throw e}
+  return j
+}
+function render(h){$('#tela').innerHTML=h;scrollTo(0,0)}
+function aviso(t,tipo='err'){const a=$('#aviso');if(!a)return alert(t);a.className='aviso '+tipo;a.textContent=t;a.hidden=false}
+
+// ---------------- som e vibração (o conferente não precisa olhar para a tela a cada volume)
+let ac=null;
+function bip(tipo){
+  try{ac=ac||new (window.AudioContext||window.webkitAudioContext)();
+    const tons={ok:[[1046,.08]],ok_completo:[[1046,.09],[1318,.12]],alerta:[[660,.12],[660,.12]],erro:[[220,.35]],info:[[880,.06]]}[tipo]||[[880,.06]];
+    let t=ac.currentTime;
+    for(const[f,d]of tons){const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=f;o.type=tipo==='erro'?'square':'sine';g.gain.value=.15;o.connect(g);g.connect(ac.destination);o.start(t);o.stop(t+d);t+=d+.05}
+  }catch{}
+  if(navigator.vibrate)navigator.vibrate(tipo==='erro'?[120,60,120,60,120]:tipo==='alerta'?[80,60,80]:40);
+}
+
+// ---------------- fila sem sinal: a leitura fica guardada e vai quando a conexão voltar
+const FILA_K='conf_fila_v1';
+const filaLer=()=>{try{return JSON.parse(localStorage.getItem(FILA_K)||'[]')}catch{return[]}};
+const filaGravar=f=>{try{localStorage.setItem(FILA_K,JSON.stringify(f))}catch{}};
+function filaMostrar(){const q=filaLer().length,b=$('#fila');b.textContent=q?q+' na fila':(navigator.onLine?'Online':'Sem sinal');b.classList.toggle('off',!!q||!navigator.onLine)}
+let enviandoFila=false;
+async function enviarFila(){
+  if(enviandoFila)return;enviandoFila=true;
+  try{let f=filaLer();
+    while(f.length){const x=f[0];
+      try{await api('POST','/api/painel/conferencia/sessoes/'+x.sessao+'/leituras',{codigo:x.codigo,uuid:x.uuid})}
+      catch(e){if(!e.status||e.status>=500)break}   // sem sinal: tenta depois; erro do servidor (4xx): descarta
+      f=filaLer().filter(y=>y.uuid!==x.uuid);filaGravar(f)}
+  }finally{enviandoFila=false;filaMostrar();if(S.id)atualizar()}
+}
+addEventListener('online',enviarFila);addEventListener('offline',filaMostrar);setInterval(()=>{if(filaLer().length)enviarFila()},15000);
+
+// ---------------- câmera: lê sem parar, para bipar a carga inteira em sequência
+let detector=null,stream=null,ultimoCam={v:'',t:0};
+async function camera(liga){
+  const b=$('#bCam');
+  if(!liga||stream){if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;const v=$('#video');if(v)v.hidden=true;if(b)b.classList.remove('on');return}
+  if(!('BarcodeDetector' in window)){aviso('Este aparelho não lê códigos pela câmera no navegador. Use o coletor ou digite o código.');return}
+  try{
+    detector=detector||new BarcodeDetector({formats:['code_128','ean_13','ean_8','qr_code','code_39','itf','upc_a','data_matrix','codabar','pdf417']});
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    const v=$('#video');v.srcObject=stream;v.hidden=false;await v.play();b.classList.add('on');
+    const loop=async()=>{if(!stream)return;
+      try{const c=await detector.detect(v);
+        if(c.length){const val=String(c[0].rawValue||'').trim(),agora=Date.now();
+          // o mesmo código parado na frente da câmera não conta duas vezes
+          if(val&&(val!==ultimoCam.v||agora-ultimoCam.t>3000)){ultimoCam={v:val,t:agora};registrar(val)}}
+      }catch{}
+      setTimeout(loop,180)};
+    loop();
+  }catch(e){camera(false);aviso('Não foi possível abrir a câmera: '+e.message)}
+}
+
+// ---------------- telas
+const S={id:null,dados:null,timer:null};
+async function inicio(){
+  camera(false);S.id=null;clearInterval(S.timer);
+  $('#titulo').textContent='Conferência de carga';$('#sub').textContent='Descarga pelas etiquetas dos clientes';
+  render('<div class="card"><b>Nova descarga</b><div class="muted">A carga esperada são os CT-es emitidos no SSW entre o horário inicial da véspera e o horário final do dia da descarga.</div>'+
+    '<div class="linha"><label>Dia da descarga<input id="nData" type="date"></label><label>Da véspera, a partir de<input id="nIni" type="time" value="19:00"></label><label>Até (no dia)<input id="nFim" type="time" value="04:00"></label></div>'+
+    '<button class="btn p" id="nOk">Começar descarga</button></div><div class="aviso" id="aviso" hidden></div>'+
+    '<b>Conferências</b><div class="lst" id="lista"><div class="muted">carregando…</div></div>');
+  const j=await api('GET','/api/painel/conferencia/sessoes?tipo=descarga');
+  $('#nData').value=j.hoje;
+  $('#nOk').onclick=async()=>{const b=$('#nOk');b.disabled=true;b.textContent='Buscando os CT-es no SSW… (até 1 min)';
+    try{const r=await api('POST','/api/painel/conferencia/sessoes',{tipo:'descarga',data:$('#nData').value,hora_inicio:$('#nIni').value,hora_fim:$('#nFim').value});abrir(r.id)}
+    catch(e){aviso(e.message);b.disabled=false;b.textContent='Começar descarga'}};
+  $('#lista').innerHTML=j.rows.length?j.rows.map(s=>'<button class="item" data-s="'+s.id+'"><b>'+esc(s.titulo)+' · '+(s.status==='aberta'?'em andamento':'fechada')+'</b><small>'+n(s.lidos)+' de '+n(s.esperado)+' volumes · aberta por '+esc(s.criado_por)+' em '+dh(s.criado_em)+'</small></button>').join(''):'<div class="muted">Nenhuma conferência ainda.</div>';
+  $('#lista').onclick=e=>{const b=e.target.closest('[data-s]');if(b)abrir(b.dataset.s)};
+}
+async function abrir(id){
+  S.id=id;
+  render('<button class="voltar" id="voltar">← Conferências</button>'+
+    '<div class="leitura" id="caixaLeitura"><input id="cod" autocomplete="off" autocapitalize="characters" inputmode="text" placeholder="Bipe a etiqueta ou o DACTE"><button type="button" id="bCam" aria-label="Ler pela câmera">📷</button></div>'+
+    '<video id="video" playsinline muted hidden></video>'+
+    '<div class="sinal" id="sinal">Pronto para bipar</div><div class="aviso" id="aviso" hidden></div>'+
+    '<div class="totais" id="totais"></div><div class="lst" id="parceiros"></div>'+
+    '<details id="dOutros"><summary id="sOutros">CT-es sem etiqueta reconhecida</summary><div id="outros"></div></details>'+
+    '<details><summary>Últimas leituras</summary><div class="lst" id="leituras"></div></details>'+
+    '<details><summary>CT-es esperados</summary><div id="esperados" style="overflow:auto"></div></details>'+
+    '<div class="linha" id="acoes"><button class="btn" id="bRec">Atualizar CT-es do SSW</button><button class="btn d" id="bFechar">Fechar conferência</button></div>');
+  $('#voltar').onclick=inicio;
+  $('#bCam').onclick=()=>camera(!stream);
+  const cod=$('#cod');
+  cod.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();const v=cod.value.trim();cod.value='';if(v)registrar(v)}});
+  cod.focus();
+  // o foco volta sozinho para o campo (o leitor do coletor digita onde o cursor está)
+  document.addEventListener('click',focoCampo);
+  $('#bRec').onclick=async()=>{const b=$('#bRec');b.disabled=true;b.textContent='Buscando no SSW…';try{desenhar(await api('POST','/api/painel/conferencia/sessoes/'+id+'/recarregar',{}));aviso('CT-es atualizados.','ok')}catch(e){aviso(e.message)}finally{b.disabled=false;b.textContent='Atualizar CT-es do SSW'}};
+  $('#bFechar').onclick=fecharConf;
+  $('#leituras').onclick=async e=>{const b=e.target.closest('[data-desf]');if(!b)return;if(!confirm('Desfazer esta leitura?'))return;try{await api('DELETE','/api/painel/conferencia/sessoes/'+id+'/leituras/'+b.dataset.desf);atualizar()}catch(er){aviso(er.message)}};
+  await atualizar();
+  clearInterval(S.timer);S.timer=setInterval(()=>{if(!document.hidden&&S.id===id)atualizar()},10000);   // outros coletores na mesma carga
+}
+function focoCampo(e){const c=$('#cod');if(c&&!e.target.closest('input,textarea,button,summary,select,a')&&!c.disabled)c.focus()}
+async function atualizar(){
+  if(!S.id)return;
+  try{desenhar(await api('GET','/api/painel/conferencia/sessoes/'+S.id))}catch(e){if(e.status)aviso(e.message)}
+}
+const ROT={ok:'ok',duplicado:'repetido',excesso:'a mais',sobra:'sem CT-e',nao_reconhecido:'não reconhecida',dacte:'DACTE',dacte_parceiro:'DACTE parceiro',danfe:'DANFE',danfe_fora:'DANFE fora'};
+const COR={ok:'v',duplicado:'a',excesso:'r',sobra:'r',nao_reconhecido:'r',dacte:'',dacte_parceiro:'',danfe:'',danfe_fora:'a'};
+function desenhar(d){
+  S.dados=d;const s=d.sessao,t=d.totais,aberta=s.status==='aberta';
+  $('#titulo').textContent=s.titulo+(aberta?'':' · fechada');
+  $('#sub').textContent='CT-es emitidos de '+dh(s.janela_ini)+' a '+dh(s.janela_fim)+(s.carregado_em?' · SSW lido às '+hr(s.carregado_em):'');
+  $('#caixaLeitura').hidden=!aberta;$('#acoes').hidden=!aberta;
+  $('#totais').innerHTML='<div><b>'+n(t.lidos)+'</b><span>de '+n(t.esperado)+' lidos</span></div><div><b style="color:'+(t.faltam?'#fbbf24':'#4ade80')+'">'+n(t.faltam)+'</b><span>faltam</span></div><div><b style="color:'+(t.excesso?'#f87171':'inherit')+'">'+n(t.excesso)+'</b><span>a mais</span></div><div><b style="color:'+(d.nao_reconhecidos?'#f87171':'inherit')+'">'+n(d.nao_reconhecidos)+'</b><span>não reconhecidas</span></div>';
+  $('#parceiros').innerHTML=d.parceiros.map(p=>{const pc=p.esperado?Math.min(100,Math.round(p.lidos*100/p.esperado)):0,cl=p.excesso?'mais':p.completo?'completo':'falta';
+    return'<div class="parc '+cl+'"><div class="topo"><b>'+esc(p.parceiro)+'</b><span class="num">'+n(p.lidos)+' / '+n(p.esperado)+'</span></div><div class="barra"><i style="width:'+pc+'%"></i></div>'+
+      '<div class="chips"><span class="chip">'+n(p.ctes)+' CT-e(s)</span>'+(p.faltam?'<span class="chip a">faltam '+n(p.faltam)+'</span>':'')+(p.completo&&!p.excesso?'<span class="chip v">completo</span>':'')+(p.excesso?'<span class="chip r">'+n(p.excesso)+' a mais</span>':'')+(p.repetidos?'<span class="chip a">'+n(p.repetidos)+' repetido(s)</span>':'')+'</div></div>'}).join('')||'<div class="muted">Nenhum CT-e de parceiro com etiqueta conhecida nesta janela.</div>';
+  const out=d.esperado.filter(e=>!e.parceiro);
+  $('#dOutros').hidden=!out.length;
+  $('#sOutros').textContent='CT-es sem etiqueta reconhecida: '+n(d.outros.ctes)+' CT-e(s), '+n(d.outros.volumes)+' volume(s)';
+  $('#outros').innerHTML=tabelaCtes(out);
+  $('#esperados').innerHTML=tabelaCtes(d.esperado);
+  if(d.leituras)$('#leituras').innerHTML=d.leituras.map(l=>'<div class="lei"><div><code>'+esc(l.codigo)+'</code> <span class="chip '+(COR[l.situacao]||'')+'">'+esc(ROT[l.situacao]||l.situacao)+'</span><br><small>'+esc([l.parceiro,l.ctrc].filter(Boolean).join(' · '))+' · '+hr(l.criado_em)+' · '+esc(l.usuario)+'</small></div>'+(aberta?'<button data-desf="'+l.id+'">Desfazer</button>':'')+'</div>').join('')||'<div class="muted">Nenhuma leitura.</div>';
+  filaMostrar();
+}
+function tabelaCtes(l){return l.length?'<table><thead><tr><th>CT-e</th><th>NF</th><th>Vol.</th><th>Parceiro</th><th>Destinatário</th><th>DACTE</th></tr></thead><tbody>'+l.map(e=>'<tr><td>'+esc(e.ctrc)+'</td><td>'+esc(e.nf)+'</td><td>'+n(e.volumes)+'</td><td>'+esc(e.parceiro||'—')+'</td><td>'+esc(e.destinatario)+'</td><td>'+(e.dacte_lido_em?'✓':'')+'</td></tr>').join('')+'</tbody></table>':'<div class="muted">Nenhum.</div>'}
+
+async function registrar(codigo){
+  if(!S.id)return;
+  const x={sessao:S.id,codigo,uuid:uuid()};
+  const sin=$('#sinal');
+  try{
+    const r=await api('POST','/api/painel/conferencia/sessoes/'+S.id+'/leituras',{codigo,uuid:x.uuid});
+    sin.className='sinal '+r.sinal;sin.innerHTML=esc(r.mensagem)+'<small>'+esc(codigo)+'</small>';bip(r.sinal);
+    atualizar();
+  }catch(e){
+    if(!e.status){   // sem sinal: guarda e manda depois
+      const f=filaLer();f.push(x);filaGravar(f);filaMostrar();
+      sin.className='sinal alerta';sin.innerHTML='Sem sinal: leitura guardada<small>'+esc(codigo)+'</small>';bip('alerta');
+    }else{sin.className='sinal erro';sin.innerHTML=esc(e.message)+'<small>'+esc(codigo)+'</small>';bip('erro')}
+  }
+}
+async function fecharConf(){
+  const d=S.dados,t=d.totais;
+  const msg='Fechar a conferência?\n\nLidos: '+t.lidos+' de '+t.esperado+'\nFaltam: '+t.faltam+'\nA mais: '+t.excesso+'\nNão reconhecidas: '+d.nao_reconhecidos;
+  if(!confirm(msg))return;
+  const obs=(t.faltam||t.excesso||d.nao_reconhecidos)?prompt('Observação (o que aconteceu com as diferenças):',''):'';
+  if(obs===null)return;
+  try{camera(false);desenhar(await api('POST','/api/painel/conferencia/sessoes/'+S.id+'/fechar',{observacao:obs}));aviso('Conferência fechada.','ok')}catch(e){aviso(e.message)}
+}
+
+filaMostrar();
+inicio().catch(e=>render('<div class="aviso err">'+esc(e.message)+'</div>'));
+enviarFila();
+</script>
+</body>
+</html>
