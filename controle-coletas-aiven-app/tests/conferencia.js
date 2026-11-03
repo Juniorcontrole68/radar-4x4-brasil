@@ -91,6 +91,45 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
   r=await lt('35261012345678000199570010000999991000099999');check('DACTE que o SSW não acha',r.j.situacao==='cte_nao_achado'&&r.j.sinal==='erro',r.j);
   r=await api('DELETE','/api/painel/conferencia/sessoes/'+cc+'/ctes/AMS001050-2');
   check('tirar CT-e bipado por engano',r.status===200&&r.j.esperado.length===0,r.j.esperado);
+  // link do motorista: só bipa e acompanha
+  r=await lt(dacte2,{cte_teste:{ctrc:'AMS001050-2',nf:'112899',volumes:2,nomes:['CONASID IND']}});
+  r=await api('POST','/api/painel/conferencia/sessoes/'+id+'/link-motorista',{});
+  check('link do motorista não vale para descarga/fechada',r.status===400||r.status===409,r.j);
+  r=await api('POST','/api/painel/conferencia/sessoes/'+cc+'/link-motorista',{});
+  const tok=r.j&&((r.j.link||'').match(/\/conferencia\/m\/([A-Za-z0-9_-]+)$/)||[])[1];
+  check('gera link do motorista com WhatsApp',r.status===200&&!!tok&&/^https:\/\/wa\.me\/\?text=/.test(r.j.whatsapp),r.j);
+  const mot=async(m,suf,body)=>{const x=await fetch(B+'/api/conferencia-motorista/'+tok+suf,{method:m,headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});let j=null;try{j=await x.json()}catch{}return{status:x.status,j}};
+  r=await mot('GET','');
+  check('motorista vê a carga sem login',r.status===200&&r.j.ctes===1&&r.j.totais.esperado===2&&r.j.sessao.status==='aberta',r.j);
+  check('  ...sem dados de leitura do conferente (id/usuário)',r.j&&r.j.leituras.every(l=>!('id' in l)&&!('usuario' in l)),r.j&&r.j.leituras);
+  r=await mot('POST','/leituras',{codigo:'001000257623',uuid:'m-1'});
+  check('motorista bipa volume da carga',r.status===200&&r.j.situacao==='ok',r.j);
+  r=await mot('POST','/leituras',{codigo:'35261012345678000199570010000999991000099999',uuid:'m-2'});
+  check('DACTE fora da carga: NÃO CARREGAR e não entra',r.j.situacao==='dacte_fora'&&/NÃO CARREGAR/.test(r.j.mensagem),r.j);
+  r=await api('GET','/api/painel/conferencia/sessoes/'+cc);
+  check('  ...a carga continua com 1 CT-e',r.j.esperado.length===1,r.j.esperado);
+  check('conferente vê o horário do link',!!r.j.sessao.motorista_link_em);
+  for(const [m,suf] of [['DELETE','/leituras/1'],['POST','/fechar'],['POST','/recarregar'],['DELETE',''],['PUT','']]){
+    const x=await mot(m,suf,m==='DELETE'?undefined:{});check('motorista não pode '+m+' '+(suf||'/'),x.status===404||x.status===405,x);
+  }
+  r=await fetch(B+'/api/painel/conferencia/sessoes/'+cc);check('token não abre o painel',r.status===401);
+  r=await mot('POST','/terminei',{});check('motorista avisa que terminou',r.status===200);
+  r=await api('GET','/api/painel/conferencia/sessoes/'+cc);check('  ...conferente vê que terminou',!!r.j.sessao.motorista_terminou_em);
+  const pg=await (await fetch(B+'/conferencia/m/'+tok)).text();
+  check('página do motorista abre sem login, sem botão de desfazer',pg.includes('Terminei de carregar')&&!/data-desf|\/fechar|\/recarregar/.test(pg));
+  r=await api('POST','/api/painel/conferencia/sessoes/'+cc+'/link-motorista',{});
+  const tok2=((r.j.link||'').match(/\/conferencia\/m\/([A-Za-z0-9_-]+)$/)||[])[1];
+  r=await mot('GET','');check('link trocado: o anterior para de funcionar',r.status===404,r);
+  r=await (await fetch(B+'/api/conferencia-motorista/'+tok2)).json();check('  ...o novo funciona',r.ok===true);
+  r=await fetch(B+'/api/conferencia-motorista/xxxxxxxxxxxxxxxxxxxxxxxx');check('token inventado: 404',r.status===404);
+  await api('DELETE','/api/painel/conferencia/sessoes/'+cc+'/link-motorista');
+  r=await fetch(B+'/api/conferencia-motorista/'+tok2);check('link cancelado: 404',r.status===404);
+  r=await api('POST','/api/painel/conferencia/sessoes/'+cc+'/link-motorista',{});
+  const tok3=((r.j.link||'').match(/\/conferencia\/m\/([A-Za-z0-9_-]+)$/)||[])[1];
+  await api('POST','/api/painel/conferencia/sessoes/'+cc+'/fechar',{});
+  r=await fetch(B+'/api/conferencia-motorista/'+tok3+'/leituras',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({codigo:'001000257627'})});
+  check('conferência fechada: link encerra (410)',r.status===410);
+
   r=await api('GET','/api/painel/conferencia/sessoes?tipo=carregamento');
   check('lista de carregamentos',r.status===200&&r.j.rows.length===2&&r.j.rows.every(x=>x.tipo==='carregamento'),r.j.rows);
   r=await api('GET','/api/painel/conferencia/romaneios');

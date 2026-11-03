@@ -162,6 +162,7 @@ async function abrir(id){
     '<video id="video" playsinline muted hidden></video>'+
     '<div class="sinal" id="sinal">Pronto para bipar</div><div class="aviso" id="aviso" hidden></div>'+
     '<div class="card" id="dica" hidden><b>1º bipe os DACTEs</b><div class="muted">Cada DACTE bipado coloca o CT-e na carga, com os volumes do SSW. Depois bipe os volumes: o que não for desses CT-es aparece em vermelho, NÃO CARREGAR.</div></div>'+
+    '<div class="card" id="cMot" hidden><b>📱 Conferência pelo celular do motorista</b><div class="muted">O motorista abre o link e só bipa as caixas: não desfaz, não tira CT-e e não fecha. Vale só para esta carga.</div><div id="motEstado" class="muted"></div><div class="linha" id="motAcoes"><button class="btn p" id="bMot">Gerar link para o motorista</button></div></div>'+
     '<div class="totais" id="totais"></div><div class="lst" id="parceiros"></div>'+
     '<details id="dOutros"><summary id="sOutros">CT-es sem etiqueta reconhecida</summary><div id="outros"></div></details>'+
     '<details><summary>Últimas leituras</summary><div class="lst" id="leituras"></div></details>'+
@@ -176,6 +177,7 @@ async function abrir(id){
   document.addEventListener('click',focoCampo);
   $('#bRec').onclick=async()=>{const b=$('#bRec');b.disabled=true;b.textContent='Buscando no SSW…';try{desenhar(await api('POST','/api/painel/conferencia/sessoes/'+id+'/recarregar',{}));aviso('CT-es atualizados.','ok')}catch(e){aviso(e.message)}finally{b.disabled=false;b.textContent='Atualizar CT-es do SSW'}};
   $('#bFechar').onclick=fecharConf;
+  $('#bMot').onclick=linkMotorista;
   document.addEventListener('click',tirarCte);
   $('#leituras').onclick=async e=>{const b=e.target.closest('[data-desf]');if(!b)return;if(!confirm('Desfazer esta leitura?'))return;try{await api('DELETE','/api/painel/conferencia/sessoes/'+id+'/leituras/'+b.dataset.desf);atualizar()}catch(er){aviso(er.message)}};
   await atualizar();
@@ -194,6 +196,8 @@ function desenhar(d){
   $('#sub').textContent=(s.tipo==='descarga'?'CT-es emitidos de '+dh(s.janela_ini)+' a '+dh(s.janela_fim):s.modo==='romaneio'?'Romaneio '+s.referencia:'Carga montada pelos DACTEs bipados')+(s.carregado_em?' · SSW lido às '+hr(s.carregado_em):'');
   $('#cod').placeholder=s.tipo==='carregamento'&&s.modo==='ctes'?'Bipe os DACTEs e depois os volumes':'Bipe a etiqueta ou o DACTE';
   $('#dica').hidden=!(aberta&&s.tipo==='carregamento'&&s.modo==='ctes'&&!d.esperado.length);
+  $('#cMot').hidden=!(aberta&&s.tipo==='carregamento');
+  if(!S.linkMot||S.linkMot.id!==S.id)$('#motEstado').innerHTML=s.motorista_link_em?'Link enviado às '+esc(hr(s.motorista_link_em))+(s.motorista_terminou_em?' · <b style="color:#4ade80">motorista avisou que terminou às '+esc(hr(s.motorista_terminou_em))+'</b>':' · motorista ainda carregando'):'';
   $('#caixaLeitura').hidden=!aberta;$('#acoes').hidden=!aberta;
   $('#totais').innerHTML='<div><b>'+n(t.lidos)+'</b><span>de '+n(t.esperado)+' lidos</span></div><div><b style="color:'+(t.faltam?'#fbbf24':'#4ade80')+'">'+n(t.faltam)+'</b><span>faltam</span></div><div><b style="color:'+(t.excesso?'#f87171':'inherit')+'">'+n(t.excesso)+'</b><span>a mais</span></div><div><b style="color:'+(d.nao_reconhecidos?'#f87171':'inherit')+'">'+n(d.nao_reconhecidos)+'</b><span>não reconhecidas</span></div>';
   $('#parceiros').innerHTML=d.parceiros.map(p=>{const pc=p.esperado?Math.min(100,Math.round(p.lidos*100/p.esperado)):0,cl=p.excesso?'mais':p.completo?'completo':'falta';
@@ -211,6 +215,19 @@ function tabelaCtes(l){
   const tira=S.dados&&S.dados.sessao.tipo==='carregamento'&&S.dados.sessao.status==='aberta';
   return l.length?'<table><thead><tr><th>CT-e</th><th>NF</th><th>Vol.</th><th>Parceiro</th><th>Destinatário</th><th>DACTE</th>'+(tira?'<th></th>':'')+'</tr></thead><tbody>'+l.map(e=>'<tr><td>'+esc(e.ctrc)+'</td><td>'+esc(e.nf)+'</td><td>'+n(e.volumes)+'</td><td>'+esc(e.parceiro||'—')+'</td><td>'+esc(e.destinatario)+'</td><td>'+(e.dacte_lido_em?'✓':'')+'</td>'+(tira?'<td><button class="chip r" style="border:0;cursor:pointer" data-tira="'+esc(e.ctrc)+'">tirar</button></td>':'')+'</tr>').join('')+'</tbody></table>':'<div class="muted">Nenhum.</div>'}
 
+async function linkMotorista(){
+  if(S.dados&&S.dados.sessao.motorista_link_em&&!confirm('Gerar um link novo? O link anterior para de funcionar.'))return;
+  const b=$('#bMot');b.disabled=true;
+  try{
+    const r=await api('POST','/api/painel/conferencia/sessoes/'+S.id+'/link-motorista',{});
+    S.linkMot={id:S.id,...r};
+    $('#motEstado').innerHTML='<input readonly value="'+esc(r.link)+'" style="width:100%;margin:6px 0;padding:8px;border-radius:8px">';
+    $('#motAcoes').innerHTML='<a class="btn p" href="'+esc(r.whatsapp)+'" target="_blank" rel="noopener" style="text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center">Enviar pelo WhatsApp</a><button class="btn" id="bCopia">Copiar link</button><button class="btn" id="bMot">Gerar outro</button><button class="btn d" id="bMotOff">Cancelar link</button>';
+    $('#bCopia').onclick=async()=>{try{await navigator.clipboard.writeText(r.link);aviso('Link copiado.','ok')}catch{$('#motEstado input').select()}};
+    $('#bMot').onclick=linkMotorista;
+    $('#bMotOff').onclick=async()=>{if(!confirm('Cancelar o link? O motorista não consegue mais bipar.'))return;try{await api('DELETE','/api/painel/conferencia/sessoes/'+S.id+'/link-motorista');S.linkMot=null;$('#motAcoes').innerHTML='<button class="btn p" id="bMot">Gerar link para o motorista</button>';$('#bMot').onclick=linkMotorista;aviso('Link cancelado.','ok');atualizar()}catch(e){aviso(e.message)}};
+  }catch(e){aviso(e.message)}finally{const x=$('#bMot');if(x)x.disabled=false}
+}
 async function tirarCte(e){
   const b=e.target.closest('[data-tira]');if(!b||!S.id)return;
   if(!confirm('Tirar o CT-e '+b.dataset.tira+' desta carga?'))return;

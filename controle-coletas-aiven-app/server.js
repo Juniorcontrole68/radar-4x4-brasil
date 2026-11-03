@@ -52,6 +52,7 @@ const DRIVER_INSTALL_PAGE = path.join(__dirname, 'motorista-instalar.html');
 const DRIVER_TEST_INSTALL_PAGE = path.join(__dirname, 'motorista-teste-instalar.html');
 const LOTACAO_PAGE = path.join(__dirname, 'lotacao.html');
 const CONFERENCIA_PAGE = path.join(__dirname, 'conferencia.html');
+const CONFERENCIA_MOTORISTA_PAGE = path.join(__dirname, 'conferencia-motorista.html');
 const FROTA_PAGE = path.join(__dirname, 'frota.html');
 const ROTEIRIZADOR_CARGAS_PAGE = path.join(__dirname, 'roteirizador-cargas.html');
 const PDF_UNIFIER_PAGE = path.join(__dirname, 'pdf-unificador.html');
@@ -3354,7 +3355,7 @@ async function start() {
       if (await lancamentos.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,sessionOrInternal,dashboardSession,dashboardHas,spToday})) return;
       // Agendamento de entregas (notas pendentes no SSW, com e sem agendamento): ver agendamento.js
       // Conferência de carga por código de barras (descarga e carregamento): carga esperada lida do SSW pelo painel
-      if (await conferencia.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,testMode:TEST_MODE,
+      if (await conferencia.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,testMode:TEST_MODE,sendHtml,paginaMotorista:CONFERENCIA_MOTORISTA_PAGE,publicBase:DRIVER_PUBLIC_BASE,
         lerSswDoUsuario:user=>(TEST_MODE||movitDemo.ATIVA||movitDemo.clienteDemo(user))?null:
           ((rota,corpo)=>agendamento.postJson(DASH_INTERNAL_PORT,'/api/conferencia/'+rota,{'X-Internal-Key':INTERNAL_KEY},corpo||{},3*60*1000))})) return;
       if (await agendamento.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,lerSswDoUsuario:agendamentoLerSswDoUsuario,lerBaixasDoUsuario:agendamentoLerBaixasDoUsuario,lerFaixaDoUsuario:agendamentoLerFaixaDoUsuario,lerProdutosDoUsuario:agendamentoLerProdutosDoUsuario})) return;

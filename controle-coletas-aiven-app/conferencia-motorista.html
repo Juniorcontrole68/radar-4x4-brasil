@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="theme-color" content="#0f766e"><meta name="robots" content="noindex">
+<title>Conferência do carregamento</title>
+<style>
+:root{--bg:#0f172a;--card:#1e293b;--line:#334155;--txt:#f8fafc;--muted:#94a3b8;--teal:#0f766e;--ok:#14b8a6;--verde:#16a34a;--amarelo:#d97706;--vermelho:#dc2626}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--txt);font-family:Segoe UI,Roboto,Arial,sans-serif}
+header{padding:14px 16px;border-bottom:1px solid var(--card);position:sticky;top:0;background:var(--bg);z-index:5}
+header b{font-size:18px;display:block}header small{color:var(--muted);font-size:13px}
+main{padding:14px 16px 40px;display:flex;flex-direction:column;gap:12px;max-width:560px;margin:0 auto}
+.btn{min-height:58px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--txt);font:700 17px Segoe UI,Roboto,Arial;cursor:pointer;padding:0 14px;width:100%}
+.btn.p{background:var(--teal);border-color:var(--teal)}.btn.on{background:var(--teal);border-color:var(--teal)}
+.leitura{display:flex;gap:8px}.leitura input{flex:1;min-height:62px;border-radius:10px;border:1px solid var(--line);background:#0b1220;color:#fff;font:600 20px Segoe UI,Roboto,Arial;padding:0 14px}
+.leitura input:focus{outline:none;border:2px solid var(--ok)}
+.sinal{border-radius:14px;padding:18px;font-size:21px;font-weight:800;text-align:center;min-height:84px;display:flex;flex-direction:column;justify-content:center;gap:4px;background:#1e293b;color:var(--muted)}
+.sinal small{font-size:13px;font-weight:600;opacity:.85}
+.sinal.ok{background:#14532d;color:#bbf7d0}.sinal.ok_completo{background:var(--verde);color:#fff}
+.sinal.alerta{background:#78350f;color:#fde68a}.sinal.erro{background:#7f1d1d;color:#fecaca}.sinal.info{background:#1e3a8a;color:#bfdbfe}
+.total{background:var(--card);border-radius:12px;padding:14px;text-align:center}.total b{font-size:34px;display:block}.total span{color:var(--muted)}
+.parc{background:var(--card);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;border-left:5px solid var(--line)}
+.parc.completo{border-left-color:var(--verde)}.parc.falta{border-left-color:var(--amarelo)}.parc.mais{border-left-color:var(--vermelho)}
+.parc .topo{display:flex;justify-content:space-between;align-items:baseline}.parc .topo b{font-size:17px}.parc .num{font-size:22px;font-weight:800}
+.barra{height:10px;border-radius:99px;background:#0b1220;overflow:hidden}.barra i{display:block;height:100%;background:var(--ok)}
+.lei{display:flex;justify-content:space-between;gap:8px;background:var(--card);border-radius:10px;padding:8px 10px;font-size:14px}.lei small{color:var(--muted)}
+.muted{color:var(--muted);font-size:13px}
+.fim{background:#1e3a8a;color:#bfdbfe;border-radius:12px;padding:14px;font-weight:700;text-align:center}
+.erro{background:#450a0a;color:#fecaca;border-radius:12px;padding:16px;font-weight:700;text-align:center}
+video{width:100%;border-radius:12px;background:#000;max-height:34vh;object-fit:cover}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header><b id="titulo">Conferência do carregamento</b><small id="sub">carregando…</small></header>
+<main id="tela"><div class="muted">carregando…</div></main>
+<script>
+'use strict';
+// Página do motorista: só bipa e acompanha. Não desfaz, não tira nem põe CT-e, não fecha a conferência.
+const $=s=>document.querySelector(s);
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const n=v=>Number(v||0).toLocaleString('pt-BR');
+const hr=t=>t?new Date(t).toLocaleTimeString('pt-BR',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit'}):'';
+const TOKEN=(location.pathname.match(/\/conferencia\/m\/([A-Za-z0-9_-]+)/)||[])[1]||'';
+const API='/api/conferencia-motorista/'+TOKEN;
+const uuid=()=>(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2));
+async function api(m,url,body){
+  const r=await fetch(url,{method:m,headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined});
+  let j={};try{j=await r.json()}catch{}
+  if(!r.ok||j.ok===false){const e=new Error(j.error||('Erro '+r.status));e.status=r.status;throw e}
+  return j
+}
+let ac=null;
+function bip(tipo){
+  try{ac=ac||new (window.AudioContext||window.webkitAudioContext)();
+    const tons={ok:[[1046,.08]],ok_completo:[[1046,.09],[1318,.12]],alerta:[[660,.12],[660,.12]],erro:[[220,.35]],info:[[880,.06]]}[tipo]||[[880,.06]];
+    let t=ac.currentTime;for(const[f,d]of tons){const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=f;o.type=tipo==='erro'?'square':'sine';g.gain.value=.15;o.connect(g);g.connect(ac.destination);o.start(t);o.stop(t+d);t+=d+.05}
+  }catch{}
+  if(navigator.vibrate)navigator.vibrate(tipo==='erro'?[120,60,120,60,120]:tipo==='alerta'?[80,60,80]:40);
+}
+// sem sinal: guarda e manda depois
+const FK='conf_mot_'+TOKEN.slice(0,12);
+const filaLer=()=>{try{return JSON.parse(localStorage.getItem(FK)||'[]')}catch{return[]}};
+const filaGravar=f=>{try{localStorage.setItem(FK,JSON.stringify(f))}catch{}};
+let enviando=false;
+async function enviarFila(){
+  if(enviando)return;enviando=true;
+  try{let f=filaLer();while(f.length){const x=f[0];try{await api('POST',API+'/leituras',x)}catch(e){if(!e.status||e.status>=500||e.status===429)break}f=filaLer().filter(y=>y.uuid!==x.uuid);filaGravar(f)}}
+  finally{enviando=false;atualizar()}
+}
+addEventListener('online',enviarFila);setInterval(()=>{if(filaLer().length)enviarFila()},15000);
+
+let detector=null,stream=null,ultimo={v:'',t:0};
+async function camera(liga){
+  const b=$('#bCam');
+  if(!liga||stream){if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;$('#video').hidden=true;b.classList.remove('on');b.textContent='📷 Ler pela câmera';return}
+  if(!('BarcodeDetector' in window)){sinal('alerta','Este celular não lê código pela câmera no navegador. Abra o link no Google Chrome.');return}
+  try{
+    detector=detector||new BarcodeDetector({formats:['code_128','ean_13','ean_8','qr_code','code_39','itf','upc_a','data_matrix','codabar','pdf417']});
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    const v=$('#video');v.srcObject=stream;v.hidden=false;await v.play();b.classList.add('on');b.textContent='⏹ Parar câmera';
+    const loop=async()=>{if(!stream)return;try{const c=await detector.detect(v);if(c.length){const val=String(c[0].rawValue||'').trim(),a=Date.now();if(val&&(val!==ultimo.v||a-ultimo.t>3000)){ultimo={v:val,t:a};registrar(val)}}}catch{}setTimeout(loop,180)};
+    loop();
+  }catch(e){camera(false);sinal('erro','Não foi possível abrir a câmera: '+e.message)}
+}
+function sinal(cl,msg,cod){const s=$('#sinal');if(!s)return;s.className='sinal '+cl;s.innerHTML=esc(msg)+(cod?'<small>'+esc(cod)+'</small>':'')}
+async function registrar(codigo){
+  const x={codigo,uuid:uuid()};
+  try{const r=await api('POST',API+'/leituras',x);sinal(r.sinal,r.mensagem,codigo);bip(r.sinal);atualizar()}
+  catch(e){
+    if(!e.status){const f=filaLer();f.push(x);filaGravar(f);sinal('alerta','Sem sinal: leitura guardada, vai sozinha depois',codigo);bip('alerta')}
+    else if(e.status===410||e.status===404){fimDoLink(e.message)}
+    else{sinal('erro',e.message,codigo);bip('erro')}
+  }
+}
+function fimDoLink(msg){camera(false);$('#tela').innerHTML='<div class="erro">'+esc(msg)+'</div>';$('#sub').textContent=''}
+function montar(){
+  $('#tela').innerHTML='<div class="leitura"><input id="cod" autocomplete="off" autocapitalize="characters" placeholder="Bipe a etiqueta da caixa"></div>'+
+    '<button class="btn p" id="bCam">📷 Ler pela câmera</button><video id="video" playsinline muted hidden></video>'+
+    '<div class="sinal" id="sinal">Bipe cada caixa que for colocar no caminhão</div>'+
+    '<div class="total" id="total"></div><div id="parceiros" style="display:flex;flex-direction:column;gap:10px"></div>'+
+    '<div id="fim" hidden></div><button class="btn" id="bFim">✅ Terminei de carregar</button>'+
+    '<b>Últimas leituras</b><div id="leituras" style="display:flex;flex-direction:column;gap:6px"></div>';
+  const c=$('#cod');c.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();const v=c.value.trim();c.value='';if(v)registrar(v)}});
+  $('#bCam').onclick=()=>camera(!stream);
+  $('#bFim').onclick=async()=>{const d=DADOS||{totais:{}};const t=d.totais||{};
+    if(!confirm('Avisar o conferente que você terminou?\n\nBipadas: '+(t.lidos||0)+' de '+(t.esperado||0)+(t.faltam?'\nFaltam: '+t.faltam:'')))return;
+    try{await api('POST',API+'/terminei',{});camera(false);atualizar()}catch(e){if(e.status===410||e.status===404)fimDoLink(e.message);else sinal('erro',e.message)}};
+}
+let DADOS=null;
+const ROT={ok:'ok',duplicado:'repetida',excesso:'a mais',sobra:'não é da carga',nao_reconhecido:'não reconhecida',dacte:'DACTE',dacte_fora:'DACTE fora'};
+async function atualizar(){
+  let d;try{d=await api('GET',API)}catch(e){if(e.status===410||e.status===404)return fimDoLink(e.message);return}
+  DADOS=d;
+  if(!$('#total'))montar();
+  $('#titulo').textContent=d.sessao.titulo;$('#sub').textContent=(d.sessao.referencia?'Romaneio '+d.sessao.referencia+' · ':'')+n(d.ctes)+' CT-e(s) na carga';
+  const t=d.totais;
+  $('#total').innerHTML='<b>'+n(t.lidos)+' / '+n(t.esperado)+'</b><span>caixas bipadas'+(t.faltam?' · faltam '+n(t.faltam):' · tudo carregado ✓')+(t.excesso?' · '+n(t.excesso)+' a mais':'')+'</span>';
+  $('#parceiros').innerHTML=d.parceiros.map(p=>{const pc=p.esperado?Math.min(100,Math.round(p.lidos*100/p.esperado)):0,cl=p.excesso?'mais':p.completo?'completo':'falta';
+    return'<div class="parc '+cl+'"><div class="topo"><b>'+esc(p.parceiro)+'</b><span class="num">'+n(p.lidos)+' / '+n(p.esperado)+'</span></div><div class="barra"><i style="width:'+pc+'%"></i></div></div>'}).join('');
+  $('#leituras').innerHTML=d.leituras.map(l=>'<div class="lei"><span>'+esc(l.codigo)+' <small>'+esc(l.parceiro||'')+'</small></span><small>'+esc(ROT[l.situacao]||l.situacao)+' · '+hr(l.criado_em)+'</small></div>').join('')||'<div class="muted">Nenhuma ainda.</div>';
+  const f=$('#fim');f.hidden=!d.sessao.terminou_em;f.className='fim';f.textContent='Você avisou que terminou às '+hr(d.sessao.terminou_em)+'. O conferente encerra a conferência.';
+}
+if(!TOKEN)fimDoLink('Link inválido.');else{atualizar();enviarFila();setInterval(()=>{if(!document.hidden)atualizar()},15000)}
+</script>
+</body>
+</html>

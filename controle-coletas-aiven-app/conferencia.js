@@ -14,9 +14,15 @@
 // CT-es que vão no caminhão (cada DACTE novo entra na carga). Depois os volumes: volume de parceiro sem CT-e na
 // carga ou a mais do que os CT-es dizem aparece em vermelho, "NÃO CARREGAR".
 //
+// Motorista: no carregamento, o conferente gera um link exclusivo daquela carga (placa/romaneio) e manda pelo
+// WhatsApp. O motorista abre no celular sem login (/conferencia/m/<token>) e só bipa e acompanha: não desfaz
+// leitura, não tira nem põe CT-e, não atualiza do SSW, não fecha e não vê outras cargas. O link vale enquanto a
+// conferência estiver aberta (até 24 h) e pode ser trocado (o anterior para de funcionar).
+//
 // Tabelas: conf_formatos (formatos de etiqueta por empresa, editáveis), conf_sessoes, conf_esperado, conf_leituras.
 // Testado em tests/conferencia.js.
 
+const crypto = require('crypto');
 const limpo = (v, max = 200) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 const semAcento = v => String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
 const erro = (status, msg, code) => { const e = new Error(msg); e.status = status; if (code) e.code = code; return e; };
@@ -46,6 +52,11 @@ async function ensureSchema(pool) {
   // carregamento: modo 'romaneio' (referencia = romaneio do SSW) ou 'ctes' (carga montada pelos DACTEs bipados)
   await pool.query("ALTER TABLE conf_sessoes ADD COLUMN IF NOT EXISTS modo TEXT NOT NULL DEFAULT ''");
   await pool.query("ALTER TABLE conf_sessoes ADD COLUMN IF NOT EXISTS referencia TEXT NOT NULL DEFAULT ''");
+  // link do motorista: só o hash do token fica no banco
+  await pool.query('ALTER TABLE conf_sessoes ADD COLUMN IF NOT EXISTS motorista_token_hash TEXT');
+  await pool.query('ALTER TABLE conf_sessoes ADD COLUMN IF NOT EXISTS motorista_link_em TIMESTAMPTZ');
+  await pool.query('ALTER TABLE conf_sessoes ADD COLUMN IF NOT EXISTS motorista_terminou_em TIMESTAMPTZ');
+  await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS uq_conf_motorista_token ON conf_sessoes (motorista_token_hash) WHERE motorista_token_hash IS NOT NULL');
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS uq_conf_leitura_uuid ON conf_leituras (sessao_id, uuid) WHERE uuid IS NOT NULL');
   await pool.query('CREATE INDEX IF NOT EXISTS idx_conf_leitura_sessao ON conf_leituras (sessao_id, id)');
 }
@@ -214,7 +225,7 @@ async function resumo(db, cli, id) {
   const outros = esp.filter(e => !e.parceiro);
   const t = k => parceiros.reduce((a, p) => a + p[k], 0);
   return {
-    sessao: { id: String(s.id), tipo: s.tipo, modo: s.modo || '', referencia: s.referencia || '', titulo: s.titulo, status: s.status, janela_ini: s.janela_ini, janela_fim: s.janela_fim, criado_por: s.criado_por, criado_em: s.criado_em, carregado_em: s.carregado_em, fechada_em: s.fechada_em, fechada_por: s.fechada_por, observacao: s.observacao || '' },
+    sessao: { id: String(s.id), tipo: s.tipo, modo: s.modo || '', referencia: s.referencia || '', titulo: s.titulo, status: s.status, janela_ini: s.janela_ini, janela_fim: s.janela_fim, criado_por: s.criado_por, criado_em: s.criado_em, carregado_em: s.carregado_em, fechada_em: s.fechada_em, fechada_por: s.fechada_por, observacao: s.observacao || '', motorista_link_em: s.motorista_link_em || null, motorista_terminou_em: s.motorista_terminou_em || null },
     parceiros,
     outros: { ctes: outros.length, volumes: outros.reduce((a, e) => a + e.volumes, 0) },
     nao_reconhecidos: conta('', ['nao_reconhecido']),
@@ -230,7 +241,7 @@ async function ler(pool, cli, user, id, b, lerSsw) {
   {
     const s0 = await sessao(pool, cli, id);
     const bruto = String(b.codigo || '').replace(/[\s\r\n\t]+/g, '');
-    if (s0.tipo === 'carregamento' && s0.status === 'aberta' && /^\d{44}$/.test(bruto) && bruto.slice(20, 22) === '57') {
+    if (!b.motorista && s0.tipo === 'carregamento' && s0.status === 'aberta' && /^\d{44}$/.test(bruto) && bruto.slice(20, 22) === '57') {
       const tem = (await pool.query('SELECT 1 FROM conf_esperado WHERE sessao_id=$1 AND chave=$2', [id, bruto])).rowCount;
       if (!tem) {
         if (b.testMode && b.cte_teste) novoCte = { ...b.cte_teste, chave: bruto };
@@ -261,7 +272,7 @@ async function ler(pool, cli, user, id, b, lerSsw) {
     if (c.tipo === 'dacte') {
       const e = (await db.query('SELECT ctrc,parceiro FROM conf_esperado WHERE sessao_id=$1 AND chave=$2', [id, c.codigo])).rows[0];
       if (e) { situacao = novoCte ? 'cte_adicionado' : 'dacte'; ctrc = e.ctrc; parceiro = e.parceiro; await db.query('UPDATE conf_esperado SET dacte_lido_em=COALESCE(dacte_lido_em,NOW()) WHERE sessao_id=$1 AND ctrc=$2', [id, e.ctrc]); }
-      else situacao = s.tipo === 'carregamento' ? 'cte_nao_achado' : 'dacte_parceiro';   // descarga: DACTE de outra transportadora (ex.: Transbarbosa) fica registrado
+      else situacao = b.motorista ? 'dacte_fora' : s.tipo === 'carregamento' ? 'cte_nao_achado' : 'dacte_parceiro';   // descarga: DACTE de outra transportadora (ex.: Transbarbosa) fica registrado
     } else if (c.tipo === 'danfe') {
       const e = (await db.query("SELECT ctrc,parceiro FROM conf_esperado WHERE sessao_id=$1 AND ltrim(nf,'0')=$2 LIMIT 1", [id, c.nf])).rows[0];
       situacao = e ? 'danfe' : 'danfe_fora'; if (e) { ctrc = e.ctrc; parceiro = e.parceiro; }
@@ -290,6 +301,7 @@ async function mensagem(db, cli, id, l) {
   const M = {
     cte_adicionado: ['info', 'CT-e ' + l.ctrc + ' na carga' + (cte ? ' · ' + cte.volumes + ' volume(s)' + (cte.parceiro ? ' · ' + cte.parceiro : ' · sem etiqueta reconhecida') : '')],
     cte_nao_achado: ['erro', 'CT-e deste DACTE não encontrado no SSW'],
+    dacte_fora: ['erro', 'NÃO CARREGAR · este DACTE não é desta carga'],
     ok: [r && r.completo ? 'ok_completo' : 'ok', l.parceiro + ': ' + prog + (r && r.completo ? ' ✓ completo' : '')],
     duplicado: ['alerta', 'Volume já bipado (' + l.parceiro + ')'],
     excesso: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + 'A mais: ' + l.parceiro + ' já tem ' + prog + ' volumes'],
@@ -328,8 +340,79 @@ async function listar(db, cli, tipo) {
     FROM conf_sessoes s WHERE s.client_id IS NOT DISTINCT FROM $1 AND ($2::text IS NULL OR s.tipo=$2) ORDER BY s.id DESC LIMIT 60`, [cli, TIPOS.includes(tipo) ? tipo : null])).rows;
 }
 
+// ------------------------------------------------------------------ link do motorista
+const hashToken = t => crypto.createHash('sha256').update(String(t)).digest('hex');
+async function gerarLinkMotorista(pool, cli, id, base) {
+  const s = await sessao(pool, cli, id);
+  if (s.tipo !== 'carregamento') throw erro(400, 'O link do motorista é só para carregamento.');
+  if (s.status !== 'aberta') throw erro(409, 'Conferência já fechada.');
+  const token = crypto.randomBytes(24).toString('base64url');
+  await pool.query('UPDATE conf_sessoes SET motorista_token_hash=$2,motorista_link_em=NOW(),motorista_terminou_em=NULL WHERE id=$1', [id, hashToken(token)]);
+  const link = String(base || '').replace(/\/+$/, '') + '/conferencia/m/' + token;
+  const texto = 'Conferência do carregamento ' + (s.referencia || '') + '\n' + s.titulo + '\n\nAbra o link e bipe cada caixa que for colocar no caminhão:\n' + link;
+  return { link, whatsapp: 'https://wa.me/?text=' + encodeURIComponent(texto) };
+}
+async function revogarLinkMotorista(pool, cli, id) {
+  await sessao(pool, cli, id);
+  await pool.query('UPDATE conf_sessoes SET motorista_token_hash=NULL WHERE id=$1', [id]);
+}
+// token -> conferência (aberta, link com menos de 24 h)
+async function sessaoDoMotorista(pool, token) {
+  if (!/^[A-Za-z0-9_-]{20,64}$/.test(String(token || ''))) throw erro(404, 'Link inválido.');
+  const q = await pool.query('SELECT * FROM conf_sessoes WHERE motorista_token_hash=$1', [hashToken(token)]);
+  if (!q.rowCount) throw erro(404, 'Link inválido ou trocado. Peça um novo link ao conferente.');
+  const s = q.rows[0];
+  if (s.status !== 'aberta') throw erro(410, 'Esta conferência já foi encerrada.');
+  if (s.motorista_link_em && Date.now() - new Date(s.motorista_link_em).getTime() > 24 * 3600 * 1000) throw erro(410, 'Link vencido. Peça um novo link ao conferente.');
+  return s;
+}
+// o que o motorista vê: progresso por parceiro e as próprias leituras (sem dados de outras cargas)
+async function resumoMotorista(pool, s) {
+  const cli = s.client_id === null ? null : String(s.client_id);
+  const r = await resumo(pool, cli, String(s.id));
+  const lei = (await pool.query("SELECT codigo,parceiro,situacao,criado_em FROM conf_leituras WHERE sessao_id=$1 AND desfeita_em IS NULL ORDER BY id DESC LIMIT 15", [s.id])).rows;
+  return { sessao: { titulo: r.sessao.titulo, referencia: r.sessao.referencia, status: r.sessao.status, terminou_em: s.motorista_terminou_em || null },
+    parceiros: r.parceiros, totais: r.totais, nao_reconhecidos: r.nao_reconhecidos, ctes: r.esperado.length, leituras: lei };
+}
+const LIMITE_MOT = new Map();
+function motoristaPermitido(token) {
+  const now = Date.now(), k = String(token).slice(0, 16), row = LIMITE_MOT.get(k) || { at: now, n: 0 };
+  if (now - row.at > 60000) { row.at = now; row.n = 0; }
+  row.n++; LIMITE_MOT.set(k, row); if (LIMITE_MOT.size > 5000) LIMITE_MOT.clear();
+  return row.n <= 240;
+}
+// rotas sem login: página /conferencia/m/<token> e /api/conferencia-motorista/<token>[/leituras|/terminei]
+async function handleMotorista(req, res, u, deps) {
+  const { pool, sendJson, readJsonBodyLimited, sendHtml, paginaMotorista } = deps;
+  let m = u.pathname.match(/^\/conferencia\/m\/([A-Za-z0-9_-]{20,64})\/?$/);
+  if (m && req.method === 'GET') return sendHtml(res, paginaMotorista), true;
+  m = u.pathname.match(/^\/api\/conferencia-motorista\/([A-Za-z0-9_-]{20,64})(\/leituras|\/terminei)?$/);
+  if (!m) return false;
+  try {
+    if (!motoristaPermitido(m[1])) return sendJson(res, 429, { ok: false, error: 'Muitas leituras em pouco tempo. Aguarde um instante.' }), true;
+    const s = await sessaoDoMotorista(pool, m[1]);
+    const cli = s.client_id === null ? null : String(s.client_id);
+    const quem = { username: 'Motorista' + (s.referencia ? ' ' + s.referencia : '') };
+    if (!m[2] && req.method === 'GET') return sendJson(res, 200, { ok: true, ...(await resumoMotorista(pool, s)) }), true;
+    if (m[2] === '/leituras' && req.method === 'POST') {
+      const b = await readJsonBodyLimited(req, 4 * 1024);
+      const r = await ler(pool, cli, quem, String(s.id), { codigo: b.codigo, uuid: b.uuid, motorista: true }, null);
+      return sendJson(res, 200, { ok: true, situacao: r.situacao, parceiro: r.parceiro, sinal: r.sinal, mensagem: r.mensagem, progresso: r.progresso, repetida_envio: !!r.repetida_envio }), true;
+    }
+    if (m[2] === '/terminei' && req.method === 'POST') {
+      await pool.query('UPDATE conf_sessoes SET motorista_terminou_em=NOW() WHERE id=$1', [s.id]);
+      return sendJson(res, 200, { ok: true }), true;
+    }
+    return sendJson(res, 405, { ok: false, error: 'Operação não permitida.' }), true;
+  } catch (e) {
+    if (!e.status) console.log('CONFERENCIA MOTORISTA ERRO: ' + (e.stack || e.message || e));
+    return sendJson(res, e.status || 500, { ok: false, error: e.status ? e.message : 'Falha na conferência.' }), true;
+  }
+}
+
 // ------------------------------------------------------------------ rotas /api/painel/conferencia*
 async function handle(req, res, u, deps) {
+  if (u.pathname.startsWith('/conferencia/m/') || u.pathname.startsWith('/api/conferencia-motorista/')) return handleMotorista(req, res, u, deps);
   if (u.pathname !== '/api/painel/conferencia' && !u.pathname.startsWith('/api/painel/conferencia/')) return false;
   const { pool, sendJson, readJsonBodyLimited, dashboardSession, dashboardHas, lerSswDoUsuario, testMode } = deps;
   const p = u.pathname.slice('/api/painel/conferencia'.length) || '/';
@@ -350,6 +433,12 @@ async function handle(req, res, u, deps) {
     if (p === '/romaneios' && req.method === 'GET') {
       if (!lerSsw) return sendJson(res, 200, { ok: true, rows: [] }), true;
       return sendJson(res, 200, { ok: true, rows: (await lerSsw('ssw-romaneios', {})).rows || [] }), true;
+    }
+    if ((m = p.match(/^\/sessoes\/(\d+)\/link-motorista$/)) && req.method === 'POST')
+      return sendJson(res, 200, { ok: true, ...(await gerarLinkMotorista(pool, cli, m[1], deps.publicBase)) }), true;
+    if ((m = p.match(/^\/sessoes\/(\d+)\/link-motorista$/)) && req.method === 'DELETE') {
+      await revogarLinkMotorista(pool, cli, m[1]);
+      return sendJson(res, 200, { ok: true }), true;
     }
     if ((m = p.match(/^\/sessoes\/(\d+)\/ctes\/([A-Za-z0-9-]+)$/)) && req.method === 'DELETE') {
       await tirarCte(pool, cli, m[1], m[2]);
