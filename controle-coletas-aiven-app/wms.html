@@ -648,10 +648,12 @@ $('#estLimpar').onclick=tenta(async()=>{
     '<p><a class="btn" href="/api/wms/estoque/backup" download>⬇ Baixar backup completo (com fotos)</a></p>'+
     '<label>O que limpar<select id="lModo"><option value="tudo">Começar do zero: apaga tudo da tabela acima</option><option value="saldo">Só zerar o saldo: recebimentos, expedições e movimentos ficam como histórico</option></select></label>'+
     '<p class="muted">Antes de limpar, o sistema guarda uma cópia no banco (sem as fotos). Não dá para desfazer pela tela.</p>'+
+    '<label>Senha da limpeza<input id="lSenha" type="password" inputmode="numeric" autocomplete="off"></label>'+
     '<label>Para confirmar, digite LIMPAR<input id="lConf" autocomplete="off"></label><div class="bar"><button class="btn d" id="lOk">Limpar estoque</button><button class="btn" data-fechar>Cancelar</button></div>');
   $('#lOk').onclick=tenta(async()=>{
     const modo=$('#lModo').value;
-    const x=await api('POST','/api/wms/estoque/limpar',{modo,confirmar:$('#lConf').value});
+    if(!$('#lSenha').value.trim()){aviso('Digite a senha da limpeza do estoque.');$('#lSenha').focus();return}
+    const x=await api('POST','/api/wms/estoque/limpar',{modo,confirmar:$('#lConf').value,senha:$('#lSenha').value});
     fechar();aviso('Estoque limpo ('+(x.modo==='tudo'?'do zero':'saldo zerado')+'). Cópia de segurança nº '+x.backup_id+' guardada.',true);
     if(typeof $('#estIr').onclick==='function')$('#estIr').onclick();
   });

@@ -43,6 +43,7 @@ jobs:
       DASHBOARD_INITIAL_ADMIN_USER: admin_teste
       DASHBOARD_INITIAL_ADMIN_PASSWORD: senha-de-teste-123
       WMS_ATIVO: '1'
+      WMS_LIMPEZA_SENHA: senha-teste-limpeza
       MOVIT_DEMO_URL: http://127.0.0.1:10777
       MOVIT_CENTRAL_TOKEN: token-da-movit-central-com-32-caracteres-ou-mais
       MOVIT_DEMO_INTERVALO_MS: '200'

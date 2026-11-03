@@ -858,8 +858,27 @@ async function backupEstoque(c,ctx,{fotos=false}={}){
   }
   return{gerado_em:new Date().toISOString(),empresa:ctx.emp,usuario:ctx.usuario,versao:1,tabelas:dados};
 }
+// Senha da limpeza do estoque: só na variável secreta WMS_LIMPEZA_SENHA do Render (nunca no código, que é público).
+// Sem a variável, a limpeza fica desligada. 5 senhas erradas seguidas travam a limpeza da empresa por 15 minutos.
+const LIMPEZA_ERROS=new Map();
+function conferirSenhaLimpeza(ctx,senha){
+  const certa=String(process.env.WMS_LIMPEZA_SENHA||'');
+  if(!certa)throw erro(503,'A senha da limpeza do estoque não está configurada no servidor.','SENHA_NAO_CONFIGURADA');
+  const k=String(ctx.emp),e=LIMPEZA_ERROS.get(k)||{n:0,ate:0};
+  if(e.ate>Date.now())throw erro(429,'Senha errada muitas vezes. Tente de novo em '+Math.ceil((e.ate-Date.now())/60000)+' min.','SENHA_TRAVADA');
+  const dada=String(senha??'').trim();
+  if(!dada)throw erro(400,'Digite a senha da limpeza do estoque.','SENHA_VAZIA');
+  const h=v=>crypto.createHash('sha256').update(v).digest();
+  if(!crypto.timingSafeEqual(h(dada),h(certa))){
+    e.n++;if(e.n>=5){e.n=0;e.ate=Date.now()+15*60*1000}
+    LIMPEZA_ERROS.set(k,e);
+    throw erro(403,'Senha da limpeza incorreta.','SENHA_INCORRETA');
+  }
+  LIMPEZA_ERROS.delete(k);
+}
 async function limparEstoque(pool,ctx,b){
   if(!ctx.admin)throw erro(403,'Só o administrador limpa o estoque do WMS.','SEM_PERMISSAO');
+  conferirSenhaLimpeza(ctx,b.senha);
   const modo=b.modo==='saldo'?'saldo':b.modo==='tudo'?'tudo':null;
   if(!modo)throw erro(400,'Escolha o que limpar: "tudo" (começar do zero) ou "saldo" (só zerar as quantidades).');
   if(String(b.confirmar||'').trim().toUpperCase()!=='LIMPAR')throw erro(400,'Para confirmar, digite LIMPAR.','CONFIRMAR');
