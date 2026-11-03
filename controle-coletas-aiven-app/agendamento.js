@@ -25,7 +25,7 @@ const { limparProduto } = require('./dashboard/ssw-cte');
 const OPERACIONAIS = ['pendente', 'em_rota', 'verificar'];
 const FINAIS = ['entregue', 'devolvida'];
 const SITUACOES = OPERACIONAIS.concat(FINAIS);
-const ROTULO = { pendente: 'Pendente', em_rota: 'Em rota', verificar: 'Verificação necessária', entregue: 'Entregue', devolvida: 'Devolvida' };
+const ROTULO = { pendente: 'Aguardando', em_rota: 'Em rota', verificar: 'Verificação necessária', entregue: 'Entregue', devolvida: 'Devolvida' };
 
 const limpo = (v, max = 200) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 const normNf = v => String(v || '').replace(/\D/g, '').replace(/^0+/, '');
@@ -285,6 +285,11 @@ async function aplicarSnapshot(db, cli, snap, syncId = null) {
         [n.id, limpo(v.texto, 300), normCtrc(v.ctrc), syncId]);
       if (n.situacao !== 'em_rota') await evento(db, cli, n.id, null, 'status', ROTULO[n.situacao], ROTULO.em_rota, v.texto, 'SSW');
       c.em_rota++;
+    } else if (v && v.situacao === 'pendente') {
+      // conferido no SSW e ainda não saiu (ex.: subcontrato apenas emitido): aguardando
+      await db.query("UPDATE ag_notas SET situacao='pendente',status_ssw=COALESCE(NULLIF($2,''),status_ssw),ctrc=CASE WHEN ctrc='' THEN $3 ELSE ctrc END,erro_integracao=NULL,ultima_consulta=NOW(),ultimo_sync_id=$4,atualizado_em=NOW() WHERE id=$1",
+        [n.id, limpo(v.texto, 300), normCtrc(v.ctrc), syncId]);
+      if (n.situacao !== 'pendente') await evento(db, cli, n.id, null, 'status', ROTULO[n.situacao], ROTULO.pendente, v.texto, 'SSW');
     } else if (n.situacao === 'em_rota') {
       // já estava em rota e o SSW não respondeu desta vez: guarda o último estado válido
       await db.query("UPDATE ag_notas SET erro_integracao=$2,atualizado_em=NOW() WHERE id=$1", [n.id, v && v.erro ? limpo(v.erro, 300) : null]);

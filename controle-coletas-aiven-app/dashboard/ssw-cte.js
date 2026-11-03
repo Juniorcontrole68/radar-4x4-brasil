@@ -351,6 +351,15 @@ function situacaoBloqueiaAgendamento(textos){
   return''
 }
 
+// Situação do CT-e que indica a carga fisicamente a caminho (saiu para entrega, em trânsito, manifestada).
+// "Documento de transporte emitido", "subcontrato emitido", "no armazém" etc. NÃO são em rota: a nota aguarda.
+function situacaoEmRota(textos){
+  const t=(Array.isArray(textos)?textos:[textos]).map(x=>String(x||'')).join(' | ')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\s+/g,' ');
+  if(!t.trim())return false;
+  return /\bSAIDA PARA ENTREGA\b|\bSAIU PARA ENTREGA\b|\bEM ROTA\b|\bEM TRANSITO\b|\bEM TRANSFERENCIA\b|\bEM VIAGEM\b|\bMANIFESTAD|\bEM ENTREGA\b|\bROMANEIO\b|\bTENTATIVA DE ENTREGA\b/.test(t)
+}
+
 // Chaves de NF-e (modelo 55, dígito verificador conferido) soltas num texto: tela do SSW, lista de DANFEs, XML.
 // Aceita a chave em grupos de 4 separados por espaço ou ponto, como aparece no DANFE.
 function chavesNfe(texto){
@@ -366,4 +375,4 @@ function chavesNfe(texto){
   return out
 }
 
-module.exports={chavesNfe,situacaoBloqueiaAgendamento,parseRelacaoProdutos,limparProduto,pareceProduto,parseComprovantes,zipEntries,isZip,xmlFromDownload,parseCteXml,parseTela101,parseMapaCall,xmlValue,xmlBlock,entregaNoComplemento,enderecosEntrega,recebedorEhOutroLocal};
+module.exports={chavesNfe,situacaoBloqueiaAgendamento,situacaoEmRota,parseRelacaoProdutos,limparProduto,pareceProduto,parseComprovantes,zipEntries,isZip,xmlFromDownload,parseCteXml,parseTela101,parseMapaCall,xmlValue,xmlBlock,entregaNoComplemento,enderecosEntrega,recebedorEhOutroLocal};

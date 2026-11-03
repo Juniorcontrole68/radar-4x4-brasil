@@ -9,7 +9,7 @@ const kg=v=>Number(v||0).toLocaleString('pt-BR',{maximumFractionDigits:1});
 const nfmt=v=>Number(v||0).toLocaleString('pt-BR');
 const br=d=>d?String(d).slice(0,10).split('-').reverse().join('/'):'';
 const dh=v=>{if(!v)return'';const d=new Date(v);return isNaN(d)?'':d.toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'})};
-const ROT={pendente:'Pendente',em_rota:'Em rota',verificar:'Verificação necessária',entregue:'Entregue',devolvida:'Devolvida'};
+const ROT={pendente:'Aguardando',agendado:'Agendado',em_rota:'Em rota',verificar:'Verificação necessária',entregue:'Entregue',devolvida:'Devolvida'};
 const PER=50;
 let pronto=false,aba='agendadas',card='',page=1,painel=null,atual=null,timerSync=null,ultimaLista=null;
 
@@ -21,7 +21,9 @@ async function api(url,opts){
   return j
 }
 function msg(t,tipo=''){const e=q('#agMsg');e.textContent=t;e.className='ag-msg'+(tipo?' '+tipo:'')}
-const st=s=>'<span class="ag-st '+esc(s)+'">'+esc(ROT[s]||s||'—')+'</span>';
+// nota ainda não saiu (aguardando) mas já tem data marcada aparece como Agendado
+const stDe=(s,r)=>(s==='pendente'&&r&&(r.agendamento_id||r.data_agendada))?'agendado':s;
+const st=(s,r)=>{s=stDe(s,r);return'<span class="ag-st '+esc(s)+'">'+esc(ROT[s]||s||'—')+'</span>'};
 
 // ------------------------------------------------------------------ painel: sincronização e indicadores
 async function carregarPainel(){
@@ -111,7 +113,7 @@ function limparForm(){preencher(null);q('#agNf').value='';q('#agData').value='';
 function escolher(lista,origem){
   const box=q('#agOpcoes');box.style.display='block';
   box.innerHTML='<div style="font-weight:700;margin-bottom:3px">Há '+lista.length+' notas com este número. Escolha a correta:</div><table><thead><tr><th>CT-e</th><th>Remetente</th><th>Destinatário</th><th>Cidade</th><th>Situação</th><th></th></tr></thead><tbody>'+
-    lista.map((r,i)=>'<tr><td>'+esc(r.ctrc||'—')+'</td><td>'+esc(r.remetente)+'</td><td>'+esc(r.destinatario)+'</td><td>'+esc([r.cidade,r.uf].filter(Boolean).join('/'))+'</td><td>'+(r.situacao?st(r.situacao):esc(r.status_ssw||''))+'</td><td><button type="button" class="ag-mini primary" data-op="'+i+'">Usar esta</button></td></tr>').join('')+'</tbody></table>';
+    lista.map((r,i)=>'<tr><td>'+esc(r.ctrc||'—')+'</td><td>'+esc(r.remetente)+'</td><td>'+esc(r.destinatario)+'</td><td>'+esc([r.cidade,r.uf].filter(Boolean).join('/'))+'</td><td>'+(r.situacao?st(r.situacao,r):esc(r.status_ssw||''))+'</td><td><button type="button" class="ag-mini primary" data-op="'+i+'">Usar esta</button></td></tr>').join('')+'</tbody></table>';
   box.onclick=e=>{const b=e.target.closest('[data-op]');if(!b)return;const r=lista[Number(b.dataset.op)];box.style.display='none';
     if(origem==='ssw')buscarSsw(r.nf,r.ctrc);else usarLocal(r)};
 }
@@ -185,7 +187,7 @@ function valor(r,k){
   if(k==='peso')return kg(r.peso);
   if(k==='cidade')return [r.cidade,r.uf].filter(Boolean).join('/');
   if(['data_agendada','data_emissao','data_entrada','concluido_em','data_coleta'].includes(k))return br(r[k]);
-  if(k==='situacao')return ROT[r.situacao]||r.situacao||'';
+  if(k==='situacao'){const s=stDe(r.situacao,r);return ROT[s]||s||''}
   if(k==='remetente'&&aba!=='coletas')return String(r.remetente||'').trim().split(/\s+/)[0]||'';   // só o primeiro nome
   return r[k]??''
 }
@@ -204,7 +206,7 @@ function celula(r,k,num){
     if(aba==='sem'||aba==='pendentes')return'<td class="acoes"><button type="button" class="ag-mini primary" data-ac="agendar" data-nota="'+esc(r.nota_id)+'">Agendar</button><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
     return'<td class="acoes"><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>'
   }
-  if(k==='situacao')return'<td>'+st(r.situacao)+(r.erro_integracao&&r.situacao==='verificar'?'<div style="font-size:10px;color:#92400e">'+esc(r.erro_integracao)+'</div>':'')+'</td>';
+  if(k==='situacao')return'<td>'+st(r.situacao,r)+(r.erro_integracao&&r.situacao==='verificar'?'<div style="font-size:10px;color:#92400e">'+esc(r.erro_integracao)+'</div>':'')+'</td>';
   const v=valor(r,k);
   return'<td class="'+(num?'n':'')+(k==='produto'?' prod':k==='observacao'?' obs':'')+'" title="'+esc(k==='produto'||k==='observacao'||k==='remetente'||k==='destinatario'?v:'')+'">'+(k==='nf'?'<b>'+esc(v)+'</b>':k==='produto'?'<div class="ag-prod">'+esc(v)+'</div>':esc(v))+'</td>'
 }
@@ -260,7 +262,7 @@ async function historico(notaId){
     const j=await api('/api/painel/agendamentos/historico/'+encodeURIComponent(notaId)),n=j.nota;
     const T={agendado:'Agendado',reagendado:'Reagendado',observacao:'Observação alterada',cancelado:'Agendamento cancelado',entregue:'Entregue',produto:'Produto alterado',importada:'Importada do SSW',devolvida:'Devolvida (SSW)',status:'Situação no SSW'};
     q('#agDlg h3').textContent='Histórico • NF '+n.nf+(n.ctrc?' • CT-e '+n.ctrc:'');
-    q('#agDlg .ag-hist').innerHTML='<div style="margin-bottom:6px">'+esc(n.remetente||'')+' → '+esc(n.destinatario||'')+' • '+esc([n.cidade,n.uf].filter(Boolean).join('/'))+' • '+kg(n.peso)+' kg • '+st(n.situacao)+(n.status_ssw?' <span class="muted">'+esc(n.status_ssw)+'</span>':'')+'</div>'+
+    q('#agDlg .ag-hist').innerHTML='<div style="margin-bottom:6px">'+esc(n.remetente||'')+' → '+esc(n.destinatario||'')+' • '+esc([n.cidade,n.uf].filter(Boolean).join('/'))+' • '+kg(n.peso)+' kg • '+st(n.situacao,n)+(n.status_ssw?' <span class="muted">'+esc(n.status_ssw)+'</span>':'')+'</div>'+
       (n.endereco?'<div class="muted" style="margin-bottom:6px">Entrega: '+esc(n.endereco)+'</div>':'')+
       '<table><thead><tr><th>Quando</th><th>O quê</th><th>De</th><th>Para</th><th>Detalhe</th><th>Quem</th></tr></thead><tbody>'+
       (j.eventos.length?j.eventos.map(e=>'<tr><td>'+esc(dh(e.criado_em))+'</td><td>'+esc(T[e.tipo]||e.tipo)+'</td><td>'+esc(e.de||'')+'</td><td>'+esc(e.para||'')+'</td><td>'+esc(e.detalhe||'')+'</td><td>'+esc(e.usuario||'')+'</td></tr>').join(''):'<tr><td colspan="6" class="muted">Sem eventos ainda.</td></tr>')+'</tbody></table>';

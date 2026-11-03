@@ -66,6 +66,7 @@
 .ag-tabela tr.cinza td{background:#f1f5f9;color:#475569}
 .ag-st{display:inline-block;border-radius:999px;padding:1px 7px;font-size:10px;font-weight:800;background:#e2e8f0;color:#334155;white-space:nowrap}
 .ag-st.pendente{background:#e0f2fe;color:#075985}
+.ag-st.agendado{background:#dcfce7;color:#166534}
 .ag-st.em_rota{background:#ede9fe;color:#5b21b6}
 .ag-st.verificar{background:#fef3c7;color:#92400e}
 .ag-st.entregue{background:#bbf7d0;color:#166534}

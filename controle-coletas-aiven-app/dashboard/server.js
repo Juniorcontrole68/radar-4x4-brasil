@@ -6508,7 +6508,9 @@ if(u.pathname==='/api/agendamentos/ssw-snapshot'&&req.method==='POST'){try{
         const em=(sit.match(/(\d{2}\/\d{2}\/\d{2,4})/)||[])[1]||'';
         if(/devolvida/.test(b))return{...extra,situacao:'devolvida',texto:sit.slice(0,200),em};
         if(b)return{...extra,situacao:'entregue',texto:sit.slice(0,200),em};
-        return{...extra,situacao:'em_rota',texto:sit.slice(0,200)}
+        // só está em rota quando o SSW mostra a carga saindo; subcontrato/documento apenas emitido continua aguardando
+        if(sswCte.situacaoEmRota([sit]))return{...extra,situacao:'em_rota',texto:sit.slice(0,200)};
+        return{...extra,situacao:'pendente',texto:sit.slice(0,200)}
       })
     }catch(e){verificados[a.chave]={situacao:'desconhecida',erro:String(e.message||e).slice(0,200)}}
   }
