@@ -296,7 +296,7 @@ const CABECALHO=/\b(RELACAO|SSW|PAGINA|PAG\b\.?\s*:?\s*\d|FOLHA\s*:?\s*\d|EMISSA
 const TITULOS=/^(?:ITEM|COD(?:IGO)?|DESCRICAO|DO|DA|PRODUTOS?|QTDE?|QUANTIDADE|UN(?:ID(?:ADE)?)?|VALOR|PESO|NCM|CFOP|NF|NOTA|[\s;|.:/-])+$/;
 // "AMS001050-2 - REM: ..." / "QVOL: 1" / "0,0 M3" / "12,5 KG" / "NF: 123" / "VLR: 1.234,56": dados do CT-e, não produto
 const LINHA_CTRC=/^\s*[A-Z]{3}\s?0*\d{1,7}\s?-\s?\d\b.*\b(?:REM|DEST|QVOL|VOL)\s*:/;
-const SEGMENTO_CTRC=/^(?:[A-Z]{3}\s?0*\d{1,7}\s?-\s?\d|(?:REM|DEST|PAG|QVOL|VOL|NF|NFS?E?|NOTA|PESO|VLR|VALOR|MERC|CUB|M3)\s*[:.]|[\d.,]+\s*(?:M3|KG|KGS|UN|VOL)\b|[\d.,\s]+$|\.\.\.$)/;
+const SEGMENTO_CTRC=/^(?:[A-Z][A-Z ./]{0,15}\s*:\s*[\d.,]+\s*(?:KG|M3|UN)?$|KG[A-Z]*\s*:|[A-Z]{3}\s?0*\d{1,7}\s?-\s?\d|(?:REM|DEST|PAG|QVOL|VOL|NF|NFS?E?|NOTA|PESO|VLR|VALOR|MERC|CUB|M3)\s*[:.]|[\d.,]+\s*(?:M3|KG|KGS|UN|VOL)\b|[\d.,\s]+$|\.\.\.$)/;
 const LOG_LINHA_CTRC={n:0};
 function pareceProduto(t){
   const n=semAcento(t);

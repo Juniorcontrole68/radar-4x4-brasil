@@ -222,6 +222,7 @@ console.log('Tela de comprovantes do romaneio (opção 38)');
   const html=cte.parseRelacaoProdutos('<table><tr><th>Descrição</th><th>Qtde</th></tr><tr><td>PISO CERAMICO 60X60</td><td>30</td></tr></table>');
   check('HTML: a descrição de cada item',html.join('|')==='PISO CERAMICO 60X60',html);
   check('arquivo vazio: lista vazia',cte.parseRelacaoProdutos('').length===0)
+  check('linha real do SSW (REM/QVOL/M3/KGREAL/KGCALC) não vira produto',cte.parseRelacaoProdutos('AMS001049-9 - REM: QUADRI COMERCIO ELETRONICO LTD - QVOL: 2 - 0,0 M3 - KGREAL: 71,400 - KGCALC: 71,400').length===0);
   check('linha do CT-e (REM/QVOL/M3) não vira produto',cte.parseRelacaoProdutos('AMS001050-2 - REM: QUADRI COMERCIO ELETRONICO LTD - QVOL: 1 - 0,0 M3 - ...').length===0);
   {const r=cte.parseRelacaoProdutos('AMS001045-6 - REM: QUADRI COMERCIO ELETRONICO LTD - QVOL: 8 - 0,0 M3 - CADEIRA GAMER PRETA - 194,6 KG\n1;10020;MESA DE ESCRITORIO;1;UN');
    check('  ...mas o nome do produto que vem na mesma linha é aproveitado',JSON.stringify(r)===JSON.stringify(['CADEIRA GAMER PRETA','MESA DE ESCRITORIO']),JSON.stringify(r))}
