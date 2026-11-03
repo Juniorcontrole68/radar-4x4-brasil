@@ -294,6 +294,10 @@ function parseComprovantes(body){
 // ("CONSTRULOG DIST COMERCIO E TRA   PAG: 1", "Emissao 10/10/26 14:32", "CNPJ: ..."), título de coluna ou total.
 const CABECALHO=/\b(RELACAO|SSW|PAGINA|PAG\b\.?\s*:?\s*\d|FOLHA\s*:?\s*\d|EMISSAO|EMITIDO|CNPJ|CPF|REMETENTE|DESTINATARIO|PAGADOR|TOTAL|CTRC|CT-E|USUARIO|SISTEMA|IMPRESSO|DATA\s*:|HORA\s*:|NOTA FISCAL|SERIE\s*:|LTDA|EIRELI|S\/A|S\.A\b|CONSTRULOG|DES\s*:|END\s*:|BAIRRO\s*:|CEP\s*:)(?![A-Z])/;
 const TITULOS=/^(?:ITEM|COD(?:IGO)?|DESCRICAO|DO|DA|PRODUTOS?|QTDE?|QUANTIDADE|UN(?:ID(?:ADE)?)?|VALOR|PESO|NCM|CFOP|NF|NOTA|[\s;|.:/-])+$/;
+// "AMS001050-2 - REM: ..." / "QVOL: 1" / "0,0 M3" / "12,5 KG" / "NF: 123" / "VLR: 1.234,56": dados do CT-e, não produto
+const LINHA_CTRC=/^\s*[A-Z]{3}\s?0*\d{1,7}\s?-\s?\d\b.*\b(?:REM|DEST|QVOL|VOL)\s*:/;
+const SEGMENTO_CTRC=/^(?:[A-Z]{3}\s?0*\d{1,7}\s?-\s?\d|(?:REM|DEST|PAG|QVOL|VOL|NF|NFS?E?|NOTA|PESO|VLR|VALOR|MERC|CUB|M3)\s*[:.]|[\d.,]+\s*(?:M3|KG|KGS|UN|VOL)\b|[\d.,\s]+$|\.\.\.$)/;
+const LOG_LINHA_CTRC={n:0};
 function pareceProduto(t){
   const n=semAcento(t);
   if((n.match(/[A-Z]/g)||[]).length<3)return false;
@@ -329,6 +333,14 @@ function parseRelacaoProdutos(body){
     if(/[;|]/.test(t)){
       const campos=t.split(/[;|]/).map(x=>x.trim()).filter(Boolean);
       t=campos.sort((a,b)=>(b.match(/[A-Za-zÀ-ÿ]/g)||[]).length-(a.match(/[A-Za-zÀ-ÿ]/g)||[]).length)[0]||''
+    }
+    // linha de identificação do CT-e ("AMS001050-2 - REM: QUADRI ... - QVOL: 1 - 0,0 M3 - ..."): só o que
+    // sobrar depois de tirar CT-e, remetente, volumes, cubagem, peso, NF e valores pode ser produto
+    if(LINHA_CTRC.test(semAcento(t))){
+      if(LOG_LINHA_CTRC.n++<5)console.log('SSW RELACAO linha do CT-e: '+t.slice(0,400));
+      const resto=t.split(/\s+-\s+/).map(x=>x.trim()).filter(x=>x&&!SEGMENTO_CTRC.test(semAcento(x))&&pareceProduto(x));
+      for(const r of resto){const n=semAcento(r);if(!vistos.has(n)){vistos.add(n);out.push(r.slice(0,200))}}
+      continue
     }
     if(!pareceProduto(t))continue;
     const n=semAcento(t);
