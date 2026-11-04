@@ -52,6 +52,9 @@ function dataIso(v){
 }
 const qtdOk=q=>q!==null&&q>0&&q<1e9;
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+// Filtro por data das listas de recebimentos e expedições (?de=AAAA-MM-DD&ate=AAAA-MM-DD, horário de Brasília):
+// recebimento pela chegada (ou criação, se ainda não chegou); expedição pela saída (ou criação)
+function periodoDatas(u){const d=k=>{const v=String(u.searchParams.get(k)||'');return /^\d{4}-\d{2}-\d{2}$/.test(v)?v:null};return[d('de'),d('ate')]}
 function erro(status,msg,code){const e=new Error(msg);e.status=status;if(code)e.code=code;return e}
 
 // ---------------------------------------------------------------- NF-e (XML)
@@ -1683,11 +1686,15 @@ async function handle(req,res,u,deps){
       const ctx=await contexto(deps,req,'operador');
       const st=String(u.searchParams.get('status')||'');
       const sts=st==='abertos'?['aguardando','na_doca','em_conferencia','recontagem','divergencia','conferido']:st==='conferencia'?['na_doca','em_conferencia','recontagem']:st?st.split(','):null;
+      const [de,ate]=periodoDatas(u);
       const r=await pool.query(`SELECT r.id::text,r.nf_numero,r.nf_chave,r.status,r.rodada,c.nome AS cliente,a.nome AS armazem,e.codigo AS doca,r.placa,r.criado_em,r.chegada_em,r.finalizado_em,
           (SELECT COUNT(*) FROM wms_divergencias d WHERE d.recebimento_id=r.id AND d.status='aberta')::int AS divergencias_abertas,
           (SELECT COUNT(*) FROM wms_recebimento_itens i WHERE i.recebimento_id=r.id AND i.produto_id IS NULL)::int AS itens_sem_produto
         FROM wms_recebimentos r JOIN wms_clientes c ON c.id=r.cliente_id JOIN wms_armazens a ON a.id=r.armazem_id LEFT JOIN wms_enderecos e ON e.id=r.doca_id
-        WHERE r.empresa=$1 AND ($2::text[] IS NULL OR r.status=ANY($2)) ORDER BY r.id DESC LIMIT 200`,[ctx.emp,sts]);
+        WHERE r.empresa=$1 AND ($2::text[] IS NULL OR r.status=ANY($2))
+          AND ($3::date IS NULL OR (COALESCE(r.chegada_em,r.criado_em) AT TIME ZONE 'America/Sao_Paulo')::date>=$3::date)
+          AND ($4::date IS NULL OR (COALESCE(r.chegada_em,r.criado_em) AT TIME ZONE 'America/Sao_Paulo')::date<=$4::date)
+        ORDER BY r.id DESC LIMIT ${de||ate?1000:200}`,[ctx.emp,sts,de,ate]);
       return json(200,{ok:true,rows:r.rows});
     }
     if(p==='/api/wms/recebimentos'&&M==='POST'){
@@ -1748,12 +1755,16 @@ async function handle(req,res,u,deps){
       const ctx=await contexto(deps,req,'operador');
       const st=String(u.searchParams.get('status')||'');
       const sts=st==='abertas'?['aberta','separando','separada']:st?st.split(','):null;
+      const [de,ate]=periodoDatas(u);
       const r=await pool.query(`SELECT x.id::text,x.nf_numero,x.nf_chave,x.status,c.nome AS cliente,x.destinatario_nome,a.nome AS armazem,x.armazem_id::text,e.codigo AS doca,x.placa,x.criado_em,x.expedida_em,
           (SELECT COUNT(*) FROM wms_expedicao_itens i WHERE i.expedicao_id=x.id)::int AS itens,
           (SELECT COUNT(*) FROM wms_expedicao_itens i WHERE i.expedicao_id=x.id AND i.produto_id IS NULL)::int AS itens_sem_produto,
           (SELECT COUNT(*) FROM wms_expedicao_separacao s WHERE s.expedicao_id=x.id AND s.status='pendente')::int AS linhas_pendentes
         FROM wms_expedicoes x JOIN wms_clientes c ON c.id=x.cliente_id JOIN wms_armazens a ON a.id=x.armazem_id LEFT JOIN wms_enderecos e ON e.id=x.doca_id
-        WHERE x.empresa=$1 AND ($2::text[] IS NULL OR x.status=ANY($2)) ORDER BY x.id DESC LIMIT 200`,[ctx.emp,sts]);
+        WHERE x.empresa=$1 AND ($2::text[] IS NULL OR x.status=ANY($2))
+          AND ($3::date IS NULL OR (COALESCE(x.expedida_em,x.criado_em) AT TIME ZONE 'America/Sao_Paulo')::date>=$3::date)
+          AND ($4::date IS NULL OR (COALESCE(x.expedida_em,x.criado_em) AT TIME ZONE 'America/Sao_Paulo')::date<=$4::date)
+        ORDER BY x.id DESC LIMIT ${de||ate?1000:200}`,[ctx.emp,sts,de,ate]);
       return json(200,{ok:true,rows:r.rows});
     }
     if(p==='/api/wms/expedicoes'&&M==='POST'){

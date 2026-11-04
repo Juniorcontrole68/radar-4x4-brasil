@@ -94,7 +94,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}dialog form,dialog .in{padding:18
   <section data-sec="expedicao" hidden>
     <div class="card">
       <div class="bar" style="justify-content:space-between">
-        <label>Situação<select id="expFiltro"><option value="abertas">Em aberto</option><option value="expedida">Expedidas</option><option value="cancelada">Canceladas</option></select></label>
+        <div class="bar"><label>Situação<select id="expFiltro"><option value="">Todas</option><option value="abertas" selected>Em aberto</option><option value="expedida">Expedidas</option><option value="cancelada">Canceladas</option></select></label><label>Período<select id="expPer"><option value="">Todos</option><option value="hoje">Hoje</option><option value="ontem">Ontem</option><option value="7">Últimos 7 dias</option><option value="mes">Este mês</option><option value="esc">Escolher…</option></select></label><span id="expDatas" style="display:none;gap:4px;align-items:end"><label>De<input type="date" id="expDe"></label><label>Até<input type="date" id="expAte"></label></span><span class="muted" id="expTot"></span></div>
         <div class="bar"><button class="btn p" id="btnExpManual">+ Expedição manual</button><button class="btn" id="btnExpChave">▦ Ler código de barras da NF de saída</button><label class="btn" style="display:flex;align-items:center;cursor:pointer">⬆ Importar XML da NF de saída<input type="file" id="expXml" accept=".xml,text/xml" multiple hidden></label><label class="btn" style="display:flex;align-items:center;cursor:pointer" title="Quando a SEFAZ não libera o XML">📄 Importar DANFE (PDF)<input type="file" id="expPdf" accept=".pdf,application/pdf" hidden></label></div>
       </div>
       <p class="muted">Fluxo: lançar a nota → reservar (o sistema escolhe os endereços pelo vencimento: o que vence primeiro sai primeiro) → o operador separa no aplicativo (menu Separação) → expedir dá a baixa no estoque.</p>
@@ -116,7 +116,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}dialog form,dialog .in{padding:18
   <section data-sec="recebimentos" hidden>
     <div class="card">
       <div class="bar" style="justify-content:space-between">
-        <label>Situação<select id="recFiltro"><option value="abertos">Em aberto</option><option value="finalizado">Finalizados</option><option value="cancelado">Cancelados</option></select></label>
+        <div class="bar"><label>Situação<select id="recFiltro"><option value="">Todas</option><option value="abertos" selected>Em aberto</option><option value="finalizado">Finalizados</option><option value="cancelado">Cancelados</option></select></label><label>Período<select id="recPer"><option value="">Todos</option><option value="hoje">Hoje</option><option value="ontem">Ontem</option><option value="7">Últimos 7 dias</option><option value="mes">Este mês</option><option value="esc">Escolher…</option></select></label><span id="recDatas" style="display:none;gap:4px;align-items:end"><label>De<input type="date" id="recDe"></label><label>Até<input type="date" id="recAte"></label></span><span class="muted" id="recTot"></span></div>
         <div class="bar"><button class="btn p" id="btnRecChave">▦ Ler código de barras da NF</button><button class="btn" id="btnRecManual">+ Recebimento manual</button><label class="btn p" style="display:flex;align-items:center;cursor:pointer">⬆ Importar XML da NF-e<input type="file" id="xmlArq" accept=".xml,text/xml" multiple hidden></label><label class="btn" style="display:flex;align-items:center;cursor:pointer" title="Quando a SEFAZ não libera o XML">📄 Importar DANFE (PDF)<input type="file" id="recPdf" accept=".pdf,application/pdf" hidden></label></div>
       </div>
       <div class="tw" id="recLista"></div>
@@ -309,10 +309,22 @@ $('#mapaIr').onclick=tenta(async()=>{
 
 // ---------------- recebimentos
 async function carregarRecebimentos(){
-  const j=await api('GET','/api/wms/recebimentos?status='+$('#recFiltro').value);
-  $('#recLista').innerHTML=tabela([['#',r=>'<a href="#" data-rec="'+r.id+'">'+r.id+'</a>'],['NF',r=>esc(r.nf_numero||'')],['Cliente',r=>esc(r.cliente)],['Armazém',r=>esc(r.armazem)],['Doca',r=>esc(r.doca||'')],['Situação',r=>chipRec(r.status)+(r.divergencias_abertas?' <span class="chip err">'+r.divergencias_abertas+' diverg.</span>':'')+(r.itens_sem_produto?' <span class="chip warn">'+r.itens_sem_produto+' sem produto</span>':'')],['Criado',r=>dt(r.criado_em)]],j.rows,'Nenhum recebimento.');
+  const j=await api('GET','/api/wms/recebimentos?status='+$('#recFiltro').value+periodoQs('rec'));
+  totalPeriodo('rec',j.rows.length,'recebimento');
+  $('#recLista').innerHTML=tabela([['#',r=>'<a href="#" data-rec="'+r.id+'">'+r.id+'</a>'],['NF',r=>esc(r.nf_numero||'')],['Cliente',r=>esc(r.cliente)],['Armazém',r=>esc(r.armazem)],['Doca',r=>esc(r.doca||'')],['Chegada',r=>r.chegada_em?dt(r.chegada_em):'<span class="muted">—</span>'],['Situação',r=>chipRec(r.status)+(r.divergencias_abertas?' <span class="chip err">'+r.divergencias_abertas+' diverg.</span>':'')+(r.itens_sem_produto?' <span class="chip warn">'+r.itens_sem_produto+' sem produto</span>':'')],['Criado',r=>dt(r.criado_em)]],j.rows,'Nenhum recebimento.');
 }
 $('#recFiltro').onchange=tenta(carregarRecebimentos);
+// Período das listas de recebimentos e expedições (Hoje, Ontem, 7 dias, mês ou datas escolhidas)
+const diaSp=(n=0)=>new Date(Date.now()+n*864e5).toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+function periodoQs(x){
+  const v=$('#'+x+'Per').value;$('#'+x+'Datas').style.display=v==='esc'?'inline-flex':'none';
+  const [de,ate]=v==='hoje'?[diaSp(),diaSp()]:v==='ontem'?[diaSp(-1),diaSp(-1)]:v==='7'?[diaSp(-6),diaSp()]:v==='mes'?[diaSp().slice(0,8)+'01',diaSp()]:v==='esc'?[$('#'+x+'De').value,$('#'+x+'Ate').value||$('#'+x+'De').value]:['',''];
+  return (de?'&de='+de:'')+(ate?'&ate='+ate:'');
+}
+function totalPeriodo(x,n,um,varios){const v=$('#'+x+'Per').value;$('#'+x+'Tot').textContent=v?n+' '+(n===1?um:(varios||um+'s'))+' no período':''}
+['rec','exp'].forEach(x=>{const f=tenta(x==='rec'?carregarRecebimentos:carregarExpedicoes);
+  $('#'+x+'Per').onchange=()=>{const v=$('#'+x+'Per').value;if(v&&v!=='esc'&&/^(abertos|abertas)$/.test($('#'+x+'Filtro').value))$('#'+x+'Filtro').value='';f()};
+  $('#'+x+'De').onchange=f;$('#'+x+'Ate').onchange=f});
 $('#recLista').addEventListener('click',e=>{const a=e.target.closest('[data-rec]');if(a){e.preventDefault();tenta(abrirRec)(a.dataset.rec)}});
 async function abrirRec(id){
   const r=(await api('GET','/api/wms/recebimentos/'+id)).recebimento;
@@ -517,9 +529,10 @@ $('#fatCsv').onclick=()=>{location.href=urlFat(true)};
 $('#fatLista').addEventListener('click',e=>{const b=e.target.closest('[data-tar]');if(b)formTarifa(b.dataset.tar)});
 // ---------------------------------------------------------------- expedição
 async function carregarExpedicoes(){
-  const j=await api('GET','/api/wms/expedicoes?status='+$('#expFiltro').value);
+  const j=await api('GET','/api/wms/expedicoes?status='+$('#expFiltro').value+periodoQs('exp'));
+  totalPeriodo('exp',j.rows.length,'expedição','expedições');
   $('#expLista').innerHTML=tabela([['#',x=>'<a href="#" data-exp="'+x.id+'">'+x.id+'</a>'],['NF',x=>esc(x.nf_numero||'')],['Cliente',x=>esc(x.cliente)],['Destinatário',x=>esc(x.destinatario_nome||'')],['Armazém',x=>esc(x.armazem)],
-    ['Situação',x=>chipExp(x.status)+(x.itens_sem_produto?' <span class="chip warn">'+x.itens_sem_produto+' sem produto</span>':'')+(x.status==='separando'?' <span class="muted">'+x.linhas_pendentes+' linha(s) a separar</span>':'')],['Doca',x=>esc(x.doca||'')],['Criada',x=>dt(x.criado_em)]],j.rows,'Nenhuma expedição.');
+    ['Situação',x=>chipExp(x.status)+(x.itens_sem_produto?' <span class="chip warn">'+x.itens_sem_produto+' sem produto</span>':'')+(x.status==='separando'?' <span class="muted">'+x.linhas_pendentes+' linha(s) a separar</span>':'')],['Doca',x=>esc(x.doca||'')],['Criada',x=>dt(x.criado_em)],['Expedida',x=>x.expedida_em?dt(x.expedida_em):'<span class="muted">—</span>']],j.rows,'Nenhuma expedição.');
 }
 $('#expFiltro').onchange=tenta(carregarExpedicoes);
 $('#expLista').addEventListener('click',e=>{const a=e.target.closest('[data-exp]');if(a){e.preventDefault();tenta(abrirExp)(a.dataset.exp)}});
