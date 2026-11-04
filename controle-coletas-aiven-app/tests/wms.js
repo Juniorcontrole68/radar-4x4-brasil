@@ -791,6 +791,17 @@ function nfe({chave,itens}){
     const bk1=r.json.backup_id;
     check('zerar saldo: estoque fica zerado',r.status===200&&r.json.depois.unidades_em_estoque===0&&r.json.depois.wms_saldos===0,r.json);
     check('zerar saldo: recebimentos e expedições ficam como histórico',r.json.depois.wms_recebimentos===antes.wms_recebimentos&&r.json.depois.wms_expedicoes===antes.wms_expedicoes&&r.json.depois.wms_movimentos>antes.wms_movimentos,r.json.depois);
+    { // filtro por período (aba Recebimentos e Expedição): hoje traz os de hoje; um período antigo não traz nada
+      const hj=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+      let f=await call('GET','/api/wms/recebimentos?status=&de='+hj+'&ate='+hj,{cookie:gest});
+      check('recebimentos de hoje (todas as situações)',f.status===200&&f.json.rows.length>0&&f.json.rows.length<=antes.wms_recebimentos,{n:f.json.rows&&f.json.rows.length,esperado:antes.wms_recebimentos});
+      f=await call('GET','/api/wms/recebimentos?status=&de=2001-01-01&ate=2001-01-31',{cookie:gest});
+      check('recebimentos de um período sem movimento: nenhum',f.status===200&&f.json.rows.length===0);
+      f=await call('GET','/api/wms/expedicoes?status=&de='+hj+'&ate='+hj,{cookie:gest});
+      check('expedições de hoje (todas as situações)',f.status===200&&f.json.rows.length>0&&f.json.rows.length<=antes.wms_expedicoes,{n:f.json.rows&&f.json.rows.length,esperado:antes.wms_expedicoes});
+      f=await call('GET','/api/wms/expedicoes?status=&de=2001-01-01&ate=2001-01-31',{cookie:gest});
+      check('expedições de um período sem movimento: nenhuma',f.status===200&&f.json.rows.length===0);
+    }
     r=await call('GET','/api/wms/expedicoes?status=abertas',{cookie:gest});
     check('zerar saldo: nenhuma expedição aberta',r.status===200&&r.json.rows.length===0,r.json.rows);
     r=await call('GET','/api/wms/estoque/backup?id='+bk1,{cookie:adm});
