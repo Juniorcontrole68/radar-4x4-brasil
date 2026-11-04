@@ -39,6 +39,9 @@ const sswExemplo = require('./ssw-exemplo');
 const esquemasDemo = require('./esquemas-demo');
 const exemploDados = require('./exemplo-dados');
 const agendamento = require('./agendamento');
+const agendamentoWhatsapp = require('./agendamento-whatsapp');
+// empresa do agendamento (Construlog): a mesma da varredura do SSW
+const agendamentoClientesWa=async()=>{const cq=await pool.query("SELECT id::text FROM movit_clients WHERE lower(slug)='construlog' LIMIT 1").catch(()=>({rows:[]}));return [cq.rows[0]?cq.rows[0].id:null]};
 const conferencia = require('./conferencia');
 const movitGuia = require('./movit-guia');
 const veic = require('./veic');
@@ -2126,6 +2129,9 @@ async function start() {
       return (await pool.query("SELECT DISTINCT cliente FROM rc_docs WHERE colecao='op/main/sobras' AND cliente=ANY($1)",[ks])).rows.map(r=>r.cliente)
     }});
   await agendamento.ensureSchema(pool);
+  await agendamentoWhatsapp.ensureSchema(pool);
+  // agendamento pelo WhatsApp (API oficial da Meta): ofertas e lembretes automáticos, só com WHATSAPP_AUTO=1
+  if(!TEST_MODE&&!movitDemo.ATIVA)agendamentoWhatsapp.iniciar({pool,clientes:agendamentoClientesWa});
   await conferencia.ensureSchema(pool);
   const agendamentoClientes=async()=>{const cq=await pool.query("SELECT id::text FROM movit_clients WHERE lower(slug)='construlog' LIMIT 1").catch(()=>({rows:[]}));return [cq.rows[0]?cq.rows[0].id:null]};
   // varredura noturna do agendamento (02:00 por padrão, horário na tela): o painel lê o SSW, aqui grava
@@ -3358,6 +3364,8 @@ async function start() {
       if (await conferencia.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,testMode:TEST_MODE,sendHtml,paginaMotorista:CONFERENCIA_MOTORISTA_PAGE,publicBase:DRIVER_PUBLIC_BASE,
         lerSswDoUsuario:user=>(TEST_MODE||movitDemo.ATIVA||movitDemo.clienteDemo(user))?null:
           ((rota,corpo)=>agendamento.postJson(DASH_INTERNAL_PORT,'/api/conferencia/'+rota,{'X-Internal-Key':INTERNAL_KEY},corpo||{},3*60*1000))})) return;
+      // Agendamento pelo WhatsApp: webhook da Meta (sem login) e painel do administrador. Ver agendamento-whatsapp.js
+      if (await agendamentoWhatsapp.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,clientes:agendamentoClientesWa,desligado:movitDemo.ATIVA,testMode:TEST_MODE})) return;
       if (await agendamento.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,lerSswDoUsuario:agendamentoLerSswDoUsuario,lerBaixasDoUsuario:agendamentoLerBaixasDoUsuario,lerFaixaDoUsuario:agendamentoLerFaixaDoUsuario,lerProdutosDoUsuario:agendamentoLerProdutosDoUsuario})) return;
       // Despesas (DRE) do Financeiro, com os holerites da conta Salários: ver dre.js
       if (await dre.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas})) return;
