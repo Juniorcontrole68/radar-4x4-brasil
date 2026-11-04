@@ -617,7 +617,8 @@ const CHAVE_LOCAL_SQL = "upper(regexp_replace(trim(COALESCE(n.destinatario,'')),
 const SEL_LOCAL = `(SELECT json_build_object('link',l.link,'lat',l.lat,'lon',l.lon,'por',l.atualizado_por,'em',l.atualizado_em) FROM ag_locais l WHERE COALESCE(l.client_id,0)=COALESCE(n.client_id,0) AND l.chave=${CHAVE_LOCAL_SQL} AND ${CHAVE_LOCAL_SQL}<>'|') AS localizacao`;
 const SEL_RESERVA = `(SELECT json_build_object('usuario',r.usuario,'em',r.criado_em,'expira',r.expira_em) FROM ag_reservas r WHERE COALESCE(r.client_id,0)=COALESCE(n.client_id,0) AND r.chave=${CHAVE_LOCAL_SQL} AND r.expira_em>NOW()) AS reserva`;
 // último envio do link de agendamento pelo WhatsApp do SAC (agendamento-link.js), por destinatário + cidade
-const SEL_LINK = `(SELECT json_build_object('em',l.enviado_em,'por',l.enviado_por,'hoje',(l.enviado_em AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date,'escolhido',l.escolhido_em IS NOT NULL)
+const SEL_LINK = `(SELECT json_build_object('em',l.enviado_em,'por',l.enviado_por,'hoje',(l.enviado_em AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date,'escolhido',l.escolhido_em IS NOT NULL,
+    'dias',((NOW() AT TIME ZONE 'America/Sao_Paulo')::date-(l.enviado_em AT TIME ZONE 'America/Sao_Paulo')::date))
   FROM ag_links l WHERE COALESCE(l.client_id,0)=COALESCE(n.client_id,0) AND l.chave=${CHAVE_LOCAL_SQL} AND l.enviado_em IS NOT NULL ORDER BY l.enviado_em DESC LIMIT 1) AS link`;
 const SEL_NOTA = SEL_LOCAL + ',' + SEL_RESERVA + ',' + SEL_LINK + `,n.id::text AS nota_id,n.nf,n.serie,n.ctrc,n.remetente,n.pagador,n.produto_fonte,n.telefone,n.destinatario,n.cidade,n.uf,n.endereco,n.peso::float8 AS peso,n.volumes::float8 AS volumes,
   n.produto,n.situacao,n.status_ssw,n.previsao,to_char(n.data_emissao,'YYYY-MM-DD') AS data_emissao,to_char(n.data_entrada,'YYYY-MM-DD') AS data_entrada,
@@ -645,6 +646,10 @@ function filtrosEntrega(f, params, aba) {
   if (normNf(f.nf)) w.push('n.nf=' + p(normNf(f.nf)));
   if (SITUACOES.includes(f.status)) w.push('n.situacao=' + p(f.status));
   if (Number(f.dias_min) > 0) w.push(DIAS_SEM_SQL + '>=' + p(Math.floor(Number(f.dias_min))));
+  // link do WhatsApp enviado pelo SAC e o cliente ainda não escolheu a data ('ligar' = há 2 dias ou mais)
+  if (f.link === 'sem_resposta' || f.link === 'ligar') w.push(`EXISTS (SELECT 1 FROM ag_links l WHERE COALESCE(l.client_id,0)=COALESCE(n.client_id,0) AND l.chave=${CHAVE_LOCAL_SQL}
+      AND l.enviado_em IS NOT NULL AND l.escolhido_em IS NULL` + (f.link === 'ligar' ? ` AND (l.enviado_em AT TIME ZONE 'America/Sao_Paulo')::date<=${HOJE_SQL}-2` : '') + `)
+    AND NOT EXISTS (SELECT 1 FROM ag_agendamentos a2 WHERE a2.nota_id=n.id AND a2.status='ativo')`);
   if (f.q) { const t = p(like(limpo(f.q, 80))); w.push(`(n.nf ILIKE ${t} OR n.ctrc ILIKE ${t} OR n.remetente ILIKE ${t} OR n.destinatario ILIKE ${t} OR n.cidade ILIKE ${t} OR (n.produto_fonte IN ('operador','nfe','ssw') AND n.produto ILIKE ${t}))`); }
   if (aba === 'agendadas' || aba === 'pendentes') {
     if (f.card === 'hoje') w.push('a.data_agendada=' + HOJE_SQL);
