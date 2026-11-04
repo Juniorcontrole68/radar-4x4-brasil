@@ -1,0 +1,1365 @@
+{
+"fonte": "SSW opção 107 (ssw0083 — Relação das cidades atendidas), unidade AMR CONSTRULOG, 04/11/2026",
+"legenda": "dias = S T Q Q S S (seg a sáb); ponto = não entrega",
+"cidades": [
+{
+"uf": "SP",
+"cidade": "AGUAI",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "AGUAS DA PRATA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "AGUAS DE LINDOIA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "AGUAS DE SAO PEDRO",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "ALAMBARI",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "ALUMINIO",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "AMERICANA",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "AMPARO",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "ANALANDIA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "ANGATUBA",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "APARECIDA",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "ARACARIGUAMA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "ARACOIABA DA SERRA",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "ARARAS",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "ARTUR NOGUEIRA",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "ATIBAIA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "BOFETE",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "BOITUVA",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "BOM JESUS DOS PERDOES",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "BRAGANCA PAULISTA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "CABREUVA",
+"praca": "AMRI",
+"dias": ".TQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "CACAPAVA",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "CACHOEIRA PAULISTA",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "CAMPINAS",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "CAMPO LIMPO PAULISTA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "CAMPOS DO JORDAO",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "CAPELA DO ALTO",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "CAPIVARI",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "CARAGUATATUBA",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "CERQUILHO",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "CESARIO LANGE",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "CHARQUEADA",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "CONCHAL",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "CONCHAS",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "MG",
+"cidade": "CONTAGEM",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "CORDEIROPOLIS",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "COSMOPOLIS",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "COTIA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "CRUZEIRO",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "CUNHA",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "DIVINOLANDIA",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "ELIAS FAUSTO",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "ENGENHEIRO COELHO",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "ESPIRITO SANTO DO PINHAL",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "ESTIVA GERBI",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "GUARATINGUETA",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "GUAREI",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "GUARULHOS",
+"praca": "AMRP",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "HOLAMBRA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "HORTOLANDIA",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "IBIUNA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "IGARATA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "ILHABELA",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "INDAIATUBA",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "IPERO",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "IPEUNA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "IRACEMAPOLIS",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "ITAPETININGA",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "ITAPIRA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "ITAQUAQUECETUBA",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": null,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "ITATIBA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "ITIRAPINA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "ITU",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "ITUPEVA",
+"praca": "AMRI",
+"dias": ".TQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "JACAREI",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "JAGUARIUNA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "JANDIRA",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": null,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "JARINU",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "JOANOPOLIS",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "JUMIRIM",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "JUNDIAI",
+"praca": "AMRI",
+"dias": ".TQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "LARANJAL PAULISTA",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "LEME",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "LIMEIRA",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "LINDOIA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "LORENA",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "LOUVEIRA",
+"praca": "AMRI",
+"dias": ".TQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "MAIRINQUE",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "MAUA",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": null,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "MOGI GUACU",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "MOGI MIRIM",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "MOMBUCA",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "MONTE ALEGRE DO SUL",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "MONTE MOR",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "MORUNGABA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "NAZARE PAULISTA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "NOVA ODESSA",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "OSASCO",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": false,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "PARDINHO",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "PAULINIA",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "PEDRA BELA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "PEDREIRA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "PEREIRAS",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "PIEDADE",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "PILAR DO SUL",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "PINDAMONHANGABA",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "PINHALZINHO",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "PIQUETE",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "PIRACAIA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "PIRACICABA",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "PIRASSUNUNGA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "PORANGABA",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "PORTO FELIZ",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "PORTO FERREIRA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "QUADRA",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "RAFARD",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "RIO CLARO",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "RIO DAS PEDRAS",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "ROSEIRA",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SALTINHO",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "SALTO",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SALTO DE PIRAPORA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SANTA BARBARA D OESTE",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SANTA CRUZ DA CONCEICAO",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SANTA GERTRUDES",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SANTA MARIA DA SERRA",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "SANTO ANTONIO DE POSSE",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SANTO ANTONIO DO JARDIM",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SANTO ANTONIO DO PINHAL",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SAO BENTO DO SAPUCAI",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SAO CARLOS",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SAO JOAO DA BOA VISTA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SAO JOSE DOS CAMPOS",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SAO LUIZ DO PARAITINGA",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SAO MIGUEL ARCANJO",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SAO PAULO",
+"praca": "AMRI",
+"dias": "ST.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SAO PEDRO",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "SAO ROQUE",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SAO SEBASTIAO",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SARAPUI",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "SERRA NEGRA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SILVEIRAS",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SOCORRO",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SOROCABA",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "SUMARE",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "TABOAO DA SERRA",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": null,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "TAPIRAI",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "TATUI",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "TAUBATE",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "TIETE",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "TORRE DE PEDRA",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "TORRINHA",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+},
+{
+"uf": "SP",
+"cidade": "TREMEMBE",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "TUIUTI",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "UBATUBA",
+"praca": "TBTR",
+"dias": "STQQS.",
+"prazo": 2,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "VALINHOS",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "VARGEM",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "VARGEM GRANDE DO SUL",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "VARZEA PAULISTA",
+"praca": "AMRI",
+"dias": "..Q.S.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "VINHEDO",
+"praca": "AMRI",
+"dias": "STQQS.",
+"prazo": 1,
+"entrega": true,
+"restrito": false
+},
+{
+"uf": "SP",
+"cidade": "VOTORANTIM",
+"praca": "AMRI",
+"dias": ".T.Q..",
+"prazo": 1,
+"entrega": true,
+"restrito": true
+}
+]
+}
