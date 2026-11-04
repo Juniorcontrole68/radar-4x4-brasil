@@ -40,6 +40,7 @@ const esquemasDemo = require('./esquemas-demo');
 const exemploDados = require('./exemplo-dados');
 const agendamento = require('./agendamento');
 const agendamentoWhatsapp = require('./agendamento-whatsapp');
+const agendamentoLink = require('./agendamento-link');
 // empresa do agendamento (Construlog): a mesma da varredura do SSW
 const agendamentoClientesWa=async()=>{const cq=await pool.query("SELECT id::text FROM movit_clients WHERE lower(slug)='construlog' LIMIT 1").catch(()=>({rows:[]}));return [cq.rows[0]?cq.rows[0].id:null]};
 const conferencia = require('./conferencia');
@@ -2130,6 +2131,7 @@ async function start() {
     }});
   await agendamento.ensureSchema(pool);
   await agendamentoWhatsapp.ensureSchema(pool);
+  await agendamentoLink.ensureSchema(pool);
   // agendamento pelo WhatsApp (API oficial da Meta): ofertas e lembretes automáticos, só com WHATSAPP_AUTO=1
   if(!TEST_MODE&&!movitDemo.ATIVA)agendamentoWhatsapp.iniciar({pool,clientes:agendamentoClientesWa});
   await conferencia.ensureSchema(pool);
@@ -3365,6 +3367,8 @@ async function start() {
         lerSswDoUsuario:user=>(TEST_MODE||movitDemo.ATIVA||movitDemo.clienteDemo(user))?null:
           ((rota,corpo)=>agendamento.postJson(DASH_INTERNAL_PORT,'/api/conferencia/'+rota,{'X-Internal-Key':INTERNAL_KEY},corpo||{},3*60*1000))})) return;
       // Agendamento pelo WhatsApp: webhook da Meta (sem login) e painel do administrador. Ver agendamento-whatsapp.js
+      // Link de agendamento enviado pelo WhatsApp do SAC (página do cliente sem login). Ver agendamento-link.js
+      if (await agendamentoLink.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,clientes:agendamentoClientesWa,desligado:movitDemo.ATIVA})) return;
       if (await agendamentoWhatsapp.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,clientes:agendamentoClientesWa,desligado:movitDemo.ATIVA,testMode:TEST_MODE})) return;
       if (await agendamento.handle(req,res,u,{pool,sendJson,readJsonBodyLimited,dashboardSession,dashboardHas,lerSswDoUsuario:agendamentoLerSswDoUsuario,lerBaixasDoUsuario:agendamentoLerBaixasDoUsuario,lerFaixaDoUsuario:agendamentoLerFaixaDoUsuario,lerProdutosDoUsuario:agendamentoLerProdutosDoUsuario})) return;
       // Despesas (DRE) do Financeiro, com os holerites da conta Salários: ver dre.js

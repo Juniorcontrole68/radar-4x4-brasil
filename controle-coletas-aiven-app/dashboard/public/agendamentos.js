@@ -253,7 +253,7 @@ function celula(r,k,num){
 function celulaAcoes(r){
   {
     if((aba==='agendadas'&&r.status_agendamento!=='concluido')||(aba==='pendentes'&&r.agendamento_id))return'<td class="acoes"><button type="button" class="ag-mini" data-ac="alterar" data-id="'+esc(r.agendamento_id)+'">Alterar</button><button type="button" class="ag-mini perigo" data-ac="cancelar" data-id="'+esc(r.agendamento_id)+'">Cancelar</button><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
-    if(aba==='sem'||aba==='pendentes')return'<td class="acoes"><button type="button" class="ag-mini primary" data-ac="agendar" data-nota="'+esc(r.nota_id)+'">Agendar</button><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
+    if(aba==='sem'||aba==='pendentes')return'<td class="acoes"><button type="button" class="ag-mini primary" data-ac="agendar" data-nota="'+esc(r.nota_id)+'">Agendar</button><button type="button" class="ag-mini wa" data-ac="walink" data-nota="'+esc(r.nota_id)+'" title="Abre o seu WhatsApp com a mensagem da Ana e o link para o cliente escolher a data">📲 WhatsApp</button><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
     return'<td class="acoes"><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>'
   }
 }
@@ -319,6 +319,7 @@ async function acao(b){
     q('#agNf').value=r.nf;usarLocal(r);window.scrollTo({top:0,behavior:'smooth'});q('#agForm').scrollIntoView({block:'nearest'});q('#agData').focus();return
   }
   if(ac==='hist')return historico(b.dataset.nota);
+  if(ac==='walink')return linkWhatsapp(b);
   if(ac==='local')return abrirLocal(b.dataset.nota);
   if(ac==='reservar'||ac==='liberar'){
     const r=(ultimaLista?.rows||[]).find(x=>String(x.nota_id)===String(b.dataset.nota));
@@ -448,6 +449,20 @@ function configurar(){
 }
 
 // ------------------------------------------------------------------ exportações (todas as linhas do filtro)
+// Link de agendamento: abre o WhatsApp do SAC com a mensagem da Ana pronta; o cliente escolhe a data no link
+async function linkWhatsapp(b){
+  const w=window.open('','_blank');   // abre já no clique (senão o navegador bloqueia o pop-up)
+  b.disabled=true;
+  try{
+    const j=await api('/api/painel/agendamento-whatsapp/link',{method:'POST',body:{nota_id:b.dataset.nota}});
+    if(j.telefone&&w){w.location.href=j.whatsapp;msg('WhatsApp aberto com o link da '+(j.notas.length>1?'NFs '+j.notas.join(', '):'NF '+j.notas[0])+'. É só tocar em enviar.','ok')}
+    else{if(w)w.close();
+      try{await navigator.clipboard.writeText(j.texto)}catch(e){}
+      dialogo('<h3>Sem celular na nota</h3><div class="muted">A mensagem com o link foi copiada. Cole no WhatsApp do cliente.</div><textarea rows="9" readonly style="width:100%">'+esc(j.texto)+'</textarea>',null)}
+    b.textContent='📲 Enviado';
+  }catch(e){if(w)w.close();msg(e.message,'err')}
+  finally{b.disabled=false}
+}
 async function linhasExport(){
   const p=new URLSearchParams({...filtros(),page:1,per:5000});
   const j=await api('/api/painel/agendamentos/lista?'+p);

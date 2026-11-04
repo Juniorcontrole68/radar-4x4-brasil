@@ -16,6 +16,7 @@
 .ag-btn:disabled{opacity:.55;cursor:default}
 .ag-mini{border:1px solid #cbd5e1;background:#fff;border-radius:6px;padding:2px 7px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap}
 .ag-mini.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+.ag-mini.wa{background:#16a34a;border-color:#16a34a;color:#fff}
 .ag-mini.perigo{color:#b91c1c;border-color:#fecaca}
 .ag-cards{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:4px;margin-bottom:5px}
 .ag-card{background:#fff;border:1px solid var(--line);border-radius:7px;padding:2px 7px;cursor:pointer;text-align:left;font:inherit;min-width:0;display:flex;align-items:baseline;justify-content:space-between;gap:6px}
