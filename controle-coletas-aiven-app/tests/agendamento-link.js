@@ -10,7 +10,7 @@ function check(name, cond, extra = '') { if (cond) { pass++; console.log('  OK  
 (async () => {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://teste:teste@127.0.0.1:5432/construlog_teste', ssl: false });
   await ag.ensureSchema(pool); await wa.ensureSchema(pool); await lk.ensureSchema(pool);
-  await pool.query('DELETE FROM ag_links;DELETE FROM ag_wa_mensagens;DELETE FROM ag_wa_conversas;DELETE FROM ag_rotas;DELETE FROM ag_reservas;DELETE FROM ag_locais;DELETE FROM ag_eventos;DELETE FROM ag_agendamentos;DELETE FROM ag_notas;DELETE FROM ag_config');
+  await pool.query('DELETE FROM ag_link_envios;DELETE FROM ag_links;DELETE FROM ag_wa_mensagens;DELETE FROM ag_wa_conversas;DELETE FROM ag_rotas;DELETE FROM ag_reservas;DELETE FROM ag_locais;DELETE FROM ag_eventos;DELETE FROM ag_agendamentos;DELETE FROM ag_notas;DELETE FROM ag_config');
   const cli = null;
   await ag.gravarConfig(pool, cli, { parceiros: '' }, 'teste');
   await ag.aplicarSnapshot(pool, cli, { pendentes: [
@@ -65,6 +65,10 @@ function check(name, cond, extra = '') { if (cond) { pass++; console.log('  OK  
   check('histórico: link enviado pelo SAC e agendado pelo cliente', (await pool.query("SELECT COUNT(*)::int n FROM ag_eventos WHERE tipo='whatsapp' AND para='link' AND usuario='maria'")).rows[0].n >= 2
     && (await pool.query("SELECT COUNT(*)::int n FROM ag_eventos WHERE tipo='agendado' AND usuario='Cliente (link)'")).rows[0].n === 2);
 
+  console.log('Relatório');
+  const rel = await lk.relatorio(pool, cli, {});
+  check('relatório: 2 envios da maria, 1 abriu e escolheu a data (100% no último)', rel.total.enviados === 2 && rel.por_usuario[0].usuario === 'maria' && rel.por_usuario[0].enviados === 2 && rel.rows[0].abriu && rel.rows[0].respondeu && rel.rows[0].nfs === '7001, 7002', rel);
+  check('relatório: filtro por atendente e por data', (await lk.relatorio(pool, cli, { usuario: 'joao' })).rows.length === 0 && (await lk.relatorio(pool, cli, { de: '2001-01-01', ate: '2001-01-02' })).rows.length === 0);
   console.log('Segurança');
   erro = null; try { await lk.dadosLink(pool, 'x'.repeat(24)); } catch (e) { erro = e; }
   check('link inexistente -> 404', erro && erro.status === 404);

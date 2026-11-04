@@ -30,6 +30,13 @@ async function ensureSchema(pool) {
   // último envio pelo botão do SAC: trava o botão do cliente até o dia seguinte
   await pool.query('ALTER TABLE ag_links ADD COLUMN IF NOT EXISTS enviado_em TIMESTAMPTZ');
   await pool.query('ALTER TABLE ag_links ADD COLUMN IF NOT EXISTS enviado_por TEXT');
+  // cada clique no botão 📲 WhatsApp (quem mandou e quando), para o relatório do SAC
+  await pool.query(`CREATE TABLE IF NOT EXISTS ag_link_envios (id BIGSERIAL PRIMARY KEY, token TEXT NOT NULL, client_id BIGINT, chave TEXT NOT NULL,
+    nota_ids BIGINT[] NOT NULL, usuario TEXT, enviado_em TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+  await pool.query('CREATE INDEX IF NOT EXISTS ix_ag_link_envios_em ON ag_link_envios (COALESCE(client_id,0), enviado_em DESC)');
+  // envios feitos antes desta tabela: o último envio de cada link
+  await pool.query(`INSERT INTO ag_link_envios(token,client_id,chave,nota_ids,usuario,enviado_em) SELECT l.token,l.client_id,l.chave,l.nota_ids,COALESCE(l.enviado_por,l.criado_por),COALESCE(l.enviado_em,l.criado_em)
+    FROM ag_links l WHERE NOT EXISTS (SELECT 1 FROM ag_link_envios e WHERE e.token=l.token)`);
   await pool.query('CREATE INDEX IF NOT EXISTS ix_ag_links_chave ON ag_links (COALESCE(client_id,0), chave, expira_em DESC)');
 }
 
@@ -73,6 +80,7 @@ async function criarLink(pool, cli, user, notaId, base) {
     await pool.query(`INSERT INTO ag_links(token,client_id,chave,nota_ids,destinatario,cidade,uf,telefone,criado_por,expira_em,enviado_em,enviado_por) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW()+($10||' days')::interval,NOW(),$9)`,
       [token, cli, n.chave, ids, limpo(n.destinatario, 120), limpo(n.cidade, 80), limpo(n.uf, 2).toUpperCase(), limpo(n.telefone, 60), limpo(user.username, 80), String(DIAS_VALIDADE)]);
   }
+  await pool.query('INSERT INTO ag_link_envios(token,client_id,chave,nota_ids,usuario) VALUES($1,$2,$3,$4,$5)', [token, cli, n.chave, ids, limpo(user.username, 80)]);
   for (const id of ids) await pool.query('INSERT INTO ag_eventos(client_id,nota_id,tipo,para,detalhe,usuario) VALUES($1,$2,$3,$4,$5,$6)', [cli, id, 'whatsapp', 'link', 'Link de agendamento enviado ao cliente pelo WhatsApp do SAC', limpo(user.username, 80)]);
   const url = String(base || '').replace(/\/+$/, '') + '/agendar/' + token;
   const texto = mensagem(n.destinatario, grupo, n.cidade, n.uf, url);
@@ -136,6 +144,38 @@ async function escolher(pool, token, b, { agora, abrirLink } = {}) {
   return { ok: true, data: data || null, data_texto: data ? dataLonga(data) : '', notas: feitas, localizacao: !!local };
 }
 
+// ------------------------------------------------------------------ relatório do SAC
+// Um envio = um clique no botão 📲 WhatsApp. Abriu = o cliente abriu o link; Respondeu = escolheu a data no link.
+const dataIso = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null;
+async function relatorio(pool, cli, f = {}) {
+  const de = dataIso(f.de), ate = dataIso(f.ate), usuario = limpo(f.usuario, 80);
+  const rows = (await pool.query(`SELECT e.id::text,e.enviado_em,e.usuario,l.destinatario,l.cidade,l.uf,l.aberto_em,l.escolhido_em,to_char(l.data_escolhida,'YYYY-MM-DD') AS data_escolhida,
+      (SELECT string_agg(n.nf,', ' ORDER BY n.nf) FROM ag_notas n WHERE n.id=ANY(e.nota_ids)) AS nfs,
+      (SELECT to_char(MIN(a.data_agendada),'YYYY-MM-DD') FROM ag_agendamentos a WHERE a.nota_id=ANY(e.nota_ids) AND a.status='ativo') AS agendada_para,
+      (SELECT string_agg(DISTINCT a.criado_por_nome,', ') FROM ag_agendamentos a WHERE a.nota_id=ANY(e.nota_ids) AND a.status='ativo') AS agendada_por,
+      (SELECT bool_and(n.situacao IN ('entregue','devolvida')) FROM ag_notas n WHERE n.id=ANY(e.nota_ids)) AS concluida,
+      ((NOW() AT TIME ZONE 'America/Sao_Paulo')::date-(e.enviado_em AT TIME ZONE 'America/Sao_Paulo')::date) AS dias
+    FROM ag_link_envios e JOIN ag_links l ON l.token=e.token
+    WHERE COALESCE(e.client_id,0)=COALESCE($1::bigint,0)
+      AND ($2::date IS NULL OR (e.enviado_em AT TIME ZONE 'America/Sao_Paulo')::date>=$2::date)
+      AND ($3::date IS NULL OR (e.enviado_em AT TIME ZONE 'America/Sao_Paulo')::date<=$3::date)
+      AND ($4='' OR lower(e.usuario)=lower($4))
+    ORDER BY e.enviado_em DESC LIMIT 2000`, [cli, de, ate, usuario])).rows.map(r => ({
+    ...r, abriu: !!r.aberto_em, respondeu: !!r.escolhido_em,
+    situacao: r.concluida ? 'Entregue/concluída' : r.escolhido_em ? 'Escolheu a data' : r.agendada_para ? 'Agendada pelo SAC' : r.dias >= 2 ? 'Sem resposta (ligar)' : 'Sem resposta',
+  }));
+  const por = new Map();
+  for (const r of rows) {
+    const k = r.usuario || '(sem usuário)';
+    if (!por.has(k)) por.set(k, { usuario: k, enviados: 0, abriram: 0, responderam: 0, sem_resposta: 0, ultimo: r.enviado_em });
+    const p = por.get(k); p.enviados++; if (r.abriu) p.abriram++; if (r.respondeu) p.responderam++; if (!r.respondeu && !r.agendada_para && !r.concluida) p.sem_resposta++;
+  }
+  const porUsuario = [...por.values()].map(p => ({ ...p, pct_resposta: p.enviados ? Math.round(p.responderam * 100 / p.enviados) : 0 })).sort((a, b) => b.enviados - a.enviados);
+  const total = porUsuario.reduce((t, p) => ({ enviados: t.enviados + p.enviados, abriram: t.abriram + p.abriram, responderam: t.responderam + p.responderam, sem_resposta: t.sem_resposta + p.sem_resposta }), { enviados: 0, abriram: 0, responderam: 0, sem_resposta: 0 });
+  const usuarios = (await pool.query("SELECT DISTINCT usuario FROM ag_link_envios WHERE COALESCE(client_id,0)=COALESCE($1::bigint,0) AND usuario IS NOT NULL ORDER BY 1", [cli])).rows.map(r => r.usuario);
+  return { ok: true, total: { ...total, pct_resposta: total.enviados ? Math.round(total.responderam * 100 / total.enviados) : 0 }, por_usuario: porUsuario, rows, usuarios };
+}
+
 // ------------------------------------------------------------------ página do cliente
 const PAGINA = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
 <title>Agendamento de entrega · Construlog</title>
@@ -191,7 +231,8 @@ api('GET').then(j=>{D=j;tela()}).catch(e=>{A.innerHTML='<div class="card"><h2>�
 async function handle(req, res, u, { pool, sendJson, readJsonBodyLimited, dashboardSession, dashboardHas, clientes, desligado = false, base }) {
   const p = u.pathname;
   const pagina = /^\/agendar\/[A-Za-z0-9_-]{20,40}\/?$/.test(p), api = /^\/api\/agendar\/[A-Za-z0-9_-]{20,40}$/.test(p), painel = p === '/api/painel/agendamento-whatsapp/link';
-  if (!pagina && !api && !painel) return false;
+  const rel = p === '/api/painel/agendamento-whatsapp/relatorio';
+  if (!pagina && !api && !painel && !rel) return false;
   if (desligado) { sendJson(res, 404, { ok: false, error: 'Não disponível.' }); return true; }
   try {
     if (pagina && req.method === 'GET') {
@@ -201,6 +242,12 @@ async function handle(req, res, u, { pool, sendJson, readJsonBodyLimited, dashbo
     const token = p.split('/').pop();
     if (api && req.method === 'GET') return sendJson(res, 200, await dadosLink(pool, token)), true;
     if (api && req.method === 'POST') return sendJson(res, 200, await escolher(pool, token, await readJsonBodyLimited(req, 16 * 1024))), true;
+    if (rel && req.method === 'GET') {
+      const user = await dashboardSession(req, false);
+      if (!(user.is_admin || (dashboardHas && (dashboardHas(user, 'agendamentos_sac') || dashboardHas(user, 'agendamentos'))))) throw erro(403, 'Sem acesso ao relatório do WhatsApp.');
+      const cli = user.client_id ? String(user.client_id) : ((await clientes())[0] ?? null);
+      return sendJson(res, 200, await relatorio(pool, cli, Object.fromEntries(u.searchParams))), true;
+    }
     if (painel && req.method === 'POST') {
       const user = await dashboardSession(req, false);
       if (!(user.is_admin || (dashboardHas && dashboardHas(user, 'agendamentos_sac')))) throw erro(403, 'Só usuários do SAC enviam o link de agendamento.');
@@ -213,4 +260,4 @@ async function handle(req, res, u, { pool, sendJson, readJsonBodyLimited, dashbo
   } catch (e) { return sendJson(res, e.status || 500, { ok: false, error: e.status ? e.message : 'Não consegui completar agora. Tente de novo.' }), true; }
 }
 
-module.exports = { ensureSchema, criarLink, dadosLink, escolher, mensagem, handle, PAGINA };
+module.exports = { ensureSchema, criarLink, relatorio, dadosLink, escolher, mensagem, handle, PAGINA };

@@ -47,7 +47,7 @@ function botaoReserva(r){
 async function carregarPainel(){
   try{painel=await api('/api/painel/agendamentos/painel')}catch(e){q('#agSyncInfo').textContent=e.message;return}
   const ind=painel.indicadores,s=ind.sync||{},ok=s.ultimaOk,ul=s.ultima;
-  q('#agCfgBtn').style.display=painel.pode_configurar?'':'none';q('#agAudBtn').style.display=painel.pode_configurar?'':'none';
+  q('#agCfgBtn').style.display=painel.pode_configurar?'':'none';q('#agAudBtn').style.display=painel.pode_configurar?'':'none';q('#agWaRelBtn').style.display='';
   modoSac();
   let info=ok?'Última sincronização válida com o SSW: <b>'+esc(dh(ok.finalizado_em||ok.iniciado_em))+'</b> ('+esc(ok.origem==='automatica'?'automática':'manual'+(ok.usuario?' por '+ok.usuario:''))+') • '+nfmt(ok.pendentes_ssw)+' notas pendentes no SSW':'Ainda não houve sincronização com o SSW.';
   info+=' • varredura automática às <b>'+esc(painel.config.hora_sync)+'</b>'+(painel.config.sync_ativa?'':' (desligada)');
@@ -376,6 +376,34 @@ async function auditoria(){
   filtrar();
 }
 
+// ------------------------------------------------------------------ relatório dos links do WhatsApp (SAC)
+async function relatorioWhatsapp(){
+  const hoje=painel?.hoje||'';
+  dialogo('<h3>📊 Relatório WhatsApp</h3><div class="muted">Links de agendamento enviados pelo botão 📲 WhatsApp: quem do SAC enviou, se o cliente abriu o link e se escolheu a data.</div>'+
+    '<form class="ag-aud-filtros" id="agWrF" onsubmit="return false"><label>Atendente<select name="usuario"><option value="">Todos</option></select></label><label>De<input type="date" name="de" value="'+esc(hoje)+'"></label><label>Até<input type="date" name="ate" value="'+esc(hoje)+'"></label>'+
+    '<div style="display:flex;gap:4px"><button class="ag-btn primary" type="button" id="agWrOk">Filtrar</button><button class="ag-btn" type="button" id="agWrCsv">Excel (CSV)</button></div></form>'+
+    '<div id="agWrRes" class="muted">Carregando…</div>');
+  const d=q('#agDlg');d.classList.add('largo');d.addEventListener('close',()=>d.classList.remove('largo'),{once:true});
+  let ult=null;const sim=(v,h)=>v?'✅ '+esc(h?dh(h):''):'—';
+  const filtrar=async()=>{
+    const f=new URLSearchParams(Object.fromEntries(new FormData(q('#agWrF'))));q('#agWrRes').innerHTML='Carregando…';
+    try{
+      const j=await api('/api/painel/agendamento-whatsapp/relatorio?'+f);ult=j;const t=j.total;
+      const sel=q('#agWrF [name=usuario]'),v=sel.value;sel.innerHTML='<option value="">Todos</option>'+j.usuarios.map(x=>'<option'+(x===v?' selected':'')+'>'+esc(x)+'</option>').join('');
+      q('#agWrRes').innerHTML='<div style="display:flex;gap:16px;flex-wrap:wrap;margin:6px 0 10px"><span>📤 Enviados <b>'+nfmt(t.enviados)+'</b></span><span>👀 Abriram o link <b>'+nfmt(t.abriram)+'</b></span><span>✅ Escolheram a data <b>'+nfmt(t.responderam)+'</b> ('+t.pct_resposta+'%)</span><span>⏳ Sem resposta <b>'+nfmt(t.sem_resposta)+'</b></span></div>'+
+        '<b>Por atendente</b><div class="ag-aud-box" style="max-height:20vh;margin:4px 0 8px"><table><thead><tr><th>Atendente</th><th>Enviados</th><th>Abriram</th><th>Escolheram a data</th><th>% resposta</th><th>Sem resposta</th><th>Último envio</th></tr></thead><tbody>'+
+        (j.por_usuario.map(x=>'<tr><td><b>'+esc(x.usuario)+'</b></td><td>'+nfmt(x.enviados)+'</td><td>'+nfmt(x.abriram)+'</td><td>'+nfmt(x.responderam)+'</td><td>'+x.pct_resposta+'%</td><td>'+nfmt(x.sem_resposta)+'</td><td>'+esc(dh(x.ultimo))+'</td></tr>').join('')||'<tr><td colspan="7">Nenhum envio no período.</td></tr>')+'</tbody></table></div>'+
+        '<b>Envios ('+nfmt(j.rows.length)+')</b><div class="ag-aud-box"><table><thead><tr><th>Enviado</th><th>Atendente</th><th>Cliente</th><th>NF</th><th>Abriu o link</th><th>Escolheu a data</th><th>Situação</th></tr></thead><tbody>'+
+        (j.rows.map(r=>'<tr><td>'+esc(dh(r.enviado_em))+'</td><td>'+esc(r.usuario||'')+'</td><td>'+esc(r.destinatario||'')+' <span class="muted">'+esc([r.cidade,r.uf].filter(Boolean).join('/'))+'</span></td><td>'+esc(r.nfs||'')+'</td><td>'+sim(r.abriu,r.aberto_em)+'</td><td>'+(r.respondeu?'✅ '+esc(br(r.data_escolhida))+' <span class="muted">('+esc(dh(r.escolhido_em))+')</span>':'—')+'</td><td>'+esc(r.situacao)+(r.agendada_para&&!r.respondeu?' <span class="muted">'+esc(br(r.agendada_para))+'</span>':'')+'</td></tr>').join('')||'<tr><td colspan="7">Nenhum envio.</td></tr>')+'</tbody></table></div>';
+    }catch(e){q('#agWrRes').textContent=e.message}
+  };
+  q('#agWrOk').onclick=filtrar;
+  q('#agWrCsv').onclick=()=>{if(!ult)return;const c=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
+    const csv='\ufeff'+[['Enviado','Atendente','Cliente','Cidade','NF','Abriu o link','Escolheu a data','Data escolhida','Situação','Agendada para'].map(c).join(';'),...ult.rows.map(r=>[dh(r.enviado_em),r.usuario,r.destinatario,[r.cidade,r.uf].filter(Boolean).join('/'),r.nfs,r.abriu?dh(r.aberto_em):'',r.respondeu?dh(r.escolhido_em):'',r.data_escolhida?br(r.data_escolhida):'',r.situacao,r.agendada_para?br(r.agendada_para):''].map(c).join(';'))].join('\r\n');
+    const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='relatorio-whatsapp-agendamento.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)};
+  filtrar();
+}
+
 // ------------------------------------------------------------------ localização do cliente
 // Link recebido no WhatsApp: abre o mapa num pop-up, guarda para as próximas notas do cliente e encaminha ao motorista.
 let motoristas=null;
@@ -540,7 +568,7 @@ function setup(){
   q('#agSyncBtn').onclick=sincronizar;q('#agBaixasBtn').onclick=atualizarBaixas;q('#agImpForm').onsubmit=importarFaixa;
   api('/api/painel/agendamentos/parceiros').then(j=>{q('#agImpParc').innerHTML=(j.parceiros||[]).map(t=>'<option value="'+esc(t)+'">').join('')}).catch(()=>{});
   q('#agLogBtn').onclick=logSync;
-  q('#agCfgBtn').onclick=configurar;q('#agAudBtn').onclick=auditoria;
+  q('#agCfgBtn').onclick=configurar;q('#agAudBtn').onclick=auditoria;q('#agWaRelBtn').onclick=relatorioWhatsapp;
   q('#agCards').onclick=e=>{const b=e.target.closest('[data-card]');if(b)clicarCard(b)};
   q('#agAbas').onclick=e=>{const b=e.target.closest('[data-aba]');if(!b)return;aba=b.dataset.aba;card='';page=1;marcarAba();carregarLista();carregarPainel()};
   q('#agFiltros').onsubmit=e=>{e.preventDefault();page=1;card='';carregarLista();carregarPainel()};
