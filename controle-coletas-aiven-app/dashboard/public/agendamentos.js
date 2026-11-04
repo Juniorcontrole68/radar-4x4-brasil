@@ -352,13 +352,13 @@ const ROT_EV={agendado:'Agendou',reagendado:'Reagendou',observacao:'Alterou obse
 async function auditoria(){
   const hoje=painel?.hoje||'';
   dialogo('<h3>📜 Histórico de ações dos usuários</h3><div class="muted">Tudo o que cada usuário fez no agendamento: agendar, reagendar, cancelar, reservar, produto e localização.</div>'+
-    '<form class="ag-aud-filtros" id="agAudF" onsubmit="return false"><label>Usuário<select name="usuario"><option value="">Todos</option></select></label><label>De<input type="date" name="de" value="'+esc(hoje)+'"></label><label>Até<input type="date" name="ate" value="'+esc(hoje)+'"></label>'+
-    '<label>Ação<select name="tipo"><option value="">Todas</option>'+Object.entries(ROT_EV).map(([k,v])=>'<option value="'+k+'">'+esc(v)+'</option>').join('')+'</select></label><label>NF<input name="nf" inputmode="numeric"></label><div style="display:flex;gap:4px"><button class="ag-btn primary" type="button" id="agAudOk">Filtrar</button><button class="ag-btn" type="button" id="agAudCsv">Excel (CSV)</button></div></form>'+
+    '<div class="ag-aud-filtros" id="agAudF"><label>Usuário<select name="usuario"><option value="">Todos</option></select></label><label>De<input type="date" name="de" value="'+esc(hoje)+'"></label><label>Até<input type="date" name="ate" value="'+esc(hoje)+'"></label>'+
+    '<label>Ação<select name="tipo"><option value="">Todas</option>'+Object.entries(ROT_EV).map(([k,v])=>'<option value="'+k+'">'+esc(v)+'</option>').join('')+'</select></label><label>NF<input name="nf" inputmode="numeric"></label><div style="display:flex;gap:4px"><button class="ag-btn primary" type="button" id="agAudOk">Filtrar</button><button class="ag-btn" type="button" id="agAudCsv">Excel (CSV)</button></div></div>'+
     '<div id="agAudRes" class="muted">Carregando…</div>');
   const d=q('#agDlg');d.classList.add('largo');d.addEventListener('close',()=>d.classList.remove('largo'),{once:true});
   let ult=null;
   const filtrar=async()=>{
-    const f=new URLSearchParams(Object.fromEntries(new FormData(q('#agAudF'))));
+    const f=new URLSearchParams();q('#agAudF').querySelectorAll('[name]').forEach(x=>{if(x.value)f.set(x.name,x.value)});
     q('#agAudRes').innerHTML='Carregando…';
     try{
       const j=await api('/api/painel/agendamentos/auditoria?'+f);ult=j;
@@ -380,13 +380,13 @@ async function auditoria(){
 async function relatorioWhatsapp(){
   const hoje=painel?.hoje||'';
   dialogo('<h3>📊 Relatório WhatsApp</h3><div class="muted">Links de agendamento enviados pelo botão 📲 WhatsApp: quem do SAC enviou, se o cliente abriu o link e se escolheu a data.</div>'+
-    '<form class="ag-aud-filtros" id="agWrF" onsubmit="return false"><label>Atendente<select name="usuario"><option value="">Todos</option></select></label><label>De<input type="date" name="de" value="'+esc(hoje)+'"></label><label>Até<input type="date" name="ate" value="'+esc(hoje)+'"></label>'+
-    '<div style="display:flex;gap:4px"><button class="ag-btn primary" type="button" id="agWrOk">Filtrar</button><button class="ag-btn" type="button" id="agWrCsv">Excel (CSV)</button></div></form>'+
+    '<div class="ag-aud-filtros" id="agWrF"><label>Atendente<select name="usuario"><option value="">Todos</option></select></label><label>De<input type="date" name="de" value="'+esc(hoje)+'"></label><label>Até<input type="date" name="ate" value="'+esc(hoje)+'"></label>'+
+    '<div style="display:flex;gap:4px"><button class="ag-btn primary" type="button" id="agWrOk">Filtrar</button><button class="ag-btn" type="button" id="agWrCsv">Excel (CSV)</button></div></div>'+
     '<div id="agWrRes" class="muted">Carregando…</div>');
   const d=q('#agDlg');d.classList.add('largo');d.addEventListener('close',()=>d.classList.remove('largo'),{once:true});
   let ult=null;const sim=(v,h)=>v?'✅ '+esc(h?dh(h):''):'—';
   const filtrar=async()=>{
-    const f=new URLSearchParams(Object.fromEntries(new FormData(q('#agWrF'))));q('#agWrRes').innerHTML='Carregando…';
+    const f=new URLSearchParams();q('#agWrF').querySelectorAll('[name]').forEach(x=>{if(x.value)f.set(x.name,x.value)});q('#agWrRes').innerHTML='Carregando…';
     try{
       const j=await api('/api/painel/agendamento-whatsapp/relatorio?'+f);ult=j;const t=j.total;
       const sel=q('#agWrF [name=usuario]'),v=sel.value;sel.innerHTML='<option value="">Todos</option>'+j.usuarios.map(x=>'<option'+(x===v?' selected':'')+'>'+esc(x)+'</option>').join('');
