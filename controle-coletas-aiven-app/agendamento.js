@@ -178,6 +178,12 @@ async function ensureSchema(pool) {
     usuario_id BIGINT, nota_id BIGINT, criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), expira_em TIMESTAMPTZ NOT NULL)`);
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS uq_ag_reservas ON ag_reservas (COALESCE(client_id,0), chave)');
   await pool.query('CREATE INDEX IF NOT EXISTS ix_ag_eventos_usuario ON ag_eventos (client_id, criado_em DESC)');
+  // links de agendamento enviados pelo SAC (agendamento-link.js completa a tabela); a lista mostra o último envio
+  await pool.query(`CREATE TABLE IF NOT EXISTS ag_links (token TEXT PRIMARY KEY, client_id BIGINT, chave TEXT NOT NULL, nota_ids BIGINT[] NOT NULL,
+    destinatario TEXT, cidade TEXT, uf TEXT, telefone TEXT, criado_por TEXT, criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), expira_em TIMESTAMPTZ NOT NULL,
+    aberto_em TIMESTAMPTZ, data_escolhida DATE, escolhido_em TIMESTAMPTZ)`);
+  await pool.query('ALTER TABLE ag_links ADD COLUMN IF NOT EXISTS enviado_em TIMESTAMPTZ');
+  await pool.query('ALTER TABLE ag_links ADD COLUMN IF NOT EXISTS enviado_por TEXT');
   // permissão SAC (agendar e inserir informações): na primeira vez vai para quem já agendou pelo sistema
   await pool.query('CREATE TABLE IF NOT EXISTS ag_migracoes (nome TEXT PRIMARY KEY, feito_em TIMESTAMPTZ NOT NULL DEFAULT NOW())');
   try {
@@ -608,7 +614,10 @@ function postJson(porta, caminho, headers, corpo, timeoutMs = 12 * 60 * 1000) {
 const CHAVE_LOCAL_SQL = "upper(regexp_replace(trim(COALESCE(n.destinatario,'')),'\\s+',' ','g'))||'|'||upper(regexp_replace(trim(COALESCE(n.cidade,'')),'\\s+',' ','g'))";
 const SEL_LOCAL = `(SELECT json_build_object('link',l.link,'lat',l.lat,'lon',l.lon,'por',l.atualizado_por,'em',l.atualizado_em) FROM ag_locais l WHERE COALESCE(l.client_id,0)=COALESCE(n.client_id,0) AND l.chave=${CHAVE_LOCAL_SQL} AND ${CHAVE_LOCAL_SQL}<>'|') AS localizacao`;
 const SEL_RESERVA = `(SELECT json_build_object('usuario',r.usuario,'em',r.criado_em,'expira',r.expira_em) FROM ag_reservas r WHERE COALESCE(r.client_id,0)=COALESCE(n.client_id,0) AND r.chave=${CHAVE_LOCAL_SQL} AND r.expira_em>NOW()) AS reserva`;
-const SEL_NOTA = SEL_LOCAL + ',' + SEL_RESERVA + `,n.id::text AS nota_id,n.nf,n.serie,n.ctrc,n.remetente,n.pagador,n.produto_fonte,n.telefone,n.destinatario,n.cidade,n.uf,n.endereco,n.peso::float8 AS peso,n.volumes::float8 AS volumes,
+// último envio do link de agendamento pelo WhatsApp do SAC (agendamento-link.js), por destinatário + cidade
+const SEL_LINK = `(SELECT json_build_object('em',l.enviado_em,'por',l.enviado_por,'hoje',(l.enviado_em AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date,'escolhido',l.escolhido_em IS NOT NULL)
+  FROM ag_links l WHERE COALESCE(l.client_id,0)=COALESCE(n.client_id,0) AND l.chave=${CHAVE_LOCAL_SQL} AND l.enviado_em IS NOT NULL ORDER BY l.enviado_em DESC LIMIT 1) AS link`;
+const SEL_NOTA = SEL_LOCAL + ',' + SEL_RESERVA + ',' + SEL_LINK + `,n.id::text AS nota_id,n.nf,n.serie,n.ctrc,n.remetente,n.pagador,n.produto_fonte,n.telefone,n.destinatario,n.cidade,n.uf,n.endereco,n.peso::float8 AS peso,n.volumes::float8 AS volumes,
   n.produto,n.situacao,n.status_ssw,n.previsao,to_char(n.data_emissao,'YYYY-MM-DD') AS data_emissao,to_char(n.data_entrada,'YYYY-MM-DD') AS data_entrada,
   n.ultima_consulta,n.erro_integracao,to_char(n.concluido_em,'YYYY-MM-DD') AS concluido_em,
   ((NOW() AT TIME ZONE 'America/Sao_Paulo')::date-COALESCE(n.data_entrada,n.data_emissao,(n.primeiro_visto AT TIME ZONE 'America/Sao_Paulo')::date))::int AS dias_sem`;

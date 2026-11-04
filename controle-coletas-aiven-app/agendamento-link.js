@@ -27,6 +27,9 @@ async function ensureSchema(pool) {
     destinatario TEXT, cidade TEXT, uf TEXT, telefone TEXT, criado_por TEXT,
     criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), expira_em TIMESTAMPTZ NOT NULL,
     aberto_em TIMESTAMPTZ, data_escolhida DATE, escolhido_em TIMESTAMPTZ)`);
+  // último envio pelo botão do SAC: trava o botão do cliente até o dia seguinte
+  await pool.query('ALTER TABLE ag_links ADD COLUMN IF NOT EXISTS enviado_em TIMESTAMPTZ');
+  await pool.query('ALTER TABLE ag_links ADD COLUMN IF NOT EXISTS enviado_por TEXT');
   await pool.query('CREATE INDEX IF NOT EXISTS ix_ag_links_chave ON ag_links (COALESCE(client_id,0), chave, expira_em DESC)');
 }
 
@@ -50,6 +53,11 @@ async function criarLink(pool, cli, user, notaId, base) {
   if (!n) throw erro(404, 'Nota não encontrada.');
   if (n.chave === '|') throw erro(400, 'A nota não tem destinatário.');
   if (ag.FINAIS.includes(n.situacao)) throw erro(409, 'A NF ' + n.nf + ' já foi ' + (n.situacao === 'entregue' ? 'entregue' : 'devolvida') + '.');
+  // já mandado hoje para este cliente (destinatário + cidade): o botão fica travado até amanhã
+  const hoje = (await pool.query(`SELECT enviado_por,to_char(enviado_em AT TIME ZONE 'America/Sao_Paulo','HH24:MI') AS hora FROM ag_links
+    WHERE COALESCE(client_id,0)=COALESCE($1::bigint,0) AND chave=$2 AND (enviado_em AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+    ORDER BY enviado_em DESC LIMIT 1`, [cli, n.chave])).rows[0];
+  if (hoje) throw erro(409, 'O link para ' + (n.destinatario || 'este cliente') + ' já foi enviado hoje às ' + hoje.hora + (hoje.enviado_por ? ' por ' + hoje.enviado_por : '') + '. Dá para mandar de novo a partir de amanhã.');
   await wa.garantirRotas(pool, cli);
   const rota = await wa.rotaDa(pool, cli, n.cidade, n.uf);
   if (!wa.proximasDatas(rota).length) throw erro(422, (n.cidade || 'A cidade') + ' não tem dia de entrega na grade (opção 107). Agende pelo botão Agendar.');
@@ -59,10 +67,10 @@ async function criarLink(pool, cli, user, notaId, base) {
   if (!grupo.some(g => g.id === n.id)) grupo.unshift({ id: n.id, nf: n.nf, remetente: n.remetente });
   const ids = grupo.map(g => g.id);
   let token = (await pool.query("SELECT token FROM ag_links WHERE COALESCE(client_id,0)=COALESCE($1::bigint,0) AND chave=$2 AND expira_em>NOW()+INTERVAL '2 days' ORDER BY criado_em DESC LIMIT 1", [cli, n.chave])).rows[0]?.token;
-  if (token) await pool.query('UPDATE ag_links SET nota_ids=$2 WHERE token=$1', [token, ids]);
+  if (token) await pool.query('UPDATE ag_links SET nota_ids=$2,enviado_em=NOW(),enviado_por=$3 WHERE token=$1', [token, ids, limpo(user.username, 80)]);
   else {
     token = crypto.randomBytes(18).toString('base64url');
-    await pool.query(`INSERT INTO ag_links(token,client_id,chave,nota_ids,destinatario,cidade,uf,telefone,criado_por,expira_em) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW()+($10||' days')::interval)`,
+    await pool.query(`INSERT INTO ag_links(token,client_id,chave,nota_ids,destinatario,cidade,uf,telefone,criado_por,expira_em,enviado_em,enviado_por) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW()+($10||' days')::interval,NOW(),$9)`,
       [token, cli, n.chave, ids, limpo(n.destinatario, 120), limpo(n.cidade, 80), limpo(n.uf, 2).toUpperCase(), limpo(n.telefone, 60), limpo(user.username, 80), String(DIAS_VALIDADE)]);
   }
   for (const id of ids) await pool.query('INSERT INTO ag_eventos(client_id,nota_id,tipo,para,detalhe,usuario) VALUES($1,$2,$3,$4,$5,$6)', [cli, id, 'whatsapp', 'link', 'Link de agendamento enviado ao cliente pelo WhatsApp do SAC', limpo(user.username, 80)]);

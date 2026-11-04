@@ -27,8 +27,13 @@ function check(name, cond, extra = '') { if (cond) { pass++; console.log('  OK  
   const l = await lk.criarLink(pool, cli, sac, await id('7001'), 'https://exemplo.test');
   check('link com as duas notas do cliente e o WhatsApp do celular da nota', l.notas.join() === '7001,7002' && l.telefone === '5519991587277' && l.whatsapp.startsWith('https://wa.me/5519991587277?text=') && l.url === 'https://exemplo.test/agendar/' + l.token, l);
   check('mensagem da Ana com nome limpo, NFs, cidade, link e aviso dos 15 dias', /Olá, Mada Cabral! 👋 Sou a \*Ana\*/.test(l.texto) && /NFs 7001, 7002 — QUADRI COMERCIO/.test(l.texto) && l.texto.includes(l.url) && /15 dias/.test(l.texto), l.texto);
+  let e2 = null; try { await lk.criarLink(pool, cli, sac, await id('7002'), 'https://exemplo.test'); } catch (e) { e2 = e; }
+  check('mesmo cliente no mesmo dia: travado até amanhã', e2 && e2.status === 409 && /já foi enviado hoje às \d\d:\d\d por maria/.test(e2.message), e2 && e2.message);
+  const lista = await ag.listar(pool, cli, 'sem', {});
+  check('lista do SAC mostra o envio de hoje nas duas notas do cliente', ['7001', '7002'].every(nf => { const r = lista.rows.find(x => x.nf === nf); return r && r.link && r.link.hoje === true && r.link.por === 'maria'; }), lista.rows.map(r => [r.nf, r.link]));
+  await pool.query("UPDATE ag_links SET enviado_em=NOW()-INTERVAL '1 day'");
   const l2 = await lk.criarLink(pool, cli, sac, await id('7002'), 'https://exemplo.test');
-  check('clicar de novo reaproveita o mesmo link', l2.token === l.token);
+  check('no dia seguinte libera e reaproveita o mesmo link', l2.token === l.token && (await ag.listar(pool, cli, 'sem', {})).rows.find(x => x.nf === '7002').link.hoje === true);
   let erro = null; try { await lk.criarLink(pool, cli, sac, await id('7003'), 'x'); } catch (e) { erro = e; }
   check('cidade sem entrega (Osasco) não gera link', erro && erro.status === 422, erro && erro.message);
 

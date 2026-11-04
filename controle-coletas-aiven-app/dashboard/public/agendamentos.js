@@ -253,7 +253,7 @@ function celula(r,k,num){
 function celulaAcoes(r){
   {
     if((aba==='agendadas'&&r.status_agendamento!=='concluido')||(aba==='pendentes'&&r.agendamento_id))return'<td class="acoes"><button type="button" class="ag-mini" data-ac="alterar" data-id="'+esc(r.agendamento_id)+'">Alterar</button><button type="button" class="ag-mini perigo" data-ac="cancelar" data-id="'+esc(r.agendamento_id)+'">Cancelar</button><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
-    if(aba==='sem'||aba==='pendentes')return'<td class="acoes"><button type="button" class="ag-mini primary" data-ac="agendar" data-nota="'+esc(r.nota_id)+'">Agendar</button><button type="button" class="ag-mini wa" data-ac="walink" data-nota="'+esc(r.nota_id)+'" title="Abre o seu WhatsApp com a mensagem da Ana e o link para o cliente escolher a data">📲 WhatsApp</button><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
+    if(aba==='sem'||aba==='pendentes')return'<td class="acoes"><button type="button" class="ag-mini primary" data-ac="agendar" data-nota="'+esc(r.nota_id)+'">Agendar</button>'+botaoWa(r)+'<button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
     return'<td class="acoes"><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>'
   }
 }
@@ -449,6 +449,13 @@ function configurar(){
 }
 
 // ------------------------------------------------------------------ exportações (todas as linhas do filtro)
+// Botão do link: travado (✅ Enviado) quando o link do cliente já foi mandado hoje; amanhã libera de novo
+function botaoWa(r){
+  const l=r.link;
+  if(l&&l.hoje){const h=new Date(l.em).toLocaleTimeString('pt-BR',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit'});
+    return'<button type="button" class="ag-mini wa-ok" disabled title="Link enviado hoje às '+esc(h)+(l.por?' por '+esc(l.por):'')+'. Libera de novo amanhã.">✅ Enviado '+esc(h)+'</button>'}
+  return'<button type="button" class="ag-mini wa" data-ac="walink" data-nota="'+esc(r.nota_id)+'" title="Abre o seu WhatsApp com a mensagem da Ana e o link para o cliente escolher a data'+(l?' (último envio: '+esc(new Date(l.em).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'}))+')':'')+'">📲 WhatsApp</button>'
+}
 // Link de agendamento: abre o WhatsApp do SAC com a mensagem da Ana pronta; o cliente escolhe a data no link
 async function linkWhatsapp(b){
   const w=window.open('','_blank');   // abre já no clique (senão o navegador bloqueia o pop-up)
@@ -459,9 +466,13 @@ async function linkWhatsapp(b){
     else{if(w)w.close();
       try{await navigator.clipboard.writeText(j.texto)}catch(e){}
       dialogo('<h3>Sem celular na nota</h3><div class="muted">A mensagem com o link foi copiada. Cole no WhatsApp do cliente.</div><textarea rows="9" readonly style="width:100%">'+esc(j.texto)+'</textarea>',null)}
-    b.textContent='📲 Enviado';
+    const h=new Date().toLocaleTimeString('pt-BR',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit'});
+    // trava o botão desta nota e das outras notas do mesmo cliente na tela, sem recarregar a lista
+    document.querySelectorAll('[data-ac="walink"]').forEach(x=>{const rr=(ultimaLista&&ultimaLista.rows||[]).find(y=>String(y.nota_id)===x.dataset.nota);
+      if(x===b||(rr&&j.notas.includes(rr.nf))){x.outerHTML='<button type="button" class="ag-mini wa-ok" disabled title="Link enviado hoje às '+h+'. Libera de novo amanhã.">✅ Enviado '+h+'</button>'}});
+    return;
   }catch(e){if(w)w.close();msg(e.message,'err')}
-  finally{b.disabled=false}
+  finally{if(b.isConnected)b.disabled=false}
 }
 async function linhasExport(){
   const p=new URLSearchParams({...filtros(),page:1,per:5000});
