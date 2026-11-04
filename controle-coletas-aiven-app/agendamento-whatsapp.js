@@ -203,28 +203,49 @@ async function notasDa(db, conv) {
     FROM ag_notas n WHERE n.id=ANY($1::bigint[]) ORDER BY n.nf`, [conv.nota_ids])).rows;
 }
 
+// ------------------------------------------------------------------ textos da Ana (atendente virtual)
+const ANA = {
+  ola: nome => 'Olá' + (nome ? ', ' + nome : '') + '! 👋 Sou a *Ana*, atendente virtual da *Construlog* 🚚',
+  entrega: (notas, cidade, uf) => 'Temos uma entrega para você:\n📦 ' + nfsTexto(notas) + ' — ' + remetentes(notas) + '\n📍 ' + limpo(cidade, 40) + (uf ? '/' + uf : ''),
+  escolha: 'Toque em *📅 Ver datas* e escolha o melhor dia para receber 👇',
+  apresentacao: 'Olá! 👋 Sou a *Ana*, atendente virtual da *Construlog* 🚚\n\nPor aqui eu agendo as suas entregas. Quando tivermos uma entrega para você, mando as datas disponíveis 📅',
+  agendado: (data, notas) => '✅ *Prontinho!* Sua entrega está agendada para *' + dataLonga(data) + '*, em horário comercial.\n📦 ' + nfsTexto(notas) +
+    '\n\n⚠️ *Importante:* precisa ter alguém no local para receber. Se não houver recebedor, a entrega será reagendada para até *15 dias*.\n\n🔔 Na véspera eu mando um lembrete. Precisa mudar a data? É só responder *REMARCAR*.',
+  pedeLocal: '📍 Para o motorista chegar certinho, pode me enviar a *localização* do endereço de entrega?\n\nToque no 📎 (clipe) → *Localização* → *Enviar localização atual* (se estiver no local). Se não estiver, pode mandar o link do Google Maps 🗺️',
+  localOk: '📍 Localização recebida, obrigada! Já está no seu agendamento para o motorista 🚚😊',
+  localRuim: 'Não consegui ler essa localização 😕 Tente pelo 📎 (clipe) → *Localização*, ou mande o link do Google Maps.',
+  indisponivel: 'Essa data não está mais disponível 😕 Escolha outra, por favor 👇',
+  paraAtendente: 'Tudo bem! 🙋‍♀️ Vou chamar uma pessoa da nossa equipe para falar com você por aqui.',
+  confirmouSac: 'Recebi a sua escolha 👍 Uma pessoa da nossa equipe vai confirmar com você por aqui.',
+  semData: cidade => 'Não encontrei uma data de entrega disponível para ' + limpo(cidade, 40) + ' 😕 Uma pessoa da nossa equipe vai falar com você por aqui.',
+  naoEntendi: 'Recebi sua mensagem 😉 Uma pessoa da nossa equipe vai responder por aqui.',
+  confirmado: 'Obrigada! Entrega confirmada ✅ Até amanhã 🚚',
+  ateLa: 'Obrigada! Até lá 🚚😊',
+  lembrete: (nome, data, notas) => '⏰ Oi' + (nome ? ', ' + nome : '') + '! Aqui é a *Ana*, da *Construlog*.\n\nSua entrega chega *amanhã, ' + dataLonga(data) + '*, em horário comercial.\n📦 ' + nfsTexto(notas) + '\n\nLembre que precisa ter alguém no local para receber 🙂',
+};
+
 // Lista com as datas (dentro da janela de 24 h)
 async function enviarDatas(ctx, conv, intro) {
   const { pool } = ctx;
   const notas = await notasDa(pool, conv);
   const rota = await rotaDa(pool, conv.client_id, conv.cidade, conv.uf);
   const datas = proximasDatas(rota, { agora: ctx.agora ? ctx.agora() : new Date() });
-  if (!datas.length) return paraSac(ctx, conv, 'Cidade sem dia de entrega na grade', 'Não encontrei uma data de entrega disponível para ' + conv.cidade + '. Um atendente vai falar com você por aqui.');
+  if (!datas.length) return paraSac(ctx, conv, 'Cidade sem dia de entrega na grade', ANA.semData(conv.cidade));
   await pool.query("UPDATE ag_wa_conversas SET datas=$2,estado=CASE WHEN estado='agendado' THEN 'remarcando' ELSE 'escolhendo' END,atualizado_em=NOW() WHERE id=$1", [conv.id, datas]);
-  const corpo = (intro ? intro + '\n\n' : '') + 'Entrega da ' + nfsTexto(notas) + ' (' + remetentes(notas) + ') em ' + limpo(conv.cidade, 40) + '.\nEscolha o melhor dia para receber:';
-  const rows = datas.map(d => ({ id: 'd:' + conv.id + ':' + d, title: DIAS_CURTO[diaSemana(d)] + ' ' + br(d), description: DIAS_NOME[diaSemana(d)] + ', horário comercial' }));
-  rows.push({ id: 'sac:' + conv.id, title: 'Nenhuma data serve', description: 'Falar com um atendente' });
+  const corpo = (intro ? intro + '\n\n' : '') + ANA.entrega(notas, conv.cidade, conv.uf) + '\n\n' + ANA.escolha;
+  const rows = datas.map(d => ({ id: 'd:' + conv.id + ':' + d, title: DIAS_CURTO[diaSemana(d)] + ' ' + br(d), description: DIAS_NOME[diaSemana(d)] + ' · horário comercial' }));
+  rows.push({ id: 'sac:' + conv.id, title: 'Nenhuma data serve', description: 'Falar com uma pessoa da equipe' });
   return enviar(ctx, conv, conv.telefone, {
     type: 'interactive',
-    interactive: { type: 'list', header: { type: 'text', text: 'Agendamento de entrega' }, body: { text: corpo.slice(0, 1024) }, footer: { text: 'Construlog' },
-      action: { button: 'Ver datas', sections: [{ title: 'Datas disponíveis', rows }] } },
+    interactive: { type: 'list', header: { type: 'text', text: '🚚 Agendamento de entrega' }, body: { text: corpo.slice(0, 1024) }, footer: { text: 'Construlog' },
+      action: { button: '📅 Ver datas', sections: [{ title: 'Datas disponíveis', rows }] } },
   }, 'Lista de datas: ' + datas.map(br).join(', '));
 }
 
 // Primeiro contato: lista direto se a janela estiver aberta; senão o modelo aprovado com o botão "Escolher data"
 async function ofertar(ctx, conv) {
   const { pool, cfg } = ctx;
-  if (await janelaAberta(pool, conv.telefone)) return enviarDatas(ctx, conv, 'Olá, ' + primeiroNome(conv.destinatario) + '!');
+  if (await janelaAberta(pool, conv.telefone)) return enviarDatas(ctx, conv, ANA.ola(primeiroNome(conv.destinatario)));
   const notas = await notasDa(pool, conv);
   return enviar(ctx, conv, conv.telefone, {
     type: 'template',
@@ -242,11 +263,11 @@ async function paraSac(ctx, conv, motivo, aviso) {
   if (aviso) await texto(ctx, conv, conv.telefone, aviso).catch(e => console.log('WHATSAPP aviso SAC: ' + e.message));
 }
 
-// Cliente escolheu a data: grava (ou remarca) todas as notas da conversa
+// Cliente escolheu a data: grava (ou remarca) todas as notas da conversa e pede a localização
 async function escolherData(ctx, conv, data) {
   const { pool } = ctx;
   if (!conv.datas.includes(data) || !proximasDatas(await rotaDa(pool, conv.client_id, conv.cidade, conv.uf), { agora: ctx.agora ? ctx.agora() : new Date() }).includes(data))
-    return enviarDatas(ctx, conv, 'Essa data não está mais disponível. Escolha outra, por favor:');
+    return enviarDatas(ctx, conv, ANA.indisponivel);
   const notas = await notasDa(pool, conv);
   const feitas = [], problemas = [];
   for (const n of notas) {
@@ -257,11 +278,34 @@ async function escolherData(ctx, conv, data) {
       feitas.push(n);
     } catch (e) { problemas.push('NF ' + n.nf + ': ' + e.message); }
   }
-  if (!feitas.length) return paraSac(ctx, conv, 'Não gravou pelo WhatsApp: ' + problemas.join(' | '), 'Recebi a sua escolha, mas preciso que um atendente confirme. Ele vai falar com você por aqui.');
+  if (!feitas.length) return paraSac(ctx, conv, 'Não gravou pelo WhatsApp: ' + problemas.join(' | '), ANA.confirmouSac);
   await pool.query("UPDATE ag_wa_conversas SET estado='agendado',data_escolhida=$2,lembrete_em=NULL,motivo_sac=$3,atualizado_em=NOW() WHERE id=$1", [conv.id, data, problemas.length ? limpo(problemas.join(' | '), 300) : null]);
   if (problemas.length) await eventoNotas(pool, conv.client_id, conv.nota_ids, 'SAC', 'Parte das notas não foi agendada: ' + problemas.join(' | '));
-  return texto(ctx, conv, conv.telefone, '✅ Entrega agendada para ' + dataLonga(data) + ', em horário comercial (' + nfsTexto(feitas) + ').\n\nNa véspera mandamos um lembrete. Precisa mudar? Responda REMARCAR.');
+  await texto(ctx, conv, conv.telefone, ANA.agendado(data, feitas));
+  // a localização do cliente já guardada (destinatário + cidade) vale para esta entrega: não pede de novo
+  if (!(await temLocal(pool, conv))) await texto(ctx, conv, conv.telefone, ANA.pedeLocal);
+  return 'agendado';
 }
+
+// ------------------------------------------------------------------ localização do cliente
+async function temLocal(db, conv) {
+  const q = await db.query(`SELECT 1 FROM ag_locais l JOIN ag_notas n ON COALESCE(l.client_id,0)=COALESCE(n.client_id,0)
+      AND l.chave=upper(regexp_replace(trim(COALESCE(n.destinatario,'')),'\\s+',' ','g'))||'|'||upper(regexp_replace(trim(COALESCE(n.cidade,'')),'\\s+',' ','g'))
+    WHERE n.id=ANY($1::bigint[]) LIMIT 1`, [conv.nota_ids]);
+  return !!q.rowCount;
+}
+// Pino do WhatsApp (mensagem do tipo location) ou link do Google Maps / Waze no texto -> campo Localização do agendamento
+async function receberLocal(ctx, conv, entrada) {
+  const { pool } = ctx;
+  let ok = 0;
+  for (const id of conv.nota_ids) {
+    try { await ag.gravarLocalizacao(pool, conv.client_id, USUARIO, String(id), entrada, ctx.abrirLink ? { abrir: ctx.abrirLink } : undefined); ok++; }
+    catch (e) { console.log('WHATSAPP localização nota ' + id + ': ' + e.message); }
+  }
+  await texto(ctx, conv, conv.telefone, ok ? ANA.localOk : ANA.localRuim);
+  return ok ? 'localizacao' : 'localizacao_invalida';
+}
+const TEM_LINK_MAPA = /https?:\/\/\S*(google\.[a-z.]+\/maps|maps\.google|goo\.gl|maps\.app\.goo\.gl|waze\.com|maps\.apple\.com)/i;
 
 // ------------------------------------------------------------------ mensagens recebidas
 async function conversaDoFone(db, fone, id) {
@@ -272,14 +316,16 @@ async function conversaDoFone(db, fone, id) {
 }
 const PEDE_REMARCAR = /\b(remarcar|reagendar|mudar|trocar|alterar|outra data|outro dia)\b/i;
 const PEDE_ATENDENTE = /\b(atendente|humano|pessoa|falar com|ajuda|sac)\b/i;
-const CONFIRMA = /^\s*(ok|sim|confirm\w*|certo|combinado|beleza|blz|👍)\s*[.!]*\s*$/i;
+const CONFIRMA = /^\s*(ok|sim|confirm\w*|certo|combinado|beleza|blz|obrigad\w*|valeu|👍)\s*[.!]*\s*$/i;
 
 async function receber(ctx, m) {
   const { pool } = ctx;
   const fone = String(m.from || '');
+  const loc = m.type === 'location' && m.location && Number.isFinite(Number(m.location.latitude)) ? Number(m.location.latitude) + ',' + Number(m.location.longitude) : '';
   const txt = m.type === 'text' ? limpo(m.text && m.text.body, 1000)
     : m.type === 'interactive' ? limpo((m.interactive.list_reply || m.interactive.button_reply || {}).title, 200)
-    : m.type === 'button' ? limpo(m.button && m.button.text, 200) : '[' + m.type + ']';
+    : m.type === 'button' ? limpo(m.button && m.button.text, 200)
+    : loc ? 'Localização: ' + loc : '[' + m.type + ']';
   const resposta = m.type === 'interactive' ? (m.interactive.list_reply || m.interactive.button_reply || {}).id
     : m.type === 'button' ? m.button && m.button.payload : '';
   const ref = String(resposta || '').match(/^(d|sac|ofertar|confirmar|remarcar):(\d+)(?::(\d{4}-\d{2}-\d{2}))?$/);
@@ -288,7 +334,7 @@ async function receber(ctx, m) {
     [conv ? conv.client_id : null, conv ? conv.id : null, fone, chaveFone(fone), m.type, txt, m.id || null]);
   if (!ins.rowCount) return 'repetida';   // a Meta reenvia o mesmo aviso: processa uma vez só
   if (!conv) {
-    await texto(ctx, null, fone, 'Olá! Este é o canal de agendamento de entregas da Construlog. Quando houver uma entrega para você, mandamos as datas disponíveis por aqui.').catch(() => {});
+    await texto(ctx, null, fone, ANA.apresentacao).catch(() => {});
     return 'sem_conversa';
   }
   await pool.query('UPDATE ag_wa_conversas SET respondido_em=NOW(),atualizado_em=NOW() WHERE id=$1', [conv.id]);
@@ -296,14 +342,16 @@ async function receber(ctx, m) {
   if (fone && fone !== conv.telefone) { await pool.query('UPDATE ag_wa_conversas SET telefone=$2 WHERE id=$1', [conv.id, fone]); conv.telefone = fone; }
   const tipo = ref ? ref[1] : '';
   if (tipo === 'd') return escolherData(ctx, conv, ref[3]);
-  if (tipo === 'sac') return paraSac(ctx, conv, 'Cliente pediu outra data / atendente', 'Tudo bem! Um atendente vai falar com você por aqui para combinar a entrega.');
+  if (tipo === 'sac') return paraSac(ctx, conv, 'Cliente pediu outra data / atendente', ANA.paraAtendente);
   if (tipo === 'ofertar' || tipo === 'remarcar') return enviarDatas(ctx, conv, '');
-  if (tipo === 'confirmar') { await eventoNotas(pool, conv.client_id, conv.nota_ids, 'confirmado', 'Cliente confirmou a entrega no lembrete'); return texto(ctx, conv, conv.telefone, 'Obrigado! Entrega confirmada. 🚚'); }
+  if (tipo === 'confirmar') { await eventoNotas(pool, conv.client_id, conv.nota_ids, 'confirmado', 'Cliente confirmou a entrega no lembrete'); return texto(ctx, conv, conv.telefone, ANA.confirmado); }
+  // localização vale em qualquer momento da conversa (inclusive com o SAC)
+  if (loc || (m.type === 'text' && TEM_LINK_MAPA.test(txt))) return receberLocal(ctx, conv, loc || txt);
   if (conv.estado === 'sac') { await eventoNotas(pool, conv.client_id, conv.nota_ids, null, 'Mensagem do cliente: ' + txt); return 'sac'; }
-  if (conv.estado === 'agendado' && CONFIRMA.test(txt)) return texto(ctx, conv, conv.telefone, 'Obrigado! Até lá. 🚚');
-  if (PEDE_ATENDENTE.test(txt)) return paraSac(ctx, conv, 'Cliente pediu atendente: ' + txt, 'Certo! Um atendente vai falar com você por aqui.');
-  if (PEDE_REMARCAR.test(txt) || ['oferta', 'escolhendo', 'remarcando', 'sem_resposta'].includes(conv.estado)) return enviarDatas(ctx, conv, conv.estado === 'agendado' ? '' : 'Para agendar, toque em "Ver datas" e escolha o dia:');
-  return paraSac(ctx, conv, 'Mensagem que o robô não entendeu: ' + txt, 'Recebi sua mensagem. Um atendente vai responder por aqui.');
+  if (conv.estado === 'agendado' && CONFIRMA.test(txt)) return texto(ctx, conv, conv.telefone, ANA.ateLa);
+  if (PEDE_ATENDENTE.test(txt)) return paraSac(ctx, conv, 'Cliente pediu atendente: ' + txt, ANA.paraAtendente);
+  if (PEDE_REMARCAR.test(txt) || ['oferta', 'escolhendo', 'remarcando', 'sem_resposta'].includes(conv.estado)) return enviarDatas(ctx, conv, conv.estado === 'agendado' || conv.estado === 'remarcando' ? '' : ANA.escolha.replace('Toque', 'Para agendar, toque'));
+  return paraSac(ctx, conv, 'Mensagem que o robô não entendeu: ' + txt, ANA.naoEntendi);
 }
 
 function statusEnvio(ctx, s) {
@@ -319,7 +367,7 @@ async function candidatas(pool, cli) {
   const rows = (await pool.query(`SELECT n.id::text,n.nf,n.remetente,n.pagador,n.destinatario,n.cidade,n.uf,n.telefone FROM ag_notas n
     WHERE n.client_id IS NOT DISTINCT FROM $1 AND n.tipo_operacao='entrega' AND n.situacao='pendente' AND COALESCE(n.telefone,'')<>''
       AND NOT EXISTS (SELECT 1 FROM ag_agendamentos a WHERE a.nota_id=n.id AND a.status='ativo')
-      AND NOT EXISTS (SELECT 1 FROM ag_wa_conversas c WHERE n.id=ANY(c.nota_ids) AND (c.estado<>'sem_resposta' OR c.atualizado_em>NOW()-INTERVAL '7 days'))
+      AND NOT EXISTS (SELECT 1 FROM ag_wa_conversas c WHERE n.id=ANY(c.nota_ids) AND c.origem<>'teste' AND (c.estado<>'sem_resposta' OR c.atualizado_em>NOW()-INTERVAL '7 days'))
       AND NOT EXISTS (SELECT 1 FROM ag_reservas r WHERE COALESCE(r.client_id,0)=COALESCE(n.client_id,0) AND r.expira_em>NOW()
         AND r.chave=upper(regexp_replace(trim(COALESCE(n.destinatario,'')),'\\s+',' ','g'))||'|'||upper(regexp_replace(trim(COALESCE(n.cidade,'')),'\\s+',' ','g')))
     ORDER BY n.id LIMIT 2000`, [cli])).rows;
@@ -373,8 +421,8 @@ async function rodadaLembretes(ctx, cli) {
     if (!notas.length) continue;
     try {
       if (await janelaAberta(pool, conv.telefone)) {
-        await enviar(ctx, conv, conv.telefone, { type: 'interactive', interactive: { type: 'button', body: { text: '🚚 Lembrete: a entrega da ' + nfsTexto(notas) + ' está agendada para amanhã, ' + dataLonga(amanha) + ', em horário comercial.' },
-          action: { buttons: [{ type: 'reply', reply: { id: 'confirmar:' + conv.id, title: 'Confirmar' } }, { type: 'reply', reply: { id: 'remarcar:' + conv.id, title: 'Remarcar' } }] } } }, 'Lembrete ' + amanha);
+        await enviar(ctx, conv, conv.telefone, { type: 'interactive', interactive: { type: 'button', body: { text: ANA.lembrete(primeiroNome(conv.destinatario), amanha, notas) },
+          action: { buttons: [{ type: 'reply', reply: { id: 'confirmar:' + conv.id, title: '✅ Confirmar' } }, { type: 'reply', reply: { id: 'remarcar:' + conv.id, title: '📅 Remarcar' } }] } } }, 'Lembrete ' + amanha);
       } else {
         await enviar(ctx, conv, conv.telefone, { type: 'template', template: { name: cfg.modeloLembrete, language: { code: cfg.idioma }, components: [
           { type: 'body', parameters: [{ type: 'text', text: nfsTexto(notas) }, { type: 'text', text: dataLonga(amanha) }] },
@@ -525,5 +573,5 @@ async function handle(req, res, u, { pool, sendJson, readJsonBodyLimited, dashbo
   } catch (e) { return sendJson(res, e.status || 500, { ok: false, error: e.message || 'Erro.' }), true; }
 }
 
-module.exports = { proximasDatas, feriados, pascoa, celular, chaveFone, chaveCidade, configDoAmbiente, ensureSchema, garantirRotas, gravarRotas, rotaDa,
+module.exports = { ANA, proximasDatas, feriados, pascoa, celular, chaveFone, chaveCidade, configDoAmbiente, ensureSchema, garantirRotas, gravarRotas, rotaDa,
   candidatas, rodadaOfertas, rodadaLembretes, receber, ofertar, escolherData, assinaturaOk, iniciar, handle, GRADE };
