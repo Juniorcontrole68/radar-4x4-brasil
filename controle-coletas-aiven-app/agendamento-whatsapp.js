@@ -211,9 +211,9 @@ const ANA = {
   apresentacao: 'Olá! 👋 Sou a *Ana*, atendente virtual da *Construlog* 🚚\n\nPor aqui eu agendo as suas entregas. Quando tivermos uma entrega para você, mando as datas disponíveis 📅',
   agendado: (data, notas) => '✅ *Prontinho!* Sua entrega está agendada para *' + dataLonga(data) + '*, em horário comercial.\n📦 ' + nfsTexto(notas) +
     '\n\n⚠️ *Importante:* precisa ter alguém no local para receber. Se não houver recebedor, a entrega será reagendada para até *15 dias*.\n\n🔔 Na véspera eu mando um lembrete. Precisa mudar a data? É só responder *REMARCAR*.',
-  pedeLocal: '📍 Para o motorista chegar certinho, pode me enviar a *localização* do endereço de entrega?\n\nToque no 📎 (clipe) → *Localização* → *Enviar localização atual* (se estiver no local). Se não estiver, pode mandar o link do Google Maps 🗺️',
+  pedeLocal: '📍 Para o motorista chegar certinho, pode me enviar a *localização* do endereço de entrega?\n\n📱 *Android:* toque no 📎 (clipe) → *Localização*\n🍎 *iPhone:* toque no ➕ → *Localização*\n\nSe não estiver no local, pode colar aqui o link do endereço no Google Maps 🗺️',
   localOk: '📍 Localização recebida, obrigada! Já está no seu agendamento para o motorista 🚚😊',
-  localRuim: 'Não consegui ler essa localização 😕 Tente pelo 📎 (clipe) → *Localização*, ou mande o link do Google Maps.',
+  localRuim: 'Não consegui ler essa localização 😕 Tente pelo 📎 (Android) ou ➕ (iPhone) → *Localização*, ou cole o link do Google Maps.',
   indisponivel: 'Essa data não está mais disponível 😕 Escolha outra, por favor 👇',
   paraAtendente: 'Tudo bem! 🙋‍♀️ Vou chamar uma pessoa da nossa equipe para falar com você por aqui.',
   confirmouSac: 'Recebi a sua escolha 👍 Uma pessoa da nossa equipe vai confirmar com você por aqui.',

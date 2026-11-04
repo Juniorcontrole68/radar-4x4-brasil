@@ -38,7 +38,7 @@ while (dow(SEG) !== 1 || wa.feriados(Number(SEG.slice(0, 4))).has(SEG) || [1, 2,
   const pool = new Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://teste:teste@127.0.0.1:5432/construlog_teste', ssl: false });
   await ag.ensureSchema(pool);
   await wa.ensureSchema(pool);
-  await pool.query('DELETE FROM ag_wa_mensagens;DELETE FROM ag_wa_conversas;DELETE FROM ag_rotas;DELETE FROM ag_reservas;DELETE FROM ag_eventos;DELETE FROM ag_agendamentos;DELETE FROM ag_notas;DELETE FROM ag_config');
+  await pool.query('DELETE FROM ag_wa_mensagens;DELETE FROM ag_wa_conversas;DELETE FROM ag_rotas;DELETE FROM ag_reservas;DELETE FROM ag_locais;DELETE FROM ag_eventos;DELETE FROM ag_agendamentos;DELETE FROM ag_notas;DELETE FROM ag_config');
   const cli = null;
   await ag.gravarConfig(pool, cli, { parceiros: '' }, 'teste');
 
