@@ -426,7 +426,41 @@ async function lerCru(req, max = 512 * 1024) {
 
 // Webhook da Meta: /api/whatsapp/webhook (sem login; GET valida, POST traz mensagens e status)
 // Painel (administrador): /api/painel/agendamento-whatsapp/{status,rotas,teste}
+// Política de privacidade pública do atendimento pelo WhatsApp (a Meta exige o endereço para publicar o app)
+const PRIVACIDADE = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Política de Privacidade - Agendamento de entregas CONSTRULOG</title>
+<style>body{font-family:system-ui,-apple-system,sans-serif;max-width:820px;margin:0 auto;padding:28px;color:#1f2937;line-height:1.6;background:#fff}h1{font-size:1.6rem}h2{font-size:1.15rem;margin-top:1.6em}.box{background:#f3f4f6;border-radius:8px;padding:14px 16px}</style></head><body>
+<h1>Política de Privacidade do agendamento de entregas pelo WhatsApp</h1>
+<p>Última atualização: 4 de novembro de 2026.</p>
+<p>A CONSTRULOG usa o WhatsApp (API oficial da Meta) para combinar com o destinatário o dia da entrega das mercadorias que transporta. Esta política explica quais dados usamos nesse atendimento e como.</p>
+<h2>Dados utilizados</h2>
+<ul>
+<li><b>Telefone e nome do destinatário</b>, que constam no documento de transporte (CT-e) ou na nota fiscal da mercadoria.</li>
+<li><b>Dados da entrega</b>: número da nota fiscal, remetente, cidade e endereço de entrega.</li>
+<li><b>Mensagens trocadas neste canal</b>: a data escolhida, pedidos de remarcação e as mensagens enviadas ao atendimento.</li>
+</ul>
+<h2>Finalidades</h2>
+<ul>
+<li>Oferecer as datas de entrega disponíveis para a cidade do destinatário e registrar a data escolhida.</li>
+<li>Enviar o lembrete na véspera da entrega e permitir confirmar ou remarcar.</li>
+<li>Encaminhar ao atendimento (SAC) da CONSTRULOG os casos que precisam de uma pessoa.</li>
+</ul>
+<p>Os dados não são vendidos, não são usados para publicidade e não são compartilhados com anunciantes. Não enviamos mensagens de propaganda por este canal.</p>
+<h2>Compartilhamento</h2>
+<p>As mensagens passam pela plataforma WhatsApp Business da Meta, conforme os termos do WhatsApp. Os dados ficam nos servidores do sistema da CONSTRULOG, contratados de provedores de nuvem, e são acessados pela equipe de operação e atendimento. A data agendada pode ser informada ao remetente da mercadoria (cliente da transportadora).</p>
+<h2>Retenção</h2>
+<p>O histórico do agendamento é mantido enquanto necessário para a operação, a conferência das entregas e as obrigações legais.</p>
+<h2 id="exclusao">Seus direitos</h2>
+<p>Pela Lei Geral de Proteção de Dados (LGPD), você pode pedir acesso, correção ou exclusão dos seus dados e pedir para não receber mais mensagens deste canal. Basta responder "atendente" no WhatsApp ou escrever para o contato abaixo.</p>
+<h2>Contato</h2>
+<div class="box">CONSTRULOG • Central de operação<br>E-mail: <a href="mailto:junior.controle68@gmail.com">junior.controle68@gmail.com</a></div>
+</body></html>`;
+
 async function handle(req, res, u, { pool, sendJson, readJsonBodyLimited, dashboardSession, clientes, env = process.env, fetchFn, desligado = false, testMode = false }) {
+  if (req.method === 'GET' && (u.pathname === '/whatsapp/privacidade' || u.pathname === '/whatsapp/privacidade/')) {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=300' });
+    res.end(PRIVACIDADE);
+    return true;
+  }
   const web = u.pathname === '/api/whatsapp/webhook', painel = u.pathname.startsWith('/api/painel/agendamento-whatsapp/');
   if (!web && !painel) return false;
   if (desligado) { sendJson(res, 404, { ok: false, error: 'Não disponível.' }); return true; }
