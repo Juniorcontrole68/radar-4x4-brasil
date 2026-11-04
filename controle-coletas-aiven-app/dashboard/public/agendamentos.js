@@ -243,7 +243,7 @@ function classeCor(r){
 }
 function celula(r,k,num){
   if(k==='acoes'){
-    const rs=(aba==='agendadas'||aba==='pendentes'||aba==='sem')&&r.status_agendamento!=='concluido'?botaoReserva(r):'';
+    const rs=(aba==='pendentes'||aba==='sem')&&!r.agendamento_id?botaoReserva(r):'';
     const sac=podeAgendar();
     if(!sac)return'<td class="acoes"><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
     return celulaAcoes(r).replace('<td class="acoes">','<td class="acoes">'+rs);
@@ -422,6 +422,7 @@ async function abrirLocal(notaId){
 }
 async function historico(notaId){
   dialogo('<h3>Histórico</h3><div class="ag-hist">Carregando…</div>');
+  {const d=q('#agDlg');d.classList.add('largo');d.addEventListener('close',()=>d.classList.remove('largo'),{once:true})}
   try{
     const j=await api('/api/painel/agendamentos/historico/'+encodeURIComponent(notaId)),n=j.nota;
     const T={agendado:'Agendado',reagendado:'Reagendado',observacao:'Observação alterada',cancelado:'Agendamento cancelado',entregue:'Entregue',produto:'Produto alterado',importada:'Importada do SSW',devolvida:'Devolvida (SSW)',status:'Situação no SSW',localizacao:'Localização',reservado:'Cliente reservado',reserva_liberada:'Reserva liberada'};
