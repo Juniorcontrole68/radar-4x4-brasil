@@ -94,6 +94,7 @@ const PERMISSION_OPTIONS=[
   ['motoristas','Motoristas'],
   ['filiais','Filiais'],
   ['agendamentos','Agendamentos'],
+  ['agendamentos_sac','Agendamentos • SAC: agendar, reservar cliente e inserir informações'],
   ['ajudantes','Ajudantes e Conferentes'],
   ['rotas','Rotas e Produtividade'],
   ['ocorrencias','Ocorrências e SLA'],

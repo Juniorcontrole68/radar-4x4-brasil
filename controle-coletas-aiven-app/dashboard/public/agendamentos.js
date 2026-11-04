@@ -6,6 +6,7 @@
 const q=(s,r=document)=>r.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const kg=v=>Number(v||0).toLocaleString('pt-BR',{maximumFractionDigits:1});
+const hr=v=>{if(!v)return'';const d=new Date(v);return isNaN(d)?'':d.toLocaleTimeString('pt-BR',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit'})};
 const nfmt=v=>Number(v||0).toLocaleString('pt-BR');
 const br=d=>d?String(d).slice(0,10).split('-').reverse().join('/'):'';
 const dh=v=>{if(!v)return'';const d=new Date(v);return isNaN(d)?'':d.toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'})};
@@ -26,10 +27,28 @@ const stDe=(s,r)=>(s==='pendente'&&r&&(r.agendamento_id||r.data_agendada))?'agen
 const st=(s,r)=>{s=stDe(s,r);return'<span class="ag-st '+esc(s)+'">'+esc(ROT[s]||s||'—')+'</span>'};
 
 // ------------------------------------------------------------------ painel: sincronização e indicadores
+// Sem a permissão SAC: só consulta (o formulário e os botões de agendar ficam travados)
+function podeAgendar(){return!painel||painel.pode_agendar!==false}
+function modoSac(){
+  const ok=podeAgendar(),f=q('#agForm');
+  f.querySelectorAll('input:not([readonly]),button').forEach(x=>{if(x.id!=='agSalvar')x.disabled=!ok});
+  if(!ok){q('#agSalvar').disabled=true;msg('Somente consulta: só usuários do SAC agendam. Peça ao administrador para marcar "Agendamentos • SAC" no seu usuário.','err')}
+  const imp=q('#agImpForm');if(imp)imp.querySelectorAll('input,button').forEach(x=>x.disabled=!ok);
+}
+// reserva do cliente: livre, minha ou de outro usuário
+function reservaDe(r){const v=r&&r.reserva;if(!v)return'';return painel&&String(v.usuario).toLowerCase()===String(painel.eu||'').toLowerCase()?'minha':'outro'}
+function botaoReserva(r){
+  if(!r.nota_id||!podeAgendar())return'';
+  const t=reservaDe(r),ate=r.reserva?' até '+hr(r.reserva.expira):'';
+  if(t==='minha')return'<button type="button" class="ag-mini minha" data-ac="liberar" data-nota="'+esc(r.nota_id)+'" title="Reservado para você'+esc(ate)+'. Clique para liberar.">🚩 Minha</button>';
+  if(t==='outro')return'<button type="button" class="ag-mini outro'+(painel.pode_configurar?' pode':'')+'" '+(painel.pode_configurar?'data-ac="liberar" ':'')+'data-nota="'+esc(r.nota_id)+'" title="Reservado para '+esc(r.reserva.usuario)+' desde '+esc(hr(r.reserva.em))+(painel.pode_configurar?'. Clique para liberar (administrador).':'')+'">🔒 '+esc(String(r.reserva.usuario).split(/[\s._@]/)[0])+'</button>';
+  return'<button type="button" class="ag-mini reserva" data-ac="reservar" data-nota="'+esc(r.nota_id)+'" title="Reservar este cliente para você agendar (os outros não conseguem agendar até você liberar ou o dia acabar)">🚩 Reservar</button>';
+}
 async function carregarPainel(){
   try{painel=await api('/api/painel/agendamentos/painel')}catch(e){q('#agSyncInfo').textContent=e.message;return}
   const ind=painel.indicadores,s=ind.sync||{},ok=s.ultimaOk,ul=s.ultima;
-  q('#agCfgBtn').style.display=painel.pode_configurar?'':'none';
+  q('#agCfgBtn').style.display=painel.pode_configurar?'':'none';q('#agAudBtn').style.display=painel.pode_configurar?'':'none';
+  modoSac();
   let info=ok?'Última sincronização válida com o SSW: <b>'+esc(dh(ok.finalizado_em||ok.iniciado_em))+'</b> ('+esc(ok.origem==='automatica'?'automática':'manual'+(ok.usuario?' por '+ok.usuario:''))+') • '+nfmt(ok.pendentes_ssw)+' notas pendentes no SSW':'Ainda não houve sincronização com o SSW.';
   info+=' • varredura automática às <b>'+esc(painel.config.hora_sync)+'</b>'+(painel.config.sync_ativa?'':' (desligada)');
   if(ind.rodando)info+=' • <b>sincronizando agora…</b> (pode continuar usando a tela)';
@@ -123,7 +142,7 @@ function preencher(r){
   q('#agCid').value=r?[r.cidade,r.uf].filter(Boolean).join('/'):'';q('#agPeso').value=r&&r.peso?kg(r.peso):'';
   q('#agProd').value=r&&FONTES_PROD.includes(r.produto_fonte)?r.produto||'':'';q('#agProd').title=r&&ORIGEM_PROD[r.produto_fonte]?'Produtos: '+ORIGEM_PROD[r.produto_fonte]:'';prodAuto=r&&r.produto_fonte!=='operador'&&FONTES_PROD.includes(r.produto_fonte)?{texto:r.produto||'',fonte:r.produto_fonte}:null;q('#agCte').value=r?.ctrc||'';
   q('#agRem').title=r?.endereco?'Entrega: '+r.endereco:'';q('#agDest').title=r?.endereco?'Entrega: '+r.endereco:'';
-  q('#agSalvar').disabled=!r;
+  q('#agSalvar').disabled=!r||!podeAgendar();
   const lc=q('#agLocal');lc.value='';lc.placeholder=r&&r.localizacao?'Já tem: cole outro para trocar':'Cole o link do WhatsApp';lc.title=r&&r.localizacao?'Localização guardada: '+r.localizacao.link:'';
 }
 function limparForm(){preencher(null);q('#agNf').value='';q('#agData').value='';q('#agObs').value='';q('#agLocal').value='';q('#agOpcoes').style.display='none';q('#agOpcoes').innerHTML='';msg('Digite a NF e pressione Enter: os dados vêm do SSW.');q('#agNf').focus()}
@@ -137,6 +156,7 @@ function escolher(lista,origem){
 function usarLocal(r){
   if(r.agendamento_id){preencher(null);msg('A NF '+r.nf+' já está agendada para '+br(r.data_agendada)+'. Use "Alterar" na lista Agendadas para reagendar.','err');return}
   if(r.situacao==='entregue'||r.situacao==='devolvida'){preencher(null);msg('A NF '+r.nf+' já está '+ROT[r.situacao].toLowerCase()+' no SSW e não entra no agendamento.','err');return}
+  if(reservaDe(r)==='outro'&&!painel?.pode_configurar){preencher(null);msg('O cliente '+(r.destinatario||'')+' (NF '+r.nf+') está reservado para '+r.reserva.usuario+' desde '+hr(r.reserva.em)+'. Só ele agenda até liberar.','err');return}
   preencher(r);carregarProdutos(r);msg('NF '+r.nf+' carregada ('+(ROT[r.situacao]||'')+' no SSW, consultada em '+dh(r.ultima_consulta)+'). Informe a data e clique em Agendar.','ok');q('#agData').focus()
 }
 async function buscarNf(){
@@ -211,7 +231,8 @@ function valor(r,k){
   if(k==='remetente'&&aba!=='coletas')return String(r.remetente||'').trim().split(/\s+/)[0]||'';   // só o primeiro nome
   return r[k]??''
 }
-function classe(r){
+function classe(r){return(classeCor(r)+(reservaDe(r)==='outro'?' reservado-outro':'')).trim()}
+function classeCor(r){
   const hoje=painel?.hoje||new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}),cfg=painel?.config||{dias_amarelo:2,dias_vermelho:5};
   if(aba==='pendentes'&&!r.data_agendada){if(r.dias_sem>cfg.dias_vermelho)return'vermelho';if(r.dias_sem>cfg.dias_amarelo)return'amarelo';return''}
   if(aba==='agendadas'&&r.situacao==='entregue')return'verde';
@@ -222,10 +243,21 @@ function classe(r){
 }
 function celula(r,k,num){
   if(k==='acoes'){
+    const rs=(aba==='agendadas'||aba==='pendentes'||aba==='sem')&&r.status_agendamento!=='concluido'?botaoReserva(r):'';
+    const sac=podeAgendar();
+    if(!sac)return'<td class="acoes"><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
+    return celulaAcoes(r).replace('<td class="acoes">','<td class="acoes">'+rs);
+  }
+  return celulaDado(r,k,num);
+}
+function celulaAcoes(r){
+  {
     if((aba==='agendadas'&&r.status_agendamento!=='concluido')||(aba==='pendentes'&&r.agendamento_id))return'<td class="acoes"><button type="button" class="ag-mini" data-ac="alterar" data-id="'+esc(r.agendamento_id)+'">Alterar</button><button type="button" class="ag-mini perigo" data-ac="cancelar" data-id="'+esc(r.agendamento_id)+'">Cancelar</button><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
     if(aba==='sem'||aba==='pendentes')return'<td class="acoes"><button type="button" class="ag-mini primary" data-ac="agendar" data-nota="'+esc(r.nota_id)+'">Agendar</button><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
     return'<td class="acoes"><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>'
   }
+}
+function celulaDado(r,k,num){
   if(k==='situacao')return'<td>'+st(r.situacao,r)+(r.erro_integracao&&r.situacao==='verificar'?'<div style="font-size:10px;color:#92400e">'+esc(r.erro_integracao)+'</div>':'')+'</td>';
   const v=valor(r,k);
   // destinatário: o aviso com nome, cidade e telefone aparece ao passar o mouse (ver mostrarCliente)
@@ -283,10 +315,19 @@ async function acao(b){
   const ac=b.dataset.ac;
   if(ac==='agendar'){
     const r=(ultimaLista?.rows||[]).find(x=>x.nota_id===b.dataset.nota);if(!r)return;
+    if(reservaDe(r)==='outro'&&!painel.pode_configurar){msg('O cliente '+(r.destinatario||'')+' está reservado para '+r.reserva.usuario+'. Só ele agenda até liberar.','err');return}
     q('#agNf').value=r.nf;usarLocal(r);window.scrollTo({top:0,behavior:'smooth'});q('#agForm').scrollIntoView({block:'nearest'});q('#agData').focus();return
   }
   if(ac==='hist')return historico(b.dataset.nota);
   if(ac==='local')return abrirLocal(b.dataset.nota);
+  if(ac==='reservar'||ac==='liberar'){
+    const r=(ultimaLista?.rows||[]).find(x=>String(x.nota_id)===String(b.dataset.nota));
+    if(ac==='liberar'&&reservaDe(r)==='outro'&&!confirm('Liberar a reserva de '+r.reserva.usuario+' para '+(r.destinatario||'este cliente')+'?'))return;
+    b.disabled=true;
+    try{await api('/api/painel/agendamentos/notas/'+b.dataset.nota+'/reserva',{method:ac==='reservar'?'POST':'DELETE'});msg(ac==='reservar'?'Cliente '+(r?.destinatario||'')+' reservado para você até o fim do dia.':'Reserva liberada.','ok')}
+    catch(e){msg(e.message,'err')}
+    return carregarLista();
+  }
   const r=(ultimaLista?.rows||[]).find(x=>x.agendamento_id===b.dataset.id);if(!r)return;
   if(ac==='alterar')return dialogo('<h3>Alterar / reagendar • NF '+esc(r.nf)+'</h3><div class="muted">'+esc(r.destinatario||'')+' • '+esc(r.cidade||'')+'</div><label>Data do agendamento<input name="data" type="date" required value="'+esc(r.data_agendada)+'"></label><label>Produto<input name="prod" maxlength="600" value="'+esc(r.produto||'')+'"></label><label>Motivo do reagendamento (opcional)<input name="motivo" maxlength="300"></label><label>Observação<textarea name="obs" rows="3" maxlength="1000">'+esc(r.observacao||'')+'</textarea></label>',
     async fd=>{await api('/api/painel/agendamentos/'+r.agendamento_id,{method:'PATCH',body:{data_agendada:fd.get('data'),observacao:fd.get('obs'),produto:fd.get('prod'),motivo:fd.get('motivo')}})},'Salvar');
@@ -305,6 +346,35 @@ function dialogo(html,enviar,rotulo,perigo){
   };
   if(d.open)return;if(d.showModal)d.showModal();else d.setAttribute('open','')
 }
+// ------------------------------------------------------------------ histórico de ações (administrador)
+const ROT_EV={agendado:'Agendou',reagendado:'Reagendou',observacao:'Alterou observação',cancelado:'Cancelou',entregue:'Entregue',produto:'Alterou produto',importada:'Importou do SSW',devolvida:'Devolvida (SSW)',status:'Situação no SSW',localizacao:'Localização',reservado:'Reservou cliente',reserva_liberada:'Liberou reserva'};
+async function auditoria(){
+  const hoje=painel?.hoje||'';
+  dialogo('<h3>📜 Histórico de ações dos usuários</h3><div class="muted">Tudo o que cada usuário fez no agendamento: agendar, reagendar, cancelar, reservar, produto e localização.</div>'+
+    '<form class="ag-aud-filtros" id="agAudF" onsubmit="return false"><label>Usuário<select name="usuario"><option value="">Todos</option></select></label><label>De<input type="date" name="de" value="'+esc(hoje)+'"></label><label>Até<input type="date" name="ate" value="'+esc(hoje)+'"></label>'+
+    '<label>Ação<select name="tipo"><option value="">Todas</option>'+Object.entries(ROT_EV).map(([k,v])=>'<option value="'+k+'">'+esc(v)+'</option>').join('')+'</select></label><label>NF<input name="nf" inputmode="numeric"></label><div style="display:flex;gap:4px"><button class="ag-btn primary" type="button" id="agAudOk">Filtrar</button><button class="ag-btn" type="button" id="agAudCsv">Excel (CSV)</button></div></form>'+
+    '<div id="agAudRes" class="muted">Carregando…</div>');
+  const d=q('#agDlg');d.classList.add('largo');d.addEventListener('close',()=>d.classList.remove('largo'),{once:true});
+  let ult=null;
+  const filtrar=async()=>{
+    const f=new URLSearchParams(Object.fromEntries(new FormData(q('#agAudF'))));
+    q('#agAudRes').innerHTML='Carregando…';
+    try{
+      const j=await api('/api/painel/agendamentos/auditoria?'+f);ult=j;
+      const sel=q('#agAudF [name=usuario]'),v=sel.value;sel.innerHTML='<option value="">Todos</option>'+j.usuarios.map(x=>'<option'+(x===v?' selected':'')+'>'+esc(x)+'</option>').join('');
+      q('#agAudRes').innerHTML='<b>Por usuário</b><div class="ag-aud-box" style="max-height:20vh;margin:4px 0 8px"><table><thead><tr><th>Usuário</th><th>Ações</th><th>Agendou</th><th>Reagendou</th><th>Cancelou</th><th>Reservas</th><th>Última</th></tr></thead><tbody>'+
+        (j.por_usuario.map(x=>'<tr><td><b>'+esc(x.usuario)+'</b></td><td>'+nfmt(x.acoes)+'</td><td>'+nfmt(x.agendados)+'</td><td>'+nfmt(x.reagendados)+'</td><td>'+nfmt(x.cancelados)+'</td><td>'+nfmt(x.reservas)+'</td><td>'+esc(dh(x.ultima))+'</td></tr>').join('')||'<tr><td colspan="7">Nenhuma ação no período.</td></tr>')+'</tbody></table></div>'+
+        '<b>Ações ('+nfmt(j.rows.length)+(j.rows.length>=1000?', as 1.000 mais recentes':'')+')</b><div class="ag-aud-box"><table><thead><tr><th>Quando</th><th>Usuário</th><th>Ação</th><th>NF</th><th>Cliente</th><th>De</th><th>Para</th><th>Detalhe</th></tr></thead><tbody>'+
+        (j.rows.map(e=>'<tr><td>'+esc(dh(e.criado_em))+'</td><td>'+esc(e.usuario||'(sistema)')+'</td><td>'+esc(ROT_EV[e.tipo]||e.tipo)+'</td><td>'+esc(e.nf||'')+'</td><td>'+esc(e.destinatario||'')+(e.cidade?' <span class="muted">'+esc(e.cidade)+'</span>':'')+'</td><td>'+esc(e.de||'')+'</td><td>'+esc(e.para||'')+'</td><td>'+esc(e.detalhe||'')+'</td></tr>').join('')||'<tr><td colspan="8">Nenhuma ação.</td></tr>')+'</tbody></table></div>';
+    }catch(e){q('#agAudRes').textContent=e.message}
+  };
+  q('#agAudOk').onclick=filtrar;
+  q('#agAudCsv').onclick=()=>{if(!ult)return;const c=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
+    const csv='\ufeff'+[['Quando','Usuário','Ação','NF','CT-e','Cliente','Cidade','De','Para','Detalhe'].map(c).join(';'),...ult.rows.map(e=>[dh(e.criado_em),e.usuario||'(sistema)',ROT_EV[e.tipo]||e.tipo,e.nf,e.ctrc,e.destinatario,e.cidade,e.de,e.para,e.detalhe].map(c).join(';'))].join('\r\n');
+    const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='historico-acoes-agendamento.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)};
+  filtrar();
+}
+
 // ------------------------------------------------------------------ localização do cliente
 // Link recebido no WhatsApp: abre o mapa num pop-up, guarda para as próximas notas do cliente e encaminha ao motorista.
 let motoristas=null;
@@ -354,7 +424,7 @@ async function historico(notaId){
   dialogo('<h3>Histórico</h3><div class="ag-hist">Carregando…</div>');
   try{
     const j=await api('/api/painel/agendamentos/historico/'+encodeURIComponent(notaId)),n=j.nota;
-    const T={agendado:'Agendado',reagendado:'Reagendado',observacao:'Observação alterada',cancelado:'Agendamento cancelado',entregue:'Entregue',produto:'Produto alterado',importada:'Importada do SSW',devolvida:'Devolvida (SSW)',status:'Situação no SSW',localizacao:'Localização'};
+    const T={agendado:'Agendado',reagendado:'Reagendado',observacao:'Observação alterada',cancelado:'Agendamento cancelado',entregue:'Entregue',produto:'Produto alterado',importada:'Importada do SSW',devolvida:'Devolvida (SSW)',status:'Situação no SSW',localizacao:'Localização',reservado:'Cliente reservado',reserva_liberada:'Reserva liberada'};
     q('#agDlg h3').textContent='Histórico • NF '+n.nf+(n.ctrc?' • CT-e '+n.ctrc:'');
     q('#agDlg .ag-hist').innerHTML='<div style="margin-bottom:6px">'+esc(n.remetente||'')+' → '+esc(n.destinatario||'')+' • '+esc([n.cidade,n.uf].filter(Boolean).join('/'))+' • '+kg(n.peso)+' kg • '+st(n.situacao,n)+(n.status_ssw?' <span class="muted">'+esc(n.status_ssw)+'</span>':'')+'</div>'+
       (n.endereco?'<div class="muted" style="margin-bottom:6px">Entrega: '+esc(n.endereco)+'</div>':'')+
@@ -436,7 +506,7 @@ function setup(){
   q('#agSyncBtn').onclick=sincronizar;q('#agBaixasBtn').onclick=atualizarBaixas;q('#agImpForm').onsubmit=importarFaixa;
   api('/api/painel/agendamentos/parceiros').then(j=>{q('#agImpParc').innerHTML=(j.parceiros||[]).map(t=>'<option value="'+esc(t)+'">').join('')}).catch(()=>{});
   q('#agLogBtn').onclick=logSync;
-  q('#agCfgBtn').onclick=configurar;
+  q('#agCfgBtn').onclick=configurar;q('#agAudBtn').onclick=auditoria;
   q('#agCards').onclick=e=>{const b=e.target.closest('[data-card]');if(b)clicarCard(b)};
   q('#agAbas').onclick=e=>{const b=e.target.closest('[data-aba]');if(!b)return;aba=b.dataset.aba;card='';page=1;marcarAba();carregarLista();carregarPainel()};
   q('#agFiltros').onsubmit=e=>{e.preventDefault();page=1;card='';carregarLista();carregarPainel()};

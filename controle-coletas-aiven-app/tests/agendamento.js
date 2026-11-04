@@ -336,6 +336,43 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     }
   }
 
+  console.log('SAC, reserva do cliente e histórico de ações');
+  {
+    const suf=Date.now().toString(36),entrar=async(u,perms)=>{await api('POST','/api/painel/auth/users',{username:u,password:'senha-teste-1',permissions:perms});
+      const l=await fetch(B+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:'senha-teste-1'})});
+      return{Cookie:((l.headers.get('set-cookie')||'').match(/cl_session=[^;]+/)||[''])[0]}};
+    const so=await entrar('ag_consulta_'+suf,['agendamentos']),ana=await entrar('ag_ana_'+suf,['agendamentos','agendamentos_sac']),bia=await entrar('ag_bia_'+suf,['agendamentos','agendamentos_sac']);
+    await ag.gravarNota(pool,cli,{nf:'8801',ctrc:'AMR000881-1',remetente:'CONSTRUDECOR S.A - CUMBIC',destinatario:'CLIENTE RESERVA LTDA',cidade:'GUARULHOS',uf:'SP'},{origem:'consulta',pendente:true,situacaoNova:'pendente'});
+    await ag.gravarNota(pool,cli,{nf:'8802',ctrc:'AMR000882-2',remetente:'CONSTRUDECOR S.A - CUMBIC',destinatario:'Cliente  Reserva Ltda',cidade:'Guarulhos',uf:'SP'},{origem:'consulta',pendente:true,situacaoNova:'pendente'});
+    const n1=(await api('GET','/api/painel/agendamentos/buscar-nf?nf=8801')).j.rows[0],n2=(await api('GET','/api/painel/agendamentos/buscar-nf?nf=8802')).j.rows[0];
+    let y=await api('GET','/api/painel/agendamentos/painel',undefined,so);
+    check('usuário sem SAC: painel em modo consulta',y.status===200&&y.j.pode_agendar===false,y.j.pode_agendar);
+    check('  ...não agenda',(await api('POST','/api/painel/agendamentos',{nota_id:n1.nota_id,data_agendada:dia(1)},so)).status===403);
+    check('  ...não reserva nem cola localização',(await api('POST','/api/painel/agendamentos/notas/'+n1.nota_id+'/reserva',{},so)).status===403&&(await api('PUT','/api/painel/agendamentos/notas/'+n1.nota_id+'/localizacao',{texto:'-23.5,-46.6'},so)).status===403);
+    check('  ...mas consulta a lista',(await api('GET','/api/painel/agendamentos/lista?aba=sem',undefined,so)).status===200);
+    check('usuário do SAC: pode agendar',(await api('GET','/api/painel/agendamentos/painel',undefined,ana)).j.pode_agendar===true);
+    y=await api('POST','/api/painel/agendamentos/notas/'+n1.nota_id+'/reserva',{},ana);
+    check('Ana reserva o cliente',y.status===200&&/ag_ana_/.test(y.j.reserva.usuario),y.j);
+    y=await api('GET','/api/painel/agendamentos/lista?aba=sem&nf=8802',undefined,bia);
+    check('  ...a outra NF do mesmo cliente aparece reservada para a Ana',/ag_ana_/.test(y.j.rows[0]?.reserva?.usuario||''),y.j.rows[0]);
+    y=await api('POST','/api/painel/agendamentos',{nota_id:n2.nota_id,data_agendada:dia(1)},bia);
+    check('  ...Bia não agenda o cliente reservado',y.status===423&&/reservado para ag_ana_/.test(y.j.error),y.j);
+    check('  ...Bia não toma a reserva',(await api('POST','/api/painel/agendamentos/notas/'+n2.nota_id+'/reserva',{},bia)).status===409);
+    check('  ...Bia não libera a reserva da Ana',(await api('DELETE','/api/painel/agendamentos/notas/'+n2.nota_id+'/reserva',undefined,bia)).status===403);
+    y=await api('POST','/api/painel/agendamentos',{nota_id:n1.nota_id,data_agendada:dia(1)},ana);
+    check('  ...Ana agenda',y.status===201,y.j);
+    y=await api('GET','/api/painel/agendamentos/lista?aba=sem&nf=8802',undefined,bia);
+    check('  ...ao agendar, a reserva termina',!y.j.rows[0]?.reserva,y.j.rows[0]);
+    await api('POST','/api/painel/agendamentos/notas/'+n2.nota_id+'/reserva',{},bia);
+    y=await api('DELETE','/api/painel/agendamentos/notas/'+n2.nota_id+'/reserva');
+    check('administrador libera a reserva de outro',y.status===200&&y.j.liberada===true,y.j);
+    check('histórico de ações: só o administrador',(await api('GET','/api/painel/agendamentos/auditoria',undefined,ana)).status===403);
+    y=await api('GET','/api/painel/agendamentos/auditoria?usuario=ag_ana_'+suf);
+    check('  ...mostra o que a Ana fez (reservou e agendou)',y.status===200&&y.j.rows.some(e=>e.tipo==='reservado')&&y.j.rows.some(e=>e.tipo==='agendado'&&e.nf==='8801'),y.j.rows);
+    y=await api('GET','/api/painel/agendamentos/auditoria');
+    check('  ...resumo por usuário',y.j.por_usuario.some(x=>x.usuario==='ag_ana_'+suf&&x.agendados===1&&x.reservas===1)&&y.j.usuarios.includes('ag_bia_'+suf),y.j.por_usuario);
+  }
+
   await pool.end();
   console.log('\n'+pass+' ok, '+fail+' falha(s)');
   process.exit(fail?1:0)

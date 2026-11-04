@@ -173,6 +173,18 @@ async function ensureSchema(pool) {
   await pool.query(`CREATE TABLE IF NOT EXISTS ag_locais (id BIGSERIAL PRIMARY KEY, client_id BIGINT, chave TEXT NOT NULL, link TEXT NOT NULL,
     lat DOUBLE PRECISION, lon DOUBLE PRECISION, destinatario TEXT NOT NULL DEFAULT '', cidade TEXT NOT NULL DEFAULT '', atualizado_por TEXT, atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS uq_ag_locais ON ag_locais (COALESCE(client_id,0), chave)');
+  // reserva do cliente (destinatário + cidade) para um usuário do SAC: os outros não agendam até ele liberar ou o dia acabar
+  await pool.query(`CREATE TABLE IF NOT EXISTS ag_reservas (id BIGSERIAL PRIMARY KEY, client_id BIGINT, chave TEXT NOT NULL, usuario TEXT NOT NULL,
+    usuario_id BIGINT, nota_id BIGINT, criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), expira_em TIMESTAMPTZ NOT NULL)`);
+  await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS uq_ag_reservas ON ag_reservas (COALESCE(client_id,0), chave)');
+  await pool.query('CREATE INDEX IF NOT EXISTS ix_ag_eventos_usuario ON ag_eventos (client_id, criado_em DESC)');
+  // permissão SAC (agendar e inserir informações): na primeira vez vai para quem já agendou pelo sistema
+  await pool.query('CREATE TABLE IF NOT EXISTS ag_migracoes (nome TEXT PRIMARY KEY, feito_em TIMESTAMPTZ NOT NULL DEFAULT NOW())');
+  try {
+    const m = await pool.query("INSERT INTO ag_migracoes(nome) VALUES('sac-inicial') ON CONFLICT DO NOTHING RETURNING nome");
+    if (m.rowCount) await pool.query(`UPDATE dashboard_users u SET permissions=u.permissions||'["agendamentos_sac"]'::jsonb, updated_at=NOW()
+      WHERE NOT (u.permissions ? 'agendamentos_sac') AND lower(u.username) IN (SELECT DISTINCT lower(usuario) FROM ag_eventos WHERE usuario IS NOT NULL AND tipo IN ('agendado','reagendado','cancelado','observacao','produto'))`);
+  } catch (e) { console.log('AGENDAMENTO SAC inicial: ' + (e.message || e)); }
   await pool.query('ALTER TABLE ag_config ADD COLUMN IF NOT EXISTS parceiros TEXT');   // NULL = lista padrão
   // baixa de entregue feita pelo motorista no app (entregas_comprovantes): a varredura do SSW não reabre a nota
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS baixa_motorista_em TIMESTAMPTZ');
@@ -595,7 +607,8 @@ function postJson(porta, caminho, headers, corpo, timeoutMs = 12 * 60 * 1000) {
 // destinatário + cidade em maiúsculas, sem espaços repetidos: a mesma localização serve para todas as notas do cliente
 const CHAVE_LOCAL_SQL = "upper(regexp_replace(trim(COALESCE(n.destinatario,'')),'\\s+',' ','g'))||'|'||upper(regexp_replace(trim(COALESCE(n.cidade,'')),'\\s+',' ','g'))";
 const SEL_LOCAL = `(SELECT json_build_object('link',l.link,'lat',l.lat,'lon',l.lon,'por',l.atualizado_por,'em',l.atualizado_em) FROM ag_locais l WHERE COALESCE(l.client_id,0)=COALESCE(n.client_id,0) AND l.chave=${CHAVE_LOCAL_SQL} AND ${CHAVE_LOCAL_SQL}<>'|') AS localizacao`;
-const SEL_NOTA = SEL_LOCAL + `,n.id::text AS nota_id,n.nf,n.serie,n.ctrc,n.remetente,n.pagador,n.produto_fonte,n.telefone,n.destinatario,n.cidade,n.uf,n.endereco,n.peso::float8 AS peso,n.volumes::float8 AS volumes,
+const SEL_RESERVA = `(SELECT json_build_object('usuario',r.usuario,'em',r.criado_em,'expira',r.expira_em) FROM ag_reservas r WHERE COALESCE(r.client_id,0)=COALESCE(n.client_id,0) AND r.chave=${CHAVE_LOCAL_SQL} AND r.expira_em>NOW()) AS reserva`;
+const SEL_NOTA = SEL_LOCAL + ',' + SEL_RESERVA + `,n.id::text AS nota_id,n.nf,n.serie,n.ctrc,n.remetente,n.pagador,n.produto_fonte,n.telefone,n.destinatario,n.cidade,n.uf,n.endereco,n.peso::float8 AS peso,n.volumes::float8 AS volumes,
   n.produto,n.situacao,n.status_ssw,n.previsao,to_char(n.data_emissao,'YYYY-MM-DD') AS data_emissao,to_char(n.data_entrada,'YYYY-MM-DD') AS data_entrada,
   n.ultima_consulta,n.erro_integracao,to_char(n.concluido_em,'YYYY-MM-DD') AS concluido_em,
   ((NOW() AT TIME ZONE 'America/Sao_Paulo')::date-COALESCE(n.data_entrada,n.data_emissao,(n.primeiro_visto AT TIME ZONE 'America/Sao_Paulo')::date))::int AS dias_sem`;
@@ -778,6 +791,7 @@ async function gravarLocalizacao(pool, cli, user, notaId, texto, opts) {
   const n = (await pool.query(`SELECT n.id,n.destinatario,n.cidade,${CHAVE_LOCAL_SQL} AS chave FROM ag_notas n WHERE n.id=$1 AND n.client_id IS NOT DISTINCT FROM $2`, [notaId, cli])).rows[0];
   if (!n) throw erroAg(404, 'Nota não encontrada.');
   if (n.chave === '|') throw erroAg(400, 'A nota não tem destinatário.');
+  await checarReserva(pool, cli, user, notaId);
   const loc = await lerLocalizacao(texto, opts);
   const quem = limpo(user.username || user.nome || '', 80);
   await pool.query(`INSERT INTO ag_locais(client_id,chave,link,lat,lon,destinatario,cidade,atualizado_por) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
@@ -791,6 +805,67 @@ async function apagarLocalizacao(pool, cli, user, notaId) {
   if (!n) throw erroAg(404, 'Nota não encontrada.');
   const d = await pool.query('DELETE FROM ag_locais WHERE COALESCE(client_id,0)=COALESCE($1::bigint,0) AND chave=$2 RETURNING link', [cli, n.chave]);
   if (d.rowCount) await evento(pool, cli, n.id, null, 'localizacao', d.rows[0].link, null, 'removida', limpo(user.username || '', 80));
+}
+
+// ------------------------------------------------------------------ reserva do cliente para um usuário do SAC
+const mesmoUsuario = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+async function chaveDaNota(db, cli, notaId) {
+  const n = (await db.query(`SELECT n.id,n.nf,n.destinatario,${CHAVE_LOCAL_SQL} AS chave FROM ag_notas n WHERE n.id=$1 AND n.client_id IS NOT DISTINCT FROM $2`, [notaId, cli])).rows[0];
+  if (!n) throw erro(404, 'Nota não encontrada.');
+  return n;
+}
+async function reservaAtiva(db, cli, chave) {
+  return (await db.query('SELECT usuario,criado_em,expira_em FROM ag_reservas WHERE COALESCE(client_id,0)=COALESCE($1::bigint,0) AND chave=$2 AND expira_em>NOW()', [cli, chave])).rows[0] || null;
+}
+// outro usuário reservou este cliente: só ele (ou o administrador) agenda
+async function checarReserva(db, cli, user, notaId) {
+  if (user.is_admin) return;
+  const n = await chaveDaNota(db, cli, notaId);
+  if (n.chave === '|') return;
+  const r = await reservaAtiva(db, cli, n.chave);
+  if (r && !mesmoUsuario(r.usuario, user.username))
+    throw erro(423, 'O cliente ' + (n.destinatario || '') + ' está reservado para ' + r.usuario + ' (desde ' + new Date(r.criado_em).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' }) + '). Só ele agenda até liberar.');
+}
+const FIM_DO_DIA_SQL = "((date_trunc('day', NOW() AT TIME ZONE 'America/Sao_Paulo') + interval '1 day') AT TIME ZONE 'America/Sao_Paulo')";
+async function reservar(pool, cli, user, notaId) {
+  const n = await chaveDaNota(pool, cli, notaId);
+  if (n.chave === '|') throw erro(400, 'A nota não tem destinatário.');
+  const quem = limpo(user.username, 80);
+  const q = await pool.query(`INSERT INTO ag_reservas(client_id,chave,usuario,usuario_id,nota_id,expira_em) VALUES($1,$2,$3,$4,$5,${FIM_DO_DIA_SQL})
+    ON CONFLICT (COALESCE(client_id,0),chave) DO UPDATE SET usuario=EXCLUDED.usuario,usuario_id=EXCLUDED.usuario_id,nota_id=EXCLUDED.nota_id,criado_em=NOW(),expira_em=EXCLUDED.expira_em
+      WHERE ag_reservas.expira_em<=NOW() OR lower(ag_reservas.usuario)=lower(EXCLUDED.usuario)
+    RETURNING usuario,criado_em,expira_em`, [cli, n.chave, quem, /^\d+$/.test(String(user.id || '')) ? user.id : null, n.id]);
+  if (!q.rowCount) { const r = await reservaAtiva(pool, cli, n.chave); throw erro(409, 'Este cliente já está reservado para ' + (r ? r.usuario : 'outro usuário') + '.'); }
+  await evento(pool, cli, n.id, null, 'reservado', null, quem, n.destinatario, quem);
+  return { usuario: q.rows[0].usuario, em: q.rows[0].criado_em, expira: q.rows[0].expira_em };
+}
+async function liberarReserva(pool, cli, user, notaId, motivo) {
+  const n = await chaveDaNota(pool, cli, notaId);
+  const r = await reservaAtiva(pool, cli, n.chave);
+  if (!r) return false;
+  if (!mesmoUsuario(r.usuario, user.username) && !user.is_admin) throw erro(403, 'Só ' + r.usuario + ' ou o administrador libera esta reserva.');
+  await pool.query('DELETE FROM ag_reservas WHERE COALESCE(client_id,0)=COALESCE($1::bigint,0) AND chave=$2', [cli, n.chave]);
+  await evento(pool, cli, n.id, null, 'reserva_liberada', r.usuario, null, motivo || (mesmoUsuario(r.usuario, user.username) ? '' : 'liberada pelo administrador'), limpo(user.username, 80));
+  return true;
+}
+// histórico de ações de todos os usuários (só o administrador): agendamentos, reservas, localização, produto...
+async function auditoria(pool, cli, f) {
+  const w = ['e.client_id IS NOT DISTINCT FROM $1'], p = [cli];
+  if (f.usuario) { p.push(String(f.usuario).trim().toLowerCase()); w.push('lower(e.usuario)=$' + p.length); }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(f.de || '')) { p.push(f.de); w.push("(e.criado_em AT TIME ZONE 'America/Sao_Paulo')::date>=$" + p.length); }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(f.ate || '')) { p.push(f.ate); w.push("(e.criado_em AT TIME ZONE 'America/Sao_Paulo')::date<=$" + p.length); }
+  if (f.tipo) { p.push(limpo(f.tipo, 30)); w.push('e.tipo=$' + p.length); }
+  if (normNf(f.nf)) { p.push(normNf(f.nf)); w.push('n.nf=$' + p.length); }
+  if (f.so_usuarios !== '0') w.push("e.usuario IS NOT NULL AND e.usuario<>''");
+  const where = w.join(' AND ');
+  const rows = (await pool.query(`SELECT e.id::text,e.criado_em,e.tipo,e.de,e.para,e.detalhe,e.usuario,n.nf,n.ctrc,n.destinatario,n.cidade,n.uf
+    FROM ag_eventos e LEFT JOIN ag_notas n ON n.id=e.nota_id WHERE ${where} ORDER BY e.criado_em DESC,e.id DESC LIMIT 1000`, p)).rows;
+  const porUsuario = (await pool.query(`SELECT COALESCE(e.usuario,'(sistema)') AS usuario,COUNT(*)::int AS acoes,
+      COUNT(*) FILTER (WHERE e.tipo='agendado')::int AS agendados,COUNT(*) FILTER (WHERE e.tipo='reagendado')::int AS reagendados,
+      COUNT(*) FILTER (WHERE e.tipo='cancelado')::int AS cancelados,COUNT(*) FILTER (WHERE e.tipo='reservado')::int AS reservas,MAX(e.criado_em) AS ultima
+    FROM ag_eventos e LEFT JOIN ag_notas n ON n.id=e.nota_id WHERE ${where} GROUP BY 1 ORDER BY acoes DESC`, p)).rows;
+  const usuarios = (await pool.query("SELECT DISTINCT usuario FROM ag_eventos WHERE client_id IS NOT DISTINCT FROM $1 AND usuario IS NOT NULL AND usuario<>'' ORDER BY 1", [cli])).rows.map(r => r.usuario);
+  return { rows, por_usuario: porUsuario, usuarios };
 }
 
 async function historicoNota(db, cli, notaId) {
@@ -829,6 +904,7 @@ async function agendar(pool, cli, user, b) {
       const g = await gravarNota(db, cli, nota, { origem: 'consulta', pendente: false, situacaoNova: 'pendente' });
       notaId = String(g.id);
     }
+    await checarReserva(db, cli, user, notaId);
     const n = (await db.query('SELECT id,nf,situacao,remetente,pagador FROM ag_notas WHERE id=$1 FOR UPDATE', [notaId])).rows[0];
     if (!ehParceiro(await termosDe(db, cli), n.remetente, n.pagador)) throw erro(422, 'A NF ' + n.nf + (n.remetente ? ' (' + n.remetente + ')' : '') + ' não é de um parceiro do agendamento e não entra aqui. Os parceiros ficam em ⚙ Configurar.');
     if (FINAIS.includes(n.situacao)) throw erro(409, 'A NF ' + n.nf + ' já está ' + ROTULO[n.situacao].toLowerCase() + ' no SSW e não pode ser agendada.');
@@ -841,6 +917,8 @@ async function agendar(pool, cli, user, b) {
     const q = await db.query("INSERT INTO ag_agendamentos(client_id,nota_id,data_agendada,observacao,criado_por,criado_por_nome) VALUES($1,$2,$3,$4,$5,$6) RETURNING id::text",
       [cli, notaId, data, obs || null, /^\d+$/.test(String(user.id || '')) ? user.id : null, limpo(user.username, 80)]);
     await evento(db, cli, notaId, q.rows[0].id, 'agendado', null, brData(data), obs, limpo(user.username, 80));
+    // agendou: a reserva dele para esta nota termina (as outras notas do cliente ficam livres)
+    await db.query(`DELETE FROM ag_reservas r USING ag_notas n WHERE n.id=$1 AND COALESCE(r.client_id,0)=COALESCE(n.client_id,0) AND r.chave=${CHAVE_LOCAL_SQL} AND lower(r.usuario)=lower($2)`, [notaId, limpo(user.username, 80)]);
     await db.query('COMMIT');
     return { id: q.rows[0].id, nota_id: notaId, data_agendada: data };
   } catch (e) {
@@ -857,6 +935,7 @@ async function alterar(pool, cli, user, id, b) {
     const a = (await db.query("SELECT id,nota_id,to_char(data_agendada,'YYYY-MM-DD') AS data,observacao,status FROM ag_agendamentos WHERE id=$1 AND client_id IS NOT DISTINCT FROM $2 FOR UPDATE", [id, cli])).rows[0];
     if (!a) throw erro(404, 'Agendamento não encontrado.');
     if (a.status !== 'ativo') throw erro(409, 'Este agendamento não está mais ativo.');
+    await checarReserva(db, cli, user, a.nota_id);
     const quem = limpo(user.username, 80);
     if (b.data_agendada !== undefined) {
       const d = validarData(b.data_agendada);
@@ -887,6 +966,8 @@ async function alterar(pool, cli, user, id, b) {
 
 async function cancelar(pool, cli, user, id, motivo) {
   const quem = limpo(user.username, 80);
+  const ag = (await pool.query('SELECT nota_id FROM ag_agendamentos WHERE id=$1 AND client_id IS NOT DISTINCT FROM $2', [id, cli])).rows[0];
+  if (ag) await checarReserva(pool, cli, user, ag.nota_id);
   const q = await pool.query("UPDATE ag_agendamentos SET status='cancelado',cancelado_em=NOW(),cancelado_por=$3,motivo_cancelamento=$4,atualizado_em=NOW() WHERE id=$1 AND client_id IS NOT DISTINCT FROM $2 AND status='ativo' RETURNING nota_id,to_char(data_agendada,'YYYY-MM-DD') AS data",
     [id, cli, quem, limpo(motivo, 500) || null]);
   if (!q.rowCount) throw erro(404, 'Agendamento ativo não encontrado.');
@@ -907,10 +988,14 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
       return sendJson(res, 403, { ok: false, error: 'Seu usuário não tem acesso ao Agendamento. Peça a liberação a um administrador.' });
     const cli = user.client_id ? String(user.client_id) : null;
     const f = Object.fromEntries(u.searchParams);
+    // SAC: quem agenda, reserva o cliente e insere informações. Os demais só consultam.
+    const sac = !!(user.is_admin || dashboardHas(user, 'agendamentos_sac'));
+    const escreve = (req.method !== 'GET' && (p === '/' || /^\/\d+(\/cancelar)?$/.test(p) || /^\/notas\/\d+\//.test(p) || p === '/importar'));
+    if (escreve && !sac) return sendJson(res, 403, { ok: false, error: 'Só usuários do SAC agendam e inserem informações. Peça ao administrador para marcar "Agendamentos • SAC" no seu usuário.' });
 
     if (p === '/painel' && req.method === 'GET') {
       const [ind, cfg] = await Promise.all([indicadores(pool, cli), lerConfig(pool, cli)]);
-      return sendJson(res, 200, { ok: true, indicadores: ind, config: cfg, pode_configurar: !!user.is_admin, hoje: hojeSp() });
+      return sendJson(res, 200, { ok: true, indicadores: ind, config: cfg, pode_configurar: !!user.is_admin, pode_agendar: sac, eu: limpo(user.username, 80), hoje: hojeSp() });
     }
     if (p === '/lista' && req.method === 'GET') {
       const x = await listar(pool, cli, String(f.aba || 'agendadas'), f);
@@ -947,6 +1032,15 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
       return sendJson(res, 200, { ok: true, localizacao: await gravarLocalizacao(pool, cli, user, m[1], b.texto || b.link) }), true;
     }
     if (m && req.method === 'DELETE') { await apagarLocalizacao(pool, cli, user, m[1]); return sendJson(res, 200, { ok: true }), true; }
+    // reservar o cliente para mim (POST) e liberar (DELETE)
+    m = p.match(/^\/notas\/(\d+)\/reserva$/);
+    if (m && req.method === 'POST') return sendJson(res, 200, { ok: true, reserva: await reservar(pool, cli, user, m[1]) }), true;
+    if (m && req.method === 'DELETE') { const b = await readJsonBodyLimited(req, 4 * 1024).catch(() => ({})); return sendJson(res, 200, { ok: true, liberada: await liberarReserva(pool, cli, user, m[1], limpo(b && b.motivo, 200)) }), true; }
+    // histórico de ações de todos os usuários: só o administrador (usuário master)
+    if (p === '/auditoria' && req.method === 'GET') {
+      if (!user.is_admin) return sendJson(res, 403, { ok: false, error: 'Só o administrador vê o histórico de todos os usuários.' });
+      return sendJson(res, 200, { ok: true, ...(await auditoria(pool, cli, f)) });
+    }
     // motoristas com telefone (cadastro do rastreio) para encaminhar a localização pelo WhatsApp
     if (p === '/motoristas' && req.method === 'GET') {
       if (cli) return sendJson(res, 200, { ok: true, rows: [] });

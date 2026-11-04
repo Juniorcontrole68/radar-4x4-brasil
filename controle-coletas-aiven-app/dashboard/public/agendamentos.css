@@ -64,6 +64,18 @@
 .ag-tabela tr.azul td{background:#dbeafe}
 .ag-tabela tr.verde td{background:#dcfce7}
 .ag-tabela tr.cinza td{background:#f1f5f9;color:#475569}
+.ag-mini.reserva{color:#9a3412;border-color:#fdba74}
+.ag-mini.minha{background:#ea580c;border-color:#ea580c;color:#fff}
+.ag-mini.outro{background:#f1f5f9;color:#475569;border-color:#cbd5e1;cursor:default}
+.ag-mini.outro.pode{cursor:pointer}
+.ag-tabela tr.reservado-outro td{opacity:.72}
+.ag-aud-filtros{display:grid;grid-template-columns:repeat(5,minmax(0,1fr)) auto;gap:6px;align-items:end;margin:6px 0}
+.ag-aud-box{max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:8px}
+.ag-aud-box table{width:100%;border-collapse:collapse;font-size:11.5px}
+.ag-aud-box th,.ag-aud-box td{padding:4px 6px;border-bottom:1px solid #eef2f7;text-align:left;vertical-align:top}
+.ag-aud-box th{position:sticky;top:0;background:#f8fafc}
+.ag-dlg.largo{width:min(1100px,96vw)}
+@media(max-width:700px){.ag-aud-filtros{grid-template-columns:1fr 1fr}}
 .ag-st{display:inline-block;border-radius:999px;padding:1px 7px;font-size:10px;font-weight:800;background:#e2e8f0;color:#334155;white-space:nowrap}
 .ag-st.pendente{background:#e0f2fe;color:#075985}
 .ag-st.agendado{background:#dcfce7;color:#166534}
