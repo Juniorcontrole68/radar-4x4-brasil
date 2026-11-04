@@ -3,7 +3,7 @@
 //
 // O SAC clica em "📲 WhatsApp" na nota: o sistema cria um link pessoal do cliente e abre o WhatsApp do SAC
 // com a mensagem da Ana pronta. O cliente abre o link, escolhe uma das datas válidas da rota da cidade dele
-// (mesma regra do robô: grade da opção 107, prazo, corte às 16h, sem domingo e feriado) e, se quiser, manda
+// (mesma regra do robô: grade da opção 107, prazo, corte às 18h, sem domingo e feriado) e, se quiser, manda
 // a localização. O agendamento é gravado pelo mesmo agendar()/alterar() do SAC, sem o operador digitar nada.
 //
 // Rotas: POST /api/painel/agendamento-whatsapp/link (SAC) · GET /agendar/<token> (página do cliente)

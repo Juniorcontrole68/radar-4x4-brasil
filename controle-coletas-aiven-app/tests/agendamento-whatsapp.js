@@ -19,7 +19,8 @@ while (dow(SEG) !== 1 || wa.feriados(Number(SEG.slice(0, 4))).has(SEG) || [1, 2,
   console.log('Funções puras');
   const todo = { dias: 'STQQS.', prazo: 1, entrega: true }, quaSex = { dias: '..Q.S.', prazo: 1, entrega: true };
   check('seg a sex, segunda 11h: começa na terça', wa.proximasDatas(todo, { agora: em(SEG, '11:00'), n: 3 }).join() === [mais(SEG, 1), mais(SEG, 2), mais(SEG, 3)].join(), wa.proximasDatas(todo, { agora: em(SEG, '11:00'), n: 3 }));
-  check('depois das 16h a primeira data anda um dia', wa.proximasDatas(todo, { agora: em(SEG, '16:30'), n: 1 })[0] === mais(SEG, 2));
+  check('até 17:59 ainda dá para o dia seguinte', wa.proximasDatas(todo, { agora: em(SEG, '17:59'), n: 1 })[0] === mais(SEG, 1));
+  check('a partir das 18h a primeira data anda um dia', wa.proximasDatas(todo, { agora: em(SEG, '18:00'), n: 1 })[0] === mais(SEG, 2));
   check('qua e sex: só quartas e sextas', wa.proximasDatas(quaSex, { agora: em(SEG, '11:00'), n: 4 }).every(d => [3, 5].includes(dow(d))));
   check('prazo 2 dias (Vale do Paraíba): segunda -> quarta', wa.proximasDatas({ dias: 'STQQS.', prazo: 2, entrega: true }, { agora: em(SEG, '09:00'), n: 1 })[0] === mais(SEG, 2));
   check('nunca domingo, mesmo com sábado na rota', wa.proximasDatas({ dias: 'STQQSS', prazo: 1, entrega: true }, { agora: em(SEG, '09:00'), n: 12 }).every(d => dow(d) !== 0));
