@@ -184,6 +184,8 @@ async function ensureSchema(pool) {
     aberto_em TIMESTAMPTZ, data_escolhida DATE, escolhido_em TIMESTAMPTZ)`);
   await pool.query('ALTER TABLE ag_links ADD COLUMN IF NOT EXISTS enviado_em TIMESTAMPTZ');
   await pool.query('ALTER TABLE ag_links ADD COLUMN IF NOT EXISTS enviado_por TEXT');
+  // links mandados antes desta coluna existir: o envio é a criação do link (o botão já aparece travado)
+  await pool.query('UPDATE ag_links SET enviado_em=criado_em,enviado_por=criado_por WHERE enviado_em IS NULL');
   // permissão SAC (agendar e inserir informações): na primeira vez vai para quem já agendou pelo sistema
   await pool.query('CREATE TABLE IF NOT EXISTS ag_migracoes (nome TEXT PRIMARY KEY, feito_em TIMESTAMPTZ NOT NULL DEFAULT NOW())');
   try {
