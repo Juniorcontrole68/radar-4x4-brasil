@@ -28,7 +28,7 @@ const GRADE = require('./agendamento-rotas.json');
 const USUARIO = { id: null, username: 'WhatsApp', is_admin: false };
 const DIAS_NOME = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
 const DIAS_CURTO = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-const HORA_CORTE = '16:00';          // depois disso, "amanhã" já não dá para programar: a primeira data anda um dia
+const HORA_CORTE = '18:00';          // a partir das 18h, "amanhã" já não dá para programar: a primeira data anda um dia
 const OFERTAS_POR_VEZ = 30;          // por rodada de 15 min (não estoura o limite de envio da Meta)
 const DATAS_NA_LISTA = 6;
 const HORAS_SEM_RESPOSTA = 48;
@@ -64,7 +64,7 @@ function feriados(ano) {
 const ehFeriado = iso => feriados(Number(iso.slice(0, 4))).has(iso);
 
 // ------------------------------------------------------------------ datas válidas da rota
-// dias = "STQQS." (seg a sáb, ponto = não entrega). Primeira data: hoje + prazo (mínimo 1 dia), mais um dia depois das 16h.
+// dias = "STQQS." (seg a sáb, ponto = não entrega). Primeira data: hoje + prazo (mínimo 1 dia), mais um dia a partir das 18h.
 function proximasDatas(rota, { agora = new Date(), n = DATAS_NA_LISTA, extras = [] } = {}) {
   if (!rota || !rota.entrega || !/^[STQ.]{6}$/.test(rota.dias || '') || !/[STQ]/.test(rota.dias)) return [];
   const bloqueadas = new Set(extras);
