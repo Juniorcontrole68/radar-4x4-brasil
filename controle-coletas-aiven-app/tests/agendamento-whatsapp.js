@@ -88,7 +88,11 @@ while (dow(SEG) !== 1 || wa.feriados(Number(SEG.slice(0, 4))).has(SEG) || [1, 2,
   await wa.receber(ctx, msg('wamid.IN2', { type: 'interactive', interactive: { type: 'list_reply', list_reply: { id: 'd:' + conv.id + ':' + qua, title: 'Qua' } } }));
   let ags = (await pool.query("SELECT n.nf,to_char(a.data_agendada,'YYYY-MM-DD') d,a.criado_por_nome FROM ag_agendamentos a JOIN ag_notas n ON n.id=a.nota_id WHERE a.status='ativo' ORDER BY n.nf")).rows;
   check('escolheu quarta: as duas notas agendadas pelo usuário WhatsApp', ags.length === 2 && ags.every(a => a.d === qua && a.criado_por_nome === 'WhatsApp'), ags);
-  check('confirmação enviada ao cliente', /Entrega agendada para quarta-feira/.test(enviados[enviados.length - 1].b.text.body), enviados[enviados.length - 1].b);
+  const conf = enviados[enviados.length - 2].b.text.body, pede = enviados[enviados.length - 1].b.text.body;
+  check('confirmação da Ana com a data, o aviso dos 15 dias e o REMARCAR', /Prontinho/.test(conf) && /agendada para \*quarta-feira/.test(conf) && /até \*15 dias\*/.test(conf) && /REMARCAR/.test(conf), conf);
+  check('em seguida pede a localização', /localização/.test(pede) && /📍/.test(pede), pede);
+  const lista0 = enviados.find(e => e.b.type === 'interactive' && e.b.interactive.type === 'list').b.interactive;
+  check('a lista se apresenta como a Ana, com ícones', /Sou a \*Ana\*/.test(lista0.body.text) === false && lista0.action.button === '📅 Ver datas' && /📦 NFs 5001, 5002/.test(lista0.body.text), lista0.body.text);
   check('histórico da nota mostra o agendamento', (await pool.query("SELECT COUNT(*)::int n FROM ag_eventos WHERE tipo='agendado' AND usuario='WhatsApp'")).rows[0].n === 2);
 
   console.log('Remarcação');
@@ -102,6 +106,20 @@ while (dow(SEG) !== 1 || wa.feriados(Number(SEG.slice(0, 4))).has(SEG) || [1, 2,
   ags = (await pool.query("SELECT to_char(data_agendada,'YYYY-MM-DD') d,reagendamentos FROM ag_agendamentos WHERE status='ativo'")).rows;
   check('remarcou para sexta (reagendamento, não agendamento novo)', ags.length === 2 && ags.every(a => a.d === sex && a.reagendamentos === 1), ags);
 
+  console.log('Localização');
+  await wa.receber(ctx, msg('wamid.L1', { type: 'location', location: { latitude: -22.9056, longitude: -47.0608, name: 'Loja do Zé' } }));
+  let loc = (await pool.query("SELECT link,lat,lon,atualizado_por FROM ag_locais WHERE chave='LOJA DO ZE|CAMPINAS'")).rows[0];
+  check('pino do WhatsApp vai para o campo Localização do agendamento', loc && Math.abs(loc.lat + 22.9056) < 1e-6 && /google\.com\/maps/.test(loc.link) && loc.atualizado_por === 'WhatsApp', loc);
+  check('agradece a localização', /Localização recebida/.test(enviados[enviados.length - 1].b.text.body));
+  check('histórico das duas notas mostra a localização', (await pool.query("SELECT COUNT(*)::int n FROM ag_eventos WHERE tipo='localizacao' AND usuario='WhatsApp'")).rows[0].n === 2);
+  await wa.receber(ctx, msg('wamid.L2', { type: 'text', text: { body: 'é aqui: https://www.google.com/maps/@-22.9100,-47.0700,17z' } }));
+  loc = (await pool.query("SELECT lat FROM ag_locais WHERE chave='LOJA DO ZE|CAMPINAS'")).rows[0];
+  check('link do Google Maps no texto também troca a localização', loc && Math.abs(loc.lat + 22.91) < 1e-6, loc);
+  const nLoc = enviados.length;
+  await wa.receber(ctx, msg('wamid.L3', { type: 'interactive', interactive: { type: 'list_reply', list_reply: { id: 'd:' + conv.id + ':' + mais(SEG, 3), title: 'Qui' } } }));
+  check('com a localização já guardada, remarcar não pede de novo', enviados.length === nLoc + 1 && /Prontinho/.test(enviados[nLoc].b.text.body), enviados.slice(nLoc).map(e => e.b.text && e.b.text.body));
+  await wa.receber(ctx, msg('wamid.L4', { type: 'interactive', interactive: { type: 'list_reply', list_reply: { id: 'd:' + conv.id + ':' + sex, title: 'Sex' } } }));
+
   console.log('Lembrete da véspera');
   agora = em(mais(sex, -1), '10:30');
   let l = await wa.rodadaLembretes(ctx, cli);
@@ -109,6 +127,7 @@ while (dow(SEG) !== 1 || wa.feriados(Number(SEG.slice(0, 4))).has(SEG) || [1, 2,
   check('véspera: lembrete com Confirmar / Remarcar', l === 1 && lem.type === 'interactive' && lem.interactive.type === 'button' && lem.interactive.action.buttons.length === 2, lem);
   check('não manda o lembrete duas vezes', await wa.rodadaLembretes(ctx, cli) === 0);
   await wa.receber(ctx, msg('wamid.IN6', { type: 'interactive', interactive: { type: 'button_reply', button_reply: { id: 'confirmar:' + conv.id, title: 'Confirmar' } } }));
+  check('lembrete da Ana, com o nome e o aviso do recebedor', /Aqui é a \*Ana\*/.test(lem.interactive.body.text) && /alguém no local/.test(lem.interactive.body.text) && lem.interactive.action.buttons[0].reply.title === '✅ Confirmar', lem.interactive.body.text);
   check('confirmou: agradece e registra no histórico', /confirmada/.test(enviados[enviados.length - 1].b.text.body) && (await pool.query("SELECT COUNT(*)::int n FROM ag_eventos WHERE tipo='whatsapp' AND para='confirmado'")).rows[0].n === 2);
   await pool.query("DELETE FROM ag_wa_mensagens WHERE direcao='in'");   // janela de 24 h fechada
   await pool.query('UPDATE ag_wa_conversas SET lembrete_em=NULL');
@@ -128,7 +147,7 @@ while (dow(SEG) !== 1 || wa.feriados(Number(SEG.slice(0, 4))).has(SEG) || [1, 2,
   const n1 = enviados.length;
   check('modo teste: número fora da lista não recebe nada', await wa.receber(ctx, { from: '5521911112222', id: 'wamid.IN9', type: 'text', text: { body: 'oi' } }) === 'sem_conversa' && enviados.length === n1);
   const ctxLivre = { ...ctx, cfg: wa.configDoAmbiente({ WHATSAPP_TOKEN: 't', WHATSAPP_PHONE_ID: '123' }) };
-  check('número desconhecido recebe a apresentação e nada é criado', await wa.receber(ctxLivre, { from: '5521911112222', id: 'wamid.IN10', type: 'text', text: { body: 'oi' } }) === 'sem_conversa' && enviados.length === n1 + 1 && /canal de agendamento/.test(enviados[n1].b.text.body)
+  check('número desconhecido recebe a apresentação e nada é criado', await wa.receber(ctxLivre, { from: '5521911112222', id: 'wamid.IN10', type: 'text', text: { body: 'oi' } }) === 'sem_conversa' && enviados.length === n1 + 1 && /Sou a \*Ana\*/.test(enviados[n1].b.text.body)
     && (await pool.query("SELECT COUNT(*)::int n FROM ag_wa_conversas WHERE chave_fone LIKE '5521%'")).rows[0].n === 0);
   await pool.query("UPDATE ag_wa_conversas SET estado='oferta',criado_em=NOW()-INTERVAL '49 hours',respondido_em=NULL WHERE id=$1", [c2.id]);
   rod = await wa.rodadaOfertas(ctx, cli);

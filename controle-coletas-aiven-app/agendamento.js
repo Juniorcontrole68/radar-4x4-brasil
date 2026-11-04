@@ -1107,5 +1107,5 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
   }
 }
 
-module.exports = { coordsDoTexto, lerLocalizacao, dvCtrc, faixaCtes, importarFaixa, iniciarImportacao, baixasDosMotoristas, iniciarBaixasMotoristas, OPERACIONAIS, FINAIS, ROTULO, PARCEIROS_PADRAO, normNf, normCtrc, dataBr, termosParceiros, ehParceiro, ensureSchema, lerConfig, gravarConfig, gravarNota, aplicarSnapshot, alvosDaVarredura,
+module.exports = { coordsDoTexto, lerLocalizacao, gravarLocalizacao, dvCtrc, faixaCtes, importarFaixa, iniciarImportacao, baixasDosMotoristas, iniciarBaixasMotoristas, OPERACIONAIS, FINAIS, ROTULO, PARCEIROS_PADRAO, normNf, normCtrc, dataBr, termosParceiros, ehParceiro, ensureSchema, lerConfig, gravarConfig, gravarNota, aplicarSnapshot, alvosDaVarredura,
   sincronizar, iniciarVarreduraAutomatica, postJson, listar, indicadores, buscarNf, historicoNota, agendar, alterar, cancelar, handle };
