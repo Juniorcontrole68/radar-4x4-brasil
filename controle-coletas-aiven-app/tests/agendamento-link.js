@@ -37,6 +37,13 @@ function check(name, cond, extra = '') { if (cond) { pass++; console.log('  OK  
   let erro = null; try { await lk.criarLink(pool, cli, sac, await id('7003'), 'x'); } catch (e) { erro = e; }
   check('cidade sem entrega (Osasco) não gera link', erro && erro.status === 422, erro && erro.message);
 
+  let sr = await ag.listar(pool, cli, 'sem', { link: 'sem_resposta' });
+  check('filtro "Enviado, sem resposta": as duas notas do cliente', sr.rows.map(r => r.nf).sort().join() === '7001,7002', sr.rows.map(r => r.nf));
+  check('filtro "ligar" (2+ dias): ainda nenhuma', (await ag.listar(pool, cli, 'sem', { link: 'ligar' })).rows.length === 0);
+  await pool.query("UPDATE ag_links SET enviado_em=NOW()-INTERVAL '3 days'");
+  sr = await ag.listar(pool, cli, 'sem', { link: 'ligar' });
+  check('3 dias sem resposta: aparece no filtro "ligar" com os dias', sr.rows.length === 2 && sr.rows[0].link.dias === 3, sr.rows.map(r => r.link));
+  await pool.query("UPDATE ag_links SET enviado_em=NOW()");
   console.log('Página do cliente');
   let d = await lk.dadosLink(pool, l.token);
   check('dados: nome, entrega, datas da rota e sem agendamento', d.nome === 'Mada Cabral' && /NFs 7001, 7002/.test(d.entrega) && d.datas.length === 8 && !d.agendada && !d.tem_local, d);
@@ -48,6 +55,7 @@ function check(name, cond, extra = '') { if (cond) { pass++; console.log('  OK  
   check('escolheu: as duas notas agendadas, mesmo com o cliente reservado pelo SAC', r.notas === 2 && ags.length === 2 && ags.every(a => a.d === dt && a.criado_por_nome === 'Cliente (link)'), ags);
   const loc = (await pool.query("SELECT lat FROM ag_locais WHERE chave='MADA CABRAL 1330321|CAMPINAS'")).rows[0];
   check('localização do celular vai para o campo Localização', r.localizacao && loc && Math.abs(loc.lat + 22.9056) < 1e-6, loc);
+  check('escolheu: sai do filtro "sem resposta"', (await ag.listar(pool, cli, 'sem', { link: 'sem_resposta' })).rows.length === 0);
   d = await lk.dadosLink(pool, l.token);
   check('abrindo de novo: mostra a data agendada e a localização recebida', d.agendada === dt && d.tem_local);
   const dt2 = d.datas[3].data;

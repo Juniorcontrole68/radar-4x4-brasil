@@ -211,11 +211,11 @@ function marcarAba(){document.querySelectorAll('#agAbas .ag-aba').forEach(b=>b.c
 function filtros(){
   const f={aba,page,per:PER};
   const v=(k,id)=>{const x=String(q(id).value||'').trim();if(x)f[k]=x};
-  v('de','#agFDe');v('ate','#agFAte');v('remetente','#agFRem');v('destinatario','#agFDest');v('cidade','#agFCid');v('nf','#agFNf');v('status','#agFSt');v('dias_min','#agFDias');v('q','#agFQ');
+  v('de','#agFDe');v('ate','#agFAte');v('remetente','#agFRem');v('destinatario','#agFDest');v('cidade','#agFCid');v('nf','#agFNf');v('status','#agFSt');v('dias_min','#agFDias');v('link','#agFLink');v('q','#agFQ');
   if(card==='hoje'||card==='amanha')f.card=card;
   return f
 }
-function limparFiltros(recarregar=true){['#agFDe','#agFAte','#agFRem','#agFDest','#agFCid','#agFNf','#agFSt','#agFDias','#agFQ'].forEach(id=>q(id).value='');card='';if(recarregar){page=1;marcarAba();carregarLista();carregarPainel()}}
+function limparFiltros(recarregar=true){['#agFDe','#agFAte','#agFRem','#agFDest','#agFCid','#agFNf','#agFSt','#agFDias','#agFLink','#agFQ'].forEach(id=>q(id).value='');card='';if(recarregar){page=1;marcarAba();carregarLista();carregarPainel()}}
 const COLS={
   pendentes:[['nf','NF'],['remetente','Remetente'],['destinatario','Destinatário'],['cidade','Cidade'],['peso','Peso',1],['produto','Produto'],['data_agendada','Data Agendada'],['dias_sem','Dias sem agend.',1],['situacao','Status'],['acoes','Ações']],
   agendadas:[['nf','NF'],['remetente','Remetente'],['destinatario','Destinatário'],['cidade','Cidade'],['peso','Peso',1],['produto','Produto'],['data_agendada','Data Agendada'],['observacao','Observação'],['situacao','Status'],['acoes','Ações']],
@@ -261,7 +261,7 @@ function celulaDado(r,k,num){
   if(k==='situacao')return'<td>'+st(r.situacao,r)+(r.erro_integracao&&r.situacao==='verificar'?'<div style="font-size:10px;color:#92400e">'+esc(r.erro_integracao)+'</div>':'')+'</td>';
   const v=valor(r,k);
   // destinatário: o aviso com nome, cidade e telefone aparece ao passar o mouse (ver mostrarCliente)
-  if(k==='destinatario'&&r.nota_id)return'<td class="ag-dest" data-nota="'+esc(r.nota_id)+'">'+esc(v)+(r.localizacao?'<button type="button" class="ag-pin" data-ac="local" data-nota="'+esc(r.nota_id)+'" title="Localização do cliente">📍</button>':'')+'</td>';
+  if(k==='destinatario'&&r.nota_id)return'<td class="ag-dest" data-nota="'+esc(r.nota_id)+'">'+esc(v)+(r.localizacao?'<button type="button" class="ag-pin" data-ac="local" data-nota="'+esc(r.nota_id)+'" title="Localização do cliente">📍</button>':'')+seloLink(r)+'</td>';
   return'<td class="'+(num?'n':'')+(k==='produto'?' prod':k==='observacao'?' obs':'')+'" title="'+esc(k==='produto'&&v&&ORIGEM_PROD[r.produto_fonte]?v+' ('+ORIGEM_PROD[r.produto_fonte]+')':k==='produto'||k==='observacao'||k==='remetente'||k==='destinatario'?v:'')+'">'+(k==='nf'?'<b>'+esc(v)+'</b>':k==='produto'?'<div class="ag-prod">'+esc(v)+'</div>':esc(v))+'</td>'
 }
 // Aviso sobre o destinatário: nome do cliente, cidade e telefone (do XML do CT-e/NF-e).
@@ -450,6 +450,13 @@ function configurar(){
 
 // ------------------------------------------------------------------ exportações (todas as linhas do filtro)
 // Botão do link: travado (✅ Enviado) quando o link do cliente já foi mandado hoje; amanhã libera de novo
+// Cliente que recebeu o link e ainda não escolheu a data: ⏳ até 1 dia; 📞 ligar a partir de 2 dias
+function seloLink(r){
+  const l=r.link;if(!l||l.escolhido||r.agendamento_id)return'';
+  const d=new Date(l.em).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit'});
+  return l.dias>=2?'<div class="ag-link ligar" title="Link enviado em '+esc(d)+(l.por?' por '+esc(l.por):'')+' e o cliente não escolheu a data">📞 Ligar: sem resposta há '+l.dias+' dias</div>'
+    :'<div class="ag-link" title="Link enviado'+(l.por?' por '+esc(l.por):'')+'">⏳ Link enviado '+esc(d)+', sem resposta</div>'
+}
 function botaoWa(r){
   const l=r.link;
   if(l&&l.hoje){const h=new Date(l.em).toLocaleTimeString('pt-BR',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit'});
