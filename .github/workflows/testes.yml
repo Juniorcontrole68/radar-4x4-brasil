@@ -145,6 +145,8 @@ jobs:
         run: node controle-coletas-aiven-app/tests/geo-endereco.js
       - name: Produtos do agendamento (XML da NF-e / SSW)
         run: node controle-coletas-aiven-app/tests/agendamento-produtos.js
+      - name: Localização do cliente no agendamento (link do WhatsApp, sem rede)
+        run: node controle-coletas-aiven-app/tests/agendamento-local.js
       - name: Leitura do CT-e guardado no SSW (zip do XML e tela 101, sem rede)
         run: node controle-coletas-aiven-app/tests/ssw-cte.js
       - name: Leitor de PDF (o mesmo pdftotext do servidor; sem ele os testes de romaneio completo são pulados)

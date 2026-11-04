@@ -25,7 +25,7 @@
 .ag-card b{font-size:14px;color:#0f172a;white-space:nowrap}
 .ag-card.velho b{color:#94a3b8}
 .ag-form{background:#fff;border:1px solid var(--line);border-radius:10px;padding:4px 8px;margin-bottom:5px;display:grid;gap:4px 5px;align-items:end;
-  grid-template-columns:92px minmax(0,1.2fr) minmax(0,1.2fr) minmax(0,.8fr) 64px minmax(0,1.5fr) 104px 122px minmax(0,1fr) auto auto}
+  grid-template-columns:92px minmax(0,1.2fr) minmax(0,1.2fr) minmax(0,.8fr) 64px minmax(0,1.5fr) 104px 122px minmax(0,1fr) minmax(0,.9fr) auto auto}
 .ag-l1,.ag-l2{display:contents}
 .ag-form label,.ag-filtros label{display:grid;gap:2px;font-size:10px;font-weight:700;color:#475569;min-width:0}
 .ag-form input,.ag-filtros input,.ag-filtros select,.ag-dlg input,.ag-dlg select,.ag-dlg textarea{border:1px solid var(--line);border-radius:6px;padding:0 6px;height:26px;font-size:12px;background:#fff;min-width:0;width:100%;box-sizing:border-box}
@@ -92,3 +92,11 @@ td.ag-dest{cursor:help;text-decoration:underline dotted #94a3b8;text-underline-o
 .ag-pop-nome{font-weight:800;font-size:13px;margin-bottom:3px}
 .ag-pop-rot{display:inline-block;min-width:62px;color:#64748b;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.02em}
 .ag-pop a{color:#0f766e;font-weight:700;text-decoration:none}
+.ag-pop .ag-mini{margin-left:4px}
+.ag-pin{border:0;background:none;cursor:pointer;padding:0 0 0 4px;font-size:12px;line-height:1;vertical-align:baseline}
+.ag-loc-mapa{height:260px;border-radius:8px;border:1px solid var(--line);margin:8px 0;background:#f1f5f9}
+.ag-loc-acoes{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.ag-loc-acoes a.ag-btn{text-decoration:none;display:inline-flex;align-items:center}
+.ag-loc-sec{border-top:1px solid var(--line);margin-top:10px;padding-top:8px}
+.ag-loc-sec b{font-size:12px}
+.ag-loc-link{font-size:11px;color:#475569;word-break:break-all}

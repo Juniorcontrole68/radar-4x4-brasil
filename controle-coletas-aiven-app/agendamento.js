@@ -169,6 +169,10 @@ async function ensureSchema(pool) {
   await pool.query("UPDATE ag_notas SET produto=NULL,produto_fonte=NULL,produtos_em=NULL,produtos_erro=NULL WHERE produto_fonte='ssw' AND (produto ILIKE '%REM:%' OR produto ILIKE '%QVOL:%' OR produto ILIKE '%KGREAL%' OR produto ILIKE '%KGCALC%' OR produto ILIKE '%NCM%' OR produto ILIKE '%EAN%PRODUTO%')");
   // tentativa que falhou na leitura (não por falta de produto) volta para a fila
   await pool.query("UPDATE ag_notas SET produtos_em=NULL,produtos_erro=NULL WHERE produtos_erro IS NOT NULL AND (produtos_erro ILIKE '%autenticad%' OR produtos_erro ILIKE '%Leitura do SSW respondeu%' OR produtos_erro ILIKE '%demorou demais%' OR produtos_erro ILIKE '%ECONNREFUSED%')");
+  // localização do cliente (link do Google Maps/Waze recebido pelo WhatsApp), por destinatário + cidade: vale para as próximas notas dele
+  await pool.query(`CREATE TABLE IF NOT EXISTS ag_locais (id BIGSERIAL PRIMARY KEY, client_id BIGINT, chave TEXT NOT NULL, link TEXT NOT NULL,
+    lat DOUBLE PRECISION, lon DOUBLE PRECISION, destinatario TEXT NOT NULL DEFAULT '', cidade TEXT NOT NULL DEFAULT '', atualizado_por TEXT, atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+  await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS uq_ag_locais ON ag_locais (COALESCE(client_id,0), chave)');
   await pool.query('ALTER TABLE ag_config ADD COLUMN IF NOT EXISTS parceiros TEXT');   // NULL = lista padrão
   // baixa de entregue feita pelo motorista no app (entregas_comprovantes): a varredura do SSW não reabre a nota
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS baixa_motorista_em TIMESTAMPTZ');
@@ -588,7 +592,10 @@ function postJson(porta, caminho, headers, corpo, timeoutMs = 12 * 60 * 1000) {
 }
 
 // ------------------------------------------------------------------ consultas das telas
-const SEL_NOTA = `n.id::text AS nota_id,n.nf,n.serie,n.ctrc,n.remetente,n.pagador,n.produto_fonte,n.telefone,n.destinatario,n.cidade,n.uf,n.endereco,n.peso::float8 AS peso,n.volumes::float8 AS volumes,
+// destinatário + cidade em maiúsculas, sem espaços repetidos: a mesma localização serve para todas as notas do cliente
+const CHAVE_LOCAL_SQL = "upper(regexp_replace(trim(COALESCE(n.destinatario,'')),'\\s+',' ','g'))||'|'||upper(regexp_replace(trim(COALESCE(n.cidade,'')),'\\s+',' ','g'))";
+const SEL_LOCAL = `(SELECT json_build_object('link',l.link,'lat',l.lat,'lon',l.lon,'por',l.atualizado_por,'em',l.atualizado_em) FROM ag_locais l WHERE COALESCE(l.client_id,0)=COALESCE(n.client_id,0) AND l.chave=${CHAVE_LOCAL_SQL} AND ${CHAVE_LOCAL_SQL}<>'|') AS localizacao`;
+const SEL_NOTA = SEL_LOCAL + `,n.id::text AS nota_id,n.nf,n.serie,n.ctrc,n.remetente,n.pagador,n.produto_fonte,n.telefone,n.destinatario,n.cidade,n.uf,n.endereco,n.peso::float8 AS peso,n.volumes::float8 AS volumes,
   n.produto,n.situacao,n.status_ssw,n.previsao,to_char(n.data_emissao,'YYYY-MM-DD') AS data_emissao,to_char(n.data_entrada,'YYYY-MM-DD') AS data_entrada,
   n.ultima_consulta,n.erro_integracao,to_char(n.concluido_em,'YYYY-MM-DD') AS concluido_em,
   ((NOW() AT TIME ZONE 'America/Sao_Paulo')::date-COALESCE(n.data_entrada,n.data_emissao,(n.primeiro_visto AT TIME ZONE 'America/Sao_Paulo')::date))::int AS dias_sem`;
@@ -722,6 +729,68 @@ async function buscarNf(db, cli, nf) {
   const q = await db.query('SELECT ' + SEL_NOTA + ',' + SEL_AG + " FROM ag_notas n LEFT JOIN ag_agendamentos a ON a.nota_id=n.id AND a.status='ativo' WHERE n.client_id IS NOT DISTINCT FROM $1 AND n.tipo_operacao='entrega' AND n.nf=$2 ORDER BY (n.situacao=ANY($3)) DESC, n.id DESC LIMIT 20",
     [cli, normNf(nf), OPERACIONAIS]);
   return q.rows.map(comProdutoLimpo);
+}
+
+// ------------------------------------------------------------------ localização do cliente
+// Aceita o texto colado do WhatsApp ("Localização: https://maps.app.goo.gl/..."), um link do Google Maps, Waze ou
+// Apple Maps, ou as coordenadas ("-23.55, -46.63"). Link curto é aberto no servidor só para achar as coordenadas.
+const HOSTS_MAPA = /(^|\.)(google\.(?:com|[a-z]{2})(?:\.[a-z]{2})?|goo\.gl|g\.co|g\.page|waze\.com|maps\.apple\.com|apple\.co|openstreetmap\.org|bing\.com)$/i;
+function coordsDoTexto(t) {
+  t = String(t || '');
+  try { t = decodeURIComponent(t); } catch {}
+  const ok = (a, b) => { const la = Number(a), lo = Number(b); return Number.isFinite(la) && Number.isFinite(lo) && Math.abs(la) <= 90 && Math.abs(lo) <= 180 && (la || lo) ? { lat: la, lon: lo } : null; };
+  const pads = [/!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)/, /@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/,
+    /[?&](?:q|query|ll|daddr|destination|sll|center)=(?:loc:)?(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/, /\/search\/(-?\d{1,2}\.\d+),\s*\+?(-?\d{1,3}\.\d+)/,
+    /^\s*(-?\d{1,2}\.\d+)\s*[,; ]\s*(-?\d{1,3}\.\d+)\s*$/];
+  for (const re of pads) { const m = t.match(re); const c = m && ok(m[1], m[2]); if (c) return c; }
+  return null;
+}
+async function abrirLinkCurto(link) {
+  let atual = link;
+  for (let i = 0; i < 4; i++) {
+    let r;
+    try { r = await fetch(atual, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(5000), headers: { 'User-Agent': 'Mozilla/5.0' } }); } catch { return null; }
+    const loc = r.headers.get('location');
+    if (loc) { atual = new URL(loc, atual).toString(); const c = coordsDoTexto(atual); if (c) return c; if (!HOSTS_MAPA.test(new URL(atual).hostname)) return null; continue; }
+    try { const html = (await r.text()).slice(0, 200000); return coordsDoTexto((html.match(/https?:\/\/[^"'\s]*(?:@|!3d|[?&](?:q|ll|center)=)-?\d[^"'\s]*/) || [])[0]); } catch { return null; }
+  }
+  return null;
+}
+async function lerLocalizacao(texto, { abrir = abrirLinkCurto } = {}) {
+  const t = String(texto || '').trim().slice(0, 2000);
+  if (!t) throw erroAg(400, 'Cole o link da localização.');
+  const so = coordsDoTexto(t.replace(/^[^-\d]*/, ''));
+  const url = (t.match(/https?:\/\/[^\s<>"']+/i) || [])[0];
+  if (!url) {
+    if (so) return { link: 'https://www.google.com/maps/search/?api=1&query=' + so.lat + ',' + so.lon, ...so };
+    throw erroAg(400, 'Não achei um link de mapa. Cole o link do Google Maps ou Waze, ou as coordenadas.');
+  }
+  let u; try { u = new URL(url.replace(/[).,;]+$/, '')); } catch { throw erroAg(400, 'Link inválido.'); }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') throw erroAg(400, 'Link inválido.');
+  if (!HOSTS_MAPA.test(u.hostname)) throw erroAg(400, 'Esse link não é de mapa. Use o link do Google Maps, Waze ou Apple Maps.');
+  const link = u.toString().slice(0, 1500);
+  let c = coordsDoTexto(link);
+  if (!c) c = await abrir(link).catch(() => null);
+  return { link, lat: c ? c.lat : null, lon: c ? c.lon : null };
+}
+function erroAg(status, msg) { return Object.assign(new Error(msg), { status }); }
+async function gravarLocalizacao(pool, cli, user, notaId, texto, opts) {
+  const n = (await pool.query(`SELECT n.id,n.destinatario,n.cidade,${CHAVE_LOCAL_SQL} AS chave FROM ag_notas n WHERE n.id=$1 AND n.client_id IS NOT DISTINCT FROM $2`, [notaId, cli])).rows[0];
+  if (!n) throw erroAg(404, 'Nota não encontrada.');
+  if (n.chave === '|') throw erroAg(400, 'A nota não tem destinatário.');
+  const loc = await lerLocalizacao(texto, opts);
+  const quem = limpo(user.username || user.nome || '', 80);
+  await pool.query(`INSERT INTO ag_locais(client_id,chave,link,lat,lon,destinatario,cidade,atualizado_por) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+    ON CONFLICT (COALESCE(client_id,0),chave) DO UPDATE SET link=EXCLUDED.link,lat=EXCLUDED.lat,lon=EXCLUDED.lon,atualizado_por=EXCLUDED.atualizado_por,atualizado_em=NOW()`,
+    [cli, n.chave, loc.link, loc.lat, loc.lon, limpo(n.destinatario, 120), limpo(n.cidade, 80), quem]);
+  await evento(pool, cli, n.id, null, 'localizacao', null, loc.link, loc.lat != null ? loc.lat + ',' + loc.lon : '', quem);
+  return { link: loc.link, lat: loc.lat, lon: loc.lon, por: quem, em: new Date().toISOString() };
+}
+async function apagarLocalizacao(pool, cli, user, notaId) {
+  const n = (await pool.query(`SELECT n.id,${CHAVE_LOCAL_SQL} AS chave FROM ag_notas n WHERE n.id=$1 AND n.client_id IS NOT DISTINCT FROM $2`, [notaId, cli])).rows[0];
+  if (!n) throw erroAg(404, 'Nota não encontrada.');
+  const d = await pool.query('DELETE FROM ag_locais WHERE COALESCE(client_id,0)=COALESCE($1::bigint,0) AND chave=$2 RETURNING link', [cli, n.chave]);
+  if (d.rowCount) await evento(pool, cli, n.id, null, 'localizacao', d.rows[0].link, null, 'removida', limpo(user.username || '', 80));
 }
 
 async function historicoNota(db, cli, notaId) {
@@ -871,7 +940,20 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
       const b = await readJsonBodyLimited(req, 64 * 1024);
       return sendJson(res, 201, { ok: true, ...(await agendar(pool, cli, user, b)) });
     }
-    let m = p.match(/^\/(\d+)$/);
+    // localização do cliente: gravar/trocar (PUT) e apagar (DELETE), pela nota
+    let m = p.match(/^\/notas\/(\d+)\/localizacao$/);
+    if (m && req.method === 'PUT') {
+      const b = await readJsonBodyLimited(req, 8 * 1024);
+      return sendJson(res, 200, { ok: true, localizacao: await gravarLocalizacao(pool, cli, user, m[1], b.texto || b.link) }), true;
+    }
+    if (m && req.method === 'DELETE') { await apagarLocalizacao(pool, cli, user, m[1]); return sendJson(res, 200, { ok: true }), true; }
+    // motoristas com telefone (cadastro do rastreio) para encaminhar a localização pelo WhatsApp
+    if (p === '/motoristas' && req.method === 'GET') {
+      if (cli) return sendJson(res, 200, { ok: true, rows: [] });
+      const q = await pool.query("SELECT driver_name AS nome, phone AS telefone FROM driver_tracking_contacts WHERE trim(COALESCE(phone,''))<>'' ORDER BY driver_name LIMIT 500").catch(() => ({ rows: [] }));
+      return sendJson(res, 200, { ok: true, rows: q.rows });
+    }
+    m = p.match(/^\/(\d+)$/);
     if (m && req.method === 'PATCH') {
       await alterar(pool, cli, user, m[1], await readJsonBodyLimited(req, 32 * 1024));
       return sendJson(res, 200, { ok: true });
@@ -931,5 +1013,5 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
   }
 }
 
-module.exports = { dvCtrc, faixaCtes, importarFaixa, iniciarImportacao, baixasDosMotoristas, iniciarBaixasMotoristas, OPERACIONAIS, FINAIS, ROTULO, PARCEIROS_PADRAO, normNf, normCtrc, dataBr, termosParceiros, ehParceiro, ensureSchema, lerConfig, gravarConfig, gravarNota, aplicarSnapshot, alvosDaVarredura,
+module.exports = { coordsDoTexto, lerLocalizacao, dvCtrc, faixaCtes, importarFaixa, iniciarImportacao, baixasDosMotoristas, iniciarBaixasMotoristas, OPERACIONAIS, FINAIS, ROTULO, PARCEIROS_PADRAO, normNf, normCtrc, dataBr, termosParceiros, ehParceiro, ensureSchema, lerConfig, gravarConfig, gravarNota, aplicarSnapshot, alvosDaVarredura,
   sincronizar, iniciarVarreduraAutomatica, postJson, listar, indicadores, buscarNf, historicoNota, agendar, alterar, cancelar, handle };

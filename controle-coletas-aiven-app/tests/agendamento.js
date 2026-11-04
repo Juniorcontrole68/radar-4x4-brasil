@@ -160,6 +160,25 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   x=await api('GET','/api/painel/agendamentos/lista?aba=agendadas&nf=7001');
   check('  ...e a lista mostra o que ele digitou',x.j.rows[0]?.produto==='TUBO PVC 100MM',x.j.rows);
   const ag7001=x.j.rows[0].agendamento_id;
+  // localização do cliente (link do WhatsApp): guardada por destinatário + cidade
+  {
+    const nid=x.j.rows[0].nota_id;
+    let y=await api('PUT','/api/painel/agendamentos/notas/'+nid+'/localizacao',{texto:'Localização: https://maps.google.com/maps?q=-23.4567%2C-46.5123&z=17&hl=pt-BR'});
+    check('guarda a localização colada do WhatsApp',y.status===200&&y.j.localizacao.lat===-23.4567&&y.j.localizacao.lon===-46.5123,y.j);
+    y=await api('GET','/api/painel/agendamentos/lista?aba=agendadas&nf=7001');
+    check('  ...a lista traz a localização',y.j.rows[0]?.localizacao?.link&&y.j.rows[0].localizacao.lat===-23.4567,y.j.rows[0]);
+    y=await api('PUT','/api/painel/agendamentos/notas/'+nid+'/localizacao',{texto:'https://exemplo.com/phishing'});
+    check('  ...link que não é de mapa é recusado',y.status===400,y.j);
+    y=await api('PUT','/api/painel/agendamentos/notas/'+nid+'/localizacao',{texto:'-23.5, -46.6'});
+    check('  ...coordenadas digitadas viram link do Google Maps',y.status===200&&/google\.com\/maps/.test(y.j.localizacao.link),y.j);
+    y=await api('GET','/api/painel/agendamentos/historico/'+nid);
+    check('  ...fica no histórico',y.j.eventos?y.j.eventos.some(e=>e.tipo==='localizacao'):JSON.stringify(y.j).includes('localizacao'),y.j);
+    y=await api('DELETE','/api/painel/agendamentos/notas/'+nid+'/localizacao');
+    check('  ...remove a localização',y.status===200&&!(await api('GET','/api/painel/agendamentos/lista?aba=agendadas&nf=7001')).j.rows[0].localizacao);
+    check('  ...nota de outro cliente/inexistente: 404',(await api('PUT','/api/painel/agendamentos/notas/999999/localizacao',{texto:'-23.5,-46.6'})).status===404);
+    y=await api('GET','/api/painel/agendamentos/motoristas');
+    check('lista de motoristas para encaminhar',y.status===200&&Array.isArray(y.j.rows),y.j);
+  }
   x=await api('PATCH','/api/painel/agendamentos/'+ag7001,{produto:'CAIXA D AGUA 1000L'});
   check('  ...pode trocar o produto em Alterar',x.status===200&&(await api('GET','/api/painel/agendamentos/lista?aba=agendadas&nf=7001')).j.rows[0]?.produto==='CAIXA D AGUA 1000L',x.j);
   c=await ag.aplicarSnapshot(pool,cli,{pendentes:[{nf:'7001',ctrc:'AMR000701-1',remetente:'CONSTRUDECOR S.A - CUMBIC',mercadoria:'PISOS'}],verificados:{}},null);

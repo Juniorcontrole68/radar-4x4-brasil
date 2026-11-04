@@ -124,8 +124,9 @@ function preencher(r){
   q('#agProd').value=r&&FONTES_PROD.includes(r.produto_fonte)?r.produto||'':'';q('#agProd').title=r&&ORIGEM_PROD[r.produto_fonte]?'Produtos: '+ORIGEM_PROD[r.produto_fonte]:'';prodAuto=r&&r.produto_fonte!=='operador'&&FONTES_PROD.includes(r.produto_fonte)?{texto:r.produto||'',fonte:r.produto_fonte}:null;q('#agCte').value=r?.ctrc||'';
   q('#agRem').title=r?.endereco?'Entrega: '+r.endereco:'';q('#agDest').title=r?.endereco?'Entrega: '+r.endereco:'';
   q('#agSalvar').disabled=!r;
+  const lc=q('#agLocal');lc.value='';lc.placeholder=r&&r.localizacao?'Já tem: cole outro para trocar':'Cole o link do WhatsApp';lc.title=r&&r.localizacao?'Localização guardada: '+r.localizacao.link:'';
 }
-function limparForm(){preencher(null);q('#agNf').value='';q('#agData').value='';q('#agObs').value='';q('#agOpcoes').style.display='none';q('#agOpcoes').innerHTML='';msg('Digite a NF e pressione Enter: os dados vêm do SSW.');q('#agNf').focus()}
+function limparForm(){preencher(null);q('#agNf').value='';q('#agData').value='';q('#agObs').value='';q('#agLocal').value='';q('#agOpcoes').style.display='none';q('#agOpcoes').innerHTML='';msg('Digite a NF e pressione Enter: os dados vêm do SSW.');q('#agNf').focus()}
 function escolher(lista,origem){
   const box=q('#agOpcoes');box.style.display='block';
   box.innerHTML='<div style="font-weight:700;margin-bottom:3px">Há '+lista.length+' notas com este número. Escolha a correta:</div><table><thead><tr><th>CT-e</th><th>Remetente</th><th>Destinatário</th><th>Cidade</th><th>Situação</th><th></th></tr></thead><tbody>'+
@@ -174,8 +175,10 @@ async function salvar(ev){
     const body={data_agendada:data,observacao:q('#agObs').value,produto:q('#agProd').value};
     if(prodAuto&&body.produto.trim()===prodAuto.texto.trim())body.produto_fonte=prodAuto.fonte;
     if(atual.nota_id)body.nota_id=atual.nota_id;else body.nota={...atual,produto:'',mercadoria:''};
-    await api('/api/painel/agendamentos',{method:'POST',body});
-    const nf=atual.nf;limparForm();msg('NF '+nf+' agendada para '+br(data)+'.','ok');
+    const ag=await api('/api/painel/agendamentos',{method:'POST',body});
+    const nf=atual.nf,local=q('#agLocal').value.trim();let aviso='';
+    if(local&&ag.nota_id){try{await api('/api/painel/agendamentos/notas/'+ag.nota_id+'/localizacao',{method:'PUT',body:{texto:local}});aviso=' Localização guardada.'}catch(e){aviso=' A localização não foi guardada: '+e.message}}
+    limparForm();msg('NF '+nf+' agendada para '+br(data)+'.'+aviso,aviso.includes('não foi')?'err':'ok');
     if(aba==='sem'||aba==='agendadas')carregarLista();carregarPainel()
   }catch(e){msg(e.message,'err');b.disabled=false}
 }
@@ -226,7 +229,7 @@ function celula(r,k,num){
   if(k==='situacao')return'<td>'+st(r.situacao,r)+(r.erro_integracao&&r.situacao==='verificar'?'<div style="font-size:10px;color:#92400e">'+esc(r.erro_integracao)+'</div>':'')+'</td>';
   const v=valor(r,k);
   // destinatário: o aviso com nome, cidade e telefone aparece ao passar o mouse (ver mostrarCliente)
-  if(k==='destinatario'&&r.nota_id)return'<td class="ag-dest" data-nota="'+esc(r.nota_id)+'">'+esc(v)+'</td>';
+  if(k==='destinatario'&&r.nota_id)return'<td class="ag-dest" data-nota="'+esc(r.nota_id)+'">'+esc(v)+(r.localizacao?'<button type="button" class="ag-pin" data-ac="local" data-nota="'+esc(r.nota_id)+'" title="Localização do cliente">📍</button>':'')+'</td>';
   return'<td class="'+(num?'n':'')+(k==='produto'?' prod':k==='observacao'?' obs':'')+'" title="'+esc(k==='produto'&&v&&ORIGEM_PROD[r.produto_fonte]?v+' ('+ORIGEM_PROD[r.produto_fonte]+')':k==='produto'||k==='observacao'||k==='remetente'||k==='destinatario'?v:'')+'">'+(k==='nf'?'<b>'+esc(v)+'</b>':k==='produto'?'<div class="ag-prod">'+esc(v)+'</div>':esc(v))+'</td>'
 }
 // Aviso sobre o destinatário: nome do cliente, cidade e telefone (do XML do CT-e/NF-e).
@@ -240,11 +243,13 @@ function mostrarCliente(td){
   if(!r)return;
   let pop=q('#agPop');
   if(!pop){pop=document.createElement('div');pop.id='agPop';pop.className='ag-pop';document.body.appendChild(pop);
-    pop.addEventListener('mouseenter',()=>clearTimeout(popTimer));pop.addEventListener('mouseleave',esconderCliente)}
+    pop.addEventListener('mouseenter',()=>clearTimeout(popTimer));
+    pop.addEventListener('click',e=>{const b=e.target.closest('[data-pop-local]');if(!b)return;pop.style.display='none';abrirLocal(b.dataset.popLocal)});pop.addEventListener('mouseleave',esconderCliente)}
   clearTimeout(popTimer);
   pop.innerHTML='<div class="ag-pop-nome">'+esc(r.destinatario||'—')+'</div>'+
     '<div><span class="ag-pop-rot">Cidade</span>'+esc([r.cidade,r.uf].filter(Boolean).join('/')||'—')+'</div>'+
-    '<div><span class="ag-pop-rot">Telefone</span>'+textoFone(r)+'</div>';
+    '<div><span class="ag-pop-rot">Telefone</span>'+textoFone(r)+'</div>'+
+    '<div><span class="ag-pop-rot">Local</span>'+(r.localizacao?'<a href="'+esc(r.localizacao.link)+'" target="_blank" rel="noopener">Abrir mapa</a><button type="button" class="ag-mini" data-pop-local="'+esc(r.nota_id)+'">Ver / enviar ao motorista</button>':'<span class="muted">sem link</span><button type="button" class="ag-mini" data-pop-local="'+esc(r.nota_id)+'">+ Colar link</button>')+'</div>';
   pop.style.display='block';
   const b=td.getBoundingClientRect(),w=pop.offsetWidth,h=pop.offsetHeight;
   let top=b.bottom+6,left=Math.min(b.left,window.innerWidth-w-8);
@@ -281,6 +286,7 @@ async function acao(b){
     q('#agNf').value=r.nf;usarLocal(r);window.scrollTo({top:0,behavior:'smooth'});q('#agForm').scrollIntoView({block:'nearest'});q('#agData').focus();return
   }
   if(ac==='hist')return historico(b.dataset.nota);
+  if(ac==='local')return abrirLocal(b.dataset.nota);
   const r=(ultimaLista?.rows||[]).find(x=>x.agendamento_id===b.dataset.id);if(!r)return;
   if(ac==='alterar')return dialogo('<h3>Alterar / reagendar • NF '+esc(r.nf)+'</h3><div class="muted">'+esc(r.destinatario||'')+' • '+esc(r.cidade||'')+'</div><label>Data do agendamento<input name="data" type="date" required value="'+esc(r.data_agendada)+'"></label><label>Produto<input name="prod" maxlength="600" value="'+esc(r.produto||'')+'"></label><label>Motivo do reagendamento (opcional)<input name="motivo" maxlength="300"></label><label>Observação<textarea name="obs" rows="3" maxlength="1000">'+esc(r.observacao||'')+'</textarea></label>',
     async fd=>{await api('/api/painel/agendamentos/'+r.agendamento_id,{method:'PATCH',body:{data_agendada:fd.get('data'),observacao:fd.get('obs'),produto:fd.get('prod'),motivo:fd.get('motivo')}})},'Salvar');
@@ -297,13 +303,58 @@ function dialogo(html,enviar,rotulo,perigo){
     try{await enviar(new FormData(f));d.close();carregarLista();carregarPainel()}
     catch(err){const m=f.querySelector('[data-dlg-msg]');m.textContent=err.message;m.className='ag-msg err';bt.disabled=false}
   };
-  if(d.showModal)d.showModal();else d.setAttribute('open','')
+  if(d.open)return;if(d.showModal)d.showModal();else d.setAttribute('open','')
+}
+// ------------------------------------------------------------------ localização do cliente
+// Link recebido no WhatsApp: abre o mapa num pop-up, guarda para as próximas notas do cliente e encaminha ao motorista.
+let motoristas=null;
+const urlGoogle=l=>l.lat!=null?'https://www.google.com/maps/search/?api=1&query='+l.lat+','+l.lon:l.link;
+const urlWaze=l=>l.lat!=null?'https://waze.com/ul?ll='+l.lat+','+l.lon+'&navigate=yes':'';
+function textoMotorista(r,l){
+  const dados=['📦 Entrega NF '+r.nf+(r.ctrc?' (CT-e '+r.ctrc+')':''),'Cliente: '+(r.destinatario||''),'Cidade: '+[r.cidade,r.uf].filter(Boolean).join('/'),
+    r.endereco?'Endereço: '+r.endereco:'',r.telefone?'Telefone do cliente: '+r.telefone:'',r.data_agendada?'Agendada para: '+br(r.data_agendada):'',r.volumes?'Volumes: '+nfmt(r.volumes):''].filter(Boolean);
+  return dados.join('\n')+'\n\n📍 Localização: '+urlGoogle(l)+(urlWaze(l)?'\nWaze: '+urlWaze(l):'')
+}
+function foneWa(f){let d=String(f||'').replace(/\D/g,'').replace(/^0+/,'');if(d.length===10||d.length===11)d='55'+d;return d.length>=12?d:''}
+async function abrirLocal(notaId){
+  const r=(ultimaLista?.rows||[]).find(x=>String(x.nota_id)===String(notaId));if(!r)return;
+  const l=r.localizacao;
+  dialogo('<h3>📍 Localização • '+esc(r.destinatario||'')+'</h3><div class="muted">'+esc([r.cidade,r.uf].filter(Boolean).join('/'))+' • NF '+esc(r.nf)+(r.endereco?' • '+esc(r.endereco):'')+'</div>'+
+    (l?(l.lat!=null?'<div id="agLocMapa" class="ag-loc-mapa"></div>':'<div class="ag-msg">Link sem coordenadas (o mapa não aparece aqui): abra pelo botão.</div>')+
+      '<div class="ag-loc-link">'+esc(l.link)+(l.por?' • colado por '+esc(l.por)+' em '+esc(dh(l.em)):'')+'</div>'+
+      '<div class="ag-loc-acoes"><a class="ag-btn primary" href="'+esc(urlGoogle(l))+'" target="_blank" rel="noopener">Abrir no Google Maps</a>'+(urlWaze(l)?'<a class="ag-btn" href="'+esc(urlWaze(l))+'" target="_blank" rel="noopener">Abrir no Waze</a>':'')+'<button type="button" class="ag-btn" id="agLocCopia">Copiar link</button></div>'+
+      '<div class="ag-loc-sec"><b>Encaminhar ao motorista</b><div class="muted">Abre o WhatsApp com os dados da entrega e a localização.</div>'+
+      '<label>Motorista<select id="agLocMot"><option value="">carregando…</option></select></label><label>Ou o celular do motorista<input id="agLocFone" inputmode="tel" placeholder="(11) 99999-9999"></label>'+
+      '<label>Mensagem<textarea id="agLocTexto" rows="7" maxlength="1500">'+esc(textoMotorista(r,l))+'</textarea></label>'+
+      '<div class="ag-loc-acoes"><button type="button" class="ag-btn primary" id="agLocWa">Enviar pelo WhatsApp</button><button type="button" class="ag-btn" id="agLocCopiaTxt">Copiar mensagem</button></div></div>'
+    :'<div class="ag-msg">Ainda não tem a localização deste cliente.</div>')+
+    '<div class="ag-loc-sec"><b>'+(l?'Trocar a localização':'Colar a localização')+'</b><div class="muted">Cole o link ou a mensagem de localização que o cliente mandou no WhatsApp (Google Maps, Waze ou coordenadas). Vale para as próximas notas deste cliente.</div>'+
+    '<label>Link<textarea id="agLocNovo" rows="2" maxlength="2000" placeholder="https://maps.app.goo.gl/…"></textarea></label>'+
+    '<div class="ag-loc-acoes"><button type="button" class="ag-btn primary" id="agLocSalvar">Guardar localização</button>'+(l?'<button type="button" class="ag-btn perigo" id="agLocApagar">Remover</button>':'')+'</div></div>');
+  const d=q('#agDlg'),m=d.querySelector('[data-dlg-msg]'),aviso=(t,ok)=>{m.textContent=t;m.className='ag-msg '+(ok?'ok':'err')};
+  const copiar=async t=>{try{await navigator.clipboard.writeText(t);aviso('Copiado.',true)}catch{aviso('Não consegui copiar: selecione e copie.')}};
+  const recarregar=async()=>{await carregarLista();abrirLocal(notaId)};
+  q('#agLocSalvar').onclick=async()=>{const t=q('#agLocNovo').value.trim();if(!t)return aviso('Cole o link.');const b=q('#agLocSalvar');b.disabled=true;b.textContent='Lendo o link…';
+    try{const j=await api('/api/painel/agendamentos/notas/'+notaId+'/localizacao',{method:'PUT',body:{texto:t}});r.localizacao=j.localizacao;await recarregar()}catch(e){aviso(e.message);b.disabled=false;b.textContent='Guardar localização'}};
+  if(!l)return;
+  if(q('#agLocApagar'))q('#agLocApagar').onclick=async()=>{if(!confirm('Remover a localização deste cliente?'))return;try{await api('/api/painel/agendamentos/notas/'+notaId+'/localizacao',{method:'DELETE'});r.localizacao=null;await recarregar()}catch(e){aviso(e.message)}};
+  q('#agLocCopia').onclick=()=>copiar(urlGoogle(l));
+  q('#agLocCopiaTxt').onclick=()=>copiar(q('#agLocTexto').value);
+  q('#agLocWa').onclick=()=>{
+    const f=foneWa(q('#agLocFone').value||q('#agLocMot').value);
+    if((q('#agLocFone').value||q('#agLocMot').value)&&!f)return aviso('Celular do motorista inválido.');
+    window.open('https://wa.me/'+(f||'')+'?text='+encodeURIComponent(q('#agLocTexto').value),'_blank','noopener')};
+  if(l.lat!=null&&window.L)setTimeout(()=>{const el=q('#agLocMapa');if(!el)return;const mp=L.map(el).setView([l.lat,l.lon],16);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(mp);L.marker([l.lat,l.lon]).addTo(mp).bindPopup(esc(r.destinatario||'')).openPopup();
+    d.addEventListener('close',()=>mp.remove(),{once:true})},60);
+  try{motoristas=motoristas||(await api('/api/painel/agendamentos/motoristas')).rows||[]}catch{motoristas=[]}
+  const sel=q('#agLocMot');if(sel)sel.innerHTML='<option value="">'+(motoristas.length?'Escolha o motorista':'Nenhum motorista com celular cadastrado')+'</option>'+motoristas.map(x=>'<option value="'+esc(x.telefone)+'">'+esc(x.nome)+' • '+esc(x.telefone)+'</option>').join('');
 }
 async function historico(notaId){
   dialogo('<h3>Histórico</h3><div class="ag-hist">Carregando…</div>');
   try{
     const j=await api('/api/painel/agendamentos/historico/'+encodeURIComponent(notaId)),n=j.nota;
-    const T={agendado:'Agendado',reagendado:'Reagendado',observacao:'Observação alterada',cancelado:'Agendamento cancelado',entregue:'Entregue',produto:'Produto alterado',importada:'Importada do SSW',devolvida:'Devolvida (SSW)',status:'Situação no SSW'};
+    const T={agendado:'Agendado',reagendado:'Reagendado',observacao:'Observação alterada',cancelado:'Agendamento cancelado',entregue:'Entregue',produto:'Produto alterado',importada:'Importada do SSW',devolvida:'Devolvida (SSW)',status:'Situação no SSW',localizacao:'Localização'};
     q('#agDlg h3').textContent='Histórico • NF '+n.nf+(n.ctrc?' • CT-e '+n.ctrc:'');
     q('#agDlg .ag-hist').innerHTML='<div style="margin-bottom:6px">'+esc(n.remetente||'')+' → '+esc(n.destinatario||'')+' • '+esc([n.cidade,n.uf].filter(Boolean).join('/'))+' • '+kg(n.peso)+' kg • '+st(n.situacao,n)+(n.status_ssw?' <span class="muted">'+esc(n.status_ssw)+'</span>':'')+'</div>'+
       (n.endereco?'<div class="muted" style="margin-bottom:6px">Entrega: '+esc(n.endereco)+'</div>':'')+
