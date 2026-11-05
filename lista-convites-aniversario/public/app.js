@@ -28,8 +28,9 @@ if(contactButton){
     try{
       const contacts=await navigator.contacts.select(['name','tel'],{multiple:false});
       const contact=contacts[0];if(!contact)return;
-      const numbers=[...new Set((contact.tel||[]).map(normalizeContactPhone).filter(n=>/^\d{10,11}$/.test(n)))];
-      if(!numbers.length){hint.textContent='O contato não tem um número brasileiro válido com DDD. Selecione outro ou preencha o WhatsApp manualmente.';return;}
+      const allNumbers=[...new Set((contact.tel||[]).map(normalizeContactPhone).filter(n=>/^\d{10,11}$/.test(n)))];
+      const numbers=allNumbers.filter(n=>/^\d{11}$/.test(n));
+      if(!numbers.length){hint.textContent='Nenhum celular brasileiro foi encontrado nesse contato. Números fixos foram ignorados porque não são tratados como WhatsApp pelo app. Preencha manualmente se necessário.';return;}
       if(contact.name?.[0])$('#name').value=contact.name[0];
       if(numbers.length===1){$('#phone').value=numbers[0];hint.textContent='Contato preenchido. Confira os dados e toque em Salvar.';}
       else{
@@ -38,8 +39,8 @@ if(contactButton){
         numbers.forEach(number=>{const option=document.createElement('option');option.value=number;option.textContent=number;select.append(option)});
         $('#contactNumberWrap').hidden=false;
         select.value=numbers[0];
-        hint.textContent='O primeiro número foi preenchido. Se ele não usa WhatsApp, escolha outro na lista acima.';
-        const applyNumber=()=>{$('#phone').value=select.value;hint.textContent='Número preenchido. Confira os dados e toque em Salvar.';};select.onchange=applyNumber;select.oninput=applyNumber;
+        hint.textContent='Mais de um celular foi encontrado. Escolha o número que usa WhatsApp.';
+        const applyNumber=()=>{$('#phone').value=select.value;hint.textContent='Celular selecionado. Confira se é o número de WhatsApp e toque em Salvar.';};select.onchange=applyNumber;select.oninput=applyNumber;
         select.focus();
       }
     }catch(error){
