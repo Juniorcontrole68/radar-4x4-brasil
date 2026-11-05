@@ -3278,6 +3278,11 @@ function resumoSswPorMotorista(v,data){
 // Horários pela mesma base do painel "Evolução por Motorista": os romaneios do dia na opção 38 (todas as unidades,
 // AMR, AMS...), os CT-es de cada romaneio e o rastreio do SSW de cada CT-e (data e hora da baixa "entregue").
 // Só existe para o dia corrente; o resultado fica 3 min em memória (o rastreio de cada CT-e também tem cache).
+function cnpjValido(c){
+  if(!/^\d{14}$/.test(c)||/^(\d)\1+$/.test(c))return false;
+  const dv=n=>{let s=0,p=n-7;for(let i=0;i<n;i++){s+=Number(c[i])*p--;if(p<2)p=9}const r=s%11;return r<2?0:11-r};
+  return dv(12)===Number(c[12])&&dv(13)===Number(c[13]);
+}
 let HORARIOS_ROM={at:0,data:'',rows:null,p:null};
 async function horariosRomaneiosHoje(data){
   if(data!==spDateISO()||!internalSswConfigured())return null;
@@ -3309,12 +3314,13 @@ async function horariosRomaneiosHoje(data){
       if(r&&r.entregue){diag.linhaEntregue++;ms=msBaixaSsw(r.baixaDataHora)}
       else if(!r||!r.trackingOk){
         if(!(m.cnpjs||[]).length)diag.semCnpj++;
-        for(const doc of (m.cnpjs||[]).slice(0,4)){
+        // o bloco do PDF traz CNPJs e pedaços da chave da NF-e ("3526..."): só CNPJ válido vai ao rastreio
+        for(const doc of [...new Set((m.cnpjs||[]).map(x=>String(x).replace(/\D/g,'')))].filter(cnpjValido).slice(0,4)){
           diag.consultas++;
           const tr=await trackingDestQuery(doc,m.nf,'');   // sem filtro de data: a baixa do dia é conferida abaixo
           if(diag.amostra.length<4)diag.amostra.push({ctrc:m.ctrc,nf:m.nf,doc:doc.slice(0,8),ok:tr.ok,itens:(tr.items||[]).length,entregue:tr.entregue,quando:tr.delivery?.data_hora||tr.last?.data_hora||'',erro:tr.error||''});
           if(tr.entregue){diag.entregue++;ms=msBaixaSsw(tr.delivery?.data_hora||tr.last?.data_hora);break}
-          if((tr.items||[]).length){diag.achou++;break}   // achou o CT-e e ainda não foi entregue
+          if(tr.ok&&(tr.items||[]).length){diag.achou++;break}   // achou a NF e ainda não foi entregue
         }
       }
       if(ms!=null&&spDateISO(new Date(ms))===data)g.horas.push(ms);else if(ms!=null)diag.foraDoDia++;
