@@ -116,8 +116,6 @@ async function ensureSchema(pool) {
   await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS ux_ag_agendamentos_ativo ON ag_agendamentos (nota_id) WHERE status='ativo'");
   // agendamento não cumprido (data de hoje ou já passada, sem entrega) que ganhou nova data: fica como prioridade até a entrega
   await pool.query('ALTER TABLE ag_agendamentos ADD COLUMN IF NOT EXISTS prioridade BOOLEAN NOT NULL DEFAULT FALSE');
-  // grupos de remetentes do limite diário por cidade (uma linha por grupo: "Nome: termo, termo")
-  await pool.query('ALTER TABLE ag_config ADD COLUMN IF NOT EXISTS grupos_remetentes TEXT');
   await pool.query('ALTER TABLE ag_agendamentos ADD COLUMN IF NOT EXISTS prioridade_motivo TEXT');
   await pool.query('CREATE INDEX IF NOT EXISTS ix_ag_agendamentos_data ON ag_agendamentos (client_id, status, data_agendada)');
   await pool.query(`CREATE TABLE IF NOT EXISTS ag_eventos (
@@ -160,6 +158,8 @@ async function ensureSchema(pool) {
     atualizado_por TEXT,
     atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
+  // grupos de remetentes do limite diário por cidade (uma linha por grupo: "Nome: termo, termo")
+  await pool.query('ALTER TABLE ag_config ADD COLUMN IF NOT EXISTS grupos_remetentes TEXT');
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS pagador TEXT');
   // de onde veio o nome dos produtos (xml/nfe/ssw_xml/danfe = itens da NF-e; cte = produto predominante) e quando foi buscado
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS produto_fonte TEXT');
