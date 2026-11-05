@@ -13,7 +13,7 @@ function syncInvitedChoice(){const choice=$('#invitedChoice');if(!choice)return;
 if($('#invitedChoice'))$('#invitedChoice').onchange=()=>{syncInvitedChoice();if($('#invitedChoice').value==='more'){$('#invited').value='';$('#invited').focus();}};
 function openGuest(g=null){resetContactPicker();$('#guestTitle').textContent=g?'Editar convidado':'Novo convidado';$('#guestId').value=g?.id||'';$('#name').value=g?.name||'';$('#phone').value=g?.phone||'';$('#invited').value=g?.invited||1;if($('#invitedChoice')){$('#invitedChoice').value=Number(g?.invited||1)>5?'more':String(g?.invited||1);syncInvitedChoice();}$('#confirmed').value=g?.confirmed??'';$('#attendees').value=(g?.attendees||[]).join('\n');$('#note').value=g?.note||'';$('#guestDlg').showModal()}
 
-function normalizeContactPhone(value){let digits=String(value||'').replace(/\D/g,'');if(digits.startsWith('00'))digits=digits.slice(2);if(digits.startsWith('55')&&(digits.length===12||digits.length===13))digits=digits.slice(2);return digits;}
+function normalizeContactPhone(value){let digits=String(value||'').replace(/\D/g,'');if(digits.startsWith('00'))digits=digits.slice(2);if(digits.startsWith('55')&&(digits.length===12||digits.length===13))digits=digits.slice(2);if(digits.length>11&&digits.startsWith('0'))digits=digits.replace(/^0+/,'');return digits.slice(-11);}
 function resetContactPicker(){const wrap=$('#contactNumberWrap');if(wrap)wrap.hidden=true;const hint=$('#contactHint');if(hint)hint.textContent='';}
 const contactButton=$('#selectContact');
 if(contactButton){
@@ -70,9 +70,10 @@ window.sendWa=async id=>{
   const when=[e.date?fmtDate(e.date):'',e.time?`às ${e.time}`:''].filter(Boolean).join(' ');
   const cleanMessage=String(e.message||'').replace(/ter você comigo/gi,'ter você conosco').replace(/ter voce comigo/gi,'ter voce conosco');
   const text=`Olá, ${g.name}! 🎉\n\nVenha comemorar com a gente! Junior e Carol${when?` — ${when}`:''}.${e.venue?`\n📍 ${e.venue}`:''}${e.address?` - ${e.address}`:''}\n\n${cleanMessage}\n\nConfirme sua presença aqui:\n${link}`;
-  await api('/api/guests/'+id+'/mark-sent',{method:'POST',body:'{}'});
-  window.open(`https://wa.me/55${normalizeContactPhone(g.phone)}?text=${encodeURIComponent(text)}`,'_blank');
-  await load();
+  const phone=normalizeContactPhone(g.phone);
+  if(!/^\\d{11}$/.test(phone)){alert('O número de WhatsApp deste convidado não é válido. Edite o contato e escolha um celular com DDD.');return;}
+  api('/api/guests/'+id+'/mark-sent',{method:'POST',body:'{}'}).catch(()=>{});
+  location.href=`https://wa.me/55${phone}?text=${encodeURIComponent(text)}`;
 };
 
 window.sendInviteOnly=async id=>{
