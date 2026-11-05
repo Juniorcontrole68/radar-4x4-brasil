@@ -39,7 +39,9 @@ await redis.connect();
 
 async function load() {
   const raw = await redis.get(KEY);
-  return raw ? JSON.parse(raw) : structuredClone(EMPTY);
+  const data = raw ? JSON.parse(raw) : structuredClone(EMPTY);
+  data.guests = (data.guests || []).map(g => ({ ...g, attendees: Array.isArray(g.attendees) ? g.attendees : [] }));
+  return data;
 }
 
 async function save(data) {
@@ -47,7 +49,7 @@ async function save(data) {
 }
 
 function guestPublic(g) {
-  return { id:g.id, name:g.name, invited:g.invited, status:g.status, confirmed:g.confirmed };
+  return { id:g.id, name:g.name, invited:g.invited, status:g.status, confirmed:g.confirmed, attendees:Array.isArray(g.attendees)?g.attendees:[] };
 }
 
 app.use(express.json({ limit: '15mb' }));
@@ -134,6 +136,7 @@ app.post('/api/guests', async (req, res, next) => {
       phone: String(body.phone || '').replace(/\D/g, ''),
       invited: Math.max(1, Number(body.invited || 1)),
       confirmed: null,
+      attendees: [],
       status: 'pendente',
       sentAt: null,
       answeredAt: null,
@@ -154,6 +157,7 @@ app.put('/api/guests/:id', async (req, res, next) => {
     Object.assign(guest, req.body || {});
     if (req.body?.phone !== undefined) guest.phone = String(req.body.phone).replace(/\D/g, '');
     if (req.body?.invited !== undefined) guest.invited = Math.max(1, Number(req.body.invited || 1));
+    if (req.body?.attendees !== undefined) guest.attendees = Array.isArray(req.body.attendees) ? req.body.attendees.map(x=>String(x||'').trim()).filter(Boolean) : [];
     await save(data);
     res.json(guest);
   } catch (e) { next(e); }
@@ -201,14 +205,20 @@ app.post('/api/invite/:id/respond', async (req, res, next) => {
 
     if (response === 'yes') {
       const confirmed = Math.max(1, Math.floor(Number(req.body?.confirmed || 1)));
+      const attendees = Array.isArray(req.body?.attendees)
+        ? req.body.attendees.map(x=>String(x||'').trim()).filter(Boolean).slice(0, confirmed)
+        : [];
       guest.confirmed = confirmed;
+      guest.attendees = attendees;
       if (confirmed > Number(guest.invited || 0)) guest.invited = confirmed;
       guest.status = 'confirmado';
     } else if (response === 'maybe') {
       guest.confirmed = null;
+      guest.attendees = [];
       guest.status = 'talvez';
     } else if (response === 'no') {
       guest.confirmed = 0;
+      guest.attendees = [];
       guest.status = 'nao-vai';
     } else {
       return res.status(400).json({ error: 'Resposta inválida' });
