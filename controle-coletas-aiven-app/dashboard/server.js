@@ -3296,7 +3296,10 @@ async function horariosRomaneiosHoje(data){
   if(HORARIOS_ROM.data===data&&HORARIOS_ROM.rows&&Date.now()-HORARIOS_ROM.at<3*60*1000)return HORARIOS_ROM.rows;
   if(HORARIOS_ROM.p&&HORARIOS_ROM.data===data)return HORARIOS_ROM.p;
   const p=(async()=>{
-    const key='online|'+data+'|'+data,v=(SSW_DRIVER_CACHE.get(key)||{}).value||(SSW_DRIVER_LAST?.key===key?SSW_DRIVER_LAST.value:null);
+    const key='online|'+data+'|'+data;
+    let v=(SSW_DRIVER_CACHE.get(key)||{}).value||(SSW_DRIVER_LAST?.key===key?SSW_DRIVER_LAST.value:null);
+    // sem a leitura do painel Saídas x Baixas em memória (ex.: logo após reiniciar), espera por ela: é dali que vêm as horas
+    if(!v||!(v.rows||[]).length)v=await Promise.race([ensureSswMotoristasRefresh(data,data).catch(()=>null),new Promise(r=>setTimeout(()=>r(v),90000))]);
     let roms=(v&&v.romaneios38)||[];
     if(!roms.length){const quick=await fetchSsw38QuickTodas();for(const q of quick)if(q.status==='fulfilled')roms.push(...(q.value?.rows||[]))}
     roms=roms.filter(x=>x&&x.romaneio&&x.motorista);
@@ -3308,8 +3311,10 @@ async function horariosRomaneiosHoje(data){
     await mapLimit(roms.filter(x=>!(x.ctrcMeta&&x.ctrcMeta.length)),3,async x=>{try{const det=await fetchSsw38RomaneioDetailDirect(x.romaneio,x.qtdeCtrcs,x.motorista,x.veiculo);x.__meta=det.ctrcMeta&&det.ctrcMeta.length?det.ctrcMeta:(det.ctrcNfs||[]).map(p=>({ctrc:p.ctrc,nf:p.nf,cnpjs:[]}))}catch(e){x.__meta=[]}});
     for(const x of roms){
       const k=tokensMotorista(x.motorista).join(' ');if(!k)continue;
-      if(!mots.has(k))mots.set(k,{motorista:String(x.motorista).trim(),placa:String(x.veiculo||'').toUpperCase(),saidas:0,horas:[],romaneios:new Set()});
-      const g=mots.get(k);if(g.romaneios.has(x.romaneio))continue;g.romaneios.add(x.romaneio);g.saidas+=Number(x.qtdeCtrcs||0);if(!g.placa&&x.veiculo)g.placa=String(x.veiculo).toUpperCase();
+      if(!mots.has(k))mots.set(k,{motorista:String(x.motorista).trim(),placa:String(x.veiculo||'').toUpperCase(),saidas:0,baixadas:0,horas:[],romaneios:new Set()});
+      const g=mots.get(k);if(g.romaneios.has(x.romaneio))continue;g.romaneios.add(x.romaneio);g.saidas+=Number(x.qtdeCtrcs||0);
+      // mesma conta do painel de evolução: CT-es do romaneio menos os que ainda estão sem ocorrência ("Falta Ocorr.")
+      g.baixadas+=Math.max(0,Number(x.qtdeCtrcs||0)-Math.max(0,Number(x.faltaOcorr||0)));if(!g.placa&&x.veiculo)g.placa=String(x.veiculo).toUpperCase();
       const meta=(x.ctrcMeta&&x.ctrcMeta.length)?x.ctrcMeta:(x.__meta||[]);
       for(const m of meta)tarefas.push({g,m});
     }
@@ -3334,20 +3339,24 @@ async function horariosRomaneiosHoje(data){
       }
       if(ms!=null&&spDateISO(new Date(ms))===data)g.horas.push(ms);else if(ms!=null)diag.foraDoDia++;
     });
-    const rows=[...mots.values()].map(g=>({motorista:g.motorista,placa:g.placa,saidas:g.saidas,entregas:g.horas.length,
+    const rows=[...mots.values()].map(g=>({motorista:g.motorista,placa:g.placa,saidas:g.saidas,entregas:Math.max(g.horas.length,g.baixadas),com_horario:g.horas.length,
       primeira_entrega_em:g.horas.length?new Date(Math.min(...g.horas)).toISOString():null,ultima_entrega_em:g.horas.length?new Date(Math.max(...g.horas)).toISOString():null}));
     const resumoDiag={romaneios:roms.length,ctes:tarefas.length,motoristas:rows.length,comEntrega:rows.filter(x=>x.entregas).length,linhas:((v&&v.rows)||[]).length,diag};
     console.log('SAIDAS MOTORISTA horários dos romaneios: '+JSON.stringify(resumoDiag));HORARIOS_DIAG=resumoDiag;
     return rows;
   })();
   HORARIOS_ROM={...HORARIOS_ROM,data,p};
-  try{const rows=await p;HORARIOS_ROM={at:Date.now(),data,rows,p:null};return rows}
+  // sem nenhuma hora (cache do painel ainda vazio): guarda só 30 s para tentar de novo logo
+  try{const rows=await p;HORARIOS_ROM={at:Date.now()-(rows&&rows.some(x=>x.com_horario)?0:150000),data,rows,p:null};return rows}
   catch(e){HORARIOS_ROM={at:0,data,rows:null,p:null};throw e}
 }
 // Resumo do dia por motorista: romaneios + rastreio de cada CT-e; na falta, as linhas do painel Saídas x Baixas
 async function resumoDoDia(data,v){
-  const h=await Promise.race([horariosRomaneiosHoje(data).catch(e=>{console.log('SAIDAS MOTORISTA romaneios: '+String(e.message||e));return null}),new Promise(r=>setTimeout(()=>r(null),25000))]);
-  return h&&h.some(x=>x.entregas||x.saidas)?h:resumoSswPorMotorista(v,data);
+  const h=await Promise.race([horariosRomaneiosHoje(data).catch(e=>{console.log('SAIDAS MOTORISTA romaneios: '+String(e.message||e));return null}),new Promise(r=>setTimeout(()=>r(null),40000))]);
+  if(!(h&&h.some(x=>x.entregas||x.saidas)))return resumoSswPorMotorista(v,data);
+  // romaneio sem nenhuma hora: completa com as horas do painel Saídas x Baixas para o mesmo motorista
+  if(!h.some(x=>x.com_horario)&&v){const r=resumoSswPorMotorista(v,data);for(const x of h){const t=tokensMotorista(x.motorista);const y=r.find(z=>mesmoMotorista(tokensMotorista(z.motorista),t,true));if(y){x.primeira_entrega_em=y.primeira_entrega_em;x.ultima_entrega_em=y.ultima_entrega_em}}}
+  return h;
 }
 // grava a foto do dia no servidor principal (no máximo a cada 5 min por dia), para consultar depois
 const SSW_DIA_SALVO=new Map();
