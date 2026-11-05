@@ -53,6 +53,10 @@ async function call(method,path,{body,cookie,bearer,headers}={}){
     r=await call('GET','/api/painel/saidas-motorista?data='+hojeSm,{cookie});
     check('saídas por motorista: carregamento do dia com a hora, sem a descarga',r.status===200&&r.json?.ok===true&&r.json.carregamentos.length===1&&r.json.carregamentos[0].motorista==='MOTORISTA CARGA'&&!!r.json.carregamentos[0].carregou_em&&Array.isArray(r.json.app),r.status+' '+r.text.slice(0,200));
     r=await call('GET','/api/painel/saidas-motorista?data=ontem',{cookie}); check('saídas por motorista: data inválida -> 400',r.status===400,'veio '+r.status);
+    r=await call('POST','/api/painel/saidas-motorista/ssw',{cookie,body:{data:hojeSm,rows:[{motorista:'X',entregas:1}]}});
+    check('só o dashboard (chave interna) grava a foto do SSW',r.status===401,'veio '+r.status);
+    r=await call('GET','/api/painel/saidas-motorista?data='+hojeSm,{cookie});
+    check('saídas por motorista: campo da foto do SSW presente e sem gravação de fora',Array.isArray(r.json?.ssw)&&r.json.ssw.length===0,r.text.slice(0,160));
     r=await call('GET','/api/ssw/saidas-motorista?data='+hojeSm,{cookie});
     const linSm=(r.json?.rows||[]).find(x=>x.motorista==='Motorista Carga');
     check('dashboard -> consulta por motorista mostra quando carregou',r.status===200&&r.json?.ok===true&&linSm&&/^\d\d:\d\d$/.test(linSm.carregou)&&linSm.fontes.includes('Registro de carga'),r.status+' '+r.text.slice(0,240));
