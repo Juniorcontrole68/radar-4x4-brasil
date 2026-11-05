@@ -26,7 +26,8 @@ function check(name, cond, extra = '') { if (cond) { pass++; console.log('  OK  
   console.log('Link do SAC');
   const l = await lk.criarLink(pool, cli, sac, await id('7001'), 'https://exemplo.test');
   check('link com as duas notas do cliente e o WhatsApp do celular da nota', l.notas.join() === '7001,7002' && l.telefone === '5519991587277' && l.whatsapp.startsWith('https://wa.me/5519991587277?text=') && l.url === 'https://exemplo.test/agendar/' + l.token, l);
-  check('mensagem da Ana com nome limpo, NFs, cidade, link e aviso dos 15 dias', /Olá, Mada Cabral! 👋 Sou a \*Ana\*/.test(l.texto) && /NFs 7001, 7002 — QUADRI COMERCIO/.test(l.texto) && l.texto.includes(l.url) && /15 dias/.test(l.texto), l.texto);
+  check('mensagem com primeiro nome, loja, NFs, cidade, link, sem cobrança e aviso dos 15 dias', /Olá, Mada!/.test(l.texto) && !/Ana/.test(l.texto) && /sua compra na \*Quadri\*/.test(l.texto) && /Nota fiscal: 7001, 7002/.test(l.texto)
+    && /Campinas\/SP/.test(l.texto) && l.texto.includes(l.url) && /não pedimos pagamento/.test(l.texto) && /15 dias/.test(l.texto) && /Não reconhece esta compra/.test(l.texto), l.texto);
   let e2 = null; try { await lk.criarLink(pool, cli, sac, await id('7002'), 'https://exemplo.test'); } catch (e) { e2 = e; }
   check('mesmo cliente no mesmo dia: travado até amanhã', e2 && e2.status === 409 && /já foi enviado hoje às \d\d:\d\d por maria/.test(e2.message), e2 && e2.message);
   const lista = await ag.listar(pool, cli, 'sem', {});
@@ -46,7 +47,7 @@ function check(name, cond, extra = '') { if (cond) { pass++; console.log('  OK  
   await pool.query("UPDATE ag_links SET enviado_em=NOW()");
   console.log('Página do cliente');
   let d = await lk.dadosLink(pool, l.token);
-  check('dados: nome, entrega, datas da rota e sem agendamento', d.nome === 'Mada Cabral' && /NFs 7001, 7002/.test(d.entrega) && d.datas.length === 8 && !d.agendada && !d.tem_local, d);
+  check('dados: nome, entrega, datas da rota e sem agendamento', d.nome === 'Mada' && d.loja === 'Quadri' && /NFs 7001, 7002/.test(d.entrega) && d.datas.length === 8 && !d.agendada && !d.tem_local, d);
   erro = null; try { await lk.escolher(pool, l.token, { data: '2099-01-01' }); } catch (e) { erro = e; }
   check('data fora da rota é recusada', erro && erro.status === 422);
   const dt = d.datas[1].data;

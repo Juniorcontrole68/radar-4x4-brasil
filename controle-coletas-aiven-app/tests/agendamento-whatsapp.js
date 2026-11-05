@@ -27,6 +27,8 @@ while (dow(SEG) !== 1 || wa.feriados(Number(SEG.slice(0, 4))).has(SEG) || [1, 2,
   check('feriado fica de fora (Consciência Negra 20/11/2026)', !wa.proximasDatas(todo, { agora: em('2026-11-18', '09:00'), n: 3 }).includes('2026-11-20'));
   check('Páscoa e feriados móveis (2027: Sexta Santa 26/03, Corpus Christi 27/05)', wa.pascoa(2027) === '2027-03-28' && wa.feriados(2027).has('2027-03-26') && wa.feriados(2027).has('2027-05-27'));
   check('cidade sem entrega (Osasco) não tem data', wa.proximasDatas({ dias: 'STQQS.', prazo: 1, entrega: false }).length === 0);
+  check('nome da loja limpo: razão social cortada vira a marca', wa.nomeLoja('QUADRI COMERCIO ELETRONIC ..') === 'Quadri' && wa.nomeLoja('CASA DO CONSTRUTOR LTDA') === 'Casa do Construtor' && wa.nomeLoja('TELHA NORTE S/A') === 'Telha Norte' && wa.nomeLoja('FCB') === 'FCB', [wa.nomeLoja('QUADRI COMERCIO ELETRONIC ..'), wa.nomeLoja('CASA DO CONSTRUTOR LTDA')]);
+  check('primeiro nome do cliente sem o número do pedido; empresa fica sem nome', wa.primeiroNome('MADA CABRAL 1330321') === 'Mada' && wa.primeiroNome('LOJA DO ZE') === '' && wa.primeiroNome('OSASCO LTDA') === '' && wa.cidadeUf('CAMPINAS', 'sp') === 'Campinas/SP');
   check('celular do texto da nota (pula o fixo)', wa.celular('(19) 3333-4444 / (19) 99888-7766') === '5519998887766' && wa.celular('19 3333-4444') === '' && wa.celular('+55 (11) 98765-4321') === '5511987654321');
   check('celular antigo sem o 9 ganha o 9', wa.celular('(19) 9888-7766') === '5519998887766');
   check('número da Meta sem o 9 casa com o com 9', wa.chaveFone('5519998887766') === wa.chaveFone('551998887766'));
@@ -93,7 +95,10 @@ while (dow(SEG) !== 1 || wa.feriados(Number(SEG.slice(0, 4))).has(SEG) || [1, 2,
   check('confirmação da Ana com a data, o aviso dos 15 dias e o REMARCAR', /Prontinho/.test(conf) && /agendada para \*quarta-feira/.test(conf) && /até \*15 dias\*/.test(conf) && /REMARCAR/.test(conf), conf);
   check('em seguida pede a localização', /localização/.test(pede) && /📍/.test(pede), pede);
   const lista0 = enviados.find(e => e.b.type === 'interactive' && e.b.interactive.type === 'list').b.interactive;
-  check('a lista se apresenta como a Ana, com ícones', /Sou a \*Ana\*/.test(lista0.body.text) === false && lista0.action.button === '📅 Ver datas' && /📦 NFs 5001, 5002/.test(lista0.body.text), lista0.body.text);
+  check('a lista diz a loja, as NFs e que não se pede pagamento (sem personagem)', !/Ana/.test(lista0.body.text) && lista0.action.button === 'Ver datas' && /📦 Nota fiscal: 5001, 5002/.test(lista0.body.text)
+    && /transportadora responsável pela entrega da sua compra na \*FCB\*/.test(lista0.body.text) && /não pedimos pagamento/.test(lista0.body.text) && /FCB/.test(lista0.header.text), lista0);
+  const linhas = lista0.action.sections[0].rows;
+  check('a lista tem a saída "Não reconheço a compra" (até 24 letras)', linhas.some(r => r.id === 'nr:' + conv.id && r.title.length <= 24) && linhas.length <= 10, linhas);
   check('histórico da nota mostra o agendamento', (await pool.query("SELECT COUNT(*)::int n FROM ag_eventos WHERE tipo='agendado' AND usuario='WhatsApp'")).rows[0].n === 2);
 
   console.log('Remarcação');
@@ -128,12 +133,22 @@ while (dow(SEG) !== 1 || wa.feriados(Number(SEG.slice(0, 4))).has(SEG) || [1, 2,
   check('véspera: lembrete com Confirmar / Remarcar', l === 1 && lem.type === 'interactive' && lem.interactive.type === 'button' && lem.interactive.action.buttons.length === 2, lem);
   check('não manda o lembrete duas vezes', await wa.rodadaLembretes(ctx, cli) === 0);
   await wa.receber(ctx, msg('wamid.IN6', { type: 'interactive', interactive: { type: 'button_reply', button_reply: { id: 'confirmar:' + conv.id, title: 'Confirmar' } } }));
-  check('lembrete da Ana, com o nome e o aviso do recebedor', /Aqui é a \*Ana\*/.test(lem.interactive.body.text) && /alguém no local/.test(lem.interactive.body.text) && lem.interactive.action.buttons[0].reply.title === '✅ Confirmar', lem.interactive.body.text);
+  check('lembrete da Construlog, com o aviso do recebedor', /Aqui é da \*Construlog\*/.test(lem.interactive.body.text) && !/Ana/.test(lem.interactive.body.text) && /alguém no local/.test(lem.interactive.body.text) && lem.interactive.action.buttons[0].reply.title === '✅ Confirmar', lem.interactive.body.text);
   check('confirmou: agradece e registra no histórico', /confirmada/.test(enviados[enviados.length - 1].b.text.body) && (await pool.query("SELECT COUNT(*)::int n FROM ag_eventos WHERE tipo='whatsapp' AND para='confirmado'")).rows[0].n === 2);
   await pool.query("DELETE FROM ag_wa_mensagens WHERE direcao='in'");   // janela de 24 h fechada
   await pool.query('UPDATE ag_wa_conversas SET lembrete_em=NULL');
   await wa.rodadaLembretes(ctx, cli);
   check('janela fechada: lembrete pelo modelo aprovado', enviados[enviados.length - 1].b.type === 'template' && enviados[enviados.length - 1].b.template.name === 'lembrete_entrega');
+
+  console.log('Não reconhece a compra');
+  const cNr = conv, estadoAntes = (await pool.query('SELECT estado FROM ag_wa_conversas WHERE id=$1', [conv.id])).rows[0].estado;
+  {
+    const antesNr = enviados.length;
+    await wa.receber(ctx, msg('wamid.INNR', { type: 'interactive', interactive: { type: 'list_reply', list_reply: { id: 'nr:' + cNr.id, title: 'Não reconheço a compra' } } }));
+    const eNr = (await pool.query('SELECT estado,motivo_sac FROM ag_wa_conversas WHERE id=$1', [cNr.id])).rows[0];
+    check('"Não reconheço a compra": vai para o SAC e avisa o cliente', eNr.estado === 'sac' && /não reconhece/.test(eNr.motivo_sac) && enviados.length === antesNr + 1 && /Não vamos agendar/.test(enviados[antesNr].b.text.body), eNr);
+    await pool.query('UPDATE ag_wa_conversas SET estado=$2,motivo_sac=NULL WHERE id=$1', [cNr.id, estadoAntes]);
+  }
 
   console.log('SAC');
   agora = em(SEG, '11:00');
@@ -148,7 +163,7 @@ while (dow(SEG) !== 1 || wa.feriados(Number(SEG.slice(0, 4))).has(SEG) || [1, 2,
   const n1 = enviados.length;
   check('modo teste: número fora da lista não recebe nada', await wa.receber(ctx, { from: '5521911112222', id: 'wamid.IN9', type: 'text', text: { body: 'oi' } }) === 'sem_conversa' && enviados.length === n1);
   const ctxLivre = { ...ctx, cfg: wa.configDoAmbiente({ WHATSAPP_TOKEN: 't', WHATSAPP_PHONE_ID: '123' }) };
-  check('número desconhecido recebe a apresentação e nada é criado', await wa.receber(ctxLivre, { from: '5521911112222', id: 'wamid.IN10', type: 'text', text: { body: 'oi' } }) === 'sem_conversa' && enviados.length === n1 + 1 && /Sou a \*Ana\*/.test(enviados[n1].b.text.body)
+  check('número desconhecido recebe a apresentação e nada é criado', await wa.receber(ctxLivre, { from: '5521911112222', id: 'wamid.IN10', type: 'text', text: { body: 'oi' } }) === 'sem_conversa' && enviados.length === n1 + 1 && /Aqui é a \*Construlog\*/.test(enviados[n1].b.text.body) && /Não pedimos pagamento/.test(enviados[n1].b.text.body)
     && (await pool.query("SELECT COUNT(*)::int n FROM ag_wa_conversas WHERE chave_fone LIKE '5521%'")).rows[0].n === 0);
   await pool.query("UPDATE ag_wa_conversas SET estado='oferta',criado_em=NOW()-INTERVAL '49 hours',respondido_em=NULL WHERE id=$1", [c2.id]);
   rod = await wa.rodadaOfertas(ctx, cli);

@@ -41,17 +41,16 @@ async function ensureSchema(pool) {
 }
 
 const erro = (status, msg) => Object.assign(new Error(msg), { status });
-const nfsTexto = notas => { const l = [...new Set(notas.map(n => n.nf))]; return (l.length > 1 ? 'NFs ' : 'NF ') + (l.length > 4 ? l.slice(0, 4).join(', ') + ' e mais ' + (l.length - 4) : l.join(', ')); };
-const remetentes = notas => [...new Set(notas.map(n => limpo(n.remetente, 40).replace(/\s*\.+$/, '')).filter(Boolean))].slice(0, 2).join(' e ') || 'nosso cliente';
-// "MADA CABRAL 1330321" -> "Mada Cabral" (o número do pedido que vem colado no nome sai)
-const primeiroNome = v => limpo(String(v || '').replace(/\s+\d{5,}$/, ''), 60).split(' ').slice(0, 2)
-  .map(p => /^(de|da|do|dos|das|e)$/i.test(p) ? p.toLowerCase() : p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join(' ');
+const { nfsTexto, remetentes, primeiroNome, NAO_COBRAMOS } = wa;   // mesmos textos e limpeza de nome do robô
 
 function mensagem(dest, notas, cidade, uf, url) {
-  return 'Olá' + (dest ? ', ' + primeiroNome(dest) : '') + '! 👋 Sou a *Ana*, atendente virtual da *Construlog* 🚚\n\n' +
-    'Temos uma entrega para você:\n📦 ' + nfsTexto(notas) + ' — ' + remetentes(notas) + '\n📍 ' + limpo(cidade, 40) + (uf ? '/' + uf : '') + '\n\n' +
-    '📅 Escolha o melhor dia para receber por este link:\n' + url + '\n\n' +
-    '⚠️ Precisa ter alguém no local para receber. Se não houver recebedor, a entrega será reagendada para até 15 dias.';
+  const nome = primeiroNome(dest);
+  return '🚚 *Agendamento de entrega da sua compra na ' + remetentes(notas) + '*\n\n' +
+    'Olá' + (nome ? ', ' + nome : '') + '! ' + wa.ANA.entrega(notas, cidade, uf) + '\n\n' +
+    '📅 Escolha o melhor dia para receber neste link:\n' + url + '\n\n' +
+    NAO_COBRAMOS + '\n' +
+    '⚠️ Precisa ter alguém no local para receber. Se não houver recebedor, a entrega será reagendada para até 15 dias.\n\n' +
+    'Não reconhece esta compra? Responda esta mensagem que a nossa equipe confere.';
 }
 
 // SAC: cria (ou reaproveita) o link do cliente da nota, com todas as notas pendentes dele na mesma cidade
@@ -109,7 +108,7 @@ async function dadosLink(pool, token, { agora } = {}) {
   const datas = wa.proximasDatas(await wa.rotaDa(pool, l.client_id, l.cidade, l.uf), { agora: agora || new Date(), n: 8 });
   const local = (await pool.query('SELECT 1 FROM ag_locais WHERE COALESCE(client_id,0)=COALESCE($1::bigint,0) AND chave=$2', [l.client_id, l.chave])).rowCount > 0;
   const agendada = abertas.find(n => n.ag_data)?.ag_data || null;
-  return { ok: true, nome: primeiroNome(l.destinatario), cidade: l.cidade, uf: l.uf, entrega: nfsTexto(abertas.length ? abertas : notas) + ' — ' + remetentes(notas),
+  return { ok: true, nome: primeiroNome(l.destinatario), cidade: l.cidade, uf: l.uf, loja: remetentes(notas), entrega: nfsTexto(abertas.length ? abertas : notas),
     concluida: !abertas.length, agendada, agendada_texto: agendada ? dataLonga(agendada) : '', tem_local: local,
     datas: datas.map(d => ({ data: d, texto: dataLonga(d) })) };
 }
@@ -198,7 +197,7 @@ input{width:100%;border:1.5px solid var(--bd);border-radius:10px;padding:11px;fo
 .ok{color:var(--vd);font-weight:600}.erro{color:#b91c1c;font-size:.9rem;margin-top:8px}
 .feito{text-align:center}.feito .big{font-size:2.4rem}
 </style></head><body>
-<header><b>🚚 Construlog</b><div>Agendamento de entrega</div></header>
+<header><b>🚚 Construlog Transportadora</b><div>Agendamento de entrega</div></header>
 <main id="app"><div class="card mu">Carregando…</div></main>
 <script>
 const T=location.pathname.split('/').pop(),A=document.getElementById('app');let D=null,sel='',loc='';
@@ -207,12 +206,12 @@ async function api(m,b){const r=await fetch('/api/agendar/'+T,{method:m,headers:
 function tela(){
   if(D.concluida){A.innerHTML='<div class="card feito"><div class="big">📦</div><h2>Esta entrega já foi concluída.</h2><div class="mu">Obrigado!</div></div>';return}
   const d=D.datas.map(x=>{const[p,q]=x.texto.split(', ');return'<button type="button" data-d="'+x.data+'" class="'+(sel===x.data?'sel':'')+'"><b>'+esc(q)+'</b><span>'+esc(p)+'</span></button>'}).join('');
-  A.innerHTML='<div class="card ana"><div class="av">👩</div><div>Olá'+(D.nome?', <b>'+esc(D.nome)+'</b>':'')+'! 👋 Sou a <b>Ana</b>, atendente virtual da <b>Construlog</b>.<br><br>📦 '+esc(D.entrega)+'<br>📍 '+esc(D.cidade)+(D.uf?'/'+esc(D.uf):'')+'</div></div>'+
+  A.innerHTML='<div class="card ana"><div class="av">🚚</div><div>Olá'+(D.nome?', <b>'+esc(D.nome)+'</b>':'')+'! A <b>Construlog</b> é a transportadora responsável pela entrega da sua compra'+(D.loja?' na <b>'+esc(D.loja)+'</b>':'')+'.<br><br>📦 '+esc(D.entrega)+'<br>📍 '+esc(D.cidade)+(D.uf?'/'+esc(D.uf):'')+'</div></div>'+
   (D.agendada?'<div class="card"><span class="ok">✅ Entrega agendada para '+esc(D.agendada_texto)+'</span><div class="mu">Precisa mudar? Escolha outro dia abaixo.</div></div>':'')+
   '<div class="card"><h2>📅 '+(D.agendada?'Mudar a data':'Escolha o melhor dia para receber')+'</h2><div class="datas">'+(d||'<div class="mu">Sem datas disponíveis. A Construlog vai falar com você.</div>')+'</div><div class="mu" style="margin-top:8px">Entregas em horário comercial.</div></div>'+
   '<div class="card"><h2>📍 Localização do endereço de entrega '+(D.tem_local?'<span class="ok">(já recebida ✓)</span>':'<span class="mu">(opcional)</span>')+'</h2><div class="mu">Ajuda o motorista a chegar certinho.</div>'+
   '<button type="button" class="btn sec" id="gps">📍 Usar minha localização atual</button><input id="lk" placeholder="ou cole aqui o link do Google Maps" value="'+esc(loc.startsWith('http')?loc:'')+'"><div id="gpsok" class="ok" style="margin-top:6px">'+(loc&&!loc.startsWith('http')?'Localização capturada ✓':'')+'</div></div>'+
-  '<div class="aviso">⚠️ Precisa ter alguém no local para receber. Se não houver recebedor, a entrega será reagendada para até <b>15 dias</b>.</div>'+
+  '<div class="card mu">🔒 Aqui você só escolhe a data. <b>Não pedimos pagamento, taxa, senha nem dados bancários.</b></div>'+'<div class="aviso">⚠️ Precisa ter alguém no local para receber. Se não houver recebedor, a entrega será reagendada para até <b>15 dias</b>.</div>'+
   '<button class="btn pri" id="ok" '+(sel||(D.agendada&&loc)?'':'disabled')+'>'+(sel?'Confirmar '+esc((D.datas.find(x=>x.data===sel)||{}).texto||''):D.agendada?'Enviar localização':'Escolha uma data')+'</button><div class="erro" id="er"></div>';
   A.querySelectorAll('[data-d]').forEach(b=>b.onclick=()=>{sel=b.dataset.d;loc=loc||lkv();tela()});
   document.getElementById('lk').oninput=e=>{loc=e.target.value.trim();const ok=document.getElementById('ok');if(!sel&&D.agendada){ok.disabled=!loc}};
@@ -223,7 +222,7 @@ function tela(){
 function lkv(){const e=document.getElementById('lk');return e?e.value.trim():''}
 async function enviar(){const b=document.getElementById('ok'),er=document.getElementById('er');b.disabled=true;b.textContent='Enviando…';er.textContent='';
   try{const r=await api('POST',{data:sel||'',local:loc||lkv()});
-    A.innerHTML='<div class="card feito"><div class="big">✅</div><h2>Prontinho!</h2>'+(r.data?'<div>Sua entrega está agendada para <b>'+esc(r.data_texto)+'</b>, em horário comercial.</div>':'')+(r.localizacao?'<div class="ok" style="margin-top:8px">📍 Localização recebida, obrigada!</div>':'')+'<div class="mu" style="margin-top:12px">Lembre que precisa ter alguém no local para receber 🙂<br>Precisa mudar? Abra este link de novo.</div></div>'}
+    A.innerHTML='<div class="card feito"><div class="big">✅</div><h2>Prontinho!</h2>'+(r.data?'<div>Sua entrega está agendada para <b>'+esc(r.data_texto)+'</b>, em horário comercial.</div>':'')+(r.localizacao?'<div class="ok" style="margin-top:8px">📍 Localização recebida, obrigado!</div>':'')+'<div class="mu" style="margin-top:12px">Lembre que precisa ter alguém no local para receber 🙂<br>Precisa mudar? Abra este link de novo.</div></div>'}
   catch(e){er.textContent=e.message;b.disabled=false;b.textContent='Tentar de novo'}}
 api('GET').then(j=>{D=j;tela()}).catch(e=>{A.innerHTML='<div class="card"><h2>😕 '+esc(e.message)+'</h2></div>'});
 </script></body></html>`;

@@ -193,8 +193,32 @@ async function janelaAberta(db, fone) {
 }
 
 const nfsTexto = notas => { const l = [...new Set(notas.map(n => n.nf))]; return (l.length > 1 ? 'NFs ' : 'NF ') + (l.length > 4 ? l.slice(0, 4).join(', ') + ' e mais ' + (l.length - 4) : l.join(', ')); };
-const remetentes = notas => [...new Set(notas.map(n => limpo(n.remetente, 40)).filter(Boolean))].slice(0, 2).join(' e ') || 'nosso cliente';
-const primeiroNome = v => limpo(v, 60).split(' ').slice(0, 3).join(' ');
+// Nome da loja como o cliente conhece: "QUADRI COMERCIO ELETRONIC .." -> "Quadri".
+// A razão social vem cortada do SSW; tira o pedaço cortado, a parte jurídica/atividade e deixa só a marca.
+const PALAVRA_GENERICA = /^(com[eé]rcio|comercial|com\.?|eletr[oô]nic\w*|distribui\w*|dist\.?|ind[uú]stri\w*|ind\.?|importa\w*|exporta\w*|atacad\w*|varejo|varejista|servi[cç]os?|log[ií]stica|transportes?|cia\.?|ltda\.?|me|epp|eireli|s\/?a\.?|s\.a\.?)$/i;
+const CONECTIVO = /^(de|da|do|dos|das|e)$/i;
+function nomeLoja(v) {
+  const bruto = limpo(v, 80), cortado = /\.\.+\s*$|…\s*$/.test(bruto);
+  let p = bruto.replace(/[\s.…]+$/, '').split(' ').filter(Boolean);
+  if (cortado && p.length > 1) p.pop();                       // a última palavra veio pela metade
+  const i = p.findIndex((w, k) => k > 0 && PALAVRA_GENERICA.test(w));
+  if (i > 0) p = p.slice(0, i);
+  while (p.length > 1 && CONECTIVO.test(p[p.length - 1])) p.pop();
+  // sigla sem vogal (FCB) ou nome de uma palavra curta (ABC) fica em maiúsculas; o resto vira "Casa do Construtor"
+  const sigla = w => /^[A-Z0-9&]{2,5}$/.test(w) && (!/[AEIOU]/.test(w) || p.length === 1);
+  return titulo(p.slice(0, 4).join(' ')).split(' ').map((w, k) => sigla(p[k]) ? p[k] : w).join(' ');
+}
+const titulo = t => limpo(t, 80).toLowerCase().split(' ').map((w, k) => k > 0 && CONECTIVO.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+const remetentes = notas => [...new Set(notas.map(n => nomeLoja(n.remetente)).filter(Boolean))].slice(0, 2).join(' e ') || 'nosso cliente';
+// "MADA CABRAL 1330321" -> "Mada" (só o primeiro nome; o número do pedido colado no nome sai); empresa (LTDA, loja...) fica sem nome no "Olá"
+const primeiroNome = v => {
+  const s = limpo(String(v || '').replace(/\s+\d{4,}\s*$/, ''), 60);
+  if (!s || /\b(ltda|eireli|me|epp|s\/?a|cia|comercio|com[eé]rcio|ind[uú]stria|materiais|dep[oó]sito|loja|construtora|condom[ií]nio)\b/i.test(s)) return '';
+  const p = s.split(' ').find(w => /^[a-zà-ú'-]{2,}$/i.test(w));
+  return p ? titulo(p) : '';
+};
+const cidadeUf = (cidade, uf) => titulo(limpo(cidade, 40)) + (uf ? '/' + limpo(uf, 2).toUpperCase() : '');
+const NAO_COBRAMOS = 'Você só escolhe a data: *não pedimos pagamento, taxa, senha nem dados bancários*.';
 
 async function notasDa(db, conv) {
   return (await db.query(`SELECT n.id::text,n.nf,n.remetente,n.destinatario,n.cidade,n.uf,n.situacao,
@@ -203,25 +227,29 @@ async function notasDa(db, conv) {
     FROM ag_notas n WHERE n.id=ANY($1::bigint[]) ORDER BY n.nf`, [conv.nota_ids])).rows;
 }
 
-// ------------------------------------------------------------------ textos da Ana (atendente virtual)
+// ------------------------------------------------------------------ textos do agendamento
+// A mensagem fala como empresa (sem personagem), diz de qual loja é a compra (o cliente não conhece a Construlog),
+// traz a NF (dado que golpista não tem) e deixa claro que não se pede pagamento: o cliente achava que era golpe.
 const ANA = {
-  ola: nome => 'Olá' + (nome ? ', ' + nome : '') + '! 👋 Sou a *Ana*, atendente virtual da *Construlog* 🚚',
-  entrega: (notas, cidade, uf) => 'Temos uma entrega para você:\n📦 ' + nfsTexto(notas) + ' — ' + remetentes(notas) + '\n📍 ' + limpo(cidade, 40) + (uf ? '/' + uf : ''),
-  escolha: 'Toque em *📅 Ver datas* e escolha o melhor dia para receber 👇',
-  apresentacao: 'Olá! 👋 Sou a *Ana*, atendente virtual da *Construlog* 🚚\n\nPor aqui eu agendo as suas entregas. Quando tivermos uma entrega para você, mando as datas disponíveis 📅',
+  ola: nome => 'Olá' + (nome ? ', ' + nome : '') + '!',
+  entrega: (notas, cidade, uf) => 'A *Construlog* é a transportadora responsável pela entrega da sua compra na *' + remetentes(notas) + '*.\n\n' +
+    '📦 Nota fiscal: ' + nfsTexto(notas).replace(/^NFs? /, '') + '\n📍 Entrega em: ' + cidadeUf(cidade, uf),
+  escolha: 'Toque em *Ver datas* para escolher o melhor dia para receber.\n' + NAO_COBRAMOS,
+  naoReconhece: 'Obrigado por avisar! Não vamos agendar nada. Uma pessoa da nossa equipe vai conferir o pedido e, se precisar, fala com você por aqui.',
+  apresentacao: 'Olá! Aqui é a *Construlog*, transportadora 🚚\n\nPor este número agendamos as entregas das compras que transportamos. Quando houver uma entrega para você, enviamos as datas disponíveis por aqui.\n\nNão pedimos pagamento, taxa, senha nem dados bancários.',
   agendado: (data, notas) => '✅ *Prontinho!* Sua entrega está agendada para *' + dataLonga(data) + '*, em horário comercial.\n📦 ' + nfsTexto(notas) +
     '\n\n⚠️ *Importante:* precisa ter alguém no local para receber. Se não houver recebedor, a entrega será reagendada para até *15 dias*.\n\n🔔 Na véspera eu mando um lembrete. Precisa mudar a data? É só responder *REMARCAR*.',
   pedeLocal: '📍 Para o motorista chegar certinho, pode me enviar a *localização* do endereço de entrega?\n\n📱 *Android:* toque no 📎 (clipe) → *Localização*\n🍎 *iPhone:* toque no ➕ → *Localização*\n\nSe não estiver no local, pode colar aqui o link do endereço no Google Maps 🗺️',
-  localOk: '📍 Localização recebida, obrigada! Já está no seu agendamento para o motorista 🚚😊',
+  localOk: '📍 Localização recebida, obrigado! Já está no seu agendamento para o motorista 🚚',
   localRuim: 'Não consegui ler essa localização 😕 Tente pelo 📎 (Android) ou ➕ (iPhone) → *Localização*, ou cole o link do Google Maps.',
   indisponivel: 'Essa data não está mais disponível 😕 Escolha outra, por favor 👇',
   paraAtendente: 'Tudo bem! 🙋‍♀️ Vou chamar uma pessoa da nossa equipe para falar com você por aqui.',
   confirmouSac: 'Recebi a sua escolha 👍 Uma pessoa da nossa equipe vai confirmar com você por aqui.',
   semData: cidade => 'Não encontrei uma data de entrega disponível para ' + limpo(cidade, 40) + ' 😕 Uma pessoa da nossa equipe vai falar com você por aqui.',
   naoEntendi: 'Recebi sua mensagem 😉 Uma pessoa da nossa equipe vai responder por aqui.',
-  confirmado: 'Obrigada! Entrega confirmada ✅ Até amanhã 🚚',
-  ateLa: 'Obrigada! Até lá 🚚😊',
-  lembrete: (nome, data, notas) => '⏰ Oi' + (nome ? ', ' + nome : '') + '! Aqui é a *Ana*, da *Construlog*.\n\nSua entrega chega *amanhã, ' + dataLonga(data) + '*, em horário comercial.\n📦 ' + nfsTexto(notas) + '\n\nLembre que precisa ter alguém no local para receber 🙂',
+  confirmado: 'Obrigado! Entrega confirmada ✅ Até amanhã 🚚',
+  ateLa: 'Obrigado! Até lá 🚚',
+  lembrete: (nome, data, notas) => '⏰ Oi' + (nome ? ', ' + nome : '') + '! Aqui é da *Construlog*, transportadora da sua compra.\n\nSua entrega chega *amanhã, ' + dataLonga(data) + '*, em horário comercial.\n📦 ' + nfsTexto(notas) + '\n\nLembre que precisa ter alguém no local para receber 🙂',
 };
 
 // Lista com as datas (dentro da janela de 24 h)
@@ -235,10 +263,11 @@ async function enviarDatas(ctx, conv, intro) {
   const corpo = (intro ? intro + '\n\n' : '') + ANA.entrega(notas, conv.cidade, conv.uf) + '\n\n' + ANA.escolha;
   const rows = datas.map(d => ({ id: 'd:' + conv.id + ':' + d, title: DIAS_CURTO[diaSemana(d)] + ' ' + br(d), description: DIAS_NOME[diaSemana(d)] + ' · horário comercial' }));
   rows.push({ id: 'sac:' + conv.id, title: 'Nenhuma data serve', description: 'Falar com uma pessoa da equipe' });
+  rows.push({ id: 'nr:' + conv.id, title: 'Não reconheço a compra', description: 'Avisar a equipe e não agendar' });
   return enviar(ctx, conv, conv.telefone, {
     type: 'interactive',
-    interactive: { type: 'list', header: { type: 'text', text: '🚚 Agendamento de entrega' }, body: { text: corpo.slice(0, 1024) }, footer: { text: 'Construlog' },
-      action: { button: '📅 Ver datas', sections: [{ title: 'Datas disponíveis', rows }] } },
+    interactive: { type: 'list', header: { type: 'text', text: ('🚚 Entrega da sua compra na ' + remetentes(notas)).slice(0, 60) }, body: { text: corpo.slice(0, 1024) }, footer: { text: 'Construlog · Transportadora' },
+      action: { button: 'Ver datas', sections: [{ title: 'Datas disponíveis', rows }] } },
   }, 'Lista de datas: ' + datas.map(br).join(', '));
 }
 
@@ -328,7 +357,7 @@ async function receber(ctx, m) {
     : loc ? 'Localização: ' + loc : '[' + m.type + ']';
   const resposta = m.type === 'interactive' ? (m.interactive.list_reply || m.interactive.button_reply || {}).id
     : m.type === 'button' ? m.button && m.button.payload : '';
-  const ref = String(resposta || '').match(/^(d|sac|ofertar|confirmar|remarcar):(\d+)(?::(\d{4}-\d{2}-\d{2}))?$/);
+  const ref = String(resposta || '').match(/^(d|sac|nr|ofertar|confirmar|remarcar):(\d+)(?::(\d{4}-\d{2}-\d{2}))?$/);
   const conv = await conversaDoFone(pool, fone, ref && ref[2]);
   const ins = await pool.query("INSERT INTO ag_wa_mensagens(client_id,conversa_id,telefone,chave_fone,direcao,tipo,texto,wamid,status) VALUES($1,$2,$3,$4,'in',$5,$6,$7,'recebida') ON CONFLICT DO NOTHING RETURNING id",
     [conv ? conv.client_id : null, conv ? conv.id : null, fone, chaveFone(fone), m.type, txt, m.id || null]);
@@ -343,6 +372,7 @@ async function receber(ctx, m) {
   const tipo = ref ? ref[1] : '';
   if (tipo === 'd') return escolherData(ctx, conv, ref[3]);
   if (tipo === 'sac') return paraSac(ctx, conv, 'Cliente pediu outra data / atendente', ANA.paraAtendente);
+  if (tipo === 'nr') return paraSac(ctx, conv, 'Cliente não reconhece a compra', ANA.naoReconhece);
   if (tipo === 'ofertar' || tipo === 'remarcar') return enviarDatas(ctx, conv, '');
   if (tipo === 'confirmar') { await eventoNotas(pool, conv.client_id, conv.nota_ids, 'confirmado', 'Cliente confirmou a entrega no lembrete'); return texto(ctx, conv, conv.telefone, ANA.confirmado); }
   // localização vale em qualquer momento da conversa (inclusive com o SAC)
@@ -573,5 +603,5 @@ async function handle(req, res, u, { pool, sendJson, readJsonBodyLimited, dashbo
   } catch (e) { return sendJson(res, e.status || 500, { ok: false, error: e.message || 'Erro.' }), true; }
 }
 
-module.exports = { ANA, proximasDatas, feriados, pascoa, celular, chaveFone, chaveCidade, configDoAmbiente, ensureSchema, garantirRotas, gravarRotas, rotaDa,
+module.exports = { ANA, nomeLoja, primeiroNome, cidadeUf, remetentes, nfsTexto, NAO_COBRAMOS, proximasDatas, feriados, pascoa, celular, chaveFone, chaveCidade, configDoAmbiente, ensureSchema, garantirRotas, gravarRotas, rotaDa,
   candidatas, rodadaOfertas, rodadaLembretes, receber, ofertar, escolherData, assinaturaOk, iniciar, handle, GRADE };
