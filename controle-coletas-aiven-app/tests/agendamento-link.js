@@ -77,6 +77,11 @@ function check(name, cond, extra = '') { if (cond) { pass++; console.log('  OK  
   await pool.query('UPDATE ag_links SET enviado_em=NOW()');
   let lista0 = await ag.listar(pool, cli, 'agendadas', {});
   check('lista: o agendamento de hoje ainda não é prioridade', lista0.rows.length === 2 && lista0.rows.every(x => x.prioridade === false), lista0.rows.map(x => [x.nf, x.prioridade]));
+  // saiu para entrega no SSW: travado até a entrega ou um insucesso
+  await pool.query("UPDATE ag_notas SET situacao='em_rota',status_ssw='SAIDA PARA ENTREGA' WHERE nf IN ('7001','7002')");
+  erro = null; try { await lk.criarLink(pool, cli, sac, await id('7001'), 'https://exemplo.test'); } catch (e) { erro = e; }
+  check('em rota sem insucesso: não pede nova data', erro && erro.status === 409 && /em rota/.test(erro.message), erro && erro.message);
+  await pool.query("UPDATE ag_notas SET status_ssw='TENTATIVA DE ENTREGA - DESTINATARIO AUSENTE' WHERE nf IN ('7001','7002')");
   const rl = await lk.criarLink(pool, cli, sac, await id('7001'), 'https://exemplo.test');
   check('não cumprido: o envio vira pedido de desculpas e nova data, mesmo com link enviado hoje', rl.reagendar === true && /Pedimos desculpas/.test(rl.texto) && /prevista para hoje/.test(rl.texto)
     && /\*prioridade\*/.test(rl.texto) && /não pedimos pagamento/.test(rl.texto) && rl.notas.join() === '7001,7002' && rl.token === l.token, rl.texto);

@@ -1545,14 +1545,16 @@ async function carregarSaidasMotorista(auto){
   const inp=$('#hubSmData');if(inp&&!inp.value)inp.value=hojeSpIso();
   const data=(inp&&inp.value)||hojeSpIso();
   if(auto&&data!==hojeSpIso())return;   // a atualização automática só mexe no dia de hoje
-  SM.carregando=true;if(!auto||!SM.rows.length)box.textContent='Carregando horários de '+data.split('-').reverse().join('/')+'…';
+  SM.carregando=true;if((!auto||!SM.rows.length)&&SM.data!==data)box.textContent='Carregando horários de '+data.split('-').reverse().join('/')+'…';
   try{
     const r=await fetch('/api/ssw/saidas-motorista?data='+encodeURIComponent(data),{cache:'no-cache'}),j=await r.json();
     if(!r.ok||!j.ok)throw Error(j.error||'Falha na consulta');
-    SM={data,rows:j.rows||[],carregando:false};
+    clearTimeout(SM.timer);SM={data,rows:j.rows||[],carregando:false};
     const dl=$('#hubSmLista');if(dl)dl.innerHTML=SM.rows.map(x=>'<option value="'+safe(x.motorista)+'">').join('');
     const av=$('#hubSmAviso');if(av)av.textContent=j.aviso||'';
     desenharSaidasMotorista();
+    // baixas do SSW daquele dia ainda chegando: pergunta de novo (enquanto a mesma data estiver escolhida)
+    clearTimeout(SM.timer);if(j.ssw_buscando)SM.timer=setTimeout(()=>{const i=$('#hubSmData');if(i&&i.value===data)carregarSaidasMotorista(false)},20000);
   }catch(e){box.textContent='Não foi possível consultar: '+e.message}
   finally{SM.carregando=false}
 }

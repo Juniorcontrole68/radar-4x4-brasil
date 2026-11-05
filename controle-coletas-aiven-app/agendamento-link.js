@@ -75,6 +75,9 @@ async function criarLink(pool, cli, user, notaId, base) {
   // agendamento ativo com data de hoje ou já passada e sem entrega = não cumprido: o envio vira pedido de desculpas + nova data
   const hojeIso = hojeSp();
   const atual = (await pool.query("SELECT to_char(data_agendada,'YYYY-MM-DD') AS data FROM ag_agendamentos WHERE nota_id=$1 AND status='ativo'", [n.id])).rows[0];
+  // em rota (SSW) sem insucesso: não pede nova data até a entrega ou um insucesso
+  if (atual && n.situacao === 'em_rota' && !(await pool.query(`SELECT ${ag.INSUCESSO_SQL} AS i FROM ag_notas n JOIN ag_agendamentos a ON a.nota_id=n.id AND a.status='ativo' WHERE n.id=$1`, [n.id])).rows[0]?.i)
+    throw erro(409, 'A NF ' + n.nf + ' está em rota no SSW. O pedido de nova data libera se houver insucesso na entrega.');
   const reagendarDe = atual && atual.data <= hojeIso ? atual.data : null;
   if (reagendarDe) {
     // o pedido de nova data sai mesmo que um link tenha ido hoje; só não repete o próprio pedido no mesmo dia
@@ -93,7 +96,7 @@ async function criarLink(pool, cli, user, notaId, base) {
   const rota = await wa.rotaDa(pool, cli, n.cidade, n.uf);
   if (!wa.proximasDatas(rota).length) throw erro(422, (n.cidade || 'A cidade') + ' não tem dia de entrega na grade (opção 107). Agende pelo botão Agendar.');
   // as outras notas do mesmo cliente na mesma cidade, ainda em aberto, vão no mesmo link
-  const grupo = (await pool.query(`SELECT n.id::text,n.nf,n.remetente FROM ag_notas n WHERE n.client_id IS NOT DISTINCT FROM $1 AND ${CHAVE_SQL}=$2 AND n.situacao IN ('pendente','verificar')
+  const grupo = (await pool.query(`SELECT n.id::text,n.nf,n.remetente FROM ag_notas n WHERE n.client_id IS NOT DISTINCT FROM $1 AND ${CHAVE_SQL}=$2 AND (n.situacao IN ('pendente','verificar') OR ($4 AND n.situacao='em_rota'))
       AND (n.id=$3 OR NOT EXISTS (SELECT 1 FROM ag_agendamentos a WHERE a.nota_id=n.id AND a.status='ativo')
         OR ($4 AND EXISTS (SELECT 1 FROM ag_agendamentos a WHERE a.nota_id=n.id AND a.status='ativo' AND a.data_agendada<=$5::date))) ORDER BY n.nf LIMIT 30`,
     [cli, n.chave, n.id, !!reagendarDe, hojeIso])).rows;

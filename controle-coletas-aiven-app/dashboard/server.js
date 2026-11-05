@@ -3265,9 +3265,10 @@ async function buildSaidasPorMotorista(dataPedida=''){
   const hoje=spDateISO(),data=/^\d{4}-\d{2}-\d{2}$/.test(dataPedida)?dataPedida:hoje;
   const [portal,ssw]=await Promise.all([
     portalJson('/api/painel/saidas-motorista?data='+data).catch(e=>({ok:false,error:String(e.message||e)})),
-    // SSW: o dia de hoje vem do painel Saídas x Baixas; outro dia, só se já estiver em memória (não dispara a varredura pesada)
-    Promise.race([(data===hoje?getSswMotoristasFast(data,data):Promise.resolve((SSW_DRIVER_CACHE.get('online|'+data+'|'+data)||{}).value||null)).catch(()=>null),
-      new Promise(r=>setTimeout(()=>r(null),8000))])   // SSW lento não segura a consulta: volta só com o registro de carga e o app
+    // SSW: o dia de hoje vem do painel Saídas x Baixas; outro dia usa o que já foi lido ou lê a opção 38 + rastreio
+    // daquele dia em segundo plano (a tela pergunta de novo até chegar). SSW lento não segura a consulta.
+    Promise.race([(data===hoje?getSswMotoristasFast(data,data):Promise.resolve((SSW_DRIVER_CACHE.get('online|'+data+'|'+data)||{}).value||ensureSswMotoristasRefresh(data,data))).catch(()=>null),
+      new Promise(r=>setTimeout(()=>r(null),8000))])
   ]);
   const mots=[];
   const achar=(nome,placa)=>{
@@ -3302,8 +3303,9 @@ async function buildSaidasPorMotorista(dataPedida=''){
       carregamentos:d.carregamentos,entregas_carregadas:d.entregas_carregadas,fontes:[...d.fontes],_o:d.carregou??d.primeira??Infinity}))
     .filter(r=>r.carregou||r.primeira_entrega||r.saidas)
     .sort((a,b)=>a._o-b._o||a.motorista.localeCompare(b.motorista,'pt-BR')).map(({_o,...r})=>r);
-  return{ok:true,data,rows,ssw:sswOk,portal:!!(portal&&portal.ok),
-    aviso:[portal&&portal.ok?'':'Registro de carga e app indisponíveis agora'+(portal&&portal.error?' ('+portal.error+')':''),sswOk?'':(data===hoje?'Baixas do SSW ainda carregando':'Baixas do SSW de dias anteriores só aparecem se o painel Saídas x Baixas já tiver consultado esse dia')].filter(Boolean).join(' • ')};
+  const buscando=!sswOk&&SSW_DRIVER_INFLIGHT.has('online|'+data+'|'+data);
+  return{ok:true,data,rows,ssw:sswOk,ssw_buscando:buscando||(!sswOk&&data===hoje),portal:!!(portal&&portal.ok),
+    aviso:[portal&&portal.ok?'':'Registro de carga e app indisponíveis agora'+(portal&&portal.error?' ('+portal.error+')':''),sswOk?'':'Buscando as baixas do SSW de '+data.split('-').reverse().join('/')+'… a tabela se completa sozinha em 1 ou 2 minutos'].filter(Boolean).join(' • ')};
 }
 
 async function getSswMotoristasFast(from='',to=''){

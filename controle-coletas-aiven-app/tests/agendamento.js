@@ -199,6 +199,30 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     check('entregue no app vira entregue no agendamento',(await sit('7003')).situacao==='entregue'&&!!(await sit('7003')).baixa_motorista_em,bx);
     check('  ...comprovante de outro CT-e com a mesma NF não baixa',(await sit('7010')).situacao!=='entregue');
     check('  ...o comprovante mais recente vale ("não entregue" depois do "entregue")',(await sit('7001')).situacao!=='entregue');
+    {
+      // "não entregue" no app = insucesso: fica guardado com o motivo e libera o Reagendar da nota em rota
+      const ins=(await pool.query("SELECT insucesso_em,insucesso_motivo,situacao FROM ag_notas WHERE nf='7001'")).rows[0];
+      check('  ..."não entregue" fica guardado como insucesso, com o motivo e o motorista',!!ins.insucesso_em&&/^Destinatário ausente • Motorista Agendamento/.test(ins.insucesso_motivo||''),ins);
+      check('  ...e entra no histórico da nota uma vez só',(await pool.query("SELECT COUNT(*)::int n FROM ag_eventos e JOIN ag_notas n ON n.id=e.nota_id WHERE n.nf='7001' AND e.tipo='insucesso'")).rows[0].n===1);
+      const antes=(await pool.query("SELECT a.id,a.data_agendada FROM ag_agendamentos a JOIN ag_notas n ON n.id=a.nota_id WHERE n.nf='7001' AND a.status='ativo'")).rows[0];
+      if(antes){
+        await pool.query("UPDATE ag_notas SET situacao='em_rota',status_ssw='SAIDA PARA ENTREGA' WHERE nf='7001'");
+        await pool.query("UPDATE ag_agendamentos SET data_agendada=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date+1 WHERE id=$1",[antes.id]);
+        let li=(await api('GET','/api/painel/agendamentos/lista?aba=agendadas&nf=7001')).j.rows[0];
+        check('  ...em rota, falha antes do dia agendado não conta como insucesso',li&&li.situacao==='em_rota'&&li.insucesso===false,li);
+        await pool.query("UPDATE ag_agendamentos SET data_agendada=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date WHERE id=$1",[antes.id]);
+        li=(await api('GET','/api/painel/agendamentos/lista?aba=agendadas&nf=7001')).j.rows[0];
+        check('  ...em rota com "não entregue" no dia agendado: insucesso (libera o Reagendar)',li&&li.insucesso===true&&/Destinatário ausente/.test(li.insucesso_motivo||''),li);
+        await pool.query("UPDATE ag_notas SET insucesso_em=NULL,status_ssw='TENTATIVA DE ENTREGA - CLIENTE AUSENTE' WHERE nf='7001'");
+        li=(await api('GET','/api/painel/agendamentos/lista?aba=agendadas&nf=7001')).j.rows[0];
+        check('  ...ocorrência de insucesso no SSW também conta',li&&li.insucesso===true,li);
+        await pool.query("UPDATE ag_notas SET status_ssw='SAIDA PARA ENTREGA' WHERE nf='7001'");
+        li=(await api('GET','/api/painel/agendamentos/lista?aba=agendadas&nf=7001')).j.rows[0];
+        check('  ...em rota sem insucesso: travada',li&&li.insucesso===false,li);
+        await pool.query("UPDATE ag_notas SET situacao=$1,status_ssw=NULL,insucesso_em=$2 WHERE nf='7001'",[ins.situacao,ins.insucesso_em]);
+        await pool.query('UPDATE ag_agendamentos SET data_agendada=$2 WHERE id=$1',[antes.id,antes.data_agendada]);
+      }
+    }
     x=await api('GET','/api/painel/agendamentos/lista?aba=historico&nf=7003');
     check('  ...a nota vai para o histórico',x.j.rows.some(r=>r.nf==='7003'&&r.situacao==='entregue'),x.j.rows);
     await comp('7010','AMR000710-0','entregue');

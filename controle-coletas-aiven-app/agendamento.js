@@ -202,6 +202,9 @@ async function ensureSchema(pool) {
   await pool.query('ALTER TABLE ag_config ADD COLUMN IF NOT EXISTS parceiros TEXT');   // NULL = lista padrão
   // baixa de entregue feita pelo motorista no app (entregas_comprovantes): a varredura do SSW não reabre a nota
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS baixa_motorista_em TIMESTAMPTZ');
+  // insucesso na entrega marcado pelo motorista no app ("não entregue"): libera Reagendar / Pedir nova data de nota em rota
+  await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS insucesso_em TIMESTAMPTZ');
+  await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS insucesso_motivo TEXT');
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS baixa_comprovante_id BIGINT');
   // pagador escolhido pelo operador na importação (subcontrato): o SSW não troca mais
   await pool.query('ALTER TABLE ag_notas ADD COLUMN IF NOT EXISTS pagador_fixo BOOLEAN NOT NULL DEFAULT FALSE');
@@ -363,6 +366,7 @@ async function darBaixa(pool, notaId, quando, texto, compId, usuario) {
     return true;
   } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
 }
+const MOTIVO_FALHA = { ausente: 'Destinatário ausente', recusou: 'Recusou a mercadoria', endereco_errado: 'Endereço não encontrado', fechado: 'Local fechado', avaria: 'Mercadoria avariada', outro: 'Outro motivo' };
 const quandoBr = d => d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 // Só os dígitos do número do CT-e com o dígito verificador ("AMR017002-0" e "017002-0" -> "170020").
 const ctrcDigitos = v => String(v || '').replace(/^[^0-9]*/, '').replace(/\D/g, '').replace(/^0+/, '');
@@ -405,7 +409,7 @@ async function baixasDosMotoristas(pool, { lerBaixas, ontem } = {}) {
       }
     }
   }
-  const q = await pool.query(`SELECT n.id,n.client_id,n.nf,n.ctrc,n.situacao,x.id AS comp_id,x.ctrc AS comp_ctrc,x.resultado,x.driver_name,x.registrado_em
+  const q = await pool.query(`SELECT n.id,n.client_id,n.nf,n.ctrc,n.situacao,x.id AS comp_id,x.ctrc AS comp_ctrc,x.resultado,x.motivo_falha,x.driver_name,x.registrado_em
       FROM ag_notas n
       JOIN LATERAL (
         SELECT c.* FROM entregas_comprovantes c
@@ -422,6 +426,13 @@ async function baixasDosMotoristas(pool, { lerBaixas, ontem } = {}) {
   }
   for (const r of porNota.values()) {
     if (!lerBaixas) c.conferidas++;
+    if (r.resultado === 'falhou') {
+      // não entregue no app: guarda o insucesso (uma vez por comprovante) para o SAC reagendar
+      const motivo = (MOTIVO_FALHA[r.motivo_falha] || 'Não entregue') + ' • ' + limpo(r.driver_name, 60) + ' em ' + quandoBr(new Date(r.registrado_em));
+      const up = await pool.query('UPDATE ag_notas SET insucesso_em=$2,insucesso_motivo=$3,atualizado_em=NOW() WHERE id=$1 AND insucesso_em IS DISTINCT FROM $2::timestamptz RETURNING id', [r.id, r.registrado_em, motivo]);
+      if (up.rowCount) { await evento(pool, r.client_id, r.id, null, 'insucesso', null, null, motivo, 'App do motorista'); c.insucessos = (c.insucessos || 0) + 1; }
+      continue;
+    }
     if (r.resultado !== 'entregue') continue;
     const quando = new Date(r.registrado_em), texto = 'Baixa no app pelo motorista ' + limpo(r.driver_name, 80) + ' em ' + quandoBr(quando);
     if (await darBaixa(pool, r.id, quando, texto, r.comp_id, 'App do motorista')) c.entregues++;
@@ -631,7 +642,12 @@ const SEL_NOTA = SEL_LOCAL + ',' + SEL_RESERVA + ',' + SEL_LINK + `,n.id::text A
   n.produto,n.situacao,n.status_ssw,n.previsao,to_char(n.data_emissao,'YYYY-MM-DD') AS data_emissao,to_char(n.data_entrada,'YYYY-MM-DD') AS data_entrada,
   n.ultima_consulta,n.erro_integracao,to_char(n.concluido_em,'YYYY-MM-DD') AS concluido_em,
   ((NOW() AT TIME ZONE 'America/Sao_Paulo')::date-COALESCE(n.data_entrada,n.data_emissao,(n.primeiro_visto AT TIME ZONE 'America/Sao_Paulo')::date))::int AS dias_sem`;
-const SEL_AG = `a.id::text AS agendamento_id,to_char(a.data_agendada,'YYYY-MM-DD') AS data_agendada,a.observacao,a.reagendamentos,a.criado_por_nome,a.criado_em AS agendado_em,a.status AS status_agendamento,a.prioridade,a.prioridade_motivo`;
+// Insucesso na entrega: o app do motorista marcou "não entregue" no dia agendado (ou depois), ou o SSW mostra uma
+// ocorrência de insucesso. Nota em rota sem insucesso fica travada (sem Reagendar / Pedir nova data) no painel.
+const INSUCESSO_SSW_RE = 'TENTATIVA|AUSENTE|RECUS|INSUCESSO|REENTREGA|N[AÃ]O ENTREG|N[AÃ]O LOCALIZ|FECHAD|SEM RECEBEDOR|ENDERE[CÇ]O (N[AÃ]O|INCORRET|ERRAD|INSUFIC)|RETORN';
+const INSUCESSO_SQL = `((n.insucesso_em IS NOT NULL AND a.data_agendada IS NOT NULL AND (n.insucesso_em AT TIME ZONE 'America/Sao_Paulo')::date>=a.data_agendada)
+  OR (n.situacao='em_rota' AND upper(COALESCE(n.status_ssw,'')) ~ '${INSUCESSO_SSW_RE}'))`;
+const SEL_AG = `a.id::text AS agendamento_id,to_char(a.data_agendada,'YYYY-MM-DD') AS data_agendada,a.observacao,a.reagendamentos,a.criado_por_nome,a.criado_em AS agendado_em,a.status AS status_agendamento,a.prioridade,a.prioridade_motivo,${INSUCESSO_SQL} AS insucesso,n.insucesso_motivo`;
 const DIAS_SEM_SQL = "((NOW() AT TIME ZONE 'America/Sao_Paulo')::date-COALESCE(n.data_entrada,n.data_emissao,(n.primeiro_visto AT TIME ZONE 'America/Sao_Paulo')::date))";
 const HOJE_SQL = "(NOW() AT TIME ZONE 'America/Sao_Paulo')::date";
 
@@ -1137,5 +1153,5 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
   }
 }
 
-module.exports = { coordsDoTexto, lerLocalizacao, gravarLocalizacao, dvCtrc, faixaCtes, importarFaixa, iniciarImportacao, baixasDosMotoristas, iniciarBaixasMotoristas, OPERACIONAIS, FINAIS, ROTULO, PARCEIROS_PADRAO, normNf, normCtrc, dataBr, termosParceiros, ehParceiro, ensureSchema, lerConfig, gravarConfig, gravarNota, aplicarSnapshot, alvosDaVarredura,
+module.exports = { INSUCESSO_SQL, coordsDoTexto, lerLocalizacao, gravarLocalizacao, dvCtrc, faixaCtes, importarFaixa, iniciarImportacao, baixasDosMotoristas, iniciarBaixasMotoristas, OPERACIONAIS, FINAIS, ROTULO, PARCEIROS_PADRAO, normNf, normCtrc, dataBr, termosParceiros, ehParceiro, ensureSchema, lerConfig, gravarConfig, gravarNota, aplicarSnapshot, alvosDaVarredura,
   sincronizar, iniciarVarreduraAutomatica, postJson, listar, indicadores, buscarNf, historicoNota, agendar, alterar, cancelar, handle };

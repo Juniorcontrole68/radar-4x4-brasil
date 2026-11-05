@@ -125,3 +125,5 @@ td.ag-dest{cursor:help;text-decoration:underline dotted #94a3b8;text-underline-o
 .ag-prio{display:inline-block;margin-left:5px;background:#ea580c;color:#fff;font-size:10px;font-weight:800;letter-spacing:.3px;border-radius:4px;padding:1px 5px;white-space:nowrap;vertical-align:1px}
 .ag-reag-aviso{background:#fff7ed;border:1px solid #fdba74;color:#9a3412;border-radius:8px;padding:8px 10px;margin:8px 0;font-size:13px}
 .ag-card[data-card="prioridade"] b{color:#c2410c}
+.ag-rota{display:inline-block;margin-right:4px;font-size:11px;font-weight:700;color:#6d28d9;background:#ede9fe;border-radius:6px;padding:2px 7px;white-space:nowrap;cursor:default}
+.ag-insuc{font-size:10px;font-weight:700;color:#b91c1c;margin-top:2px;white-space:nowrap}
