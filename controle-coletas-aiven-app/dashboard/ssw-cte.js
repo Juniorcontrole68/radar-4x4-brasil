@@ -294,16 +294,21 @@ function parseComprovantes(body){
   const dec=t=>String(t||'').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#39;/gi,"'").replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&');
   const txt=t=>dec(dec(t)).replace(/<!--[\s\S]*?-->/g,' ').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
   const src=String(body||'');
-  let linhas=[...src.matchAll(/<r\b[^>]*>([\s\S]*?)<\/r>/gi)].map(m=>[...m[1].matchAll(/<f(\d+)\b[^>]*>([\s\S]*?)<\/f\1>/gi)].map(f=>txt(f[2])));
-  if(!linhas.some(c=>c.length))linhas=[...src.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(m=>[...m[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(f=>txt(f[1])));
+  const fotoDe=raw=>((dec(dec(raw)).match(/ssw0053\?act=(\d+)/i)||[])[1]||'');
+  let linhas=[...src.matchAll(/<r\b[^>]*>([\s\S]*?)<\/r>/gi)].map(m=>{const c=[...m[1].matchAll(/<f(\d+)\b[^>]*>([\s\S]*?)<\/f\1>/gi)].map(f=>txt(f[2]));c.foto=fotoDe(m[1]);return c});
+  if(!linhas.some(c=>c.length))linhas=[...src.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(m=>{const c=[...m[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(f=>txt(f[1]));c.foto=fotoDe(m[1]);return c});
   const itens=[];
   for(const cols of linhas){
     const iC=cols.findIndex(c=>/^[A-Z]{3}\s?0*\d{1,7}\s?-\s?\d$/i.test(c));
     if(iC<0)continue;
     const iO=cols.findIndex((c,i)=>i>iC&&/^\d{2}\/\d{2}\s*-\s*\d{1,3}\s*-/.test(c));
     const oc=iO>=0?cols[iO]:'',m=oc.match(/^(\d{2}\/\d{2})\s*-\s*(\d{1,3})\s*-\s*(.*)$/);
+    // hora da baixa: na baixa do escritório vem no texto ("ENTREGUE EM 05/11/26 13:15H"); na do SSWMobile, só na
+    // página da foto (ssw0053?act=<código>), cujo código vem no link do CT-e ou na última coluna
+    const h=oc.match(/\bEM\s+(\d{2})\/(\d{2})\/(\d{2,4})\s+(\d{2}):(\d{2})\s*H?\b/i);
+    const hora=h?(h[3].length===2?'20'+h[3]:h[3])+'-'+h[2]+'-'+h[1]+'T'+h[4]+':'+h[5]+':00-03:00':'';
     itens.push({ctrc:cols[iC].replace(/\s+/g,'').toUpperCase(),remetente:cols[iC+1]||'',destinatario:cols[iC+3]||'',endereco:cols[iC+4]||'',cidade:String(cols[iC+5]||'').replace(/^[A-Z]{2}\s+/,''),
-      ocorrencia:oc,codigo:m?Number(m[2]):null,texto:m?(m[2].padStart(2,'0')+'-'+m[3]).slice(0,70):''})
+      ocorrencia:oc,codigo:m?Number(m[2]):null,texto:m?(m[2].padStart(2,'0')+'-'+m[3]).slice(0,70):'',hora,foto:cols.foto||''})
   }
   const plano=txt(src.replace(/<xml[\s\S]*?<\/xml>/gi,' ')).slice(0,4000);
   return{ehComprovantes:/Comprovantes/i.test(plano)||itens.length>0,motorista:((plano.match(/Motorista:\s*(.{0,60}?)\s+Data:/i)||[])[1]||'').trim(),veiculo:((plano.match(/Ve[ií]culo:\s*([A-Z0-9]{7})/i)||[])[1]||''),itens}
@@ -441,4 +446,10 @@ function chavesNfe(texto){
   return out
 }
 
-module.exports={chavesNfe,situacaoBloqueiaAgendamento,situacaoEmRota,parseRelacaoProdutos,limparProduto,pareceProduto,parseComprovantes,zipEntries,isZip,xmlFromDownload,parseCteXml,parseTela101,parseMapaCall,xmlValue,xmlBlock,entregaNoComplemento,enderecosEntrega,recebedorEhOutroLocal};
+// Página da foto da entrega (ssw0053?act=<código>): "SSWMobile 75 - 04/11/26 12:50" no cabeçalho do comprovante
+function horaDaFoto(html){
+  const t=String(html||'').replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/\s+/g,' ');
+  const m=t.match(/SSW\s*Mobile[^-]{0,12}-\s*(\d{2})\/(\d{2})\/(\d{2,4})\s+(\d{2}):(\d{2})/i)||t.match(/COMPROVANTE DE ENTREGA[^]{0,200}?(\d{2})\/(\d{2})\/(\d{2,4})\s+(\d{2}):(\d{2})/i);
+  return m?(m[3].length===2?'20'+m[3]:m[3])+'-'+m[2]+'-'+m[1]+'T'+m[4]+':'+m[5]+':00-03:00':'';
+}
+module.exports={horaDaFoto,chavesNfe,situacaoBloqueiaAgendamento,situacaoEmRota,parseRelacaoProdutos,limparProduto,pareceProduto,parseComprovantes,zipEntries,isZip,xmlFromDownload,parseCteXml,parseTela101,parseMapaCall,xmlValue,xmlBlock,entregaNoComplemento,enderecosEntrega,recebedorEhOutroLocal};
