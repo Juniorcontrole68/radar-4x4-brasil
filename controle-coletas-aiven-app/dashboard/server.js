@@ -3237,7 +3237,10 @@ function ensureSswMotoristasRefresh(from='',to=''){
   const key='online|'+from+'|'+to;
   if(SSW_DRIVER_INFLIGHT.has(key))return SSW_DRIVER_INFLIGHT.get(key);
   const p=buildSswMotoristas(from,to)
-    .then(v=>{SSW_DRIVER_LAST={key,at:Date.now(),value:v};return v})
+    .then(v=>{SSW_DRIVER_LAST={key,at:Date.now(),value:v};
+      // dia corrente: guarda a foto das baixas por motorista para consultar nos dias seguintes
+      if(from===to&&from===spDateISO())salvarSswDia(from,v).catch(e=>console.log('SAIDAS MOTORISTA gravar SSW: '+String(e.message||e)));
+      return v})
     .catch(e=>{console.log('SSW MOTORISTAS BACKGROUND ERRO: '+String(e.message||e));throw e})
     .finally(()=>SSW_DRIVER_INFLIGHT.delete(key));
   SSW_DRIVER_INFLIGHT.set(key,p);
@@ -3249,10 +3252,37 @@ function ensureSswMotoristasRefresh(from='',to=''){
 // e pelos sobrenomes que aparecem nas duas.
 const NOME_CONECTIVO=new Set(['DE','DA','DO','DOS','DAS','E']);
 function tokensMotorista(v){return String(v||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/[^A-Z ]/g,' ').split(/\s+/).filter(t=>t.length>1&&!NOME_CONECTIVO.has(t))}
-function mesmoMotorista(a,b){
-  if(!a.length||!b.length||a[0]!==b[0])return false;
+// diferença de uma letra no primeiro nome ("EVERTON" x "EWERTON"), só em nomes de 5 letras ou mais
+function umaLetra(a,b){
+  if(a===b)return true;if(a.length<5||b.length<5||Math.abs(a.length-b.length)>1)return false;
+  let i=0,j=0,d=0;
+  while(i<a.length&&j<b.length){if(a[i]===b[j]){i++;j++;continue}if(++d>1)return false;if(a.length>b.length)i++;else if(b.length>a.length)j++;else{i++;j++}}
+  return d+(a.length-i)+(b.length-j)<=1;
+}
+function mesmoMotorista(a,b,aproximado=false){
+  if(!a.length||!b.length||(a[0]!==b[0]&&!(aproximado&&umaLetra(a[0],b[0]))))return false;
   const [c,l]=a.length<=b.length?[a,b]:[b,a];
   return c.length===1||c.slice(1).every(t=>l.includes(t));
+}
+// Baixas do SSW por motorista num dia (precisa da opção 38, que só liga CT-e e motorista no dia corrente)
+function resumoSswPorMotorista(v,data){
+  const m=new Map(),chave=x=>tokensMotorista(x).join(' ');
+  const pegar=(nome,placa)=>{const k=chave(nome);if(!k)return null;if(!m.has(k))m.set(k,{motorista:String(nome).trim(),placa:placa||'',primeira:null,ultima:null,entregas:0,saidas:0});const d=m.get(k);if(placa&&!d.placa)d.placa=placa;return d};
+  for(const x of (v&&v.motoristas)||[]){const d=x.motorista&&pegar(x.motorista,x.veiculo);if(d)d.saidas=Math.max(d.saidas,x.saidas||0)}
+  for(const r of (v&&v.rows)||[]){
+    if(!r.entregue||!r.motorista)continue;const ms=msBaixaSsw(r.baixaDataHora);if(ms==null||spDateISO(new Date(ms))!==data)continue;
+    const d=pegar(r.motorista,r.veiculo);if(!d)continue;
+    d.primeira=d.primeira==null?ms:Math.min(d.primeira,ms);d.ultima=d.ultima==null?ms:Math.max(d.ultima,ms);d.entregas++}
+  return[...m.values()].map(d=>({motorista:d.motorista,placa:d.placa,primeira_entrega_em:d.primeira==null?null:new Date(d.primeira).toISOString(),ultima_entrega_em:d.ultima==null?null:new Date(d.ultima).toISOString(),entregas:d.entregas,saidas:d.saidas}));
+}
+// grava a foto do dia no servidor principal (no máximo a cada 5 min por dia), para consultar depois
+const SSW_DIA_SALVO=new Map();
+async function salvarSswDia(data,v){
+  const rows=resumoSswPorMotorista(v,data);if(!rows.length)return 0;
+  const ult=SSW_DIA_SALVO.get(data)||0;if(Date.now()-ult<5*60*1000)return 0;
+  SSW_DIA_SALVO.set(data,Date.now());
+  const r=await portalJson('/api/painel/saidas-motorista/ssw',{method:'POST',body:{data,rows}});
+  return r&&r.gravados||0;
 }
 function msBaixaSsw(v){
   const t=String(v||'').trim();let m=t.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
@@ -3267,13 +3297,13 @@ async function buildSaidasPorMotorista(dataPedida=''){
     portalJson('/api/painel/saidas-motorista?data='+data).catch(e=>({ok:false,error:String(e.message||e)})),
     // SSW: o dia de hoje vem do painel Saídas x Baixas; outro dia usa o que já foi lido ou lê a opção 38 + rastreio
     // daquele dia em segundo plano (a tela pergunta de novo até chegar). SSW lento não segura a consulta.
-    Promise.race([(data===hoje?getSswMotoristasFast(data,data):Promise.resolve((SSW_DRIVER_CACHE.get('online|'+data+'|'+data)||{}).value||ensureSswMotoristasRefresh(data,data))).catch(()=>null),
+    Promise.race([(data===hoje?getSswMotoristasFast(data,data):Promise.resolve(null)).catch(()=>null),
       new Promise(r=>setTimeout(()=>r(null),8000))])
   ]);
   const mots=[];
   const achar=(nome,placa)=>{
     const tok=tokensMotorista(nome);if(!tok.length&&!placa)return null;
-    let d=tok.length?mots.find(x=>mesmoMotorista(x.tok,tok)):mots.find(x=>x.placa&&x.placa===placa);
+    let d=tok.length?(mots.find(x=>mesmoMotorista(x.tok,tok))||mots.find(x=>mesmoMotorista(x.tok,tok,true))):mots.find(x=>x.placa&&x.placa===placa);
     if(!d){d={tok,nome:String(nome||'').trim()||placa,placa:placa||'',carregou:null,carregamentos:0,entregas_carregadas:0,primeira:null,ultima:null,app:0,ssw:0,falhas:0,saidas:0,fontes:new Set()};mots.push(d)}
     if(tok.length>d.tok.length){d.tok=tok;d.nome=String(nome).trim()}
     if(placa&&!d.placa)d.placa=placa;
@@ -3286,27 +3316,38 @@ async function buildSaidasPorMotorista(dataPedida=''){
     if(a.primeira_entrega_em)d.primeira=menor(d.primeira,Date.parse(a.primeira_entrega_em));
     if(a.ultima_entrega_em)d.ultima=maior(d.ultima,Date.parse(a.ultima_entrega_em));
     d.app+=a.entregues||0;d.falhas+=a.falhas||0;d.fontes.add('App MOVIT')}
-  let sswOk=false;
-  if(ssw&&Array.isArray(ssw.rows)){
-    sswOk=true;
-    for(const m of ssw.motoristas||[]){if(!m.motorista)continue;const d=achar(m.motorista,m.veiculo);if(d)d.saidas=Math.max(d.saidas,m.saidas||0)}
-    const porMot=new Map();
-    for(const r of ssw.rows){
-      if(!r.entregue||!r.motorista)continue;const ms=msBaixaSsw(r.baixaDataHora);if(ms==null||spDateISO(new Date(ms))!==data)continue;
-      const d=achar(r.motorista,r.veiculo);if(!d)continue;
-      d.primeira=menor(d.primeira,ms);d.ultima=maior(d.ultima,ms);porMot.set(d,(porMot.get(d)||0)+1);d.fontes.add('SSW')}
-    for(const [d,n] of porMot)d.ssw=n;
-  }
+  // SSW: o lido agora quando ele traz o motorista de cada CT-e (dia corrente); senão a foto guardada daquele dia
+  let resumo=ssw&&Array.isArray(ssw.rows)&&ssw.rows.some(r=>r.motorista)?resumoSswPorMotorista(ssw,data):[];
+  if(resumo.length&&data===hoje)salvarSswDia(data,ssw).catch(e=>console.log('SAIDAS MOTORISTA gravar SSW: '+String(e.message||e)));
+  const salvo=!resumo.length&&portal&&Array.isArray(portal.ssw)&&portal.ssw.length;
+  if(salvo)resumo=portal.ssw;
+  const sswOk=resumo.length>0;
+  for(const x of resumo){
+    const d=achar(x.motorista,String(x.placa||'').toUpperCase());if(!d)continue;
+    d.saidas=Math.max(d.saidas,x.saidas||0);
+    if(x.primeira_entrega_em)d.primeira=menor(d.primeira,Date.parse(x.primeira_entrega_em));
+    if(x.ultima_entrega_em)d.ultima=maior(d.ultima,Date.parse(x.ultima_entrega_em));
+    d.ssw=Math.max(d.ssw,x.entregas||0);if(x.entregas||x.primeira_entrega_em)d.fontes.add('SSW')}
   const titulo=t=>String(t||'').toLowerCase().split(/\s+/).filter(Boolean).map((w,i)=>i&&NOME_CONECTIVO.has(w.toUpperCase())?w:w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
   const rows=mots.map(d=>({motorista:titulo(d.nome),placa:d.placa,carregou:horaSp(d.carregou),primeira_entrega:horaSp(d.primeira),ultima_entrega:horaSp(d.ultima),
       ate_primeira:duracao(d.carregou,d.primeira),jornada:duracao(d.carregou,d.ultima),entregas:Math.max(d.app,d.ssw),saidas:d.saidas,falhas:d.falhas,
       carregamentos:d.carregamentos,entregas_carregadas:d.entregas_carregadas,fontes:[...d.fontes],_o:d.carregou??d.primeira??Infinity}))
     .filter(r=>r.carregou||r.primeira_entrega||r.saidas)
     .sort((a,b)=>a._o-b._o||a.motorista.localeCompare(b.motorista,'pt-BR')).map(({_o,...r})=>r);
-  const buscando=!sswOk&&SSW_DRIVER_INFLIGHT.has('online|'+data+'|'+data);
-  return{ok:true,data,rows,ssw:sswOk,ssw_buscando:buscando||(!sswOk&&data===hoje),portal:!!(portal&&portal.ok),
-    aviso:[portal&&portal.ok?'':'Registro de carga e app indisponíveis agora'+(portal&&portal.error?' ('+portal.error+')':''),sswOk?'':'Buscando as baixas do SSW de '+data.split('-').reverse().join('/')+'… a tabela se completa sozinha em 1 ou 2 minutos'].filter(Boolean).join(' • ')};
+  const buscando=!sswOk&&data===hoje;
+  return{ok:true,data,rows,ssw:sswOk,ssw_salvo:!!salvo,ssw_buscando:buscando,portal:!!(portal&&portal.ok),
+    aviso:[portal&&portal.ok?'':'Registro de carga e app indisponíveis agora'+(portal&&portal.error?' ('+portal.error+')':''),
+      sswOk?'':data===hoje?'Buscando as baixas do SSW de hoje… a tabela se completa sozinha':'Sem as baixas do SSW deste dia: o SSW só informa o motorista de cada entrega no próprio dia, e o sistema passou a guardar essa informação a partir de 05/11/2026'].filter(Boolean).join(' • ')};
 }
+
+// Mesmo com o painel fechado, lê o dia corrente a cada 30 min (6h às 22h) para a foto do dia ficar completa.
+setInterval(()=>{try{
+  const h=Number(new Date().toLocaleTimeString('en-GB',{timeZone:'America/Sao_Paulo',hour:'2-digit',hour12:false}));
+  if(h<6||h>=22||!internalSswConfigured())return;
+  const d=spDateISO(),hit=SSW_DRIVER_CACHE.get('online|'+d+'|'+d);
+  if(hit&&Date.now()-hit.at<25*60*1000){salvarSswDia(d,hit.value).catch(()=>{});return}
+  ensureSswMotoristasRefresh(d,d).catch(()=>{});
+}catch(e){}},30*60*1000).unref?.();
 
 async function getSswMotoristasFast(from='',to=''){
   const today=spDateISO();from=from||today;to=to||today;

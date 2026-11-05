@@ -1911,6 +1911,11 @@ async function start() {
     )
   `);
   await pool.query('CREATE INDEX IF NOT EXISTS idx_carregamentos_finais_capturada_em ON carregamentos_finais (capturada_em DESC)');
+  // foto do dia das baixas do SSW por motorista (o SSW só liga CT-e e motorista no dia corrente, pela opção 38):
+  // o dashboard grava durante o dia e a consulta de um dia anterior usa o que ficou guardado
+  await pool.query(`CREATE TABLE IF NOT EXISTS saidas_motorista_ssw (data DATE NOT NULL, motorista TEXT NOT NULL, placa TEXT NOT NULL DEFAULT '',
+    primeira_entrega_em TIMESTAMPTZ, ultima_entrega_em TIMESTAMPTZ, entregas INTEGER NOT NULL DEFAULT 0, saidas INTEGER NOT NULL DEFAULT 0,
+    atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (data, motorista))`);
   await pool.query("ALTER TABLE carregamentos_finais ADD COLUMN IF NOT EXISTS tipo TEXT NOT NULL DEFAULT 'carregamento'");
   await pool.query("UPDATE carregamentos_finais SET tipo='carregamento' WHERE tipo IS NULL OR trim(tipo)=''");
   await pool.query("ALTER TABLE carregamentos_finais ADD COLUMN IF NOT EXISTS conferente_coleta_devolucao TEXT");
@@ -5691,6 +5696,30 @@ async function start() {
 
       // Saídas por motorista num dia: hora do carregamento (registro de carga com foto) e primeira/última baixa no app MOVIT.
       // O dashboard junta com as baixas do SSW e casa os nomes (conferente, app e SSW escrevem o nome de jeitos diferentes).
+      if (req.method === 'POST' && u.pathname === '/api/painel/saidas-motorista/ssw') {
+        try {
+          if (!isInternalCall(req)) return sendJson(res, 401, { ok: false, error: 'Só o dashboard grava as baixas do SSW.' });
+          const b = await readJsonBodyLimited(req, 512 * 1024);
+          const data = String(b.data || '');
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return sendJson(res, 400, { ok: false, error: 'Data inválida.' });
+          let n = 0;
+          for (const r of (Array.isArray(b.rows) ? b.rows : []).slice(0, 300)) {
+            const mot = String(r.motorista || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+            if (!mot) continue;
+            const ts = v => (v && !isNaN(Date.parse(v))) ? new Date(v).toISOString() : null;
+            await pool.query(`INSERT INTO saidas_motorista_ssw(data,motorista,placa,primeira_entrega_em,ultima_entrega_em,entregas,saidas,atualizado_em) VALUES($1,$2,$3,$4,$5,$6,$7,NOW())
+              ON CONFLICT (data,motorista) DO UPDATE SET placa=CASE WHEN EXCLUDED.placa<>'' THEN EXCLUDED.placa ELSE saidas_motorista_ssw.placa END,
+                primeira_entrega_em=COALESCE(LEAST(saidas_motorista_ssw.primeira_entrega_em,EXCLUDED.primeira_entrega_em),saidas_motorista_ssw.primeira_entrega_em,EXCLUDED.primeira_entrega_em),
+                ultima_entrega_em=COALESCE(GREATEST(saidas_motorista_ssw.ultima_entrega_em,EXCLUDED.ultima_entrega_em),saidas_motorista_ssw.ultima_entrega_em,EXCLUDED.ultima_entrega_em),
+                entregas=GREATEST(saidas_motorista_ssw.entregas,EXCLUDED.entregas),saidas=GREATEST(saidas_motorista_ssw.saidas,EXCLUDED.saidas),atualizado_em=NOW()`,
+              [data, mot, String(r.placa || '').toUpperCase().slice(0, 10), ts(r.primeira_entrega_em), ts(r.ultima_entrega_em), Math.max(0, Number(r.entregas) || 0), Math.max(0, Number(r.saidas) || 0)]);
+            n++;
+          }
+          return sendJson(res, 200, { ok: true, gravados: n });
+        } catch (e) {
+          return sendJson(res, e.status || 500, { ok: false, error: e.message || 'Não foi possível gravar as baixas do SSW.' });
+        }
+      }
       if (req.method === 'GET' && u.pathname === '/api/painel/saidas-motorista') {
         try {
           const user = await sessionOrInternal(req);
@@ -5710,7 +5739,8 @@ async function start() {
               MIN(c.registrado_em) AS primeira_baixa_em, MAX(c.registrado_em) AS ultima_baixa_em,
               COUNT(*) FILTER (WHERE c.resultado='entregue')::int AS entregues, COUNT(*) FILTER (WHERE c.resultado='falhou')::int AS falhas
             FROM entregas_comprovantes c WHERE c.work_date=$1::date${filtro} GROUP BY c.driver_name`, params)).rows;
-          return sendJson(res, 200, { ok: true, data, carregamentos: carg, app });
+          const ssw = (await pool.query('SELECT motorista,placa,primeira_entrega_em,ultima_entrega_em,entregas,saidas,atualizado_em FROM saidas_motorista_ssw WHERE data=$1::date', [data])).rows;
+          return sendJson(res, 200, { ok: true, data, carregamentos: carg, app, ssw });
         } catch (e) {
           return sendJson(res, e.status || 500, { ok: false, error: e.message || 'Não foi possível montar a consulta por motorista.' });
         }
