@@ -3275,10 +3275,62 @@ function resumoSswPorMotorista(v,data){
     d.primeira=d.primeira==null?ms:Math.min(d.primeira,ms);d.ultima=d.ultima==null?ms:Math.max(d.ultima,ms);d.entregas++}
   return[...m.values()].map(d=>({motorista:d.motorista,placa:d.placa,primeira_entrega_em:d.primeira==null?null:new Date(d.primeira).toISOString(),ultima_entrega_em:d.ultima==null?null:new Date(d.ultima).toISOString(),entregas:d.entregas,saidas:d.saidas}));
 }
+// Horários pela mesma base do painel "Evolução por Motorista": os romaneios do dia na opção 38 (todas as unidades,
+// AMR, AMS...), os CT-es de cada romaneio e o rastreio do SSW de cada CT-e (data e hora da baixa "entregue").
+// Só existe para o dia corrente; o resultado fica 3 min em memória (o rastreio de cada CT-e também tem cache).
+let HORARIOS_ROM={at:0,data:'',rows:null,p:null};
+async function horariosRomaneiosHoje(data){
+  if(data!==spDateISO()||!internalSswConfigured())return null;
+  if(HORARIOS_ROM.data===data&&HORARIOS_ROM.rows&&Date.now()-HORARIOS_ROM.at<3*60*1000)return HORARIOS_ROM.rows;
+  if(HORARIOS_ROM.p&&HORARIOS_ROM.data===data)return HORARIOS_ROM.p;
+  const p=(async()=>{
+    const key='online|'+data+'|'+data,v=(SSW_DRIVER_CACHE.get(key)||{}).value||(SSW_DRIVER_LAST?.key===key?SSW_DRIVER_LAST.value:null);
+    let roms=(v&&v.romaneios38)||[];
+    if(!roms.length){const quick=await fetchSsw38QuickTodas();for(const q of quick)if(q.status==='fulfilled')roms.push(...(q.value?.rows||[]))}
+    roms=roms.filter(x=>x&&x.romaneio&&x.motorista);
+    if(!roms.length)return null;
+    const byCtrc=new Map(),byNf=new Map();
+    for(const r of (v&&v.rows)||[]){for(const raw of [r.ctrc,r.ctrcOficial]){const k=normCtrc(raw),lk=normCtrcLoose(raw);if(k)byCtrc.set(k,r);if(lk)byCtrc.set('#'+lk,r)}const nf=normNf(r.nf);if(nf)byNf.set(nf,r)}
+    const mots=new Map(),tarefas=[];
+    for(const x of roms){
+      const k=tokensMotorista(x.motorista).join(' ');if(!k)continue;
+      if(!mots.has(k))mots.set(k,{motorista:String(x.motorista).trim(),placa:String(x.veiculo||'').toUpperCase(),saidas:0,horas:[],romaneios:new Set()});
+      const g=mots.get(k);if(g.romaneios.has(x.romaneio))continue;g.romaneios.add(x.romaneio);g.saidas+=Number(x.qtdeCtrcs||0);if(!g.placa&&x.veiculo)g.placa=String(x.veiculo).toUpperCase();
+      let meta=(x.ctrcMeta&&x.ctrcMeta.length)?x.ctrcMeta:null;
+      if(!meta){try{const det=await fetchSsw38RomaneioDetailDirect(x.romaneio,x.qtdeCtrcs,x.motorista,x.veiculo);meta=det.ctrcMeta&&det.ctrcMeta.length?det.ctrcMeta:(det.ctrcNfs||[]).map(p=>({ctrc:p.ctrc,nf:p.nf,cnpjs:[]}))}catch(e){meta=[]}}
+      for(const m of meta)tarefas.push({g,m});
+    }
+    await mapLimit(tarefas,8,async({g,m})=>{
+      let ms=null;
+      const r=byCtrc.get(normCtrc(m.ctrc))||byCtrc.get('#'+normCtrcLoose(m.ctrc))||(m.nf?byNf.get(normNf(m.nf)):null);
+      if(r&&r.entregue)ms=msBaixaSsw(r.baixaDataHora);
+      else if(!r||!r.trackingOk){
+        for(const doc of (m.cnpjs||[]).slice(0,3)){
+          const tr=await trackingDestQuery(doc,m.nf,data);
+          if(tr.entregue){ms=msBaixaSsw(tr.delivery?.data_hora||tr.last?.data_hora);break}
+          if((tr.items||[]).length)break;   // achou o CT-e e ainda não foi entregue
+        }
+      }
+      if(ms!=null&&spDateISO(new Date(ms))===data)g.horas.push(ms);
+    });
+    const rows=[...mots.values()].map(g=>({motorista:g.motorista,placa:g.placa,saidas:g.saidas,entregas:g.horas.length,
+      primeira_entrega_em:g.horas.length?new Date(Math.min(...g.horas)).toISOString():null,ultima_entrega_em:g.horas.length?new Date(Math.max(...g.horas)).toISOString():null}));
+    console.log('SAIDAS MOTORISTA horários dos romaneios: '+JSON.stringify({romaneios:roms.length,ctes:tarefas.length,motoristas:rows.length,comEntrega:rows.filter(x=>x.entregas).length}));
+    return rows;
+  })();
+  HORARIOS_ROM={...HORARIOS_ROM,data,p};
+  try{const rows=await p;HORARIOS_ROM={at:Date.now(),data,rows,p:null};return rows}
+  catch(e){HORARIOS_ROM={at:0,data,rows:null,p:null};throw e}
+}
+// Resumo do dia por motorista: romaneios + rastreio de cada CT-e; na falta, as linhas do painel Saídas x Baixas
+async function resumoDoDia(data,v){
+  const h=await Promise.race([horariosRomaneiosHoje(data).catch(e=>{console.log('SAIDAS MOTORISTA romaneios: '+String(e.message||e));return null}),new Promise(r=>setTimeout(()=>r(null),25000))]);
+  return h&&h.some(x=>x.entregas||x.saidas)?h:resumoSswPorMotorista(v,data);
+}
 // grava a foto do dia no servidor principal (no máximo a cada 5 min por dia), para consultar depois
 const SSW_DIA_SALVO=new Map();
-async function salvarSswDia(data,v){
-  const rows=resumoSswPorMotorista(v,data);if(!rows.length)return 0;
+async function salvarSswDia(data,v,pronto){
+  const rows=pronto||await resumoDoDia(data,v);if(!rows.length)return 0;
   const ult=SSW_DIA_SALVO.get(data)||0;if(Date.now()-ult<5*60*1000)return 0;
   SSW_DIA_SALVO.set(data,Date.now());
   const r=await portalJson('/api/painel/saidas-motorista/ssw',{method:'POST',body:{data,rows}});
@@ -3317,8 +3369,8 @@ async function buildSaidasPorMotorista(dataPedida=''){
     if(a.ultima_entrega_em)d.ultima=maior(d.ultima,Date.parse(a.ultima_entrega_em));
     d.app+=a.entregues||0;d.falhas+=a.falhas||0;d.fontes.add('App MOVIT')}
   // SSW: o lido agora quando ele traz o motorista de cada CT-e (dia corrente); senão a foto guardada daquele dia
-  let resumo=ssw&&Array.isArray(ssw.rows)&&ssw.rows.some(r=>r.motorista)?resumoSswPorMotorista(ssw,data):[];
-  if(resumo.length&&data===hoje)salvarSswDia(data,ssw).catch(e=>console.log('SAIDAS MOTORISTA gravar SSW: '+String(e.message||e)));
+  let resumo=data===hoje?await resumoDoDia(data,ssw):[];
+  if(resumo.length)salvarSswDia(data,ssw,resumo).catch(e=>console.log('SAIDAS MOTORISTA gravar SSW: '+String(e.message||e)));
   const salvo=!resumo.length&&portal&&Array.isArray(portal.ssw)&&portal.ssw.length;
   if(salvo)resumo=portal.ssw;
   const sswOk=resumo.length>0;
