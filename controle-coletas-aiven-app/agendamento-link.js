@@ -138,7 +138,8 @@ async function dadosLink(pool, token, { agora } = {}) {
   if (!l.aberto_em) await pool.query('UPDATE ag_links SET aberto_em=NOW() WHERE token=$1', [token]);
   const notas = await notasDoLink(pool, l);
   const abertas = notas.filter(n => !ag.FINAIS.includes(n.situacao));
-  const datas = wa.proximasDatas(await wa.rotaDa(pool, l.client_id, l.cidade, l.uf), { agora: agora || new Date(), n: 8 });
+  const datas = await wa.datasDisponiveis(pool, l.client_id, await wa.rotaDa(pool, l.client_id, l.cidade, l.uf), { agora: agora || new Date(), n: 8,
+    cidade: l.cidade, uf: l.uf, remetentes: (abertas.length ? abertas : notas).map(x => x.remetente), cliente: l.chave });
   const local = (await pool.query('SELECT 1 FROM ag_locais WHERE COALESCE(client_id,0)=COALESCE($1::bigint,0) AND chave=$2', [l.client_id, l.chave])).rowCount > 0;
   const agendada = abertas.find(n => n.ag_data)?.ag_data || null;
   // pedido de nova data ainda sem resposta e o agendamento continua no dia que falhou: a página pede desculpas
@@ -156,7 +157,8 @@ async function escolher(pool, token, b, { agora, abrirLink } = {}) {
   if (!notas.length) throw erro(409, 'Esta entrega já foi concluída.');
   let feitas = 0;
   if (data) {
-    const validas = wa.proximasDatas(await wa.rotaDa(pool, l.client_id, l.cidade, l.uf), { agora: agora || new Date(), n: 8 });
+    const validas = await wa.datasDisponiveis(pool, l.client_id, await wa.rotaDa(pool, l.client_id, l.cidade, l.uf), { agora: agora || new Date(), n: 30,
+      cidade: l.cidade, uf: l.uf, remetentes: notas.map(x => x.remetente), cliente: l.chave });
     if (!validas.includes(data)) throw erro(422, 'Essa data não está mais disponível. Escolha outra, por favor.');
     const problemas = [];
     for (const n of notas) {
