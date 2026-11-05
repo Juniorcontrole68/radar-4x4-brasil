@@ -84,7 +84,7 @@ while (dow(SEG) !== 1 || wa.feriados(Number(SEG.slice(0, 4))).has(SEG) || [1, 2,
   await wa.receber(ctx, msg('wamid.IN1', { type: 'button', button: { text: 'Escolher data', payload: 'ofertar:' + conv.id } }));
   const lista = enviados[enviados.length - 1].b;
   const rows = lista.interactive && lista.interactive.action.sections[0].rows || [];
-  check('clicou "Escolher data": lista com 6 datas de seg a sex a partir de terça + "Nenhuma data serve"', lista.type === 'interactive' && rows.length === 7 && rows[0].id === 'd:' + conv.id + ':' + mais(SEG, 1) && rows[6].id === 'sac:' + conv.id, rows);
+  check('clicou "Escolher data": lista com 6 datas de seg a sex a partir de terça + "Nenhuma data serve" + "Não reconheço a compra"', lista.type === 'interactive' && rows.length === 8 && rows[0].id === 'd:' + conv.id + ':' + mais(SEG, 1) && rows[6].id === 'sac:' + conv.id && rows[7].id === 'nr:' + conv.id, rows);
   check('responde para o número no formato da Meta', lista.to === '551998887766');
   check('a mesma mensagem reenviada pela Meta é ignorada', await wa.receber(ctx, msg('wamid.IN1', { type: 'button', button: { text: 'Escolher data', payload: 'ofertar:' + conv.id } })) === 'repetida');
   const qua = mais(SEG, 2);
