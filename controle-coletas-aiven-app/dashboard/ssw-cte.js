@@ -447,9 +447,18 @@ function chavesNfe(texto){
 }
 
 // Página da foto da entrega (ssw0053?act=<código>): "SSWMobile 75 - 04/11/26 12:50" no cabeçalho do comprovante
+// Hora da baixa "entregue": na página da foto ("SSWMobile 75 - 04/11/26 12:50") ou na tela 101 do CT-e, cuja lista
+// de ocorrências traz "04/11/26 12:50 ... 01-MERCADORIA ENTREGUE" (vale a última ocorrência de entrega).
 function horaDaFoto(html){
-  const t=String(html||'').replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/\s+/g,' ');
-  const m=t.match(/SSW\s*Mobile[^-]{0,12}-\s*(\d{2})\/(\d{2})\/(\d{2,4})\s+(\d{2}):(\d{2})/i)||t.match(/COMPROVANTE DE ENTREGA[^]{0,200}?(\d{2})\/(\d{2})\/(\d{2,4})\s+(\d{2}):(\d{2})/i);
-  return m?(m[3].length===2?'20'+m[3]:m[3])+'-'+m[2]+'-'+m[1]+'T'+m[4]+':'+m[5]+':00-03:00':'';
+  const t=htmlPlain(String(html||'')).replace(/\s+/g,' ');
+  const iso=m=>(m[3].length===2?'20'+m[3]:m[3])+'-'+m[2]+'-'+m[1]+'T'+m[4]+':'+m[5]+':00-03:00';
+  let m=t.match(/SSW\s*Mobile[^-]{0,12}-\s*(\d{2})\/(\d{2})\/(\d{2,4})\s+(\d{2}):(\d{2})/i);
+  if(m)return iso(m);
+  const ents=[...t.matchAll(/(\d{2})\/(\d{2})\/(\d{2,4})\s+(\d{2}):(\d{2})(?:[^0-9]{0,40}?)\b0?(?:1|37)\s*-\s*(?:MERCADORIA ENTREGUE|ENTREGA REALIZADA)/gi)];
+  if(ents.length)return iso(ents[ents.length-1]);
+  m=t.match(/COMPROVANTE DE ENTREGA.{0,200}?(\d{2})\/(\d{2})\/(\d{2,4})\s+(\d{2}):(\d{2})/i);
+  return m?iso(m):'';
 }
-module.exports={horaDaFoto,chavesNfe,situacaoBloqueiaAgendamento,situacaoEmRota,parseRelacaoProdutos,limparProduto,pareceProduto,parseComprovantes,zipEntries,isZip,xmlFromDownload,parseCteXml,parseTela101,parseMapaCall,xmlValue,xmlBlock,entregaNoComplemento,enderecosEntrega,recebedorEhOutroLocal};
+// trecho da tela com a ocorrência de entrega (diagnóstico)
+function trechoEntrega(html){const t=htmlPlain(String(html||'')).replace(/\s+/g,' '),i=t.search(/MERCADORIA ENTREGUE|ENTREGA REALIZADA/i);return i<0?'':t.slice(Math.max(0,i-160),i+60)}
+module.exports={trechoEntrega,horaDaFoto,chavesNfe,situacaoBloqueiaAgendamento,situacaoEmRota,parseRelacaoProdutos,limparProduto,pareceProduto,parseComprovantes,zipEntries,isZip,xmlFromDownload,parseCteXml,parseTela101,parseMapaCall,xmlValue,xmlBlock,entregaNoComplemento,enderecosEntrega,recebedorEhOutroLocal};

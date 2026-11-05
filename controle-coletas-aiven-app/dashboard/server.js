@@ -3319,7 +3319,7 @@ async function horariosPorRomaneios(data){
     }
     const todos=[...mots.values()].flatMap(g=>g.romaneios.map(x=>({g,x})));
     await mapLimit(todos,2,async({g,x})=>{
-      const t0=Date.now(),c=x.seq?await lancComprovantes(x.romaneio,x.seq,false,{ms:25000}).catch(e=>{console.log('SAIDAS MOTORISTA comprovantes '+x.romaneio+' ERRO: '+String(e.message||e));return null}):null;
+      const t0=Date.now(),c=x.seq?await lancComprovantes(x.romaneio,x.seq,false,{ms:60000}).catch(e=>{console.log('SAIDAS MOTORISTA comprovantes '+x.romaneio+' ERRO: '+String(e.message||e));return null}):null;
       console.log('SAIDAS MOTORISTA comprovantes '+x.romaneio+': '+JSON.stringify({seq:x.seq,ms:Date.now()-t0,itens:(c&&c.itens||[]).length,comHora:(c&&c.itens||[]).filter(i=>i.hora).length}));
       const itens=(c&&c.itens)||[];
       if(itens.length)diag.comprovantes++;
@@ -5520,7 +5520,7 @@ const FOTO_HORA=new Map();
 async function lancComprovantes(romaneioSsw,seq,guardarHtml=false,comHoras=false){
   seq=String(seq||'').replace(/\D/g,'');
   if(!seq||!internalSswConfigured())return null;
-  if(!guardarHtml&&Date.now()<LANC_COMPROV_PAUSA)return null;
+  if(!guardarHtml&&!comHoras&&Date.now()<LANC_COMPROV_PAUSA)return null;
   const prefix=(String(romaneioSsw||'').toUpperCase().match(/^[A-Z]{3}/)||['AMR'])[0],UA='Mozilla/5.0 Chrome/120 Safari/537.36';
   const value=await withSswSession('op38:'+prefix,async({apply,cookie})=>{
     let r=await fetch('https://sistema.ssw.inf.br/bin/menu01?act=TRO&f2='+encodeURIComponent(prefix)+'&f3=38',{headers:{'User-Agent':UA,'Cookie':cookie(),'Referer':'https://sistema.ssw.inf.br/bin/menu01'},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(r.headers);
@@ -5541,25 +5541,20 @@ async function lancComprovantes(romaneioSsw,seq,guardarHtml=false,comHoras=false
     // O link do SSW é ajaxEnvia('',1,'ssw0053?act=N'): tenta GET e, sem a hora, o POST com o formulário da tela.
     // Limite de tempo por romaneio para nunca travar a consulta; o que faltar fica para a próxima leitura.
     if(comHoras){
-      const ate=Date.now()+(typeof comHoras==='object'&&comHoras.ms||40000),form=deliveryProgramFormParams(html);
-      const diag=typeof comHoras==='object'&&comHoras.diag;
-      for(const i of p.itens){
-        if(i.codigo!==1||i.hora||!i.foto)continue;
-        if(FOTO_HORA.has(i.foto)){i.hora=FOTO_HORA.get(i.foto);continue}
-        if(Date.now()>ate)break;
-        const furl='https://sistema.ssw.inf.br/bin/ssw0053?act='+i.foto;
-        for(const modo of ['GET','POST']){
-          const t0=Date.now();
-          try{
-            const opt=modo==='GET'?{headers:{'User-Agent':UA,'Cookie':cookie(),'Referer':url}}
-              :{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':UA,'Cookie':cookie(),'Referer':url},body:(()=>{const f=new URLSearchParams(form.toString());f.set('act',i.foto);return f.toString()})()};
-            const rf=await fetch(furl,{...opt,redirect:'manual',signal:AbortSignal.timeout(8000)});apply(rf.headers);
-            const body=await rf.text(),h=sswCte.horaDaFoto(body);
-            if(diag&&diag.length<6)diag.push({ctrc:i.ctrc,foto:i.foto,modo,status:rf.status,ms:Date.now()-t0,bytes:body.length,hora:h,trecho:htmlText38(body).slice(0,300)});
-            if(h){i.hora=h;FOTO_HORA.set(i.foto,h);if(FOTO_HORA.size>20000)FOTO_HORA.delete(FOTO_HORA.keys().next().value);break}
-          }catch(e){if(diag&&diag.length<6)diag.push({ctrc:i.ctrc,foto:i.foto,modo,erro:String(e.message||e),ms:Date.now()-t0})}
-        }
-      }
+      // o código da linha abre a tela 101 do CT-e (ssw0053?act=N), com as ocorrências e a hora da entrega; 4 por vez
+      const ate=Date.now()+(typeof comHoras==='object'&&comHoras.ms||40000),diag=typeof comHoras==='object'&&comHoras.diag;
+      const faltam=p.itens.filter(i=>i.codigo===1&&!i.hora&&i.foto);
+      for(const i of faltam)if(FOTO_HORA.has(i.foto))i.hora=FOTO_HORA.get(i.foto);
+      await mapLimit(faltam.filter(i=>!i.hora),4,async i=>{
+        if(Date.now()>ate)return;
+        const t0=Date.now();
+        try{
+          const rf=await fetch('https://sistema.ssw.inf.br/bin/ssw0053?act='+i.foto,{headers:{'User-Agent':UA,'Cookie':cookie(),'Referer':url},redirect:'manual',signal:AbortSignal.timeout(12000)});
+          const body=await rf.text(),h=sswCte.horaDaFoto(body);
+          if(diag&&diag.length<4)diag.push({ctrc:i.ctrc,foto:i.foto,status:rf.status,ms:Date.now()-t0,bytes:body.length,hora:h,trecho:sswCte.trechoEntrega(body)});
+          if(h){i.hora=h;FOTO_HORA.set(i.foto,h);if(FOTO_HORA.size>20000)FOTO_HORA.delete(FOTO_HORA.keys().next().value)}
+        }catch(e){if(diag&&diag.length<4)diag.push({ctrc:i.ctrc,foto:i.foto,erro:String(e.message||e),ms:Date.now()-t0})}
+      });
     }
     return{...p,modo,status:r.status,bytes:Buffer.byteLength(html),...(guardarHtml?{html}:{})}
   });
