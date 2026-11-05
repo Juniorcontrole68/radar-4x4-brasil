@@ -3319,7 +3319,8 @@ async function horariosPorRomaneios(data){
     }
     const todos=[...mots.values()].flatMap(g=>g.romaneios.map(x=>({g,x})));
     await mapLimit(todos,2,async({g,x})=>{
-      const c=x.seq?await lancComprovantes(x.romaneio,x.seq,false,true).catch(()=>null):null;
+      const t0=Date.now(),c=x.seq?await lancComprovantes(x.romaneio,x.seq,false,{ms:25000}).catch(e=>{console.log('SAIDAS MOTORISTA comprovantes '+x.romaneio+' ERRO: '+String(e.message||e));return null}):null;
+      console.log('SAIDAS MOTORISTA comprovantes '+x.romaneio+': '+JSON.stringify({seq:x.seq,ms:Date.now()-t0,itens:(c&&c.itens||[]).length,comHora:(c&&c.itens||[]).filter(i=>i.hora).length}));
       const itens=(c&&c.itens)||[];
       if(itens.length)diag.comprovantes++;
       g.saidas+=Math.max(x.qtde||0,itens.length);
@@ -5536,18 +5537,28 @@ async function lancComprovantes(romaneioSsw,seq,guardarHtml=false,comHoras=false
       const h2=await r.text(),p2=sswCte.parseComprovantes(h2);
       if(p2.itens.length||!html){html=h2;p=p2;modo='POST'}
     }
-    // entregue pelo SSWMobile sem a hora no texto: abre a página da foto (a mesma do link "Imagem") e lê o cabeçalho
+    // entregue pelo SSWMobile sem a hora no texto: abre a página da foto (a mesma do link "Imagem") e lê o cabeçalho.
+    // O link do SSW é ajaxEnvia('',1,'ssw0053?act=N'): tenta GET e, sem a hora, o POST com o formulário da tela.
+    // Limite de tempo por romaneio para nunca travar a consulta; o que faltar fica para a próxima leitura.
     if(comHoras){
-      let lidas=0;
+      const ate=Date.now()+(typeof comHoras==='object'&&comHoras.ms||40000),form=deliveryProgramFormParams(html);
+      const diag=typeof comHoras==='object'&&comHoras.diag;
       for(const i of p.itens){
         if(i.codigo!==1||i.hora||!i.foto)continue;
         if(FOTO_HORA.has(i.foto)){i.hora=FOTO_HORA.get(i.foto);continue}
-        if(++lidas>60)break;
-        try{
-          const rf=await fetch('https://sistema.ssw.inf.br/bin/ssw0053?act='+i.foto,{headers:{'User-Agent':UA,'Cookie':cookie(),'Referer':url},redirect:'manual',signal:AbortSignal.timeout(15000)});apply(rf.headers);
-          const h=sswCte.horaDaFoto(await rf.text());
-          if(h){i.hora=h;FOTO_HORA.set(i.foto,h);if(FOTO_HORA.size>20000)FOTO_HORA.delete(FOTO_HORA.keys().next().value)}
-        }catch(e){}
+        if(Date.now()>ate)break;
+        const furl='https://sistema.ssw.inf.br/bin/ssw0053?act='+i.foto;
+        for(const modo of ['GET','POST']){
+          const t0=Date.now();
+          try{
+            const opt=modo==='GET'?{headers:{'User-Agent':UA,'Cookie':cookie(),'Referer':url}}
+              :{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':UA,'Cookie':cookie(),'Referer':url},body:(()=>{const f=new URLSearchParams(form.toString());f.set('act',i.foto);return f.toString()})()};
+            const rf=await fetch(furl,{...opt,redirect:'manual',signal:AbortSignal.timeout(8000)});apply(rf.headers);
+            const body=await rf.text(),h=sswCte.horaDaFoto(body);
+            if(diag&&diag.length<6)diag.push({ctrc:i.ctrc,foto:i.foto,modo,status:rf.status,ms:Date.now()-t0,bytes:body.length,hora:h,trecho:htmlText38(body).slice(0,300)});
+            if(h){i.hora=h;FOTO_HORA.set(i.foto,h);if(FOTO_HORA.size>20000)FOTO_HORA.delete(FOTO_HORA.keys().next().value);break}
+          }catch(e){if(diag&&diag.length<6)diag.push({ctrc:i.ctrc,foto:i.foto,modo,erro:String(e.message||e),ms:Date.now()-t0})}
+        }
       }
     }
     return{...p,modo,status:r.status,bytes:Buffer.byteLength(html),...(guardarHtml?{html}:{})}
@@ -7392,7 +7403,16 @@ if(u.pathname==='/api/roteirizador/rota'){try{
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
-if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas','evolucao','cidade_destino']))return dashboardDeny(res);const x=await buildBi2Baixas(u.searchParams.get('date')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/ssw/saidas-motorista'){try{
+if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas','evolucao','cidade_destino']))return dashboardDeny(res);const x=await buildBi2Baixas(u.searchParams.get('date')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/ssw/teste-foto'&&req.method==='GET'){try{
+  if(!authUser.is_admin)return dashboardDeny(res,'Só o administrador.');
+  const rom=String(u.searchParams.get('romaneio')||'').toUpperCase(),seq=String(u.searchParams.get('seq')||'').replace(/\D/g,''),diag=[];
+  const t0=Date.now(),c=await lancComprovantes(rom,seq,true,{ms:30000,diag});
+  const itens=(c&&c.itens)||[];
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(JSON.stringify({ok:true,ms:Date.now()-t0,total:itens.length,entregues:itens.filter(i=>i.codigo===1).length,comHora:itens.filter(i=>i.hora).length,
+    itens:itens.slice(0,25).map(i=>[i.ctrc,i.codigo,i.hora,i.foto,i.texto].join(' | ')),fotos:diag},null,1))
+}catch(e){res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+if(u.pathname==='/api/ssw/saidas-motorista'){try{
   if(!dashboardHasAny(authUser,['ssw_saidas','evolucao','cidade_destino']))return dashboardDeny(res);
   const x=await buildSaidasPorMotorista(u.searchParams.get('data')||'');
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))
