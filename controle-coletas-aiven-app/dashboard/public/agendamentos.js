@@ -60,7 +60,7 @@ async function carregarPainel(){
   else if(!ok){al.className='ag-alerta aviso';al.style.display='block';al.textContent='Os indicadores e a lista "Sem Agendamento" aparecem depois da primeira sincronização com o SSW. Clique em "Sincronizar SSW agora".'}
   else al.style.display='none';
   const C=[['pendentes','Entregas pendentes',ind.pendentes,'sem_filtro'],['com','Com agendamento',ind.com_agendamento,'agendadas'],['sem','Sem agendamento',ind.sem_agendamento,'sem'],
-    ['hoje','Agendadas hoje',ind.hoje,'hoje'],['amanha','Agendadas amanhã',ind.amanha,'amanha'],['entregues','Entregues na última sinc.',ind.entregues_ultima,'entregue'],
+    ['hoje','Agendadas hoje',ind.hoje,'hoje'],['amanha','Agendadas amanhã',ind.amanha,'amanha'],['prioridade','⚡ Prioridade',ind.prioridade||0,'prioridade'],['entregues','Entregues na última sinc.',ind.entregues_ultima,'entregue'],
     ['devolvidas','Devolvidas na última sinc.',ind.devolvidas_ultima,'devolvida'],['peso','Peso pendente (kg)',kg(ind.peso_pendente),'sem_filtro']];
   q('#agCards').innerHTML=C.map(([k,t,v,a])=>'<button type="button" class="ag-card'+(ind.desatualizado?' velho':'')+(card===k?' sel':'')+'" data-card="'+k+'" data-alvo="'+a+'" title="'+(ind.desatualizado?'Dados da última sincronização válida (desatualizados)':'Clique para filtrar')+'"><span>'+esc(t)+'</span><b>'+esc(typeof v==='number'?nfmt(v):v)+'</b></button>').join('');
   q('#agNAg').textContent='('+nfmt(ind.com_agendamento)+')';q('#agNSem').textContent='('+nfmt(ind.sem_agendamento)+')';
@@ -73,7 +73,7 @@ function clicarCard(b){
   limparFiltros(false);card=k;
   if(a==='sem_filtro')aba='pendentes';
   else if(a==='agendadas'||a==='sem')aba=a;
-  else if(a==='hoje'||a==='amanha')aba='agendadas';
+  else if(a==='hoje'||a==='amanha'||a==='prioridade')aba='agendadas';
   else if(a==='entregue'||a==='devolvida'){aba='historico';q('#agFSt').value=a;const u=painel?.indicadores?.sync?.ultimaOk;if(u){const d=new Date(u.iniciado_em).toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});q('#agFDe').value=d;q('#agFAte').value=d}}
   marcarAba();page=1;carregarLista();carregarPainel()
 }
@@ -206,13 +206,14 @@ async function salvar(ev){
 // ------------------------------------------------------------------ abas, filtros e tabela
 function marcarAba(){document.querySelectorAll('#agAbas .ag-aba').forEach(b=>b.classList.toggle('sel',b.dataset.aba===aba));
   q('#agFTipo').value=aba==='coletas'?'coleta':'entrega';q('#agFCom').value=aba==='agendadas'?'com':aba==='sem'?'sem':'';
-  const L={agendadas:[['#dbeafe','Agendada para hoje'],['#fee2e2','Agendamento vencido']],sem:[['#fef9c3','Sem agendamento há mais de '+(painel?.config?.dias_amarelo??2)+' dias'],['#fee2e2','Há mais de '+(painel?.config?.dias_vermelho??5)+' dias']],historico:[['#dcfce7','Entregue'],['#f1f5f9','Devolvida']],coletas:[],pendentes:[['#dbeafe','Agendada para hoje'],['#fee2e2','Vencida ou sem agendamento há muito tempo'],['#fef9c3','Sem agendamento há mais de '+(painel?.config?.dias_amarelo??2)+' dias']]}[aba]||[];
+  const P=['#ffedd5','⚡ Prioridade: nova data de um agendamento não cumprido'];
+  const L={agendadas:[['#dbeafe','Agendada para hoje'],['#fee2e2','Agendamento vencido'],P],sem:[['#fef9c3','Sem agendamento há mais de '+(painel?.config?.dias_amarelo??2)+' dias'],['#fee2e2','Há mais de '+(painel?.config?.dias_vermelho??5)+' dias']],historico:[['#dcfce7','Entregue'],['#f1f5f9','Devolvida']],coletas:[],pendentes:[['#dbeafe','Agendada para hoje'],['#fee2e2','Vencida ou sem agendamento há muito tempo'],['#fef9c3','Sem agendamento há mais de '+(painel?.config?.dias_amarelo??2)+' dias'],P]}[aba]||[];
   q('#agLegenda').innerHTML=L.map(([c,t])=>'<span><i style="background:'+c+'"></i>'+esc(t)+'</span>').join('')}
 function filtros(){
   const f={aba,page,per:PER};
   const v=(k,id)=>{const x=String(q(id).value||'').trim();if(x)f[k]=x};
   v('de','#agFDe');v('ate','#agFAte');v('remetente','#agFRem');v('destinatario','#agFDest');v('cidade','#agFCid');v('nf','#agFNf');v('status','#agFSt');v('dias_min','#agFDias');v('link','#agFLink');v('q','#agFQ');
-  if(card==='hoje'||card==='amanha')f.card=card;
+  if(card==='hoje'||card==='amanha'||card==='prioridade')f.card=card;
   return f
 }
 function limparFiltros(recarregar=true){['#agFDe','#agFAte','#agFRem','#agFDest','#agFCid','#agFNf','#agFSt','#agFDias','#agFLink','#agFQ'].forEach(id=>q(id).value='');card='';if(recarregar){page=1;marcarAba();carregarLista();carregarPainel()}}
@@ -231,7 +232,11 @@ function valor(r,k){
   if(k==='remetente'&&aba!=='coletas')return String(r.remetente||'').trim().split(/\s+/)[0]||'';   // só o primeiro nome
   return r[k]??''
 }
-function classe(r){return(classeCor(r)+(reservaDe(r)==='outro'?' reservado-outro':'')).trim()}
+function classe(r){const c=classeCor(r);return(c+(r.prioridade&&r.status_agendamento!=='concluido'?(c?'':' laranja')+' prioridade':'')+(reservaDe(r)==='outro'?' reservado-outro':'')).trim()}
+// agendamento não cumprido: data de hoje ou já passada e a nota ainda não foi entregue (o operador decide quando reagendar)
+function naoCumprido(r){const hoje=painel?.hoje||new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+  return!!(r.agendamento_id&&r.status_agendamento==='ativo'&&r.data_agendada&&r.data_agendada<=hoje&&r.situacao!=='entregue'&&r.situacao!=='devolvida')}
+const seloPrio=r=>r.prioridade?'<span class="ag-prio" title="'+esc(r.prioridade_motivo||'Agendamento não cumprido')+': nova data com prioridade">⚡ PRIORIDADE</span>':'';
 function classeCor(r){
   const hoje=painel?.hoje||new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}),cfg=painel?.config||{dias_amarelo:2,dias_vermelho:5};
   if(aba==='pendentes'&&!r.data_agendada){if(r.dias_sem>cfg.dias_vermelho)return'vermelho';if(r.dias_sem>cfg.dias_amarelo)return'amarelo';return''}
@@ -252,12 +257,15 @@ function celula(r,k,num){
 }
 function celulaAcoes(r){
   {
+    // não cumprido: o "Alterar" vira "Reagendar" e o WhatsApp vira o pedido de desculpas com a nova data (sem botões a mais)
+    if(((aba==='agendadas'&&r.status_agendamento!=='concluido')||(aba==='pendentes'&&r.agendamento_id))&&naoCumprido(r))return'<td class="acoes"><button type="button" class="ag-mini primary" data-ac="reagendar" data-id="'+esc(r.agendamento_id)+'" title="Agendamento de '+esc(br(r.data_agendada))+' não cumprido: escolha a nova data (fica como prioridade)">Reagendar</button>'+botaoWa(r)+'<button type="button" class="ag-mini perigo" data-ac="cancelar" data-id="'+esc(r.agendamento_id)+'">Cancelar</button><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
     if((aba==='agendadas'&&r.status_agendamento!=='concluido')||(aba==='pendentes'&&r.agendamento_id))return'<td class="acoes"><button type="button" class="ag-mini" data-ac="alterar" data-id="'+esc(r.agendamento_id)+'">Alterar</button><button type="button" class="ag-mini perigo" data-ac="cancelar" data-id="'+esc(r.agendamento_id)+'">Cancelar</button><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
     if(aba==='sem'||aba==='pendentes')return'<td class="acoes"><button type="button" class="ag-mini primary" data-ac="agendar" data-nota="'+esc(r.nota_id)+'">Agendar</button>'+botaoWa(r)+'<button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
     return'<td class="acoes"><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>'
   }
 }
 function celulaDado(r,k,num){
+  if(k==='data_agendada'&&r.prioridade)return'<td>'+esc(valor(r,k))+seloPrio(r)+'</td>';
   if(k==='situacao')return'<td>'+st(r.situacao,r)+(r.erro_integracao&&r.situacao==='verificar'?'<div style="font-size:10px;color:#92400e">'+esc(r.erro_integracao)+'</div>':'')+'</td>';
   const v=valor(r,k);
   // destinatário: o aviso com nome, cidade e telefone aparece ao passar o mouse (ver mostrarCliente)
@@ -330,6 +338,11 @@ async function acao(b){
     return carregarLista();
   }
   const r=(ultimaLista?.rows||[]).find(x=>x.agendamento_id===b.dataset.id);if(!r)return;
+  if(ac==='reagendar')return dialogo('<h3>Reagendar • NF '+esc(r.nf)+'</h3><div class="muted">'+esc(r.destinatario||'')+' • '+esc(r.cidade||'')+'</div>'+
+    '<div class="ag-reag-aviso">⚠️ O agendamento de <b>'+esc(br(r.data_agendada))+'</b> não foi cumprido. A nova data fica marcada como <b>⚡ PRIORIDADE</b> para toda a equipe.</div>'+
+    '<label>Nova data<input name="data" type="date" required min="'+esc(painel?.hoje||'')+'"></label><label>Motivo (ex.: a mercadoria não saiu)<input name="motivo" maxlength="300"></label><label>Observação<textarea name="obs" rows="3" maxlength="1000">'+esc(r.observacao||'')+'</textarea></label>',
+    async fd=>{if(fd.get('data')===r.data_agendada)throw new Error('Escolha uma data diferente de '+br(r.data_agendada)+'.');
+      await api('/api/painel/agendamentos/'+r.agendamento_id,{method:'PATCH',body:{data_agendada:fd.get('data'),observacao:fd.get('obs'),motivo:fd.get('motivo')}})},'Reagendar com prioridade');
   if(ac==='alterar')return dialogo('<h3>Alterar / reagendar • NF '+esc(r.nf)+'</h3><div class="muted">'+esc(r.destinatario||'')+' • '+esc(r.cidade||'')+'</div><label>Data do agendamento<input name="data" type="date" required value="'+esc(r.data_agendada)+'"></label><label>Produto<input name="prod" maxlength="600" value="'+esc(r.produto||'')+'"></label><label>Motivo do reagendamento (opcional)<input name="motivo" maxlength="300"></label><label>Observação<textarea name="obs" rows="3" maxlength="1000">'+esc(r.observacao||'')+'</textarea></label>',
     async fd=>{await api('/api/painel/agendamentos/'+r.agendamento_id,{method:'PATCH',body:{data_agendada:fd.get('data'),observacao:fd.get('obs'),produto:fd.get('prod'),motivo:fd.get('motivo')}})},'Salvar');
   if(ac==='cancelar')return dialogo('<h3>Cancelar agendamento • NF '+esc(r.nf)+'</h3><div class="muted">Agendada para '+esc(br(r.data_agendada))+'. O cancelamento vale só aqui: a entrega continua no SSW e a nota volta para "Sem Agendamento".</div><label>Motivo<input name="motivo" maxlength="300"></label>',
@@ -480,13 +493,18 @@ function configurar(){
 // Botão do link: travado (✅ Enviado) quando o link do cliente já foi mandado hoje; amanhã libera de novo
 // Cliente que recebeu o link e ainda não escolheu a data: ⏳ até 1 dia; 📞 ligar a partir de 2 dias
 function seloLink(r){
-  const l=r.link;if(!l||l.escolhido||r.agendamento_id)return'';
+  const l=r.link;
+  if(l&&l.reagendar&&naoCumprido(r))return'<div class="ag-link" title="Pedido de nova data enviado'+(l.por?' por '+esc(l.por):'')+'">⏳ Nova data pedida '+esc(new Date(l.em).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit'}))+', sem resposta</div>';
+  if(!l||l.escolhido||r.agendamento_id)return'';
   const d=new Date(l.em).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit'});
   return l.dias>=2?'<div class="ag-link ligar" title="Link enviado em '+esc(d)+(l.por?' por '+esc(l.por):'')+' e o cliente não escolheu a data">📞 Ligar: sem resposta há '+l.dias+' dias</div>'
     :'<div class="ag-link" title="Link enviado'+(l.por?' por '+esc(l.por):'')+'">⏳ Link enviado '+esc(d)+', sem resposta</div>'
 }
 function botaoWa(r){
   const l=r.link;
+  if(naoCumprido(r)){
+    if(l&&l.reagendar_hoje)return'<button type="button" class="ag-mini wa-ok" disabled title="Pedido de nova data já enviado hoje'+(l.por?' por '+esc(l.por):'')+'">✅ Pedido enviado</button>';
+    return'<button type="button" class="ag-mini wa" data-ac="walink" data-nota="'+esc(r.nota_id)+'" title="Abre o seu WhatsApp com um pedido de desculpas e o link para o cliente escolher uma nova data. A nova data fica como ⚡ PRIORIDADE.">📲 Pedir nova data</button>'}
   if(l&&l.hoje){const h=new Date(l.em).toLocaleTimeString('pt-BR',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit'});
     return'<button type="button" class="ag-mini wa-ok" disabled title="Link enviado hoje às '+esc(h)+(l.por?' por '+esc(l.por):'')+'. Libera de novo amanhã.">✅ Enviado '+esc(h)+'</button>'}
   return'<button type="button" class="ag-mini wa" data-ac="walink" data-nota="'+esc(r.nota_id)+'" title="Abre o seu WhatsApp com a mensagem da Ana e o link para o cliente escolher a data'+(l?' (último envio: '+esc(new Date(l.em).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'}))+')':'')+'">📲 WhatsApp</button>'
@@ -497,14 +515,14 @@ async function linkWhatsapp(b){
   b.disabled=true;
   try{
     const j=await api('/api/painel/agendamento-whatsapp/link',{method:'POST',body:{nota_id:b.dataset.nota}});
-    if(j.telefone&&w){w.location.href=j.whatsapp;msg('WhatsApp aberto com o link da '+(j.notas.length>1?'NFs '+j.notas.join(', '):'NF '+j.notas[0])+'. É só tocar em enviar.','ok')}
+    if(j.telefone&&w){w.location.href=j.whatsapp;msg('WhatsApp aberto com '+(j.reagendar?'o pedido de desculpas e de nova data':'o link')+' da '+(j.notas.length>1?'NFs '+j.notas.join(', '):'NF '+j.notas[0])+'. É só tocar em enviar.','ok')}
     else{if(w)w.close();
       try{await navigator.clipboard.writeText(j.texto)}catch(e){}
       dialogo('<h3>Sem celular na nota</h3><div class="muted">A mensagem com o link foi copiada. Cole no WhatsApp do cliente.</div><textarea rows="9" readonly style="width:100%">'+esc(j.texto)+'</textarea>',null)}
     const h=new Date().toLocaleTimeString('pt-BR',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit'});
     // trava o botão desta nota e das outras notas do mesmo cliente na tela, sem recarregar a lista
     document.querySelectorAll('[data-ac="walink"]').forEach(x=>{const rr=(ultimaLista&&ultimaLista.rows||[]).find(y=>String(y.nota_id)===x.dataset.nota);
-      if(x===b||(rr&&j.notas.includes(rr.nf))){x.outerHTML='<button type="button" class="ag-mini wa-ok" disabled title="Link enviado hoje às '+h+'. Libera de novo amanhã.">✅ Enviado '+h+'</button>'}});
+      if(x===b||(rr&&j.notas.includes(rr.nf)&&naoCumprido(rr)===!!j.reagendar)){x.outerHTML=j.reagendar?'<button type="button" class="ag-mini wa-ok" disabled title="Pedido de nova data enviado hoje às '+h+'">✅ Pedido enviado</button>':'<button type="button" class="ag-mini wa-ok" disabled title="Link enviado hoje às '+h+'. Libera de novo amanhã.">✅ Enviado '+h+'</button>'}});
     return;
   }catch(e){if(w)w.close();msg(e.message,'err')}
   finally{if(b.isConnected)b.disabled=false}
@@ -513,7 +531,7 @@ async function linhasExport(){
   const p=new URLSearchParams({...filtros(),page:1,per:5000});
   const j=await api('/api/painel/agendamentos/lista?'+p);
   const cols=COLS[aba].filter(([k])=>k!=='acoes');
-  return{cols,rows:j.rows.map(r=>cols.map(([k])=>{const v=valor(r,k);return k==='peso'||k==='dias_sem'||k==='total_reagendamentos'||k==='cancelamentos'?Number(r[k]||0):String(v)})),total:j.total,peso:j.peso}
+  return{cols,rows:j.rows.map(r=>cols.map(([k])=>{const v=valor(r,k);return k==='peso'||k==='dias_sem'||k==='total_reagendamentos'||k==='cancelamentos'?Number(r[k]||0):String(v)+(k==='data_agendada'&&r.prioridade?' (PRIORIDADE)':'')})),total:j.total,peso:j.peso}
 }
 const TITULO={pendentes:'Entregas pendentes',agendadas:'Entregas agendadas',sem:'Notas sem agendamento',coletas:'Coletas agendadas',historico:'Histórico de entregas'};
 function resumoFiltros(){const f=filtros();delete f.aba;delete f.page;delete f.per;const s=Object.entries(f).map(([k,v])=>k+': '+v).join(' • ');return s||'sem filtros'}

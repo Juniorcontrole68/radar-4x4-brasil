@@ -70,6 +70,42 @@ function check(name, cond, extra = '') { if (cond) { pass++; console.log('  OK  
   const rel = await lk.relatorio(pool, cli, {});
   check('relatório: 2 envios da maria, 1 abriu e escolheu a data (100% no último)', rel.total.enviados === 2 && rel.por_usuario[0].usuario === 'maria' && rel.por_usuario[0].enviados === 2 && rel.rows[0].abriu && rel.rows[0].respondeu && rel.rows[0].nfs === '7001, 7002', rel);
   check('relatório: filtro por atendente e por data', (await lk.relatorio(pool, cli, { usuario: 'joao' })).rows.length === 0 && (await lk.relatorio(pool, cli, { de: '2001-01-01', ate: '2001-01-02' })).rows.length === 0);
+  console.log('Agendamento não cumprido');
+  // a mercadoria não saiu: o agendamento continua com a data de hoje; um link comum já foi hoje (não pode travar o pedido)
+  const hojeIso = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  await pool.query("UPDATE ag_agendamentos SET data_agendada=$1::date WHERE status='ativo'", [hojeIso]);
+  await pool.query('UPDATE ag_links SET enviado_em=NOW()');
+  let lista0 = await ag.listar(pool, cli, 'agendadas', {});
+  check('lista: o agendamento de hoje ainda não é prioridade', lista0.rows.length === 2 && lista0.rows.every(x => x.prioridade === false), lista0.rows.map(x => [x.nf, x.prioridade]));
+  const rl = await lk.criarLink(pool, cli, sac, await id('7001'), 'https://exemplo.test');
+  check('não cumprido: o envio vira pedido de desculpas e nova data, mesmo com link enviado hoje', rl.reagendar === true && /Pedimos desculpas/.test(rl.texto) && /prevista para hoje/.test(rl.texto)
+    && /\*prioridade\*/.test(rl.texto) && /não pedimos pagamento/.test(rl.texto) && rl.notas.join() === '7001,7002' && rl.token === l.token, rl.texto);
+  erro = null; try { await lk.criarLink(pool, cli, sac, await id('7002'), 'https://exemplo.test'); } catch (e) { erro = e; }
+  check('o pedido de nova data não se repete no mesmo dia', erro && erro.status === 409 && /pedido de nova data/.test(erro.message), erro && erro.message);
+  lista0 = await ag.listar(pool, cli, 'agendadas', {});
+  check('lista: botão do pedido travado hoje e selo "nova data pedida"', lista0.rows.every(x => x.link && x.link.reagendar && x.link.reagendar_hoje), lista0.rows.map(x => x.link));
+  check('relatório: o envio aparece como reagendar', (await pool.query("SELECT COUNT(*)::int n FROM ag_link_envios WHERE tipo='reagendar'")).rows[0].n === 1);
+  let dr = await lk.dadosLink(pool, l.token);
+  check('página: pede desculpas pelo dia que falhou e não mostra a data antiga como agendada', dr.reagendar && /, \d\d\/\d\d$/.test(dr.reagendar_texto) && !dr.agendada, dr);
+  const nova = dr.datas[0].data;
+  await lk.escolher(pool, l.token, { data: nova });
+  const pr = (await pool.query("SELECT to_char(data_agendada,'YYYY-MM-DD') d,prioridade,prioridade_motivo FROM ag_agendamentos WHERE status='ativo'")).rows;
+  check('cliente escolheu a nova data: as duas notas ficam como PRIORIDADE', pr.length === 2 && pr.every(x => x.d === nova && x.prioridade && /^Não cumprido em \d\d\/\d\d/.test(x.prioridade_motivo)), pr);
+  check('histórico do reagendamento diz que não foi cumprido', (await pool.query("SELECT COUNT(*)::int n FROM ag_eventos WHERE tipo='reagendado' AND detalhe LIKE '%Não cumprido em%prioridade%'")).rows[0].n === 2);
+  const lp = await ag.listar(pool, cli, 'agendadas', { card: 'prioridade' });
+  check('filtro ⚡ Prioridade e indicador mostram as duas', lp.rows.length === 2 && lp.rows.every(x => x.prioridade) && (await ag.indicadores(pool, cli)).prioridade === 2, lp.rows.length);
+  dr = await lk.dadosLink(pool, l.token);
+  check('página depois de escolher: mostra a nova data, sem o pedido de desculpas', !dr.reagendar && dr.agendada === nova, dr);
+  // reagendar pelo painel (operador): agendamento vencido ganha nova data e vira prioridade; mudar uma data futura não vira
+  const a7 = (await pool.query("SELECT a.id::text FROM ag_agendamentos a JOIN ag_notas n ON n.id=a.nota_id WHERE a.status='ativo' AND n.nf='7002'")).rows[0].id;
+  await pool.query("UPDATE ag_agendamentos SET prioridade=FALSE,prioridade_motivo=NULL,data_agendada=$2::date-1 WHERE id=$1", [a7, hojeIso]);
+  await ag.alterar(pool, cli, sac, a7, { data_agendada: dr.datas[2].data, motivo: 'A mercadoria não saiu' });
+  const op = (await pool.query('SELECT prioridade FROM ag_agendamentos WHERE id=$1', [a7])).rows[0];
+  check('operador reagendou um vencido: vira prioridade', op.prioridade === true, op);
+  await pool.query('UPDATE ag_agendamentos SET prioridade=FALSE WHERE id=$1', [a7]);
+  await ag.alterar(pool, cli, sac, a7, { data_agendada: dr.datas[3].data });
+  check('mudar uma data futura não marca prioridade', (await pool.query('SELECT prioridade FROM ag_agendamentos WHERE id=$1', [a7])).rows[0].prioridade === false);
+
   console.log('Segurança');
   erro = null; try { await lk.dadosLink(pool, 'x'.repeat(24)); } catch (e) { erro = e; }
   check('link inexistente -> 404', erro && erro.status === 404);

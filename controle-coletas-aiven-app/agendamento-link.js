@@ -18,6 +18,7 @@ const USUARIO = { id: null, username: 'Cliente (link)', is_admin: true };   // o
 const DIAS_NOME = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
 const limpo = (v, max = 200) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 const br = iso => iso.slice(8, 10) + '/' + iso.slice(5, 7);
+const hojeSp = (d = new Date()) => d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 const dataLonga = iso => DIAS_NOME[new Date(iso + 'T12:00:00Z').getUTCDay()] + ', ' + br(iso);
 const CHAVE_SQL = "upper(regexp_replace(trim(COALESCE(n.destinatario,'')),'\\s+',' ','g'))||'|'||upper(regexp_replace(trim(COALESCE(n.cidade,'')),'\\s+',' ','g'))";
 
@@ -30,6 +31,9 @@ async function ensureSchema(pool) {
   // último envio pelo botão do SAC: trava o botão do cliente até o dia seguinte
   await pool.query('ALTER TABLE ag_links ADD COLUMN IF NOT EXISTS enviado_em TIMESTAMPTZ');
   await pool.query('ALTER TABLE ag_links ADD COLUMN IF NOT EXISTS enviado_por TEXT');
+  // pedido de nova data para agendamento não cumprido (também criadas em agendamento.js, que lista o selo)
+  await pool.query('ALTER TABLE ag_links ADD COLUMN IF NOT EXISTS reagendar_de DATE');
+  await pool.query('ALTER TABLE ag_links ADD COLUMN IF NOT EXISTS reagendado_em TIMESTAMPTZ');
   // cada clique no botão 📲 WhatsApp (quem mandou e quando), para o relatório do SAC
   await pool.query(`CREATE TABLE IF NOT EXISTS ag_link_envios (id BIGSERIAL PRIMARY KEY, token TEXT NOT NULL, client_id BIGINT, chave TEXT NOT NULL,
     nota_ids BIGINT[] NOT NULL, usuario TEXT, enviado_em TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
@@ -37,14 +41,23 @@ async function ensureSchema(pool) {
   // envios feitos antes desta tabela: o último envio de cada link
   await pool.query(`INSERT INTO ag_link_envios(token,client_id,chave,nota_ids,usuario,enviado_em) SELECT l.token,l.client_id,l.chave,l.nota_ids,COALESCE(l.enviado_por,l.criado_por),COALESCE(l.enviado_em,l.criado_em)
     FROM ag_links l WHERE NOT EXISTS (SELECT 1 FROM ag_link_envios e WHERE e.token=l.token)`);
+  await pool.query("ALTER TABLE ag_link_envios ADD COLUMN IF NOT EXISTS tipo TEXT NOT NULL DEFAULT 'agendar'");   // agendar | reagendar
   await pool.query('CREATE INDEX IF NOT EXISTS ix_ag_links_chave ON ag_links (COALESCE(client_id,0), chave, expira_em DESC)');
 }
 
 const erro = (status, msg) => Object.assign(new Error(msg), { status });
 const { nfsTexto, remetentes, primeiroNome, NAO_COBRAMOS } = wa;   // mesmos textos e limpeza de nome do robô
 
-function mensagem(dest, notas, cidade, uf, url) {
+function mensagem(dest, notas, cidade, uf, url, { reagendarDe = null, hoje = hojeSp() } = {}) {
   const nome = primeiroNome(dest);
+  // agendamento não cumprido: pede desculpas e pede uma nova data, que entra como prioridade
+  if (reagendarDe) return '🚚 *Precisamos remarcar a entrega da sua compra na ' + remetentes(notas) + '*\n\n' +
+    'Olá' + (nome ? ', ' + nome : '') + '! Pedimos desculpas: não conseguimos fazer a entrega ' + (reagendarDe === hoje ? 'prevista para hoje, ' : 'agendada para ') + '*' + dataLonga(reagendarDe) + '*.\n\n' +
+    wa.ANA.entrega(notas, cidade, uf) + '\n\n' +
+    '📅 Escolha uma nova data neste link. A sua entrega terá *prioridade* na nossa rota:\n' + url + '\n\n' +
+    NAO_COBRAMOS + '\n' +
+    '⚠️ Precisa ter alguém no local para receber.\n\n' +
+    'Sentimos muito pelo transtorno. Qualquer dúvida, responda esta mensagem.';
   return '🚚 *Agendamento de entrega da sua compra na ' + remetentes(notas) + '*\n\n' +
     'Olá' + (nome ? ', ' + nome : '') + '! ' + wa.ANA.entrega(notas, cidade, uf) + '\n\n' +
     '📅 Escolha o melhor dia para receber neste link:\n' + url + '\n\n' +
@@ -59,37 +72,54 @@ async function criarLink(pool, cli, user, notaId, base) {
   if (!n) throw erro(404, 'Nota não encontrada.');
   if (n.chave === '|') throw erro(400, 'A nota não tem destinatário.');
   if (ag.FINAIS.includes(n.situacao)) throw erro(409, 'A NF ' + n.nf + ' já foi ' + (n.situacao === 'entregue' ? 'entregue' : 'devolvida') + '.');
-  // já mandado hoje para este cliente (destinatário + cidade): o botão fica travado até amanhã
-  const hoje = (await pool.query(`SELECT enviado_por,to_char(enviado_em AT TIME ZONE 'America/Sao_Paulo','HH24:MI') AS hora FROM ag_links
-    WHERE COALESCE(client_id,0)=COALESCE($1::bigint,0) AND chave=$2 AND (enviado_em AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
-    ORDER BY enviado_em DESC LIMIT 1`, [cli, n.chave])).rows[0];
-  if (hoje) throw erro(409, 'O link para ' + (n.destinatario || 'este cliente') + ' já foi enviado hoje às ' + hoje.hora + (hoje.enviado_por ? ' por ' + hoje.enviado_por : '') + '. Dá para mandar de novo a partir de amanhã.');
+  // agendamento ativo com data de hoje ou já passada e sem entrega = não cumprido: o envio vira pedido de desculpas + nova data
+  const hojeIso = hojeSp();
+  const atual = (await pool.query("SELECT to_char(data_agendada,'YYYY-MM-DD') AS data FROM ag_agendamentos WHERE nota_id=$1 AND status='ativo'", [n.id])).rows[0];
+  const reagendarDe = atual && atual.data <= hojeIso ? atual.data : null;
+  if (reagendarDe) {
+    // o pedido de nova data sai mesmo que um link tenha ido hoje; só não repete o próprio pedido no mesmo dia
+    const r = (await pool.query(`SELECT enviado_por,to_char(reagendado_em AT TIME ZONE 'America/Sao_Paulo','HH24:MI') AS hora FROM ag_links
+      WHERE COALESCE(client_id,0)=COALESCE($1::bigint,0) AND chave=$2 AND (reagendado_em AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+      ORDER BY reagendado_em DESC LIMIT 1`, [cli, n.chave])).rows[0];
+    if (r) throw erro(409, 'O pedido de nova data para ' + (n.destinatario || 'este cliente') + ' já foi enviado hoje às ' + r.hora + (r.enviado_por ? ' por ' + r.enviado_por : '') + '.');
+  } else {
+    // já mandado hoje para este cliente (destinatário + cidade): o botão fica travado até amanhã
+    const hoje = (await pool.query(`SELECT enviado_por,to_char(enviado_em AT TIME ZONE 'America/Sao_Paulo','HH24:MI') AS hora FROM ag_links
+      WHERE COALESCE(client_id,0)=COALESCE($1::bigint,0) AND chave=$2 AND (enviado_em AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+      ORDER BY enviado_em DESC LIMIT 1`, [cli, n.chave])).rows[0];
+    if (hoje) throw erro(409, 'O link para ' + (n.destinatario || 'este cliente') + ' já foi enviado hoje às ' + hoje.hora + (hoje.enviado_por ? ' por ' + hoje.enviado_por : '') + '. Dá para mandar de novo a partir de amanhã.');
+  }
   await wa.garantirRotas(pool, cli);
   const rota = await wa.rotaDa(pool, cli, n.cidade, n.uf);
   if (!wa.proximasDatas(rota).length) throw erro(422, (n.cidade || 'A cidade') + ' não tem dia de entrega na grade (opção 107). Agende pelo botão Agendar.');
   // as outras notas do mesmo cliente na mesma cidade, ainda em aberto, vão no mesmo link
   const grupo = (await pool.query(`SELECT n.id::text,n.nf,n.remetente FROM ag_notas n WHERE n.client_id IS NOT DISTINCT FROM $1 AND ${CHAVE_SQL}=$2 AND n.situacao IN ('pendente','verificar')
-      AND (n.id=$3 OR NOT EXISTS (SELECT 1 FROM ag_agendamentos a WHERE a.nota_id=n.id AND a.status='ativo')) ORDER BY n.nf LIMIT 30`, [cli, n.chave, n.id])).rows;
+      AND (n.id=$3 OR NOT EXISTS (SELECT 1 FROM ag_agendamentos a WHERE a.nota_id=n.id AND a.status='ativo')
+        OR ($4 AND EXISTS (SELECT 1 FROM ag_agendamentos a WHERE a.nota_id=n.id AND a.status='ativo' AND a.data_agendada<=$5::date))) ORDER BY n.nf LIMIT 30`,
+    [cli, n.chave, n.id, !!reagendarDe, hojeIso])).rows;
   if (!grupo.some(g => g.id === n.id)) grupo.unshift({ id: n.id, nf: n.nf, remetente: n.remetente });
   const ids = grupo.map(g => g.id);
   let token = (await pool.query("SELECT token FROM ag_links WHERE COALESCE(client_id,0)=COALESCE($1::bigint,0) AND chave=$2 AND expira_em>NOW()+INTERVAL '2 days' ORDER BY criado_em DESC LIMIT 1", [cli, n.chave])).rows[0]?.token;
-  if (token) await pool.query('UPDATE ag_links SET nota_ids=$2,enviado_em=NOW(),enviado_por=$3 WHERE token=$1', [token, ids, limpo(user.username, 80)]);
+  if (token) await pool.query(`UPDATE ag_links SET nota_ids=$2,enviado_em=NOW(),enviado_por=$3,reagendar_de=$4::date,reagendado_em=CASE WHEN $4::date IS NULL THEN reagendado_em ELSE NOW() END,
+      escolhido_em=CASE WHEN $4::date IS NULL THEN escolhido_em END,data_escolhida=CASE WHEN $4::date IS NULL THEN data_escolhida END WHERE token=$1`, [token, ids, limpo(user.username, 80), reagendarDe]);
   else {
     token = crypto.randomBytes(18).toString('base64url');
-    await pool.query(`INSERT INTO ag_links(token,client_id,chave,nota_ids,destinatario,cidade,uf,telefone,criado_por,expira_em,enviado_em,enviado_por) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW()+($10||' days')::interval,NOW(),$9)`,
-      [token, cli, n.chave, ids, limpo(n.destinatario, 120), limpo(n.cidade, 80), limpo(n.uf, 2).toUpperCase(), limpo(n.telefone, 60), limpo(user.username, 80), String(DIAS_VALIDADE)]);
+    await pool.query(`INSERT INTO ag_links(token,client_id,chave,nota_ids,destinatario,cidade,uf,telefone,criado_por,expira_em,enviado_em,enviado_por,reagendar_de,reagendado_em)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW()+($10||' days')::interval,NOW(),$9,$11::date,CASE WHEN $11::date IS NULL THEN NULL ELSE NOW() END)`,
+      [token, cli, n.chave, ids, limpo(n.destinatario, 120), limpo(n.cidade, 80), limpo(n.uf, 2).toUpperCase(), limpo(n.telefone, 60), limpo(user.username, 80), String(DIAS_VALIDADE), reagendarDe]);
   }
-  await pool.query('INSERT INTO ag_link_envios(token,client_id,chave,nota_ids,usuario) VALUES($1,$2,$3,$4,$5)', [token, cli, n.chave, ids, limpo(user.username, 80)]);
-  for (const id of ids) await pool.query('INSERT INTO ag_eventos(client_id,nota_id,tipo,para,detalhe,usuario) VALUES($1,$2,$3,$4,$5,$6)', [cli, id, 'whatsapp', 'link', 'Link de agendamento enviado ao cliente pelo WhatsApp do SAC', limpo(user.username, 80)]);
+  await pool.query('INSERT INTO ag_link_envios(token,client_id,chave,nota_ids,usuario,tipo) VALUES($1,$2,$3,$4,$5,$6)', [token, cli, n.chave, ids, limpo(user.username, 80), reagendarDe ? 'reagendar' : 'agendar']);
+  const det = reagendarDe ? 'Pedido de desculpas e de nova data enviado pelo WhatsApp do SAC (agendamento de ' + br(reagendarDe) + ' não cumprido)' : 'Link de agendamento enviado ao cliente pelo WhatsApp do SAC';
+  for (const id of ids) await pool.query('INSERT INTO ag_eventos(client_id,nota_id,tipo,para,detalhe,usuario) VALUES($1,$2,$3,$4,$5,$6)', [cli, id, 'whatsapp', 'link', det, limpo(user.username, 80)]);
   const url = String(base || '').replace(/\/+$/, '') + '/agendar/' + token;
-  const texto = mensagem(n.destinatario, grupo, n.cidade, n.uf, url);
+  const texto = mensagem(n.destinatario, grupo, n.cidade, n.uf, url, { reagendarDe, hoje: hojeIso });
   const fone = wa.celular(n.telefone);
-  return { token, url, texto, telefone: fone, whatsapp: 'https://wa.me/' + fone + '?text=' + encodeURIComponent(texto), notas: grupo.map(g => g.nf) };
+  return { token, url, texto, telefone: fone, whatsapp: 'https://wa.me/' + fone + '?text=' + encodeURIComponent(texto), notas: grupo.map(g => g.nf), reagendar: !!reagendarDe };
 }
 
 async function lerLink(pool, token) {
   if (!/^[A-Za-z0-9_-]{20,40}$/.test(String(token || ''))) throw erro(404, 'Link inválido.');
-  const l = (await pool.query('SELECT * FROM ag_links WHERE token=$1', [token])).rows[0];
+  const l = (await pool.query("SELECT *,to_char(reagendar_de,'YYYY-MM-DD') AS reagendar_de_txt FROM ag_links WHERE token=$1", [token])).rows[0];
   if (!l) throw erro(404, 'Link inválido.');
   if (new Date(l.expira_em) < new Date()) throw erro(410, 'Este link expirou. Fale com a Construlog para receber um novo.');
   return l;
@@ -108,8 +138,11 @@ async function dadosLink(pool, token, { agora } = {}) {
   const datas = wa.proximasDatas(await wa.rotaDa(pool, l.client_id, l.cidade, l.uf), { agora: agora || new Date(), n: 8 });
   const local = (await pool.query('SELECT 1 FROM ag_locais WHERE COALESCE(client_id,0)=COALESCE($1::bigint,0) AND chave=$2', [l.client_id, l.chave])).rowCount > 0;
   const agendada = abertas.find(n => n.ag_data)?.ag_data || null;
+  // pedido de nova data ainda sem resposta e o agendamento continua no dia que falhou: a página pede desculpas
+  const reagendarDe = l.reagendar_de_txt && !l.escolhido_em && agendada && agendada <= hojeSp(agora || new Date()) ? l.reagendar_de_txt : null;
   return { ok: true, nome: primeiroNome(l.destinatario), cidade: l.cidade, uf: l.uf, loja: remetentes(notas), entrega: nfsTexto(abertas.length ? abertas : notas),
-    concluida: !abertas.length, agendada, agendada_texto: agendada ? dataLonga(agendada) : '', tem_local: local,
+    concluida: !abertas.length, agendada: reagendarDe ? null : agendada, agendada_texto: agendada && !reagendarDe ? dataLonga(agendada) : '', tem_local: local,
+    reagendar: !!reagendarDe, reagendar_texto: reagendarDe ? dataLonga(reagendarDe) : '',
     datas: datas.map(d => ({ data: d, texto: dataLonga(d) })) };
 }
 
@@ -193,7 +226,7 @@ h2{font-size:1rem;margin:0 0 10px}.mu{color:var(--mu);font-size:.9rem}
 .btn{display:block;width:100%;border:0;border-radius:12px;padding:14px;font:inherit;font-weight:600;cursor:pointer;margin-top:10px}
 .pri{background:var(--vd);color:#fff}.pri:disabled{background:#9ca3af}.sec{background:#eef2f7;color:var(--az)}
 input{width:100%;border:1.5px solid var(--bd);border-radius:10px;padding:11px;font:inherit;margin-top:8px}
-.aviso{background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:12px;font-size:.9rem}
+.aviso{background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:12px;font-size:.9rem}.aviso.desc{margin-bottom:14px;font-size:.95rem}
 .ok{color:var(--vd);font-weight:600}.erro{color:#b91c1c;font-size:.9rem;margin-top:8px}
 .feito{text-align:center}.feito .big{font-size:2.4rem}
 </style></head><body>
@@ -207,8 +240,9 @@ function tela(){
   if(D.concluida){A.innerHTML='<div class="card feito"><div class="big">📦</div><h2>Esta entrega já foi concluída.</h2><div class="mu">Obrigado!</div></div>';return}
   const d=D.datas.map(x=>{const[p,q]=x.texto.split(', ');return'<button type="button" data-d="'+x.data+'" class="'+(sel===x.data?'sel':'')+'"><b>'+esc(q)+'</b><span>'+esc(p)+'</span></button>'}).join('');
   A.innerHTML='<div class="card ana"><div class="av">🚚</div><div>Olá'+(D.nome?', <b>'+esc(D.nome)+'</b>':'')+'! A <b>Construlog</b> é a transportadora responsável pela entrega da sua compra'+(D.loja?' na <b>'+esc(D.loja)+'</b>':'')+'.<br><br>📦 '+esc(D.entrega)+'<br>📍 '+esc(D.cidade)+(D.uf?'/'+esc(D.uf):'')+'</div></div>'+
+  (D.reagendar?'<div class="aviso desc">😔 <b>Pedimos desculpas:</b> não conseguimos fazer a sua entrega de <b>'+esc(D.reagendar_texto)+'</b>. Escolha uma nova data abaixo: a sua entrega terá <b>prioridade</b> na nossa rota.</div>':'')+
   (D.agendada?'<div class="card"><span class="ok">✅ Entrega agendada para '+esc(D.agendada_texto)+'</span><div class="mu">Precisa mudar? Escolha outro dia abaixo.</div></div>':'')+
-  '<div class="card"><h2>📅 '+(D.agendada?'Mudar a data':'Escolha o melhor dia para receber')+'</h2><div class="datas">'+(d||'<div class="mu">Sem datas disponíveis. A Construlog vai falar com você.</div>')+'</div><div class="mu" style="margin-top:8px">Entregas em horário comercial.</div></div>'+
+  '<div class="card"><h2>📅 '+(D.reagendar?'Escolha a nova data':D.agendada?'Mudar a data':'Escolha o melhor dia para receber')+'</h2><div class="datas">'+(d||'<div class="mu">Sem datas disponíveis. A Construlog vai falar com você.</div>')+'</div><div class="mu" style="margin-top:8px">Entregas em horário comercial.</div></div>'+
   '<div class="card"><h2>📍 Localização do endereço de entrega '+(D.tem_local?'<span class="ok">(já recebida ✓)</span>':'<span class="mu">(opcional)</span>')+'</h2><div class="mu">Ajuda o motorista a chegar certinho.</div>'+
   '<button type="button" class="btn sec" id="gps">📍 Usar minha localização atual</button><input id="lk" placeholder="ou cole aqui o link do Google Maps" value="'+esc(loc.startsWith('http')?loc:'')+'"><div id="gpsok" class="ok" style="margin-top:6px">'+(loc&&!loc.startsWith('http')?'Localização capturada ✓':'')+'</div></div>'+
   '<div class="card mu">🔒 Aqui você só escolhe a data. <b>Não pedimos pagamento, taxa, senha nem dados bancários.</b></div>'+'<div class="aviso">⚠️ Precisa ter alguém no local para receber. Se não houver recebedor, a entrega será reagendada para até <b>15 dias</b>.</div>'+
@@ -222,7 +256,7 @@ function tela(){
 function lkv(){const e=document.getElementById('lk');return e?e.value.trim():''}
 async function enviar(){const b=document.getElementById('ok'),er=document.getElementById('er');b.disabled=true;b.textContent='Enviando…';er.textContent='';
   try{const r=await api('POST',{data:sel||'',local:loc||lkv()});
-    A.innerHTML='<div class="card feito"><div class="big">✅</div><h2>Prontinho!</h2>'+(r.data?'<div>Sua entrega está agendada para <b>'+esc(r.data_texto)+'</b>, em horário comercial.</div>':'')+(r.localizacao?'<div class="ok" style="margin-top:8px">📍 Localização recebida, obrigado!</div>':'')+'<div class="mu" style="margin-top:12px">Lembre que precisa ter alguém no local para receber 🙂<br>Precisa mudar? Abra este link de novo.</div></div>'}
+    A.innerHTML='<div class="card feito"><div class="big">✅</div><h2>Prontinho!</h2>'+(r.data?'<div>Sua entrega está agendada para <b>'+esc(r.data_texto)+'</b>, em horário comercial.</div>'+(D.reagendar?'<div class="ok" style="margin-top:6px">⚡ Ela está marcada como prioridade na nossa rota.</div>':''):'')+(r.localizacao?'<div class="ok" style="margin-top:8px">📍 Localização recebida, obrigado!</div>':'')+'<div class="mu" style="margin-top:12px">Lembre que precisa ter alguém no local para receber 🙂<br>Precisa mudar? Abra este link de novo.</div></div>'}
   catch(e){er.textContent=e.message;b.disabled=false;b.textContent='Tentar de novo'}}
 api('GET').then(j=>{D=j;tela()}).catch(e=>{A.innerHTML='<div class="card"><h2>😕 '+esc(e.message)+'</h2></div>'});
 </script></body></html>`;
