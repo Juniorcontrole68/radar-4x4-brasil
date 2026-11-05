@@ -440,7 +440,9 @@ async function fetchRomaneioCtrcs38(x,jar,apply,cookie){
     const addrCandidates=blockLines.filter(line=>(streetRe.test(line)||/ENDERE[CÇ]O\s*[:\-]/i.test(line))&&line.length>=8&&line.length<=220);
     const endereco=(addrCandidates.find(line=>!/REMETENTE|EMITENTE|ORIGEM/i.test(line))||addrCandidates[0]||'')
       .replace(/^.*?(ENDERE[CÇ]O\s*[:\-]?\s*)/i,'').trim();
-    x.ctrcMeta.push({ctrc:m[1].toUpperCase(),nf:String(m[2]).replace(/^0+/,'' )||'0',cnpjs,cep:cepMatch?(cepMatch[1]+'-'+cepMatch[2]):'',endereco});
+    // CPF do destinatário pessoa física (o rastreio do SSW aceita CPF ou CNPJ)
+    const cpfs=[...new Set([...block.matchAll(/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g)].map(z=>z[0].replace(/\D/g,'')))];
+    x.ctrcMeta.push({ctrc:m[1].toUpperCase(),nf:String(m[2]).replace(/^0+/,'' )||'0',cnpjs,cpfs,cep:cepMatch?(cepMatch[1]+'-'+cepMatch[2]):'',endereco});
     i=j-1;
   }
   console.log('SSW38 PDF pares CTRC/NF: '+JSON.stringify({romaneio:x.romaneio,pares:x.ctrcNfs.length,esperado:expected,blocos:x.ctrcMeta.length,blocosComCnpj:x.ctrcMeta.filter(z=>z.cnpjs.length).length,distCnpjs:[...new Set(x.ctrcMeta.map(z=>z.cnpjs.length))].sort((a,b)=>a-b)}));
@@ -2779,7 +2781,7 @@ function postForm(url,params){
 }
 async function trackingDestQuery(cnpj,nf,targetDate=''){
   const doc=String(cnpj||'').replace(/\D/g,''),n=String(nf||'').trim();
-  if(doc.length!==14||!n)return{ok:false,items:[],saiu:false,entregue:false};
+  if((doc.length!==14&&doc.length!==11)||!n)return{ok:false,items:[],saiu:false,entregue:false};
   const key=doc+'|'+n+'|'+String(targetDate||''),hit=SSW_TRACK_CACHE.get(key),ttl=hit?.value?.entregue?10*60*1000:25*1000;
   if(hit&&Date.now()-hit.at<ttl)return hit.value;
   const body=new URLSearchParams();body.append('cnpjdest',doc);body.append('cnpj',doc);body.append('NR',n);body.append('nro_nf',n);body.append('urlori','https://ssw.inf.br/ajuda/rastreamentodestnf.html');
@@ -3278,12 +3280,17 @@ function resumoSswPorMotorista(v,data){
 // Horários pela mesma base do painel "Evolução por Motorista": os romaneios do dia na opção 38 (todas as unidades,
 // AMR, AMS...), os CT-es de cada romaneio e o rastreio do SSW de cada CT-e (data e hora da baixa "entregue").
 // Só existe para o dia corrente; o resultado fica 3 min em memória (o rastreio de cada CT-e também tem cache).
+function cpfValido(c){
+  if(!/^\d{11}$/.test(c)||/^(\d)\1+$/.test(c))return false;
+  const dv=n=>{let s=0;for(let i=0;i<n;i++)s+=Number(c[i])*(n+1-i);const r=(s*10)%11;return r===10?0:r};
+  return dv(9)===Number(c[9])&&dv(10)===Number(c[10]);
+}
 function cnpjValido(c){
   if(!/^\d{14}$/.test(c)||/^(\d)\1+$/.test(c))return false;
   const dv=n=>{let s=0,p=n-7;for(let i=0;i<n;i++){s+=Number(c[i])*p--;if(p<2)p=9}const r=s%11;return r<2?0:11-r};
   return dv(12)===Number(c[12])&&dv(13)===Number(c[13]);
 }
-let HORARIOS_ROM={at:0,data:'',rows:null,p:null};
+let HORARIOS_ROM={at:0,data:'',rows:null,p:null},HORARIOS_DIAG=null;
 async function horariosRomaneiosHoje(data){
   if(data!==spDateISO()||!internalSswConfigured())return null;
   if(HORARIOS_ROM.data===data&&HORARIOS_ROM.rows&&Date.now()-HORARIOS_ROM.at<3*60*1000)return HORARIOS_ROM.rows;
@@ -3315,7 +3322,9 @@ async function horariosRomaneiosHoje(data){
       else if(!r||!r.trackingOk){
         if(!(m.cnpjs||[]).length)diag.semCnpj++;
         // o bloco do PDF traz CNPJs e pedaços da chave da NF-e ("3526..."): só CNPJ válido vai ao rastreio
-        for(const doc of [...new Set((m.cnpjs||[]).map(x=>String(x).replace(/\D/g,'')))].filter(cnpjValido).slice(0,4)){
+        const docs=[...new Set([...(m.cpfs||[]).filter(cpfValido),...(m.cnpjs||[]).map(x=>String(x).replace(/\D/g,'')).filter(cnpjValido)])];
+        if(!docs.length)diag.semDoc=(diag.semDoc||0)+1;
+        for(const doc of docs.slice(0,4)){
           diag.consultas++;
           const tr=await trackingDestQuery(doc,m.nf,'');   // sem filtro de data: a baixa do dia é conferida abaixo
           if(diag.amostra.length<4)diag.amostra.push({ctrc:m.ctrc,nf:m.nf,doc:doc.slice(0,8),ok:tr.ok,itens:(tr.items||[]).length,entregue:tr.entregue,quando:tr.delivery?.data_hora||tr.last?.data_hora||'',erro:tr.error||''});
@@ -3327,7 +3336,8 @@ async function horariosRomaneiosHoje(data){
     });
     const rows=[...mots.values()].map(g=>({motorista:g.motorista,placa:g.placa,saidas:g.saidas,entregas:g.horas.length,
       primeira_entrega_em:g.horas.length?new Date(Math.min(...g.horas)).toISOString():null,ultima_entrega_em:g.horas.length?new Date(Math.max(...g.horas)).toISOString():null}));
-    console.log('SAIDAS MOTORISTA horários dos romaneios: '+JSON.stringify({romaneios:roms.length,ctes:tarefas.length,motoristas:rows.length,comEntrega:rows.filter(x=>x.entregas).length,linhas:((v&&v.rows)||[]).length,diag}));
+    const resumoDiag={romaneios:roms.length,ctes:tarefas.length,motoristas:rows.length,comEntrega:rows.filter(x=>x.entregas).length,linhas:((v&&v.rows)||[]).length,diag};
+    console.log('SAIDAS MOTORISTA horários dos romaneios: '+JSON.stringify(resumoDiag));HORARIOS_DIAG=resumoDiag;
     return rows;
   })();
   HORARIOS_ROM={...HORARIOS_ROM,data,p};
@@ -3399,7 +3409,7 @@ async function buildSaidasPorMotorista(dataPedida=''){
     .filter(r=>r.carregou||r.primeira_entrega||r.saidas)
     .sort((a,b)=>a._o-b._o||a.motorista.localeCompare(b.motorista,'pt-BR')).map(({_o,...r})=>r);
   const buscando=!sswOk&&data===hoje;
-  return{ok:true,data,rows,ssw:sswOk,ssw_salvo:!!salvo,ssw_buscando:buscando,portal:!!(portal&&portal.ok),
+  return{ok:true,data,rows,ssw:sswOk,ssw_salvo:!!salvo,diag_romaneios:data===hoje?HORARIOS_DIAG:undefined,ssw_buscando:buscando,portal:!!(portal&&portal.ok),
     aviso:[portal&&portal.ok?'':'Registro de carga e app indisponíveis agora'+(portal&&portal.error?' ('+portal.error+')':''),
       sswOk?'':data===hoje?'Buscando as baixas do SSW de hoje… a tabela se completa sozinha':'Sem as baixas do SSW deste dia: o SSW só informa o motorista de cada entrega no próprio dia, e o sistema passou a guardar essa informação a partir de 05/11/2026'].filter(Boolean).join(' • ')};
 }
