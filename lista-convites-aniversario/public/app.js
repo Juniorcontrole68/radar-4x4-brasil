@@ -13,7 +13,7 @@ function syncInvitedChoice(){const choice=$('#invitedChoice');if(!choice)return;
 if($('#invitedChoice'))$('#invitedChoice').onchange=()=>{syncInvitedChoice();if($('#invitedChoice').value==='more'){$('#invited').value='';$('#invited').focus();}};
 function openGuest(g=null){resetContactPicker();$('#guestTitle').textContent=g?'Editar convidado':'Novo convidado';$('#guestId').value=g?.id||'';$('#name').value=g?.name||'';$('#phone').value=g?.phone||'';$('#invited').value=g?.invited||1;if($('#invitedChoice')){$('#invitedChoice').value=Number(g?.invited||1)>5?'more':String(g?.invited||1);syncInvitedChoice();}$('#confirmed').value=g?.confirmed??'';$('#attendees').value=(g?.attendees||[]).join('\n');$('#note').value=g?.note||'';$('#guestDlg').showModal()}
 
-function normalizeContactPhone(value){let digits=String(value||'').replace(/\D/g,'');if(digits.startsWith('00'))digits=digits.slice(2);if(digits.startsWith('55')&&(digits.length===12||digits.length===13))digits=digits.slice(2);if(digits.length>11&&digits.startsWith('0'))digits=digits.replace(/^0+/,'');return digits.slice(-11);}
+function normalizeContactPhone(value){let digits=String(value||'').replace(/\D/g,'');if(digits.startsWith('00'))digits=digits.slice(2);if(digits.startsWith('55')&&(digits.length===12||digits.length===13))digits=digits.slice(2);if(digits.length>11&&digits.startsWith('0'))digits=digits.replace(/^0+/,'');digits=digits.slice(-11);if(/^\d{10}$/.test(digits)&&/^[6-9]/.test(digits.slice(2,3)))digits=digits.slice(0,2)+'9'+digits.slice(2);return digits;}
 function resetContactPicker(){const wrap=$('#contactNumberWrap');if(wrap)wrap.hidden=true;const hint=$('#contactHint');if(hint)hint.textContent='';}
 const contactButton=$('#selectContact');
 if(contactButton){
@@ -29,7 +29,7 @@ if(contactButton){
       const contacts=await navigator.contacts.select(['name','tel'],{multiple:false});
       const contact=contacts[0];if(!contact)return;
       const allNumbers=[...new Set((contact.tel||[]).map(normalizeContactPhone).filter(n=>/^\d{10,11}$/.test(n)))];
-      const numbers=allNumbers.filter(n=>/^\d{11}$/.test(n));
+      const numbers=allNumbers.map(normalizeContactPhone).filter(n=>/^\d{11}$/.test(n));
       if(!numbers.length){hint.textContent='Nenhum celular brasileiro foi encontrado nesse contato. Números fixos foram ignorados porque não são tratados como WhatsApp pelo app. Preencha manualmente se necessário.';return;}
       if(contact.name?.[0])$('#name').value=contact.name[0];
       if(numbers.length===1){$('#phone').value=numbers[0];hint.textContent='Contato preenchido. Confira os dados e toque em Salvar.';}
@@ -71,7 +71,7 @@ window.sendWa=async id=>{
   const cleanMessage=String(e.message||'').replace(/ter você comigo/gi,'ter você conosco').replace(/ter voce comigo/gi,'ter voce conosco');
   const text=`Olá, ${g.name}! 🎉\n\nVenha comemorar com a gente! Junior e Carol${when?` — ${when}`:''}.${e.venue?`\n📍 ${e.venue}`:''}${e.address?` - ${e.address}`:''}\n\n${cleanMessage}\n\nConfirme sua presença aqui:\n${link}`;
   const phone=normalizeContactPhone(g.phone);
-  if(!/^\\d{11}$/.test(phone)){alert('O número de WhatsApp deste convidado não é válido. Edite o contato e escolha um celular com DDD.');return;}
+  if(!/^\d{11}$/.test(phone)){alert('O número de WhatsApp deste convidado não é válido. Edite o contato e escolha um celular com DDD.');return;}
   api('/api/guests/'+id+'/mark-sent',{method:'POST',body:'{}'}).catch(()=>{});
   location.href=`https://wa.me/55${phone}?text=${encodeURIComponent(text)}`;
 };
