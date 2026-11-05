@@ -47,7 +47,7 @@ function botaoReserva(r){
 async function carregarPainel(){
   try{painel=await api('/api/painel/agendamentos/painel')}catch(e){q('#agSyncInfo').textContent=e.message;return}
   const ind=painel.indicadores,s=ind.sync||{},ok=s.ultimaOk,ul=s.ultima;
-  q('#agCfgBtn').style.display=painel.pode_configurar?'':'none';q('#agAudBtn').style.display=painel.pode_configurar?'':'none';q('#agWaRelBtn').style.display='';
+  q('#agCfgBtn').style.display=painel.pode_configurar?'':'none';if(q('#agRotBtn'))q('#agRotBtn').style.display=painel.pode_configurar?'':'none';q('#agAudBtn').style.display=painel.pode_configurar?'':'none';q('#agWaRelBtn').style.display='';
   modoSac();
   let info=ok?'Última sincronização válida com o SSW: <b>'+esc(dh(ok.finalizado_em||ok.iniciado_em))+'</b> ('+esc(ok.origem==='automatica'?'automática':'manual'+(ok.usuario?' por '+ok.usuario:''))+') • '+nfmt(ok.pendentes_ssw)+' notas pendentes no SSW':'Ainda não houve sincronização com o SSW.';
   info+=' • varredura automática às <b>'+esc(painel.config.hora_sync)+'</b>'+(painel.config.sync_ativa?'':' (desligada)');
@@ -145,7 +145,7 @@ function preencher(r){
   q('#agSalvar').disabled=!r||!podeAgendar();
   const lc=q('#agLocal');lc.value='';lc.placeholder=r&&r.localizacao?'Já tem: cole outro para trocar':'Cole o link do WhatsApp';lc.title=r&&r.localizacao?'Localização guardada: '+r.localizacao.link:'';
 }
-function limparForm(){preencher(null);q('#agNf').value='';q('#agData').value='';q('#agObs').value='';q('#agLocal').value='';q('#agOpcoes').style.display='none';q('#agOpcoes').innerHTML='';msg('Digite a NF e pressione Enter: os dados vêm do SSW.');q('#agNf').focus()}
+function limparForm(){if(q('#agVagas'))q('#agVagas').textContent='';preencher(null);q('#agNf').value='';q('#agData').value='';q('#agObs').value='';q('#agLocal').value='';q('#agOpcoes').style.display='none';q('#agOpcoes').innerHTML='';msg('Digite a NF e pressione Enter: os dados vêm do SSW.');q('#agNf').focus()}
 function escolher(lista,origem){
   const box=q('#agOpcoes');box.style.display='block';
   box.innerHTML='<div style="font-weight:700;margin-bottom:3px">Há '+lista.length+' notas com este número. Escolha a correta:</div><table><thead><tr><th>CT-e</th><th>Remetente</th><th>Destinatário</th><th>Cidade</th><th>Situação</th><th></th></tr></thead><tbody>'+
@@ -186,6 +186,20 @@ async function buscarSsw(nf,ctrc,conhecidas=[]){
     msg(fin&&e.status===404?'A NF '+nf+' está '+ROT[fin.situacao].toLowerCase()+' no SSW (histórico) e não entra no agendamento.':e.message,'err')
   }
 }
+// Limite diário da cidade cheio: o administrador pode confirmar e passar do limite; os demais só recebem o aviso
+async function comLimite(enviar,body){
+  try{return await enviar(body)}
+  catch(e){if(/^Limite atingido/.test(e.message)&&painel?.pode_configurar&&confirm(e.message+'\n\nAgendar mesmo assim, passando do limite?'))return await enviar({...body,forcar:true});throw e}
+}
+// Vagas da cidade na data escolhida (só quando a cidade tem limite)
+async function mostrarVagas(){
+  const el=q('#agVagas'),data=q('#agData').value;if(!el)return;el.textContent='';el.className='ag-vagas';
+  if(!atual||!data||!atual.cidade)return;
+  try{const j=await api('/api/painel/agendamentos/vagas?'+new URLSearchParams({cidade:atual.cidade,uf:atual.uf||'',remetente:atual.remetente||'',data}));
+    if(!j.limite||q('#agData').value!==data)return;
+    el.textContent=(j.livres?'✅ ':'⛔ ')+atual.cidade+' em '+br(data)+': '+j.usados+' de '+j.limite+' entregas de '+j.grupo+(j.livres?' ('+j.livres+' livre'+(j.livres>1?'s':'')+')':' — lotado');
+    el.className='ag-vagas '+(j.livres?'ok':'cheio')}catch(e){}
+}
 async function salvar(ev){
   ev.preventDefault();
   if(!atual){msg('Busque a NF primeiro (digite e pressione Enter).','err');q('#agNf').focus();return}
@@ -195,7 +209,7 @@ async function salvar(ev){
     const body={data_agendada:data,observacao:q('#agObs').value,produto:q('#agProd').value};
     if(prodAuto&&body.produto.trim()===prodAuto.texto.trim())body.produto_fonte=prodAuto.fonte;
     if(atual.nota_id)body.nota_id=atual.nota_id;else body.nota={...atual,produto:'',mercadoria:''};
-    const ag=await api('/api/painel/agendamentos',{method:'POST',body});
+    const ag=await comLimite(bd=>api('/api/painel/agendamentos',{method:'POST',body:bd}),body);
     const nf=atual.nf,local=q('#agLocal').value.trim();let aviso='';
     if(local&&ag.nota_id){try{await api('/api/painel/agendamentos/notas/'+ag.nota_id+'/localizacao',{method:'PUT',body:{texto:local}});aviso=' Localização guardada.'}catch(e){aviso=' A localização não foi guardada: '+e.message}}
     limparForm();msg('NF '+nf+' agendada para '+br(data)+'.'+aviso,aviso.includes('não foi')?'err':'ok');
@@ -345,9 +359,9 @@ async function acao(b){
     '<div class="ag-reag-aviso">⚠️ O agendamento de <b>'+esc(br(r.data_agendada))+'</b> não foi cumprido. A nova data fica marcada como <b>⚡ PRIORIDADE</b> para toda a equipe.</div>'+
     '<label>Nova data<input name="data" type="date" required min="'+esc(painel?.hoje||'')+'"></label><label>Motivo (ex.: a mercadoria não saiu)<input name="motivo" maxlength="300"></label><label>Observação<textarea name="obs" rows="3" maxlength="1000">'+esc(r.observacao||'')+'</textarea></label>',
     async fd=>{if(fd.get('data')===r.data_agendada)throw new Error('Escolha uma data diferente de '+br(r.data_agendada)+'.');
-      await api('/api/painel/agendamentos/'+r.agendamento_id,{method:'PATCH',body:{data_agendada:fd.get('data'),observacao:fd.get('obs'),motivo:fd.get('motivo')}})},'Reagendar com prioridade');
+      await comLimite(bd=>api('/api/painel/agendamentos/'+r.agendamento_id,{method:'PATCH',body:bd}),{data_agendada:fd.get('data'),observacao:fd.get('obs'),motivo:fd.get('motivo')})},'Reagendar com prioridade');
   if(ac==='alterar')return dialogo('<h3>Alterar / reagendar • NF '+esc(r.nf)+'</h3><div class="muted">'+esc(r.destinatario||'')+' • '+esc(r.cidade||'')+'</div><label>Data do agendamento<input name="data" type="date" required value="'+esc(r.data_agendada)+'"></label><label>Produto<input name="prod" maxlength="600" value="'+esc(r.produto||'')+'"></label><label>Motivo do reagendamento (opcional)<input name="motivo" maxlength="300"></label><label>Observação<textarea name="obs" rows="3" maxlength="1000">'+esc(r.observacao||'')+'</textarea></label>',
-    async fd=>{await api('/api/painel/agendamentos/'+r.agendamento_id,{method:'PATCH',body:{data_agendada:fd.get('data'),observacao:fd.get('obs'),produto:fd.get('prod'),motivo:fd.get('motivo')}})},'Salvar');
+    async fd=>{await comLimite(bd=>api('/api/painel/agendamentos/'+r.agendamento_id,{method:'PATCH',body:bd}),{data_agendada:fd.get('data'),observacao:fd.get('obs'),produto:fd.get('prod'),motivo:fd.get('motivo')})},'Salvar');
   if(ac==='cancelar')return dialogo('<h3>Cancelar agendamento • NF '+esc(r.nf)+'</h3><div class="muted">Agendada para '+esc(br(r.data_agendada))+'. O cancelamento vale só aqui: a entrega continua no SSW e a nota volta para "Sem Agendamento".</div><label>Motivo<input name="motivo" maxlength="300"></label>',
     async fd=>{await api('/api/painel/agendamentos/'+r.agendamento_id+'/cancelar',{method:'POST',body:{motivo:fd.get('motivo')}})},'Cancelar agendamento',true);
 }
@@ -486,6 +500,45 @@ async function logSync(){
       (j.rows.length?j.rows.map(s=>'<tr><td>'+esc(dh(s.iniciado_em))+'</td><td>'+esc(s.origem==='automatica'?'Automática':'Manual')+(s.usuario?'<div class="muted">'+esc(s.usuario)+'</div>':'')+'</td><td>'+(s.status==='ok'?'<b style="color:#15803d">OK</b>':s.status==='rodando'?'Rodando…':'<b style="color:#b91c1c">Falhou</b><div style="font-size:11px">'+esc(s.erro||'')+'</div>')+'</td><td>'+nfmt(s.pendentes_ssw)+'</td><td>'+nfmt(s.novas)+'</td><td>'+nfmt(s.entregues)+'</td><td>'+nfmt(s.devolvidas)+'</td><td>'+nfmt(s.verificar)+'</td></tr>').join(''):'<tr><td colspan="8" class="muted">Nenhuma sincronização ainda.</td></tr>')+'</tbody></table>';
   }catch(e){q('#agDlg .ag-hist').textContent=e.message}
 }
+// ------------------------------------------------------------------ limites por cidade, sábados e grupos (administrador)
+const isoBr=d=>d.slice(8,10)+'/'+d.slice(5,7);
+function lerSabados(t){
+  const hoje=painel?.hoje||new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}),out=[];
+  for(const p of String(t||'').split(/[,;\s]+/).filter(Boolean)){
+    const m=p.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);if(!m)throw new Error('Data de sábado inválida: '+p+' (use dd/mm).');
+    let ano=m[3]?(m[3].length===2?'20'+m[3]:m[3]):hoje.slice(0,4);let d=ano+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
+    if(!m[3]&&d<hoje)d=(Number(ano)+1)+d.slice(4);
+    if(new Date(d+'T12:00:00Z').getUTCDay()!==6)throw new Error(isoBr(d)+' não é sábado.');
+    out.push(d)}
+  return[...new Set(out)].sort()
+}
+async function limites(){
+  let j;try{j=await api('/api/painel/agendamentos/rotas')}catch(e){msg(e.message,'err');return}
+  const rows=j.rows||[],dias=v=>[...'STQQSS'].map((l,i)=>'<i class="'+((v||'')[i]&&v[i]!=='.'?'on':'')+'">'+l+'</i>').join('');
+  dialogo('<h3>🗺️ Limites por cidade e sábados</h3><div class="muted">Máximo de entregas por dia em cada cidade (vazio = sem limite). Um cliente com várias NFs no mesmo dia ocupa uma vaga. Datas lotadas somem do link e do robô do WhatsApp, e o SAC é avisado ao agendar.</div>'+
+    '<label>Grupos de remetentes — cada grupo tem a sua cota na cidade; remetente fora de grupo conta sozinho. Um grupo por linha, no formato <b>Nome: termo, termo</b> (ex.: <i>Móveis: MADESA, CARRARO, MOVEIS B P</i>)<textarea name="grupos" rows="4" maxlength="6000" placeholder="Móveis: MADESA, CARRARO&#10;Construção: QUADRI, LEAL">'+esc(j.grupos_remetentes||'')+'</textarea></label>'+
+    '<div class="ag-rot-barra"><input id="agRotBusca" placeholder="Filtrar cidade, UF ou praça"><input id="agRotLim" type="number" min="1" max="999" placeholder="Limite/dia"><button type="button" class="ag-btn" id="agRotLimAp">Aplicar limite às filtradas</button>'+
+    '<input id="agRotSab" type="date" title="Sábado"><button type="button" class="ag-btn" id="agRotSabAp">Abrir este sábado nas filtradas</button><button type="button" class="ag-btn" id="agRotSabFe">Fechar este sábado</button></div>'+
+    '<div class="ag-rot-tab"><table><thead><tr><th>Cidade</th><th>Praça</th><th>Dias de entrega</th><th>Limite/dia</th><th>Sábados abertos (dd/mm)</th></tr></thead><tbody>'+
+    rows.map((r,i)=>'<tr data-i="'+i+'" data-busca="'+esc((r.cidade+' '+r.uf+' '+(r.praca||'')).toLowerCase())+'"'+(r.entrega===false?' class="sem"':'')+'><td><b>'+esc(r.cidade)+'</b>/'+esc(r.uf)+(r.entrega===false?' <span class="muted">(sem entrega)</span>':'')+'</td><td>'+esc(r.praca||'')+'</td><td class="dias">'+dias(r.dias)+'</td>'+
+      '<td><input data-lim type="number" min="1" max="999" value="'+esc(r.limite_dia??'')+'" placeholder="—"></td><td><input data-sab value="'+esc((r.sabados||[]).map(isoBr).join(', '))+'" placeholder="ex.: 14/11, 21/11"></td></tr>').join('')+'</tbody></table></div>',
+    async fd=>{
+      const tr=[...q('#agDlg').querySelectorAll('tr[data-i]')],mud=[];
+      for(const t of tr){const r=rows[Number(t.dataset.i)],li=t.querySelector('[data-lim]').value.trim(),lim=li===''?null:Number(li);
+        let sab;try{sab=lerSabados(t.querySelector('[data-sab]').value)}catch(e){throw new Error(r.cidade+': '+e.message)}
+        if(lim!==(r.limite_dia??null)||sab.join()!==(r.sabados||[]).join())mud.push({uf:r.uf,cidade:r.cidade,limite_dia:lim,sabados:sab})}
+      const g=String(fd.get('grupos')||'');
+      await api('/api/painel/agendamentos/rotas',{method:'PUT',body:{rotas:mud,...(g!==(j.grupos_remetentes||'')?{grupos_remetentes:g}:{})}});
+      msg('Limites salvos: '+mud.length+' cidade(s) alterada(s)'+(g!==(j.grupos_remetentes||'')?' e grupos de remetentes atualizados':'')+'.','ok')
+    },'Salvar limites');
+  const d=q('#agDlg');d.classList.add('largo');d.addEventListener('close',()=>d.classList.remove('largo'),{once:true});
+  const vis=()=>[...d.querySelectorAll('tr[data-i]')].filter(t=>t.style.display!=='none');
+  q('#agRotBusca').oninput=e=>{const f=e.target.value.trim().toLowerCase();d.querySelectorAll('tr[data-i]').forEach(t=>t.style.display=!f||t.dataset.busca.includes(f)?'':'none')};
+  q('#agRotLimAp').onclick=()=>{const v=q('#agRotLim').value.trim();vis().forEach(t=>t.querySelector('[data-lim]').value=v)};
+  const sabSel=()=>{const v=q('#agRotSab').value;if(!v){alert('Escolha a data do sábado.');return''}if(new Date(v+'T12:00:00Z').getUTCDay()!==6){alert(isoBr(v)+' não é sábado.');return''}return v};
+  q('#agRotSabAp').onclick=()=>{const v=sabSel();if(!v)return;vis().forEach(t=>{const i=t.querySelector('[data-sab]');let l=[];try{l=lerSabados(i.value)}catch(e){}if(!l.includes(v))l.push(v);i.value=l.sort().map(isoBr).join(', ')})};
+  q('#agRotSabFe').onclick=()=>{const v=sabSel();if(!v)return;vis().forEach(t=>{const i=t.querySelector('[data-sab]');let l=[];try{l=lerSabados(i.value)}catch(e){}i.value=l.filter(x=>x!==v).map(isoBr).join(', ')})};
+}
 function configurar(){
   const c=painel?.config||{};
   dialogo('<h3>Configuração do agendamento</h3><label>Horário da varredura automática no SSW (Brasília)<input name="hora" type="time" required value="'+esc(c.hora_sync||'02:00')+'"></label><label><span><input name="ativa" type="checkbox" style="width:auto;height:auto"'+(c.sync_ativa!==false?' checked':'')+'> Varredura automática ligada</span></label><label>Amarelo: sem agendamento há mais de (dias)<input name="am" type="number" min="0" max="60" required value="'+esc(c.dias_amarelo??2)+'"></label><label>Vermelho: sem agendamento há mais de (dias)<input name="vm" type="number" min="1" max="90" required value="'+esc(c.dias_vermelho??5)+'"></label><label>Parceiros que entram no agendamento (procurados no remetente e no pagador; separe por vírgula, vazio = todos)<textarea name="parc" rows="2" maxlength="1500">'+esc(c.parceiros||'')+'</textarea></label>',
@@ -589,7 +642,7 @@ function setup(){
   q('#agSyncBtn').onclick=sincronizar;q('#agBaixasBtn').onclick=atualizarBaixas;q('#agImpForm').onsubmit=importarFaixa;
   api('/api/painel/agendamentos/parceiros').then(j=>{q('#agImpParc').innerHTML=(j.parceiros||[]).map(t=>'<option value="'+esc(t)+'">').join('')}).catch(()=>{});
   q('#agLogBtn').onclick=logSync;
-  q('#agCfgBtn').onclick=configurar;q('#agAudBtn').onclick=auditoria;q('#agWaRelBtn').onclick=relatorioWhatsapp;
+  q('#agCfgBtn').onclick=configurar;if(q('#agRotBtn'))q('#agRotBtn').onclick=limites;q('#agData').addEventListener('change',mostrarVagas);q('#agAudBtn').onclick=auditoria;q('#agWaRelBtn').onclick=relatorioWhatsapp;
   q('#agCards').onclick=e=>{const b=e.target.closest('[data-card]');if(b)clicarCard(b)};
   q('#agAbas').onclick=e=>{const b=e.target.closest('[data-aba]');if(!b)return;aba=b.dataset.aba;card='';page=1;marcarAba();carregarLista();carregarPainel()};
   q('#agFiltros').onsubmit=e=>{e.preventDefault();page=1;card='';carregarLista();carregarPainel()};

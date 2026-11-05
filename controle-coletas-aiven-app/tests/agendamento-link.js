@@ -111,6 +111,27 @@ function check(name, cond, extra = '') { if (cond) { pass++; console.log('  OK  
   await ag.alterar(pool, cli, sac, a7, { data_agendada: dr.datas[3].data });
   check('mudar uma data futura não marca prioridade', (await pool.query('SELECT prioridade FROM ag_agendamentos WHERE id=$1', [a7])).rows[0].prioridade === false);
 
+  console.log('Limite por cidade e sábado no link');
+  {
+    const sp = n => new Date(Date.now() + n * 864e5).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    let sab = ''; for (let i = 3; i < 14 && !sab; i++) { const d = sp(i); if (new Date(d + 'T12:00:00Z').getUTCDay() === 6) sab = d; }
+    await pool.query("UPDATE ag_rotas SET limite_dia=1,sabados=ARRAY[$1]::date[] WHERE chave='CAMPINAS'", [sab]);
+    const rota = await wa.rotaDa(pool, cli, 'CAMPINAS', 'SP');
+    check('sábado aberto pelo administrador entra nas datas da rota', rota.limite_dia === 1 && wa.proximasDatas(rota, { n: 10 }).includes(sab), wa.proximasDatas(rota, { n: 10 }));
+    const X = (await pool.query("SELECT to_char(a.data_agendada,'YYYY-MM-DD') d FROM ag_agendamentos a JOIN ag_notas n ON n.id=a.nota_id WHERE a.status='ativo' AND n.nf='7001'")).rows[0].d;
+    await ag.gravarNota(pool, cli, { nf: '7101', ctrc: 'AMR007101-1', remetente: 'QUADRI COMERCIO ..', destinatario: 'OUTRO CLIENTE LIMITE', cidade: 'CAMPINAS', uf: 'SP' }, { origem: 'consulta', pendente: true, situacaoNova: 'pendente' });
+    await pool.query("UPDATE ag_notas SET telefone='(19) 99158-7000' WHERE nf='7101'");
+    const lot = await ag.datasLotadas(pool, cli, { cidade: 'CAMPINAS', uf: 'SP', remetentes: ['QUADRI COMERCIO ..'], cliente: 'OUTRO CLIENTE LIMITE|CAMPINAS', datas: [X] });
+    const lotProprio = await ag.datasLotadas(pool, cli, { cidade: 'CAMPINAS', uf: 'SP', remetentes: ['QUADRI COMERCIO ..'], cliente: 'MADA CABRAL 1330321|CAMPINAS', datas: [X] });
+    check('data com a cota do grupo cheia: lotada para cliente novo, livre para quem já está nela', lot.has(X) && !lotProprio.has(X), [X, [...lot], [...lotProprio]]);
+    const l7 = await lk.criarLink(pool, cli, sac, await id('7101'), 'https://exemplo.test');
+    const d7 = await lk.dadosLink(pool, l7.token);
+    check('link do cliente novo não oferece a data lotada', d7.datas.length > 0 && !d7.datas.some(x => x.data === X), d7.datas.map(x => x.data));
+    erro = null; try { await ag.agendar(pool, cli, sac, { nota_id: await id('7101'), data_agendada: X, forcar: true }); } catch (e) { erro = e; }
+    check('SAC sem ser administrador não força o limite', erro && erro.status === 409 && /Limite atingido/.test(erro.message), erro && erro.message);
+    await pool.query("UPDATE ag_rotas SET limite_dia=NULL,sabados='{}' WHERE chave='CAMPINAS'");
+  }
+
   console.log('Segurança');
   erro = null; try { await lk.dadosLink(pool, 'x'.repeat(24)); } catch (e) { erro = e; }
   check('link inexistente -> 404', erro && erro.status === 404);

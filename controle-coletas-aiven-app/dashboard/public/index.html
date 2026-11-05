@@ -839,7 +839,7 @@ body.embedded-view #currentUser,body.embedded-view #logoutBtn,body.embedded-view
   <div class="ag-sync"><div id="agSyncInfo" class="ag-sync-info">Carregando…</div>
     <button id="agSyncBtn" class="ag-btn primary" type="button">🔄 Sincronizar SSW agora</button>
     <button id="agBaixasBtn" class="ag-btn" type="button" title="Confere agora as entregas que os motoristas baixaram no app">🚚 Atualizar baixas</button><button id="agLogBtn" class="ag-btn" type="button">Log das sincronizações</button>
-    <button id="agWaRelBtn" class="ag-btn" type="button" style="display:none" title="Links enviados pelo WhatsApp do SAC: quem enviou, quem abriu e quem escolheu a data">📊 Relatório WhatsApp</button><button id="agAudBtn" class="ag-btn" type="button" style="display:none" title="Tudo o que cada usuário fez no agendamento">📜 Histórico de ações</button><button id="agCfgBtn" class="ag-btn" type="button" style="display:none">⚙ Configurar</button></div>
+    <button id="agWaRelBtn" class="ag-btn" type="button" style="display:none" title="Links enviados pelo WhatsApp do SAC: quem enviou, quem abriu e quem escolheu a data">📊 Relatório WhatsApp</button><button id="agAudBtn" class="ag-btn" type="button" style="display:none" title="Tudo o que cada usuário fez no agendamento">📜 Histórico de ações</button><button id="agRotBtn" class="ag-btn" type="button" style="display:none" title="Máximo de entregas por dia em cada cidade, grupos de remetentes e sábados abertos">🗺️ Limites e sábados</button><button id="agCfgBtn" class="ag-btn" type="button" style="display:none">⚙ Configurar</button></div>
   <form id="agImpForm" class="ag-imp" autocomplete="off" title="Traz do SSW todos os CT-es (ou subcontratos) da faixa; depois é só agendar na aba Sem Agendamento">
     <b>Importar CT-es do SSW</b>
     <label>Do CT-e<input id="agImpDe" maxlength="14" placeholder="AMR017002-0" autocapitalize="characters"></label>
@@ -861,7 +861,7 @@ body.embedded-view #currentUser,body.embedded-view #logoutBtn,body.embedded-view
     </div>
     <div class="ag-l2">
       <label>CT-e<input id="agCte" readonly tabindex="-1"></label>
-      <label>Data do agendamento<input id="agData" type="date"></label>
+      <label>Data do agendamento<input id="agData" type="date"><span id="agVagas" class="ag-vagas"></span></label>
       <label>Observação<input id="agObs" maxlength="1000" placeholder="Opcional"></label>
       <label title="Cole o link de localização que o cliente mandou no WhatsApp (Google Maps, Waze ou coordenadas). Fica guardado para as próximas notas dele.">📍 Localização<input id="agLocal" maxlength="2000" placeholder="Cole o link do WhatsApp"></label>
       <button id="agSalvar" class="ag-btn primary" type="submit" disabled>Agendar</button>

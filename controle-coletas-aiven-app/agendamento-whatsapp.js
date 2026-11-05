@@ -67,16 +67,25 @@ const ehFeriado = iso => feriados(Number(iso.slice(0, 4))).has(iso);
 // dias = "STQQS." (seg a sáb, ponto = não entrega). Primeira data: hoje + prazo (mínimo 1 dia), mais um dia a partir das 18h.
 function proximasDatas(rota, { agora = new Date(), n = DATAS_NA_LISTA, extras = [] } = {}) {
   if (!rota || !rota.entrega || !/^[STQ.]{6}$/.test(rota.dias || '') || !/[STQ]/.test(rota.dias)) return [];
-  const bloqueadas = new Set(extras);
+  const bloqueadas = new Set(extras), sabados = new Set(rota.sabados || []);   // sábado avulso aberto pelo administrador
   let ini = Math.max(1, Number(rota.prazo) || 1);
   if (horaSp(agora) >= HORA_CORTE) ini++;
   const hoje = hojeSp(agora), out = [];
   for (let i = ini; i <= ini + 45 && out.length < n; i++) {
     const d = isoMais(hoje, i), w = diaSemana(d);
-    if (w === 0 || rota.dias[w - 1] === '.' || ehFeriado(d) || bloqueadas.has(d)) continue;
+    if (w === 0 || (rota.dias[w - 1] === '.' && !(w === 6 && sabados.has(d))) || ehFeriado(d) || bloqueadas.has(d)) continue;
     out.push(d);
   }
   return out;
+}
+
+// Datas da rota sem as que já bateram o limite diário da cidade para o grupo de remetentes das notas (agendamento.js)
+const chaveCliente = (dest, cidade) => [dest, cidade].map(v => String(v || '').trim().replace(/\s+/g, ' ').toUpperCase()).join('|');
+async function datasDisponiveis(db, cli, rota, { agora = new Date(), n = DATAS_NA_LISTA, cidade = '', uf = '', remetentes = [], cliente = '' } = {}) {
+  const base = proximasDatas(rota, { agora, n: n + 15 });
+  if (!base.length) return [];
+  const lotadas = await ag.datasLotadas(db, cli, { cidade: cidade || (rota && rota.cidade) || '', uf: uf || (rota && rota.uf) || '', remetentes, cliente, datas: base });
+  return base.filter(d => !lotadas.has(d)).slice(0, n);
 }
 
 // ------------------------------------------------------------------ telefones
@@ -123,6 +132,9 @@ async function ensureSchema(pool) {
     praca TEXT, dias TEXT NOT NULL, prazo INTEGER, entrega BOOLEAN NOT NULL DEFAULT TRUE, restrito BOOLEAN NOT NULL DEFAULT FALSE,
     origem TEXT, atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS uq_ag_rotas ON ag_rotas (COALESCE(client_id,0), uf, chave)');
+  // definidos pelo administrador: máximo de entregas por dia na cidade (por grupo de remetentes) e sábados abertos avulsos
+  await pool.query('ALTER TABLE ag_rotas ADD COLUMN IF NOT EXISTS limite_dia INTEGER');
+  await pool.query("ALTER TABLE ag_rotas ADD COLUMN IF NOT EXISTS sabados DATE[] NOT NULL DEFAULT '{}'");
   // uma conversa = um celular + as notas oferecidas juntas
   await pool.query(`CREATE TABLE IF NOT EXISTS ag_wa_conversas (
     id BIGSERIAL PRIMARY KEY, client_id BIGINT, telefone TEXT NOT NULL, chave_fone TEXT NOT NULL, nota_ids BIGINT[] NOT NULL,
@@ -158,7 +170,7 @@ async function gravarRotas(pool, cli, cidades, origem) {
   return n;
 }
 async function rotaDa(db, cli, cidade, uf) {
-  const q = await db.query('SELECT uf,cidade,dias,prazo,entrega,restrito FROM ag_rotas WHERE client_id IS NOT DISTINCT FROM $1 AND chave=$2 AND ($3=\'\' OR uf=$3) ORDER BY (uf=$3) DESC LIMIT 1',
+  const q = await db.query('SELECT uf,cidade,dias,prazo,entrega,restrito,limite_dia,ARRAY(SELECT to_char(x,\'YYYY-MM-DD\') FROM unnest(sabados) x ORDER BY x) AS sabados FROM ag_rotas WHERE client_id IS NOT DISTINCT FROM $1 AND chave=$2 AND ($3=\'\' OR uf=$3) ORDER BY (uf=$3) DESC LIMIT 1',
     [cli, chaveCidade(cidade), limpo(uf, 2).toUpperCase()]);
   return q.rows[0] || null;
 }
@@ -257,7 +269,7 @@ async function enviarDatas(ctx, conv, intro) {
   const { pool } = ctx;
   const notas = await notasDa(pool, conv);
   const rota = await rotaDa(pool, conv.client_id, conv.cidade, conv.uf);
-  const datas = proximasDatas(rota, { agora: ctx.agora ? ctx.agora() : new Date() });
+  const datas = await datasDisponiveis(pool, conv.client_id, rota, { agora: ctx.agora ? ctx.agora() : new Date(), cidade: conv.cidade, uf: conv.uf, remetentes: notas.map(x => x.remetente), cliente: chaveCliente(conv.destinatario, conv.cidade) });
   if (!datas.length) return paraSac(ctx, conv, 'Cidade sem dia de entrega na grade', ANA.semData(conv.cidade));
   await pool.query("UPDATE ag_wa_conversas SET datas=$2,estado=CASE WHEN estado='agendado' THEN 'remarcando' ELSE 'escolhendo' END,atualizado_em=NOW() WHERE id=$1", [conv.id, datas]);
   const corpo = (intro ? intro + '\n\n' : '') + ANA.entrega(notas, conv.cidade, conv.uf) + '\n\n' + ANA.escolha;
@@ -295,9 +307,10 @@ async function paraSac(ctx, conv, motivo, aviso) {
 // Cliente escolheu a data: grava (ou remarca) todas as notas da conversa e pede a localização
 async function escolherData(ctx, conv, data) {
   const { pool } = ctx;
-  if (!conv.datas.includes(data) || !proximasDatas(await rotaDa(pool, conv.client_id, conv.cidade, conv.uf), { agora: ctx.agora ? ctx.agora() : new Date() }).includes(data))
-    return enviarDatas(ctx, conv, ANA.indisponivel);
   const notas = await notasDa(pool, conv);
+  if (!conv.datas.includes(data) || !(await datasDisponiveis(pool, conv.client_id, await rotaDa(pool, conv.client_id, conv.cidade, conv.uf), { agora: ctx.agora ? ctx.agora() : new Date(), n: 30,
+      cidade: conv.cidade, uf: conv.uf, remetentes: notas.map(x => x.remetente), cliente: chaveCliente(conv.destinatario, conv.cidade) })).includes(data))
+    return enviarDatas(ctx, conv, ANA.indisponivel);
   const feitas = [], problemas = [];
   for (const n of notas) {
     if (ag.FINAIS.includes(n.situacao)) continue;
@@ -603,5 +616,5 @@ async function handle(req, res, u, { pool, sendJson, readJsonBodyLimited, dashbo
   } catch (e) { return sendJson(res, e.status || 500, { ok: false, error: e.message || 'Erro.' }), true; }
 }
 
-module.exports = { ANA, nomeLoja, primeiroNome, cidadeUf, remetentes, nfsTexto, NAO_COBRAMOS, proximasDatas, feriados, pascoa, celular, chaveFone, chaveCidade, configDoAmbiente, ensureSchema, garantirRotas, gravarRotas, rotaDa,
+module.exports = { datasDisponiveis, chaveCliente, ANA, nomeLoja, primeiroNome, cidadeUf, remetentes, nfsTexto, NAO_COBRAMOS, proximasDatas, feriados, pascoa, celular, chaveFone, chaveCidade, configDoAmbiente, ensureSchema, garantirRotas, gravarRotas, rotaDa,
   candidatas, rodadaOfertas, rodadaLembretes, receber, ofertar, escolherData, assinaturaOk, iniciar, handle, GRADE };

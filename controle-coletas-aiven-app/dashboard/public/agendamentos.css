@@ -127,3 +127,16 @@ td.ag-dest{cursor:help;text-decoration:underline dotted #94a3b8;text-underline-o
 .ag-card[data-card="prioridade"] b{color:#c2410c}
 .ag-rota{display:inline-block;margin-right:4px;font-size:11px;font-weight:700;color:#6d28d9;background:#ede9fe;border-radius:6px;padding:2px 7px;white-space:nowrap;cursor:default}
 .ag-insuc{font-size:10px;font-weight:700;color:#b91c1c;margin-top:2px;white-space:nowrap}
+/* limites por cidade e sábados (administrador) */
+.ag-rot-barra{display:grid;grid-template-columns:1.4fr .6fr auto .8fr auto auto;gap:6px;align-items:center;margin:8px 0}
+.ag-rot-tab{max-height:48vh;overflow:auto;border:1px solid var(--line);border-radius:8px}
+.ag-rot-tab table{width:100%;border-collapse:collapse;font-size:12px}
+.ag-rot-tab th{position:sticky;top:0;background:#f8fafc;text-align:left;font-size:10px;text-transform:uppercase;color:#64748b;padding:6px;border-bottom:1px solid var(--line)}
+.ag-rot-tab td{padding:4px 6px;border-bottom:1px solid #f1f5f9}
+.ag-rot-tab tr.sem td{color:#94a3b8}
+.ag-rot-tab td input[data-lim]{width:70px}
+.ag-rot-tab .dias i{display:inline-block;width:15px;text-align:center;font-style:normal;font-weight:700;color:#cbd5e1}
+.ag-rot-tab .dias i.on{color:#15803d}
+.ag-vagas{display:block;font-size:10px;font-weight:700;margin-top:2px;white-space:nowrap}
+.ag-vagas.ok{color:#15803d}.ag-vagas.cheio{color:#b91c1c}
+@media(max-width:800px){.ag-rot-barra{grid-template-columns:1fr 1fr}}

@@ -397,6 +397,34 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     check('  ...resumo por usuário',y.j.por_usuario.some(x=>x.usuario==='ag_ana_'+suf&&x.agendados===1&&x.reservas===1)&&y.j.usuarios.includes('ag_bia_'+suf),y.j.por_usuario);
   }
 
+  console.log('Limite diário por cidade, grupos de remetentes e sábados');
+  {
+    const sp=n=>{const d=new Date(Date.now()+n*864e5);return d.toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'})};
+    let sab='';for(let i=3;i<14&&!sab;i++){const d=sp(i);if(new Date(d+'T12:00:00Z').getUTCDay()===6)sab=d}
+    let D='';for(let i=2;i<14&&!D;i++){const d=sp(i),w=new Date(d+'T12:00:00Z').getUTCDay();if(w>=1&&w<=5)D=d}
+    let x=await api('GET','/api/painel/agendamentos/rotas');
+    check('administrador vê as cidades da grade com limite e sábados',x.status===200&&x.j.rows.length>100&&x.j.rows.some(r=>r.cidade==='CAMPINAS'&&r.limite_dia===null),x.status);
+    x=await api('PUT','/api/painel/agendamentos/rotas',{rotas:[{uf:'SP',cidade:'CAMPINAS',limite_dia:1,sabados:[sp(2)===sab?sab:D]}]});
+    check('  ...recusa sábado que não é sábado',x.status===400&&/não é sábado/.test(x.j.error||''),x.j);
+    x=await api('PUT','/api/painel/agendamentos/rotas',{rotas:[{uf:'SP',cidade:'CAMPINAS',limite_dia:0}]});
+    check('  ...recusa limite zero',x.status===400,x.j);
+    x=await api('PUT','/api/painel/agendamentos/rotas',{grupos_remetentes:'Móveis: MADESA, CARRARO\nlinha sem termo:',rotas:[{uf:'SP',cidade:'CAMPINAS',limite_dia:1,sabados:[sab]}]});
+    const camp=(x.j.rows||[]).find(r=>r.cidade==='CAMPINAS');
+    check('  ...grava limite 1 em Campinas, o sábado aberto e o grupo Móveis',x.status===200&&camp?.limite_dia===1&&camp.sabados.join()===sab&&x.j.grupos.length===1&&x.j.grupos[0].nome==='Móveis',x.j.grupos);
+    const nota=async(nf,rem,dest)=>{await ag.gravarNota(pool,cli,{nf,ctrc:'AMR00'+nf+'-1',remetente:rem,destinatario:dest,cidade:'CAMPINAS',uf:'SP'},{origem:'consulta',pendente:true,situacaoNova:'pendente'});return(await api('GET','/api/painel/agendamentos/buscar-nf?nf='+nf)).j.rows[0].nota_id};
+    const a1=await nota('8901','MADESA (EXTREMA)','CLIENTE LIMITE A'),a2=await nota('8904','MADESA (EXTREMA)','CLIENTE LIMITE A'),b1=await nota('8902','MOVEIS CARRARO LTDA','CLIENTE LIMITE B'),c1=await nota('8903','QUADRI COMERCIO','CLIENTE LIMITE C');
+    check('  ...1º cliente do grupo no dia: agenda',(await api('POST','/api/painel/agendamentos',{nota_id:a1,data_agendada:D})).status===201);
+    check('  ...outra NF do mesmo cliente no mesmo dia: não ocupa outra vaga',(await api('POST','/api/painel/agendamentos',{nota_id:a2,data_agendada:D})).status===201);
+    x=await api('POST','/api/painel/agendamentos',{nota_id:b1,data_agendada:D});
+    check('  ...outro remetente do mesmo grupo (Carraro): limite atingido',x.status===409&&/^Limite atingido: CAMPINAS já tem 1 de 1 entregas de Móveis/.test(x.j.error||''),x.j);
+    x=await api('GET','/api/painel/agendamentos/vagas?'+new URLSearchParams({cidade:'CAMPINAS',uf:'SP',remetente:'MOVEIS CARRARO LTDA',data:D}));
+    check('  ...vagas do dia para o grupo: 1 de 1, nenhuma livre',x.j.limite===1&&x.j.usados===1&&x.j.livres===0&&x.j.grupo==='Móveis',x.j);
+    check('  ...remetente fora do grupo tem a sua própria cota',(await api('POST','/api/painel/agendamentos',{nota_id:c1,data_agendada:D})).status===201);
+    check('  ...o administrador pode forçar passando do limite',(await api('POST','/api/painel/agendamentos',{nota_id:b1,data_agendada:D,forcar:true})).status===201);
+    x=await api('PUT','/api/painel/agendamentos/rotas',{rotas:[{uf:'SP',cidade:'CAMPINAS',limite_dia:null,sabados:[]}]});
+    check('  ...limite e sábado removidos (vazio = sem limite)',(x.j.rows||[]).find(r=>r.cidade==='CAMPINAS')?.limite_dia===null);
+  }
+
   await pool.end();
   console.log('\n'+pass+' ok, '+fail+' falha(s)');
   process.exit(fail?1:0)

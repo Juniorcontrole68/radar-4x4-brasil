@@ -116,6 +116,8 @@ async function ensureSchema(pool) {
   await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS ux_ag_agendamentos_ativo ON ag_agendamentos (nota_id) WHERE status='ativo'");
   // agendamento não cumprido (data de hoje ou já passada, sem entrega) que ganhou nova data: fica como prioridade até a entrega
   await pool.query('ALTER TABLE ag_agendamentos ADD COLUMN IF NOT EXISTS prioridade BOOLEAN NOT NULL DEFAULT FALSE');
+  // grupos de remetentes do limite diário por cidade (uma linha por grupo: "Nome: termo, termo")
+  await pool.query('ALTER TABLE ag_config ADD COLUMN IF NOT EXISTS grupos_remetentes TEXT');
   await pool.query('ALTER TABLE ag_agendamentos ADD COLUMN IF NOT EXISTS prioridade_motivo TEXT');
   await pool.query('CREATE INDEX IF NOT EXISTS ix_ag_agendamentos_data ON ag_agendamentos (client_id, status, data_agendada)');
   await pool.query(`CREATE TABLE IF NOT EXISTS ag_eventos (
@@ -216,8 +218,9 @@ const chaveCfg = cli => Number(cli || 0);
 const FONTES_PRODUTO = ['xml', 'nfe', 'ssw_xml', 'danfe', 'cte'];
 const termosDe = async (db, cli) => termosParceiros((await lerConfig(db, cli)).parceiros);
 async function lerConfig(db, cli) {
-  const q = await db.query('SELECT hora_sync,sync_ativa,dias_amarelo,dias_vermelho,parceiros,atualizado_por,atualizado_em FROM ag_config WHERE chave=$1', [chaveCfg(cli)]);
-  const c = q.rows[0] || { hora_sync: '02:00', sync_ativa: true, dias_amarelo: 2, dias_vermelho: 5, parceiros: null, atualizado_por: null, atualizado_em: null };
+  const q = await db.query('SELECT hora_sync,sync_ativa,dias_amarelo,dias_vermelho,parceiros,grupos_remetentes,atualizado_por,atualizado_em FROM ag_config WHERE chave=$1', [chaveCfg(cli)]);
+  const c = q.rows[0] || { hora_sync: '02:00', sync_ativa: true, dias_amarelo: 2, dias_vermelho: 5, parceiros: null, grupos_remetentes: '', atualizado_por: null, atualizado_em: null };
+  c.grupos_remetentes = c.grupos_remetentes || '';
   return { ...c, parceiros: c.parceiros == null ? PARCEIROS_PADRAO : c.parceiros };
 }
 async function gravarConfig(db, cli, b, usuario) {
@@ -228,8 +231,9 @@ async function gravarConfig(db, cli, b, usuario) {
   if (vm <= am) { const e = new Error('O limite vermelho precisa ser maior que o amarelo.'); e.status = 400; throw e; }
   const ativa = typeof b.sync_ativa === 'boolean' ? b.sync_ativa : atual.sync_ativa;
   const parceiros = typeof b.parceiros === 'string' ? termosParceiros(b.parceiros).join(', ') : atual.parceiros;
-  await db.query(`INSERT INTO ag_config(chave,hora_sync,sync_ativa,dias_amarelo,dias_vermelho,parceiros,atualizado_por,atualizado_em) VALUES($1,$2,$3,$4,$5,$6,$7,NOW())
-    ON CONFLICT (chave) DO UPDATE SET hora_sync=$2,sync_ativa=$3,dias_amarelo=$4,dias_vermelho=$5,parceiros=$6,atualizado_por=$7,atualizado_em=NOW()`, [chaveCfg(cli), hora, ativa, am, vm, parceiros, usuario]);
+  const grupos = typeof b.grupos_remetentes === 'string' ? textoGrupos(gruposRemetentes(b.grupos_remetentes)) : atual.grupos_remetentes;
+  await db.query(`INSERT INTO ag_config(chave,hora_sync,sync_ativa,dias_amarelo,dias_vermelho,parceiros,grupos_remetentes,atualizado_por,atualizado_em) VALUES($1,$2,$3,$4,$5,$6,$8,$7,NOW())
+    ON CONFLICT (chave) DO UPDATE SET hora_sync=$2,sync_ativa=$3,dias_amarelo=$4,dias_vermelho=$5,parceiros=$6,grupos_remetentes=$8,atualizado_por=$7,atualizado_em=NOW()`, [chaveCfg(cli), hora, ativa, am, vm, parceiros, usuario, grupos]);
   return lerConfig(db, cli);
 }
 
@@ -927,6 +931,78 @@ function validarData(v) {
 }
 const brData = d => d ? String(d).split('-').reverse().join('/') : '';
 
+// ------------------------------------------------------------------ limite diário de entregas por cidade
+// O administrador define o máximo de entregas por dia em cada cidade (ag_rotas.limite_dia) e junta remetentes em grupos;
+// cada grupo tem a sua cota na cidade. Remetente fora de grupo conta sozinho. Uma entrega = um cliente (destinatário):
+// várias NFs do mesmo cliente no mesmo dia ocupam uma vaga só. Contam os agendamentos ativos e os já entregues do dia.
+const chaveCidadeAg = v => semAcento(v).replace(/[^A-Z0-9]+/g, ' ').trim();
+const termoNorm = v => semAcento(v).replace(/[^A-Z0-9&]+/g, ' ').trim();
+function gruposRemetentes(texto) {
+  const out = [];
+  for (const linha of String(texto || '').split(/\r?\n/)) {
+    const l = linha.trim(); if (!l) continue;
+    const i = l.indexOf(':');
+    const nome = limpo(i > 0 ? l.slice(0, i) : l, 60), termos = (i > 0 ? l.slice(i + 1) : l).split(/[,;]/).map(termoNorm).filter(t => t.length >= 2);
+    if (nome && termos.length) out.push({ nome, termos: [...new Set(termos)].slice(0, 40) });
+  }
+  return out.slice(0, 50);
+}
+const textoGrupos = gs => gs.map(g => g.nome + ': ' + g.termos.join(', ')).join('\n');
+function grupoDoRemetente(grupos, remetente) {
+  const r = ' ' + termoNorm(remetente) + ' ';
+  const g = grupos.find(x => x.termos.some(t => r.includes(' ' + t + ' ') || r.includes(' ' + t)));
+  if (g) return { chave: 'G:' + termoNorm(g.nome), nome: g.nome };
+  const k = termoNorm(remetente);
+  return { chave: 'R:' + k, nome: limpo(remetente, 60) || 'sem remetente' };
+}
+async function limiteCidade(db, cli, cidade, uf) {
+  try {
+    const q = await db.query("SELECT limite_dia FROM ag_rotas WHERE client_id IS NOT DISTINCT FROM $1 AND chave=$2 AND ($3='' OR uf=$3) ORDER BY (uf=$3) DESC LIMIT 1",
+      [cli, chaveCidadeAg(cidade), limpo(uf, 2).toUpperCase()]);
+    const n = q.rows[0] && q.rows[0].limite_dia;
+    return Number(n) > 0 ? Number(n) : null;
+  } catch (e) { return null; }   // tabela de rotas ainda não criada: sem limite
+}
+// Ocupação por data e grupo numa cidade: Map(data -> Map(grupo -> Set(clientes)))
+async function ocupacaoCidade(db, cli, cidade, uf, datas, grupos) {
+  const q = await db.query(`SELECT to_char(a.data_agendada,'YYYY-MM-DD') AS d,n.remetente,n.cidade,n.uf,${CHAVE_LOCAL_SQL} AS cliente FROM ag_agendamentos a JOIN ag_notas n ON n.id=a.nota_id
+    WHERE a.client_id IS NOT DISTINCT FROM $1 AND a.status IN ('ativo','concluido') AND a.data_agendada=ANY($2::date[])`, [cli, datas]);
+  const alvo = chaveCidadeAg(cidade), ufA = limpo(uf, 2).toUpperCase(), m = new Map();
+  for (const r of q.rows) {
+    if (chaveCidadeAg(r.cidade) !== alvo || (ufA && r.uf && String(r.uf).toUpperCase() !== ufA)) continue;
+    const g = grupoDoRemetente(grupos, r.remetente).chave;
+    if (!m.has(r.d)) m.set(r.d, new Map());
+    const pg = m.get(r.d); if (!pg.has(g)) pg.set(g, new Set()); pg.get(g).add(r.cliente);
+  }
+  return m;
+}
+// Datas em que a cota de algum dos grupos das notas já está cheia para um cliente novo nesta cidade
+async function datasLotadas(db, cli, { cidade, uf, remetentes = [], cliente = '', datas = [] }) {
+  if (!datas.length) return new Set();
+  const limite = await limiteCidade(db, cli, cidade, uf);
+  if (!limite) return new Set();
+  const grupos = gruposRemetentes((await lerConfig(db, cli)).grupos_remetentes);
+  const gs = [...new Set(remetentes.map(r => grupoDoRemetente(grupos, r).chave))];
+  const oc = await ocupacaoCidade(db, cli, cidade, uf, datas, grupos), out = new Set();
+  for (const d of datas) for (const g of gs) {
+    const set = oc.get(d)?.get(g);
+    if (set && !set.has(cliente) && set.size >= limite) out.add(d);
+  }
+  return out;
+}
+// Agendar / reagendar pelo SAC: recusa a data com a cota cheia (o administrador pode forçar)
+async function checarLimite(db, cli, user, notaId, data, forcar) {
+  const n = (await db.query(`SELECT nf,remetente,cidade,uf,${CHAVE_LOCAL_SQL} AS cliente FROM ag_notas n WHERE id=$1`, [notaId])).rows[0];
+  if (!n || !n.cidade) return;
+  const limite = await limiteCidade(db, cli, n.cidade, n.uf);
+  if (!limite) return;
+  const grupos = gruposRemetentes((await lerConfig(db, cli)).grupos_remetentes), g = grupoDoRemetente(grupos, n.remetente);
+  const set = (await ocupacaoCidade(db, cli, n.cidade, n.uf, [data], grupos)).get(data)?.get(g.chave);
+  if (!set || set.has(n.cliente) || set.size < limite) return;
+  if (forcar && user && user.is_admin && !user.internal) return;
+  throw erro(409, 'Limite atingido: ' + n.cidade + ' já tem ' + set.size + ' de ' + limite + ' entregas de ' + g.nome + ' em ' + brData(data) + '. Escolha outra data' + (user && user.is_admin ? ' ou marque "forçar" para passar do limite.' : '.'));
+}
+
 async function agendar(pool, cli, user, b) {
   const data = validarData(b.data_agendada || b.data);
   const obs = limpo(b.observacao, 1000);
@@ -949,6 +1025,7 @@ async function agendar(pool, cli, user, b) {
     const n = (await db.query('SELECT id,nf,situacao,remetente,pagador FROM ag_notas WHERE id=$1 FOR UPDATE', [notaId])).rows[0];
     if (!ehParceiro(await termosDe(db, cli), n.remetente, n.pagador)) throw erro(422, 'A NF ' + n.nf + (n.remetente ? ' (' + n.remetente + ')' : '') + ' não é de um parceiro do agendamento e não entra aqui. Os parceiros ficam em ⚙ Configurar.');
     if (FINAIS.includes(n.situacao)) throw erro(409, 'A NF ' + n.nf + ' já está ' + ROTULO[n.situacao].toLowerCase() + ' no SSW e não pode ser agendada.');
+    await checarLimite(db, cli, user, notaId, data, b.forcar === true);
     const at = await db.query("SELECT id,to_char(data_agendada,'YYYY-MM-DD') AS data FROM ag_agendamentos WHERE nota_id=$1 AND status='ativo'", [notaId]);
     if (at.rowCount) throw erro(409, 'A NF ' + n.nf + ' já está agendada para ' + brData(at.rows[0].data) + '. Use Reagendar na lista.');
     const produto = limpo(b.produto, 600);
@@ -981,6 +1058,7 @@ async function alterar(pool, cli, user, id, b) {
     if (b.data_agendada !== undefined) {
       const d = validarData(b.data_agendada);
       if (d !== a.data) {
+        await checarLimite(db, cli, user, a.nota_id, d, b.forcar === true);
         // a data antiga era hoje ou já passou e a nota não foi entregue: agendamento não cumprido, a nova data vira prioridade
         const naoCumprido = a.data <= hojeSp();
         const motivoPrio = naoCumprido ? 'Não cumprido em ' + brData(a.data) : null;
@@ -1141,6 +1219,41 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
     }
     // botão "Atualizar baixas": confere agora as baixas dos motoristas no app (a rotina roda de hora em hora)
     if (p === '/baixas' && req.method === 'POST') return sendJson(res, 200, { ok: true, ...(await baixasDosMotoristas(pool, { lerBaixas: lerBaixasDoUsuario ? lerBaixasDoUsuario(user) : null, ontem: true })) });
+    // Limite diário por cidade, sábados abertos e grupos de remetentes (só o administrador)
+    if (p === '/rotas' && (req.method === 'GET' || req.method === 'PUT')) {
+      if (!user.is_admin) return sendJson(res, 403, { ok: false, error: 'Só o administrador define limites e sábados.' });
+      const wa = require('./agendamento-whatsapp');   // aqui dentro: o módulo do WhatsApp também carrega este
+      await wa.garantirRotas(pool, cli);
+      if (req.method === 'PUT') {
+        const b = await readJsonBodyLimited(req, 256 * 1024), quem = limpo(user.username, 80), hoje = hojeSp();
+        if (typeof b.grupos_remetentes === 'string') await gravarConfig(pool, cli, { grupos_remetentes: b.grupos_remetentes }, quem);
+        let n = 0;
+        for (const r of (Array.isArray(b.rotas) ? b.rotas : []).slice(0, 600)) {
+          const lim = r.limite_dia === null || r.limite_dia === '' || r.limite_dia === undefined ? null : Number(r.limite_dia);
+          if (lim !== null && !(Number.isInteger(lim) && lim >= 1 && lim <= 999)) throw erro(400, 'Limite inválido em ' + limpo(r.cidade, 60) + ': use de 1 a 999 (vazio = sem limite).');
+          const sab = [...new Set((Array.isArray(r.sabados) ? r.sabados : []).map(String))].filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= hoje);
+          const naoSab = sab.find(d => new Date(d + 'T12:00:00Z').getUTCDay() !== 6);
+          if (naoSab) throw erro(400, brData(naoSab) + ' não é sábado (' + limpo(r.cidade, 60) + ').');
+          const q = await pool.query("UPDATE ag_rotas SET limite_dia=$4,sabados=$5::date[],origem=CASE WHEN origem LIKE '%admin%' THEN origem ELSE COALESCE(origem,'')||' + admin' END,atualizado_em=NOW() WHERE client_id IS NOT DISTINCT FROM $1 AND uf=$2 AND chave=$3",
+            [cli, limpo(r.uf, 2).toUpperCase(), chaveCidadeAg(r.cidade), lim, sab.sort().slice(0, 20)]);
+          n += q.rowCount;
+        }
+        console.log('AGENDAMENTO rotas: ' + JSON.stringify({ usuario: quem, cidades: n, grupos: typeof b.grupos_remetentes === 'string' }));
+      }
+      const rows = (await pool.query(`SELECT uf,cidade,praca,dias,prazo,entrega,limite_dia,ARRAY(SELECT to_char(x,'YYYY-MM-DD') FROM unnest(sabados) x WHERE x>=$2::date ORDER BY x) AS sabados
+        FROM ag_rotas WHERE client_id IS NOT DISTINCT FROM $1 ORDER BY cidade`, [cli, hojeSp()])).rows;
+      const cfg = await lerConfig(pool, cli);
+      return sendJson(res, 200, { ok: true, rows, grupos_remetentes: cfg.grupos_remetentes, grupos: gruposRemetentes(cfg.grupos_remetentes) });
+    }
+    // Vagas de uma cidade nos próximos dias para o grupo de um remetente (aviso no formulário do SAC)
+    if (p === '/vagas' && req.method === 'GET') {
+      const cidade = limpo(u.searchParams.get('cidade'), 80), uf = limpo(u.searchParams.get('uf'), 2), rem = limpo(u.searchParams.get('remetente'), 120), data = String(u.searchParams.get('data') || '');
+      const limite = cidade ? await limiteCidade(pool, cli, cidade, uf) : null;
+      if (!limite || !/^\d{4}-\d{2}-\d{2}$/.test(data)) return sendJson(res, 200, { ok: true, limite: null });
+      const grupos = gruposRemetentes((await lerConfig(pool, cli)).grupos_remetentes), g = grupoDoRemetente(grupos, rem);
+      const usados = ((await ocupacaoCidade(pool, cli, cidade, uf, [data], grupos)).get(data)?.get(g.chave) || new Set()).size;
+      return sendJson(res, 200, { ok: true, limite, usados, livres: Math.max(0, limite - usados), grupo: g.nome });
+    }
     if (p === '/config' && req.method === 'GET') return sendJson(res, 200, { ok: true, config: await lerConfig(pool, cli) });
     if (p === '/config' && req.method === 'PUT') {
       if (!user.is_admin) return sendJson(res, 403, { ok: false, error: 'Só o administrador altera a configuração do agendamento.' });
@@ -1153,5 +1266,5 @@ async function atender(req, res, u, { pool, sendJson, readJsonBodyLimited, dashb
   }
 }
 
-module.exports = { INSUCESSO_SQL, coordsDoTexto, lerLocalizacao, gravarLocalizacao, dvCtrc, faixaCtes, importarFaixa, iniciarImportacao, baixasDosMotoristas, iniciarBaixasMotoristas, OPERACIONAIS, FINAIS, ROTULO, PARCEIROS_PADRAO, normNf, normCtrc, dataBr, termosParceiros, ehParceiro, ensureSchema, lerConfig, gravarConfig, gravarNota, aplicarSnapshot, alvosDaVarredura,
+module.exports = { gruposRemetentes, grupoDoRemetente, datasLotadas, limiteCidade, ocupacaoCidade, chaveCidadeAg, INSUCESSO_SQL, coordsDoTexto, lerLocalizacao, gravarLocalizacao, dvCtrc, faixaCtes, importarFaixa, iniciarImportacao, baixasDosMotoristas, iniciarBaixasMotoristas, OPERACIONAIS, FINAIS, ROTULO, PARCEIROS_PADRAO, normNf, normCtrc, dataBr, termosParceiros, ehParceiro, ensureSchema, lerConfig, gravarConfig, gravarNota, aplicarSnapshot, alvosDaVarredura,
   sincronizar, iniciarVarreduraAutomatica, postJson, listar, indicadores, buscarNf, historicoNota, agendar, alterar, cancelar, handle };
