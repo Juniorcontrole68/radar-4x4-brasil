@@ -1537,6 +1537,44 @@ async function refreshDriverProgress(){
   }
 }
 
+// Card Saídas x Baixas: consulta por motorista e data (carregou, 1ª e última entrega)
+let SM={data:'',rows:[],carregando:false};
+function hojeSpIso(){return new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'})}
+async function carregarSaidasMotorista(auto){
+  const box=$('#hubSmTabela');if(!box||SM.carregando)return;
+  const inp=$('#hubSmData');if(inp&&!inp.value)inp.value=hojeSpIso();
+  const data=(inp&&inp.value)||hojeSpIso();
+  if(auto&&data!==hojeSpIso())return;   // a atualização automática só mexe no dia de hoje
+  SM.carregando=true;if(!auto||!SM.rows.length)box.textContent='Carregando horários de '+data.split('-').reverse().join('/')+'…';
+  try{
+    const r=await fetch('/api/ssw/saidas-motorista?data='+encodeURIComponent(data),{cache:'no-cache'}),j=await r.json();
+    if(!r.ok||!j.ok)throw Error(j.error||'Falha na consulta');
+    SM={data,rows:j.rows||[],carregando:false};
+    const dl=$('#hubSmLista');if(dl)dl.innerHTML=SM.rows.map(x=>'<option value="'+safe(x.motorista)+'">').join('');
+    const av=$('#hubSmAviso');if(av)av.textContent=j.aviso||'';
+    desenharSaidasMotorista();
+  }catch(e){box.textContent='Não foi possível consultar: '+e.message}
+  finally{SM.carregando=false}
+}
+function desenharSaidasMotorista(){
+  const box=$('#hubSmTabela');if(!box)return;
+  const f=String(($('#hubSmBusca')||{}).value||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().trim();
+  const rows=SM.rows.filter(x=>!f||x.motorista.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().includes(f));
+  if(!rows.length){box.innerHTML='<div class="vazio">'+(SM.rows.length?'Nenhum motorista com esse nome.':'Nenhum carregamento ou entrega registrado neste dia.')+'</div>';return}
+  const h=v=>v?safe(v):'<span class="vazio">—</span>';
+  box.innerHTML='<table><thead><tr><th>Motorista</th><th>Carregou</th><th>1ª entrega</th><th>Última</th><th>Entregas</th></tr></thead><tbody>'+
+    rows.map(x=>'<tr title="'+safe([x.ate_primeira?'Do carregamento à 1ª entrega: '+x.ate_primeira:'',x.jornada?'Do carregamento à última entrega: '+x.jornada:'',x.saidas?'Saíram (SSW): '+x.saidas:'',x.falhas?'Não entregues no app: '+x.falhas:'',x.fontes.length?'Fontes: '+x.fontes.join(', '):''].filter(Boolean).join('\n'))+'">'+
+      '<td class="mot"><b>'+safe(x.motorista)+'</b>'+(x.placa?'<small>'+safe(x.placa)+'</small>':'')+'</td>'+
+      '<td class="n">'+h(x.carregou)+'</td><td class="n">'+h(x.primeira_entrega)+(x.ate_primeira?'<small>+'+safe(x.ate_primeira)+'</small>':'')+'</td>'+
+      '<td class="n">'+h(x.ultima_entrega)+(x.jornada?'<small>'+safe(x.jornada)+' total</small>':'')+'</td>'+
+      '<td class="n">'+nf(x.entregas||0)+(x.saidas?'<small>de '+nf(x.saidas)+'</small>':'')+'</td></tr>').join('')+'</tbody></table>';
+}
+function ligarSaidasMotorista(){
+  const d=$('#hubSmData'),b=$('#hubSmBusca');if(!d||d.dataset.ok)return;d.dataset.ok='1';
+  d.value=hojeSpIso();d.max=hojeSpIso();
+  d.addEventListener('change',()=>carregarSaidasMotorista(false));
+  if(b)b.addEventListener('input',desenharSaidasMotorista);
+}
 async function refreshSswMotoristas(){
   if(window.__sswMotoristasLoading)return;
   window.__sswMotoristasLoading=true;
@@ -1554,6 +1592,7 @@ async function refreshSswMotoristas(){
     window.__sswMotoristasRetry=setTimeout(refreshSswMotoristas,15000);
   }finally{
     window.__sswMotoristasLoading=false;
+    ligarSaidasMotorista();carregarSaidasMotorista(true);   // consulta por motorista do card (só o dia de hoje se atualiza sozinho)
   }
 }
 

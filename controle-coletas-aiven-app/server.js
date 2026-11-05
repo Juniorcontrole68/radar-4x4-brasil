@@ -5689,6 +5689,33 @@ async function start() {
         }
       }
 
+      // Saídas por motorista num dia: hora do carregamento (registro de carga com foto) e primeira/última baixa no app MOVIT.
+      // O dashboard junta com as baixas do SSW e casa os nomes (conferente, app e SSW escrevem o nome de jeitos diferentes).
+      if (req.method === 'GET' && u.pathname === '/api/painel/saidas-motorista') {
+        try {
+          const user = await sessionOrInternal(req);
+          const data = String(u.searchParams.get('data') || '').trim() || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return sendJson(res, 400, { ok: false, error: 'Data de consulta inválida.' });
+          const carg = (await pool.query(`SELECT motorista, MIN(capturada_em) AS carregou_em, MAX(capturada_em) AS ultimo_carregamento_em, COUNT(*)::int AS carregamentos,
+              COALESCE(SUM(quantidade_entregas),0)::int AS entregas_carregadas, string_agg(DISTINCT conferente, ', ') AS conferentes
+            FROM carregamentos_finais WHERE lower(tipo)='carregamento' AND (capturada_em AT TIME ZONE 'America/Sao_Paulo')::date=$1::date AND trim(motorista)<>''
+            GROUP BY motorista`, [data])).rows;
+          // comprovantes do app: a empresa do usuário; o dashboard interno e o administrador da plataforma veem a operação própria (CONSTRULOG)
+          const params = [data];
+          let filtro;
+          if (user.client_id) { params.push(user.client_id); filtro = String(user.client?.slug || '').toLowerCase() === 'construlog' ? ` AND (c.client_id=$2 OR c.client_id IS NULL)` : ` AND c.client_id=$2`; }
+          else filtro = ` AND (c.client_id IS NULL OR c.client_id IN (SELECT id FROM movit_clients WHERE lower(slug)='construlog'))`;
+          const app = (await pool.query(`SELECT c.driver_name AS motorista, MAX(c.vehicle_plate) AS placa,
+              MIN(c.registrado_em) FILTER (WHERE c.resultado='entregue') AS primeira_entrega_em, MAX(c.registrado_em) FILTER (WHERE c.resultado='entregue') AS ultima_entrega_em,
+              MIN(c.registrado_em) AS primeira_baixa_em, MAX(c.registrado_em) AS ultima_baixa_em,
+              COUNT(*) FILTER (WHERE c.resultado='entregue')::int AS entregues, COUNT(*) FILTER (WHERE c.resultado='falhou')::int AS falhas
+            FROM entregas_comprovantes c WHERE c.work_date=$1::date${filtro} GROUP BY c.driver_name`, params)).rows;
+          return sendJson(res, 200, { ok: true, data, carregamentos: carg, app });
+        } catch (e) {
+          return sendJson(res, e.status || 500, { ok: false, error: e.message || 'Não foi possível montar a consulta por motorista.' });
+        }
+      }
+
       if (req.method === 'GET' && u.pathname === '/api/painel/carregamentos-finais') {
         try {
           await sessionOrInternal(req);

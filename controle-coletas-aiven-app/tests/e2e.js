@@ -20,7 +20,7 @@ async function call(method,path,{body,cookie,bearer,headers}={}){
   for(const [m,p,b] of [['GET','/coletas/api/config'],['GET','/coletas/api/coletas'],['POST','/coletas/api/coletas',{cliente:'X',endereco_entrega:'Y'}],['PUT','/coletas/api/coletas/1',{status:'Cancelada'}],
       ['GET','/api/painel/coletas-status-resumo'],['GET','/api/painel/carregamentos-finais'],['GET','/api/painel/carregamentos-finais/1/foto'],['GET','/api/painel/carregamentos-finais/1/avaria/1'],
       ['PATCH','/api/painel/carregamentos-finais/1/coleta-devolucao',{}],['POST','/api/painel/carregamentos-finais',{}],['GET','/api/painel/nf-materiais'],['POST','/api/painel/nf-materiais/import',{rows:[]}],
-      ['GET','/api/painel/coletas-resumo'],['GET','/api/painel/motoristas-veiculos'],['GET','/api/bills']]){
+      ['GET','/api/painel/coletas-resumo'],['GET','/api/painel/saidas-motorista'],['GET','/api/painel/motoristas-veiculos'],['GET','/api/bills']]){
     const r=await call(m,p,{body:b}); check(m+' '+p+' -> 401',r.status===401,'veio '+r.status+' '+r.text.slice(0,80));
   }
   let r=await call('GET','/api/painel/carregamentos-finais',{headers:{'X-Internal-Key':'chave-errada'}}); check('chave interna errada -> 401',r.status===401,'veio '+r.status);
@@ -48,6 +48,14 @@ async function call(method,path,{body,cookie,bearer,headers}={}){
     check('registra descarga com o cliente',r.status===201&&r.json?.cliente==='Construtora Silva',r.status+' '+r.text.slice(0,160));
     r=await call('GET','/api/carregamentos-count?data='+new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}),{cookie});
     check('carros carregados no dia não contam a descarga; descargas trazem o cliente',r.status===200&&r.json?.total===1&&r.json?.descargas===1&&r.json?.clientes?.[0]?.cliente==='Construtora Silva',r.status+' '+r.text.slice(0,200));
+    // Card Saídas x Baixas: consulta por motorista e data (hora em que carregou; descarga não entra)
+    const hojeSm=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
+    r=await call('GET','/api/painel/saidas-motorista?data='+hojeSm,{cookie});
+    check('saídas por motorista: carregamento do dia com a hora, sem a descarga',r.status===200&&r.json?.ok===true&&r.json.carregamentos.length===1&&r.json.carregamentos[0].motorista==='MOTORISTA CARGA'&&!!r.json.carregamentos[0].carregou_em&&Array.isArray(r.json.app),r.status+' '+r.text.slice(0,200));
+    r=await call('GET','/api/painel/saidas-motorista?data=ontem',{cookie}); check('saídas por motorista: data inválida -> 400',r.status===400,'veio '+r.status);
+    r=await call('GET','/api/ssw/saidas-motorista?data='+hojeSm,{cookie});
+    const linSm=(r.json?.rows||[]).find(x=>x.motorista==='Motorista Carga');
+    check('dashboard -> consulta por motorista mostra quando carregou',r.status===200&&r.json?.ok===true&&linSm&&/^\d\d:\d\d$/.test(linSm.carregou)&&linSm.fontes.includes('Registro de carga'),r.status+' '+r.text.slice(0,240));
   }
   r=await call('GET','/api/nf-materiais',{cookie}); check('dashboard -> notas (chave interna)',r.status===200&&r.json?.ok===true,r.status+' '+r.text.slice(0,120));
   r=await call('GET','/api/coletas/status',{cookie}); check('dashboard -> resumo de coletas (chave interna)',r.status===200&&r.json?.ok===true&&Number(r.json.total)===1,r.status+' '+r.text.slice(0,120));

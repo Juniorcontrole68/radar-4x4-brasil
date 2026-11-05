@@ -3243,6 +3243,69 @@ function ensureSswMotoristasRefresh(from='',to=''){
   SSW_DRIVER_INFLIGHT.set(key,p);
   return p
 }
+// ------------------------------------------------------------------ saídas por motorista e data
+// Hora em que o motorista carregou (registro de carga com foto), primeira e última entrega (baixas do app MOVIT
+// e do SSW). Cada fonte escreve o nome de um jeito ("ALDO", "Aldo Ap de Almeida"): casa pelo primeiro nome
+// e pelos sobrenomes que aparecem nas duas.
+const NOME_CONECTIVO=new Set(['DE','DA','DO','DOS','DAS','E']);
+function tokensMotorista(v){return String(v||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/[^A-Z ]/g,' ').split(/\s+/).filter(t=>t.length>1&&!NOME_CONECTIVO.has(t))}
+function mesmoMotorista(a,b){
+  if(!a.length||!b.length||a[0]!==b[0])return false;
+  const [c,l]=a.length<=b.length?[a,b]:[b,a];
+  return c.length===1||c.slice(1).every(t=>l.includes(t));
+}
+function msBaixaSsw(v){
+  const t=String(v||'').trim();let m=t.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  if(!m){const b=t.match(/^(\d{2})\/(\d{2})\/(\d{2,4})[ T]+(\d{2}):(\d{2})/);if(b)m=[0,b[3].length===2?'20'+b[3]:b[3],b[2],b[1],b[4],b[5]]}
+  if(!m)return null;const ms=Date.parse(m[1]+'-'+m[2]+'-'+m[3]+'T'+m[4]+':'+m[5]+':00-03:00');return Number.isFinite(ms)?ms:null;
+}
+const horaSp=ms=>ms==null?'':new Date(ms).toLocaleTimeString('pt-BR',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit'});
+const duracao=(a,b)=>{if(a==null||b==null||b<a)return'';const m=Math.round((b-a)/60000);return Math.floor(m/60)+'h'+String(m%60).padStart(2,'0')};
+async function buildSaidasPorMotorista(dataPedida=''){
+  const hoje=spDateISO(),data=/^\d{4}-\d{2}-\d{2}$/.test(dataPedida)?dataPedida:hoje;
+  const [portal,ssw]=await Promise.all([
+    portalJson('/api/painel/saidas-motorista?data='+data).catch(e=>({ok:false,error:String(e.message||e)})),
+    // SSW: o dia de hoje vem do painel Saídas x Baixas; outro dia, só se já estiver em memória (não dispara a varredura pesada)
+    Promise.race([(data===hoje?getSswMotoristasFast(data,data):Promise.resolve((SSW_DRIVER_CACHE.get('online|'+data+'|'+data)||{}).value||null)).catch(()=>null),
+      new Promise(r=>setTimeout(()=>r(null),8000))])   // SSW lento não segura a consulta: volta só com o registro de carga e o app
+  ]);
+  const mots=[];
+  const achar=(nome,placa)=>{
+    const tok=tokensMotorista(nome);if(!tok.length&&!placa)return null;
+    let d=tok.length?mots.find(x=>mesmoMotorista(x.tok,tok)):mots.find(x=>x.placa&&x.placa===placa);
+    if(!d){d={tok,nome:String(nome||'').trim()||placa,placa:placa||'',carregou:null,carregamentos:0,entregas_carregadas:0,primeira:null,ultima:null,app:0,ssw:0,falhas:0,saidas:0,fontes:new Set()};mots.push(d)}
+    if(tok.length>d.tok.length){d.tok=tok;d.nome=String(nome).trim()}
+    if(placa&&!d.placa)d.placa=placa;
+    return d;
+  };
+  const menor=(a,b)=>a==null?b:b==null?a:Math.min(a,b),maior=(a,b)=>a==null?b:b==null?a:Math.max(a,b);
+  for(const c of (portal&&portal.carregamentos)||[]){const d=achar(c.motorista);if(!d)continue;
+    d.carregou=menor(d.carregou,Date.parse(c.carregou_em));d.carregamentos+=c.carregamentos||0;d.entregas_carregadas+=c.entregas_carregadas||0;d.fontes.add('Registro de carga')}
+  for(const a of (portal&&portal.app)||[]){const d=achar(a.motorista,String(a.placa||'').toUpperCase());if(!d)continue;
+    if(a.primeira_entrega_em)d.primeira=menor(d.primeira,Date.parse(a.primeira_entrega_em));
+    if(a.ultima_entrega_em)d.ultima=maior(d.ultima,Date.parse(a.ultima_entrega_em));
+    d.app+=a.entregues||0;d.falhas+=a.falhas||0;d.fontes.add('App MOVIT')}
+  let sswOk=false;
+  if(ssw&&Array.isArray(ssw.rows)){
+    sswOk=true;
+    for(const m of ssw.motoristas||[]){if(!m.motorista)continue;const d=achar(m.motorista,m.veiculo);if(d)d.saidas=Math.max(d.saidas,m.saidas||0)}
+    const porMot=new Map();
+    for(const r of ssw.rows){
+      if(!r.entregue||!r.motorista)continue;const ms=msBaixaSsw(r.baixaDataHora);if(ms==null||spDateISO(new Date(ms))!==data)continue;
+      const d=achar(r.motorista,r.veiculo);if(!d)continue;
+      d.primeira=menor(d.primeira,ms);d.ultima=maior(d.ultima,ms);porMot.set(d,(porMot.get(d)||0)+1);d.fontes.add('SSW')}
+    for(const [d,n] of porMot)d.ssw=n;
+  }
+  const titulo=t=>String(t||'').toLowerCase().split(/\s+/).filter(Boolean).map((w,i)=>i&&NOME_CONECTIVO.has(w.toUpperCase())?w:w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+  const rows=mots.map(d=>({motorista:titulo(d.nome),placa:d.placa,carregou:horaSp(d.carregou),primeira_entrega:horaSp(d.primeira),ultima_entrega:horaSp(d.ultima),
+      ate_primeira:duracao(d.carregou,d.primeira),jornada:duracao(d.carregou,d.ultima),entregas:Math.max(d.app,d.ssw),saidas:d.saidas,falhas:d.falhas,
+      carregamentos:d.carregamentos,entregas_carregadas:d.entregas_carregadas,fontes:[...d.fontes],_o:d.carregou??d.primeira??Infinity}))
+    .filter(r=>r.carregou||r.primeira_entrega||r.saidas)
+    .sort((a,b)=>a._o-b._o||a.motorista.localeCompare(b.motorista,'pt-BR')).map(({_o,...r})=>r);
+  return{ok:true,data,rows,ssw:sswOk,portal:!!(portal&&portal.ok),
+    aviso:[portal&&portal.ok?'':'Registro de carga e app indisponíveis agora'+(portal&&portal.error?' ('+portal.error+')':''),sswOk?'':(data===hoje?'Baixas do SSW ainda carregando':'Baixas do SSW de dias anteriores só aparecem se o painel Saídas x Baixas já tiver consultado esse dia')].filter(Boolean).join(' • ')};
+}
+
 async function getSswMotoristasFast(from='',to=''){
   const today=spDateISO();from=from||today;to=to||today;
   const key='online|'+from+'|'+to,hit=SSW_DRIVER_CACHE.get(key);
@@ -7192,7 +7255,12 @@ if(u.pathname==='/api/roteirizador/rota'){try{
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
   return res.end(JSON.stringify(x))
 }catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
-if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas','evolucao','cidade_destino']))return dashboardDeny(res);const x=await buildBi2Baixas(u.searchParams.get('date')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/bi2/saidas-baixas'){try{
+if(u.pathname==='/api/bi2/baixas'){try{if(!dashboardHasAny(authUser,['ssw_saidas','evolucao','cidade_destino']))return dashboardDeny(res);const x=await buildBi2Baixas(u.searchParams.get('date')||'');res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}if(u.pathname==='/api/ssw/saidas-motorista'){try{
+  if(!dashboardHasAny(authUser,['ssw_saidas','evolucao','cidade_destino']))return dashboardDeny(res);
+  const x=await buildSaidasPorMotorista(u.searchParams.get('data')||'');
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify(x))
+}catch(e){res.writeHead(502,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:String(e.message||e)}))}}
+if(u.pathname==='/api/bi2/saidas-baixas'){try{
   if(!dashboardHasAny(authUser,['ssw_saidas','evolucao','cidade_destino']))return dashboardDeny(res);
   const x=await getSswMotoristasFast(u.searchParams.get('from')||'',u.searchParams.get('to')||'');
   let out=x;
