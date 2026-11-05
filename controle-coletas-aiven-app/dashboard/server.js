@@ -3292,30 +3292,36 @@ async function horariosRomaneiosHoje(data){
     const byCtrc=new Map(),byNf=new Map();
     for(const r of (v&&v.rows)||[]){for(const raw of [r.ctrc,r.ctrcOficial]){const k=normCtrc(raw),lk=normCtrcLoose(raw);if(k)byCtrc.set(k,r);if(lk)byCtrc.set('#'+lk,r)}const nf=normNf(r.nf);if(nf)byNf.set(nf,r)}
     const mots=new Map(),tarefas=[];
+    // detalhe dos romaneios (PDF da opção 38) em paralelo, 3 por vez; o resultado fica no cache de 5 min
+    await mapLimit(roms.filter(x=>!(x.ctrcMeta&&x.ctrcMeta.length)),3,async x=>{try{const det=await fetchSsw38RomaneioDetailDirect(x.romaneio,x.qtdeCtrcs,x.motorista,x.veiculo);x.__meta=det.ctrcMeta&&det.ctrcMeta.length?det.ctrcMeta:(det.ctrcNfs||[]).map(p=>({ctrc:p.ctrc,nf:p.nf,cnpjs:[]}))}catch(e){x.__meta=[]}});
     for(const x of roms){
       const k=tokensMotorista(x.motorista).join(' ');if(!k)continue;
       if(!mots.has(k))mots.set(k,{motorista:String(x.motorista).trim(),placa:String(x.veiculo||'').toUpperCase(),saidas:0,horas:[],romaneios:new Set()});
       const g=mots.get(k);if(g.romaneios.has(x.romaneio))continue;g.romaneios.add(x.romaneio);g.saidas+=Number(x.qtdeCtrcs||0);if(!g.placa&&x.veiculo)g.placa=String(x.veiculo).toUpperCase();
-      let meta=(x.ctrcMeta&&x.ctrcMeta.length)?x.ctrcMeta:null;
-      if(!meta){try{const det=await fetchSsw38RomaneioDetailDirect(x.romaneio,x.qtdeCtrcs,x.motorista,x.veiculo);meta=det.ctrcMeta&&det.ctrcMeta.length?det.ctrcMeta:(det.ctrcNfs||[]).map(p=>({ctrc:p.ctrc,nf:p.nf,cnpjs:[]}))}catch(e){meta=[]}}
+      const meta=(x.ctrcMeta&&x.ctrcMeta.length)?x.ctrcMeta:(x.__meta||[]);
       for(const m of meta)tarefas.push({g,m});
     }
+    const diag={comLinha:0,linhaEntregue:0,consultas:0,achou:0,entregue:0,semCnpj:0,foraDoDia:0,amostra:[]};
     await mapLimit(tarefas,8,async({g,m})=>{
       let ms=null;
       const r=byCtrc.get(normCtrc(m.ctrc))||byCtrc.get('#'+normCtrcLoose(m.ctrc))||(m.nf?byNf.get(normNf(m.nf)):null);
-      if(r&&r.entregue)ms=msBaixaSsw(r.baixaDataHora);
+      if(r)diag.comLinha++;
+      if(r&&r.entregue){diag.linhaEntregue++;ms=msBaixaSsw(r.baixaDataHora)}
       else if(!r||!r.trackingOk){
-        for(const doc of (m.cnpjs||[]).slice(0,3)){
-          const tr=await trackingDestQuery(doc,m.nf,data);
-          if(tr.entregue){ms=msBaixaSsw(tr.delivery?.data_hora||tr.last?.data_hora);break}
-          if((tr.items||[]).length)break;   // achou o CT-e e ainda não foi entregue
+        if(!(m.cnpjs||[]).length)diag.semCnpj++;
+        for(const doc of (m.cnpjs||[]).slice(0,4)){
+          diag.consultas++;
+          const tr=await trackingDestQuery(doc,m.nf,'');   // sem filtro de data: a baixa do dia é conferida abaixo
+          if(diag.amostra.length<4)diag.amostra.push({ctrc:m.ctrc,nf:m.nf,doc:doc.slice(0,8),ok:tr.ok,itens:(tr.items||[]).length,entregue:tr.entregue,quando:tr.delivery?.data_hora||tr.last?.data_hora||'',erro:tr.error||''});
+          if(tr.entregue){diag.entregue++;ms=msBaixaSsw(tr.delivery?.data_hora||tr.last?.data_hora);break}
+          if((tr.items||[]).length){diag.achou++;break}   // achou o CT-e e ainda não foi entregue
         }
       }
-      if(ms!=null&&spDateISO(new Date(ms))===data)g.horas.push(ms);
+      if(ms!=null&&spDateISO(new Date(ms))===data)g.horas.push(ms);else if(ms!=null)diag.foraDoDia++;
     });
     const rows=[...mots.values()].map(g=>({motorista:g.motorista,placa:g.placa,saidas:g.saidas,entregas:g.horas.length,
       primeira_entrega_em:g.horas.length?new Date(Math.min(...g.horas)).toISOString():null,ultima_entrega_em:g.horas.length?new Date(Math.max(...g.horas)).toISOString():null}));
-    console.log('SAIDAS MOTORISTA horários dos romaneios: '+JSON.stringify({romaneios:roms.length,ctes:tarefas.length,motoristas:rows.length,comEntrega:rows.filter(x=>x.entregas).length}));
+    console.log('SAIDAS MOTORISTA horários dos romaneios: '+JSON.stringify({romaneios:roms.length,ctes:tarefas.length,motoristas:rows.length,comEntrega:rows.filter(x=>x.entregas).length,linhas:((v&&v.rows)||[]).length,diag}));
     return rows;
   })();
   HORARIOS_ROM={...HORARIOS_ROM,data,p};
