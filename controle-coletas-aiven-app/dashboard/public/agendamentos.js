@@ -235,7 +235,9 @@ function valor(r,k){
 function classe(r){const c=classeCor(r);return(c+(r.prioridade&&r.status_agendamento!=='concluido'?(c?'':' laranja')+' prioridade':'')+(reservaDe(r)==='outro'?' reservado-outro':'')).trim()}
 // agendamento não cumprido: data de hoje ou já passada e a nota ainda não foi entregue (o operador decide quando reagendar)
 function naoCumprido(r){const hoje=painel?.hoje||new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
-  return!!(r.agendamento_id&&r.status_agendamento==='ativo'&&r.data_agendada&&r.data_agendada<=hoje&&r.situacao!=='entregue'&&r.situacao!=='devolvida')}
+  return!!(r.agendamento_id&&r.status_agendamento==='ativo'&&r.data_agendada&&r.data_agendada<=hoje&&r.situacao!=='entregue'&&r.situacao!=='devolvida'&&!emRotaTravada(r))}
+// em rota confirmada pelo SSW e sem insucesso: ninguém mexe no agendamento até a entrega ou um insucesso (app do motorista ou SSW)
+function emRotaTravada(r){return r.situacao==='em_rota'&&!r.insucesso}
 const seloPrio=r=>r.prioridade?'<span class="ag-prio" title="'+esc(r.prioridade_motivo||'Agendamento não cumprido')+': nova data com prioridade">⚡ PRIORIDADE</span>':'';
 function classeCor(r){
   const hoje=painel?.hoje||new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}),cfg=painel?.config||{dias_amarelo:2,dias_vermelho:5};
@@ -257,6 +259,7 @@ function celula(r,k,num){
 }
 function celulaAcoes(r){
   {
+    if(r.agendamento_id&&r.status_agendamento==='ativo'&&emRotaTravada(r)&&(aba==='agendadas'||aba==='pendentes'))return'<td class="acoes"><span class="ag-rota" title="Saiu para entrega (SSW). Reagendar e pedir nova data voltam se houver insucesso na entrega.">🚚 Em rota</span><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
     // não cumprido: o "Alterar" vira "Reagendar" e o WhatsApp vira o pedido de desculpas com a nova data (sem botões a mais)
     if(((aba==='agendadas'&&r.status_agendamento!=='concluido')||(aba==='pendentes'&&r.agendamento_id))&&naoCumprido(r))return'<td class="acoes"><button type="button" class="ag-mini primary" data-ac="reagendar" data-id="'+esc(r.agendamento_id)+'" title="Agendamento de '+esc(br(r.data_agendada))+' não cumprido: escolha a nova data (fica como prioridade)">Reagendar</button>'+botaoWa(r)+'<button type="button" class="ag-mini perigo" data-ac="cancelar" data-id="'+esc(r.agendamento_id)+'">Cancelar</button><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
     if((aba==='agendadas'&&r.status_agendamento!=='concluido')||(aba==='pendentes'&&r.agendamento_id))return'<td class="acoes"><button type="button" class="ag-mini" data-ac="alterar" data-id="'+esc(r.agendamento_id)+'">Alterar</button><button type="button" class="ag-mini perigo" data-ac="cancelar" data-id="'+esc(r.agendamento_id)+'">Cancelar</button><button type="button" class="ag-mini" data-ac="hist" data-nota="'+esc(r.nota_id)+'">Histórico</button></td>';
@@ -266,7 +269,7 @@ function celulaAcoes(r){
 }
 function celulaDado(r,k,num){
   if(k==='data_agendada'&&r.prioridade)return'<td>'+esc(valor(r,k))+seloPrio(r)+'</td>';
-  if(k==='situacao')return'<td>'+st(r.situacao,r)+(r.erro_integracao&&r.situacao==='verificar'?'<div style="font-size:10px;color:#92400e">'+esc(r.erro_integracao)+'</div>':'')+'</td>';
+  if(k==='situacao')return'<td>'+st(r.situacao,r)+(r.insucesso&&r.status_agendamento==='ativo'?'<div class="ag-insuc" title="'+esc(r.insucesso_motivo||r.status_ssw||'')+'">⚠️ Insucesso'+(r.insucesso_motivo?': '+esc(String(r.insucesso_motivo).split(' • ')[0]):'')+'</div>':'')+(r.erro_integracao&&r.situacao==='verificar'?'<div style="font-size:10px;color:#92400e">'+esc(r.erro_integracao)+'</div>':'')+'</td>';
   const v=valor(r,k);
   // destinatário: o aviso com nome, cidade e telefone aparece ao passar o mouse (ver mostrarCliente)
   if(k==='destinatario'&&r.nota_id)return'<td class="ag-dest" data-nota="'+esc(r.nota_id)+'">'+esc(v)+(r.localizacao?'<button type="button" class="ag-pin" data-ac="local" data-nota="'+esc(r.nota_id)+'" title="Localização do cliente">📍</button>':'')+seloLink(r)+'</td>';
@@ -361,7 +364,7 @@ function dialogo(html,enviar,rotulo,perigo){
   if(d.open)return;if(d.showModal)d.showModal();else d.setAttribute('open','')
 }
 // ------------------------------------------------------------------ histórico de ações (administrador)
-const ROT_EV={agendado:'Agendou',reagendado:'Reagendou',observacao:'Alterou observação',cancelado:'Cancelou',entregue:'Entregue',produto:'Alterou produto',importada:'Importou do SSW',devolvida:'Devolvida (SSW)',status:'Situação no SSW',localizacao:'Localização',reservado:'Reservou cliente',reserva_liberada:'Liberou reserva'};
+const ROT_EV={insucesso:'Insucesso na entrega',agendado:'Agendou',reagendado:'Reagendou',observacao:'Alterou observação',cancelado:'Cancelou',entregue:'Entregue',produto:'Alterou produto',importada:'Importou do SSW',devolvida:'Devolvida (SSW)',status:'Situação no SSW',localizacao:'Localização',reservado:'Reservou cliente',reserva_liberada:'Liberou reserva'};
 async function auditoria(){
   const hoje=painel?.hoje||'';
   dialogo('<h3>📜 Histórico de ações dos usuários</h3><div class="muted">Tudo o que cada usuário fez no agendamento: agendar, reagendar, cancelar, reservar, produto e localização.</div>'+
@@ -467,7 +470,7 @@ async function historico(notaId){
   {const d=q('#agDlg');d.classList.add('largo');d.addEventListener('close',()=>d.classList.remove('largo'),{once:true})}
   try{
     const j=await api('/api/painel/agendamentos/historico/'+encodeURIComponent(notaId)),n=j.nota;
-    const T={agendado:'Agendado',reagendado:'Reagendado',observacao:'Observação alterada',cancelado:'Agendamento cancelado',entregue:'Entregue',produto:'Produto alterado',importada:'Importada do SSW',devolvida:'Devolvida (SSW)',status:'Situação no SSW',localizacao:'Localização',reservado:'Cliente reservado',reserva_liberada:'Reserva liberada'};
+    const T={insucesso:'Insucesso na entrega',agendado:'Agendado',reagendado:'Reagendado',observacao:'Observação alterada',cancelado:'Agendamento cancelado',entregue:'Entregue',produto:'Produto alterado',importada:'Importada do SSW',devolvida:'Devolvida (SSW)',status:'Situação no SSW',localizacao:'Localização',reservado:'Cliente reservado',reserva_liberada:'Reserva liberada'};
     q('#agDlg h3').textContent='Histórico • NF '+n.nf+(n.ctrc?' • CT-e '+n.ctrc:'');
     q('#agDlg .ag-hist').innerHTML='<div style="margin-bottom:6px">'+esc(n.remetente||'')+' → '+esc(n.destinatario||'')+' • '+esc([n.cidade,n.uf].filter(Boolean).join('/'))+' • '+kg(n.peso)+' kg • '+st(n.situacao,n)+(n.status_ssw?' <span class="muted">'+esc(n.status_ssw)+'</span>':'')+'</div>'+
       (n.endereco?'<div class="muted" style="margin-bottom:6px">Entrega: '+esc(n.endereco)+'</div>':'')+
