@@ -19,7 +19,7 @@
 .ag-mini.wa{background:#16a34a;border-color:#16a34a;color:#fff}
 .ag-mini.wa-ok{background:#dcfce7;border-color:#86efac;color:#166534;cursor:default}
 .ag-mini.perigo{color:#b91c1c;border-color:#fecaca}
-.ag-cards{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:4px;margin-bottom:5px}
+.ag-cards{display:grid;grid-template-columns:repeat(9,minmax(0,1fr));gap:4px;margin-bottom:5px}
 .ag-card{background:#fff;border:1px solid var(--line);border-radius:7px;padding:2px 7px;cursor:pointer;text-align:left;font:inherit;min-width:0;display:flex;align-items:baseline;justify-content:space-between;gap:6px}
 .ag-card:hover{border-color:#94a3b8}
 .ag-card.sel{border-color:var(--brand);box-shadow:0 0 0 1px var(--brand)}
@@ -97,7 +97,7 @@
 .ag-hist table{width:100%;border-collapse:collapse;font-size:12px}
 .ag-hist td,.ag-hist th{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top;white-space:normal;word-break:break-word}
 .ag-hist th{position:sticky;top:0;background:#f8fafc}
-@media(max-width:1250px){.ag-cards{grid-template-columns:repeat(4,minmax(0,1fr))}.ag-form{grid-template-columns:92px repeat(5,minmax(0,1fr))}.ag-form .ag-btn{align-self:end}.ag-filtros{grid-template-columns:repeat(6,minmax(0,1fr))}.ag-filtros .ag-acoes{grid-column:1/-1}}
+@media(max-width:1250px){.ag-cards{grid-template-columns:repeat(5,minmax(0,1fr))}.ag-form{grid-template-columns:92px repeat(5,minmax(0,1fr))}.ag-form .ag-btn{align-self:end}.ag-filtros{grid-template-columns:repeat(6,minmax(0,1fr))}.ag-filtros .ag-acoes{grid-column:1/-1}}
 @media(max-width:900px){.ag-form{grid-template-columns:repeat(3,minmax(0,1fr))}.ag-tabela-box{max-height:65vh}}
 @media(max-width:560px){.ag-cards{grid-template-columns:repeat(2,minmax(0,1fr))}.ag-form{grid-template-columns:1fr 1fr}.ag-l1 label:first-child{grid-column:1/-1}.ag-filtros{grid-template-columns:1fr 1fr}.ag-legenda{margin-left:0}}
 
@@ -117,3 +117,11 @@ td.ag-dest{cursor:help;text-decoration:underline dotted #94a3b8;text-underline-o
 .ag-loc-link{font-size:11px;color:#475569;word-break:break-all}
 .ag-link{font-size:10px;font-weight:700;color:#92400e;background:#fef3c7;border-radius:4px;padding:1px 5px;margin-top:2px;display:inline-block;white-space:nowrap}
 .ag-link.ligar{color:#991b1b;background:#fee2e2}
+
+/* ⚡ prioridade: nova data de um agendamento não cumprido (visível para toda a equipe) */
+.ag-tabela tr.laranja td{background:#ffedd5}
+.ag-tabela tr.prioridade td:first-child{box-shadow:inset 4px 0 0 #ea580c}
+.ag-tabela tr.prioridade td{font-weight:600}
+.ag-prio{display:inline-block;margin-left:5px;background:#ea580c;color:#fff;font-size:10px;font-weight:800;letter-spacing:.3px;border-radius:4px;padding:1px 5px;white-space:nowrap;vertical-align:1px}
+.ag-reag-aviso{background:#fff7ed;border:1px solid #fdba74;color:#9a3412;border-radius:8px;padding:8px 10px;margin:8px 0;font-size:13px}
+.ag-card[data-card="prioridade"] b{color:#c2410c}

@@ -114,6 +114,9 @@ async function ensureSchema(pool) {
     atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
   await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS ux_ag_agendamentos_ativo ON ag_agendamentos (nota_id) WHERE status='ativo'");
+  // agendamento não cumprido (data de hoje ou já passada, sem entrega) que ganhou nova data: fica como prioridade até a entrega
+  await pool.query('ALTER TABLE ag_agendamentos ADD COLUMN IF NOT EXISTS prioridade BOOLEAN NOT NULL DEFAULT FALSE');
+  await pool.query('ALTER TABLE ag_agendamentos ADD COLUMN IF NOT EXISTS prioridade_motivo TEXT');
   await pool.query('CREATE INDEX IF NOT EXISTS ix_ag_agendamentos_data ON ag_agendamentos (client_id, status, data_agendada)');
   await pool.query(`CREATE TABLE IF NOT EXISTS ag_eventos (
     id BIGSERIAL PRIMARY KEY,
@@ -184,6 +187,9 @@ async function ensureSchema(pool) {
     aberto_em TIMESTAMPTZ, data_escolhida DATE, escolhido_em TIMESTAMPTZ)`);
   await pool.query('ALTER TABLE ag_links ADD COLUMN IF NOT EXISTS enviado_em TIMESTAMPTZ');
   await pool.query('ALTER TABLE ag_links ADD COLUMN IF NOT EXISTS enviado_por TEXT');
+  // pedido de nova data (desculpas) para um agendamento não cumprido: data que falhou e quando o pedido saiu
+  await pool.query('ALTER TABLE ag_links ADD COLUMN IF NOT EXISTS reagendar_de DATE');
+  await pool.query('ALTER TABLE ag_links ADD COLUMN IF NOT EXISTS reagendado_em TIMESTAMPTZ');
   // links mandados antes desta coluna existir: o envio é a criação do link (o botão já aparece travado)
   await pool.query('UPDATE ag_links SET enviado_em=criado_em,enviado_por=criado_por WHERE enviado_em IS NULL');
   // permissão SAC (agendar e inserir informações): na primeira vez vai para quem já agendou pelo sistema
@@ -618,13 +624,14 @@ const SEL_LOCAL = `(SELECT json_build_object('link',l.link,'lat',l.lat,'lon',l.l
 const SEL_RESERVA = `(SELECT json_build_object('usuario',r.usuario,'em',r.criado_em,'expira',r.expira_em) FROM ag_reservas r WHERE COALESCE(r.client_id,0)=COALESCE(n.client_id,0) AND r.chave=${CHAVE_LOCAL_SQL} AND r.expira_em>NOW()) AS reserva`;
 // último envio do link de agendamento pelo WhatsApp do SAC (agendamento-link.js), por destinatário + cidade
 const SEL_LINK = `(SELECT json_build_object('em',l.enviado_em,'por',l.enviado_por,'hoje',(l.enviado_em AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date,'escolhido',l.escolhido_em IS NOT NULL,
+    'reagendar',l.reagendar_de IS NOT NULL AND l.escolhido_em IS NULL,'reagendar_hoje',(l.reagendado_em AT TIME ZONE 'America/Sao_Paulo')::date=(NOW() AT TIME ZONE 'America/Sao_Paulo')::date,
     'dias',((NOW() AT TIME ZONE 'America/Sao_Paulo')::date-(l.enviado_em AT TIME ZONE 'America/Sao_Paulo')::date))
   FROM ag_links l WHERE COALESCE(l.client_id,0)=COALESCE(n.client_id,0) AND l.chave=${CHAVE_LOCAL_SQL} AND l.enviado_em IS NOT NULL ORDER BY l.enviado_em DESC LIMIT 1) AS link`;
 const SEL_NOTA = SEL_LOCAL + ',' + SEL_RESERVA + ',' + SEL_LINK + `,n.id::text AS nota_id,n.nf,n.serie,n.ctrc,n.remetente,n.pagador,n.produto_fonte,n.telefone,n.destinatario,n.cidade,n.uf,n.endereco,n.peso::float8 AS peso,n.volumes::float8 AS volumes,
   n.produto,n.situacao,n.status_ssw,n.previsao,to_char(n.data_emissao,'YYYY-MM-DD') AS data_emissao,to_char(n.data_entrada,'YYYY-MM-DD') AS data_entrada,
   n.ultima_consulta,n.erro_integracao,to_char(n.concluido_em,'YYYY-MM-DD') AS concluido_em,
   ((NOW() AT TIME ZONE 'America/Sao_Paulo')::date-COALESCE(n.data_entrada,n.data_emissao,(n.primeiro_visto AT TIME ZONE 'America/Sao_Paulo')::date))::int AS dias_sem`;
-const SEL_AG = `a.id::text AS agendamento_id,to_char(a.data_agendada,'YYYY-MM-DD') AS data_agendada,a.observacao,a.reagendamentos,a.criado_por_nome,a.criado_em AS agendado_em,a.status AS status_agendamento`;
+const SEL_AG = `a.id::text AS agendamento_id,to_char(a.data_agendada,'YYYY-MM-DD') AS data_agendada,a.observacao,a.reagendamentos,a.criado_por_nome,a.criado_em AS agendado_em,a.status AS status_agendamento,a.prioridade,a.prioridade_motivo`;
 const DIAS_SEM_SQL = "((NOW() AT TIME ZONE 'America/Sao_Paulo')::date-COALESCE(n.data_entrada,n.data_emissao,(n.primeiro_visto AT TIME ZONE 'America/Sao_Paulo')::date))";
 const HOJE_SQL = "(NOW() AT TIME ZONE 'America/Sao_Paulo')::date";
 
@@ -655,6 +662,7 @@ function filtrosEntrega(f, params, aba) {
     if (f.card === 'hoje') w.push('a.data_agendada=' + HOJE_SQL);
     if (f.card === 'amanha') w.push('a.data_agendada=' + HOJE_SQL + '+1');
     if (f.card === 'vencidas') w.push('a.data_agendada<' + HOJE_SQL);
+    if (f.card === 'prioridade') w.push('a.prioridade');
   }
   return w;
 }
@@ -671,13 +679,13 @@ async function listar(db, cli, aba, f) {
       ? `FROM ag_notas n JOIN ag_agendamentos a ON a.nota_id=n.id AND (a.status='ativo' OR (a.status='concluido' AND a.data_agendada<${HOJE_SQL}))
       WHERE n.client_id IS NOT DISTINCT FROM $1 AND n.tipo_operacao='entrega' AND (n.situacao=ANY($2) OR a.status='concluido')`
       : "FROM ag_notas n JOIN ag_agendamentos a ON a.nota_id=n.id AND a.status='ativo' WHERE n.client_id IS NOT DISTINCT FROM $1 AND n.tipo_operacao='entrega' AND n.situacao=ANY($2)";
-    ordem = 'a.data_agendada, n.nf';
+    ordem = 'a.data_agendada, a.prioridade DESC, n.nf';   // no mesmo dia, as prioridades primeiro
   } else if (aba === 'sem') {
     base = "FROM ag_notas n LEFT JOIN ag_agendamentos a ON a.nota_id=n.id AND a.status='ativo' WHERE n.client_id IS NOT DISTINCT FROM $1 AND n.tipo_operacao='entrega' AND n.situacao=ANY($2) AND a.id IS NULL";
     ordem = DIAS_SEM_SQL + ' DESC, n.nf';
   } else if (aba === 'pendentes') {
     base = "FROM ag_notas n LEFT JOIN ag_agendamentos a ON a.nota_id=n.id AND a.status='ativo' WHERE n.client_id IS NOT DISTINCT FROM $1 AND n.tipo_operacao='entrega' AND n.situacao=ANY($2)";
-    ordem = 'a.data_agendada NULLS LAST, ' + DIAS_SEM_SQL + ' DESC, n.nf';
+    ordem = 'a.data_agendada NULLS LAST, a.prioridade DESC, ' + DIAS_SEM_SQL + ' DESC, n.nf';
   } else if (aba === 'historico') {
     // entregues, devolvidas e as notas com agendamento cancelado ou reagendado
     base = `FROM ag_notas n LEFT JOIN LATERAL (SELECT * FROM ag_agendamentos x WHERE x.nota_id=n.id ORDER BY x.id DESC LIMIT 1) a ON TRUE
@@ -741,6 +749,7 @@ async function indicadores(db, cli) {
       COUNT(*) FILTER (WHERE a.data_agendada=${HOJE_SQL})::int AS hoje,
       COUNT(*) FILTER (WHERE a.data_agendada=${HOJE_SQL}+1)::int AS amanha,
       COUNT(*) FILTER (WHERE a.data_agendada<${HOJE_SQL})::int AS vencidas,
+      COUNT(*) FILTER (WHERE a.prioridade)::int AS prioridade,
       COUNT(*) FILTER (WHERE n.situacao='verificar')::int AS verificar,
       COALESCE(SUM(n.peso),0)::float8 AS peso_pendente
     FROM ag_notas n LEFT JOIN ag_agendamentos a ON a.nota_id=n.id AND a.status='ativo'
@@ -956,8 +965,13 @@ async function alterar(pool, cli, user, id, b) {
     if (b.data_agendada !== undefined) {
       const d = validarData(b.data_agendada);
       if (d !== a.data) {
-        await db.query('UPDATE ag_agendamentos SET data_agendada=$2,reagendamentos=reagendamentos+1,atualizado_em=NOW() WHERE id=$1', [id, d]);
-        await evento(db, cli, a.nota_id, id, 'reagendado', brData(a.data), brData(d), b.motivo || null, quem);
+        // a data antiga era hoje ou já passou e a nota não foi entregue: agendamento não cumprido, a nova data vira prioridade
+        const naoCumprido = a.data <= hojeSp();
+        const motivoPrio = naoCumprido ? 'Não cumprido em ' + brData(a.data) : null;
+        await db.query(`UPDATE ag_agendamentos SET data_agendada=$2,reagendamentos=reagendamentos+1,atualizado_em=NOW(),
+            prioridade=prioridade OR $3,prioridade_motivo=CASE WHEN $3 THEN $4 ELSE prioridade_motivo END WHERE id=$1`, [id, d, naoCumprido, motivoPrio]);
+        const det = [limpo(b.motivo, 300), naoCumprido ? motivoPrio + ': nova data com prioridade' : ''].filter(Boolean).join(' · ');
+        await evento(db, cli, a.nota_id, id, 'reagendado', brData(a.data), brData(d), det || null, quem);
       }
     }
     if (b.produto !== undefined) {
