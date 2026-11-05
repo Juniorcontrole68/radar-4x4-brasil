@@ -126,8 +126,29 @@ $('#saveEvent').onclick=async()=>{const body={title:$('#evTitle').value,date:$('
 load().catch(e=>alert(e.message));
 
 let deferredInstallPrompt=null;
+const refreshBtn=document.querySelector('#refreshApp');
 const installBtn=document.querySelector('#installApp');
 const shareBtn=document.querySelector('#shareApp');
+
+if(refreshBtn){
+  refreshBtn.onclick=async()=>{
+    refreshBtn.disabled=true;
+    refreshBtn.textContent='⏳ Atualizando...';
+    try{
+      if('serviceWorker' in navigator){
+        const regs=await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r=>r.update().catch(()=>{})));
+      }
+      if('caches' in window){
+        const keys=await caches.keys();
+        await Promise.all(keys.map(k=>caches.delete(k)));
+      }
+    }catch(e){}
+    const url=new URL(location.href);
+    url.searchParams.set('_atualiza',Date.now().toString());
+    location.replace(url.toString());
+  };
+}
 
 window.addEventListener('beforeinstallprompt',e=>{
   e.preventDefault();
