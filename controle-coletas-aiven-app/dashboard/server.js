@@ -6865,7 +6865,8 @@ if(u.pathname==='/api/agendamentos/ssw-snapshot'&&req.method==='POST'){try{
         const sit=String(lido?.resumo?.situacao||'').trim();
         if(!sit)return{...extra,situacao:'desconhecida',erro:'situação do CT-e não lida na opção 101'};
         const b=agendamentoBloqueio([sit]);
-        const em=(sit.match(/(\d{2}\/\d{2}\/\d{2,4})/)||[])[1]||'';
+        // data da entrega ("ENTREGUE EM 07/11/26 18:00H"); na falta, a data da ocorrência (registro da baixa)
+        const em=(sit.match(/ENTREGUE\s+EM\s+(\d{2}\/\d{2}\/\d{2,4})/i)||sit.match(/(\d{2}\/\d{2}\/\d{2,4})/)||[])[1]||'';
         if(/devolvida/.test(b))return{...extra,situacao:'devolvida',texto:sit.slice(0,200),em};
         if(b)return{...extra,situacao:'entregue',texto:sit.slice(0,200),em};
         // só está em rota quando o SSW mostra a carga saindo; subcontrato/documento apenas emitido continua aguardando
