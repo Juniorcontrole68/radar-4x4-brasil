@@ -144,6 +144,10 @@ console.log('Dados da carga na tela 101');
   check('previsão e pedido',r.previsao==='09/10/26'&&r.pedido==='74236',r);
   const sit=cte.parseTela101('<div>Observa&ccedil;&atilde;o: Instru&ccedil;&atilde;o Entrega: Situa&ccedil;&atilde;o Atual: CNG AMR 09/10/26 06:45 85-SAIDA PARA ENTREGA O corr&ecirc;ncias Fr e te D ANFEs</div>').resumo.situacao;
   check('situação atual do CT-e (sem as siglas da frente)',sit==='09/10/26 06:45 85-SAIDA PARA ENTREGA',sit);
+  // baixa de entrega com o texto inteiro do SSW (CT-e AMS001030-8, 09/11/26): passa de 140 caracteres
+  const longa=cte.parseTela101('<div>Instru&ccedil;&atilde;o Entrega: Situa&ccedil;&atilde;o Atual: CNG AMR 09/11/26 06:39 1-MERCADORIA ENTREGUE MERCADORIA ENTREGUE EM 07/11/26 18:00H E FOI RECEBIDO POR RUBRICA, PARENTESCO: , DOC N.: (OPC 038). CO2 emitido para transportar esta mercadoria: 413,5g. O corr&ecirc;ncias Fr e te D ANFEs</div>').resumo.situacao;
+  check('situação atual longa (baixa com recebedor e CO2) é lida',longa.startsWith('09/11/26 06:39 1-MERCADORIA ENTREGUE')&&longa.endsWith('413,5g.'),longa);
+  check('situação atual longa tira a nota do agendamento',cte.situacaoBloqueiaAgendamento([longa])==='entregue (baixada)',longa);
   const vazio=cte.parseTela101('<html>nada</html>').resumo;
   check('tela sem dados: tudo zerado, sem quebrar',vazio.ctrc===''&&vazio.volumes===0&&vazio.peso===0)
 }

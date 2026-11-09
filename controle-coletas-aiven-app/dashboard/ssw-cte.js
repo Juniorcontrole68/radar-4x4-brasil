@@ -222,7 +222,9 @@ function parseTela101(html){
     // "CNG AMR 09/10/26 06:45 85-SAIDA PARA ENTREGA": última ocorrência do CT-e
     // telefones do destinatário (coluna da direita do bloco Remetente/Destinatário)
     fonesDestinatario:(()=>{const a=plain.search(/Remetente:\s*Destinat[aá]rio:/i);if(a<0)return[];const b=plain.slice(a).search(/Expedidor:/i);return fonesDaDireita(plain.slice(a,b>0?a+b:a+1800))})(),
-    situacao:((plain.match(/Situa[cç][aã]o Atual:\s*(.{0,140}?)\s+(?:O\s?corr[eê]ncias|Fr\s?e\s?te|D\s?ANFEs)/i)||[])[1]||'').replace(/^[A-Z]{3}\s+[A-Z]{3}\s+/,'').trim()
+    // A baixa de entrega traz o texto inteiro ("1-MERCADORIA ENTREGUE ... RECEBIDO POR ..., DOC N.: (OPC 038).
+    // CO2 emitido para transportar esta mercadoria: 413,5g."), que passa de 200 caracteres: o limite é largo.
+    situacao:((plain.match(/Situa[cç][aã]o Atual:\s*(.{0,600}?)\s+(?:O\s?corr[eê]ncias|Fr\s?e\s?te|D\s?ANFEs)/i)||[])[1]||'').replace(/^[A-Z]{3}\s+[A-Z]{3}\s+/,'').trim()
   };
   return{entrega,mapas,resumo}
 }
