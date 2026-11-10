@@ -215,8 +215,34 @@ function classificar(fs, bruto) {
 
 // ------------------------------------------------------------------ rotas do galpão
 const SEM_ROTA = 'Sem rota';
-const cidadesDe = txt => [...new Set(String(txt || '').split(/[,;\n]/).map(semAcento).filter(Boolean))];
+const nomeCidade = v => semAcento(v).replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+const cidadesDe = txt => [...new Set(String(txt || '').split(/[,;\n]/).map(nomeCidade).filter(Boolean))];
+// Relatório da opção 404 do SSW (ssw0004 "SETORES CADASTRADOS"): CIDADE UF CEP-INI CEP-FIN SET NOME-SETOR.
+// Cada setor vira uma rota "Setor N · NOME" (o DACTE mostra o número). Número com mais de um nome junta os nomes.
+function rotasDa404(texto) {
+  const set = new Map();
+  for (const linha of String(texto || '').split(/\r?\n/)) {
+    const m = linha.match(/^\s*(\S.*?)\s+([A-Z]{2})\s+(\d{8})\s+(\d{8})\s+(\d{1,4})\s+(.*?)\s*$/);
+    if (!m) continue;
+    const n = String(Number(m[5])), x = set.get(n) || { cidades: new Set(), nomes: new Map() };
+    x.cidades.add(nomeCidade(m[1]));
+    const nome = nomeCidade(m[6]) || n;
+    x.nomes.set(nome, (x.nomes.get(nome) || 0) + 1);
+    set.set(n, x);
+  }
+  const avisos = [];
+  const rotas = [...set.entries()].sort((a, b) => Number(a[0]) - Number(b[0])).map(([n, x]) => {
+    const nomes = [...x.nomes.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]);
+    if (nomes.length > 1) avisos.push('Setor ' + n + ' tem mais de um nome na 404: ' + nomes.join(', ') + '.');
+    const rot = nomes.filter(x => x !== n).join(' / ');
+    return { nome: ('Setor ' + n + (rot ? ' · ' + rot : '')).slice(0, 40), cidades: [...x.cidades] };
+  });
+  return { rotas, avisos };
+}
+const SETORES_PADRAO = (() => { try { return require('fs').readFileSync(require('path').join(__dirname, 'conferencia-setores-404.txt'), 'utf8'); } catch { return ''; } })();
 async function rotas(db, cli) {
+  const n = (await db.query('SELECT COUNT(*)::int n FROM conf_rotas WHERE client_id IS NOT DISTINCT FROM $1', [cli])).rows[0].n;
+  if (!n && SETORES_PADRAO) { try { await salvarRotas(db, cli, rotasDa404(SETORES_PADRAO).rotas); } catch (e) { console.log('CONFERENCIA setores 404: ' + e.message); } }
   return (await db.query('SELECT id::text,nome,cidades,ordem FROM conf_rotas WHERE client_id IS NOT DISTINCT FROM $1 ORDER BY ordem,id', [cli])).rows
     .map(r => ({ ...r, cidades: cidadesDe(r.cidades) }));
 }
@@ -237,7 +263,7 @@ async function salvarRotas(db, cli, lista) {
 }
 // cidade do CT-e -> nome da rota ('Sem rota' quando nenhuma rota tem a cidade)
 function rotaDaCidade(rs, cidade) {
-  const c = semAcento(cidade).replace(/\s*[-\/]\s*[A-Z]{2}$/, '');
+  const c = nomeCidade(semAcento(cidade).replace(/\s*[-\/]\s*[A-Z]{2}$/, ''));
   const r = rs.find(x => x.cidades.includes(c));
   return r ? r.nome : SEM_ROTA;
 }
@@ -504,7 +530,7 @@ async function mensagem(db, cli, id, l) {
     duplicado: ['alerta', 'Volume já bipado (' + l.parceiro + ')'],
     excesso: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + 'A mais: ' + l.parceiro + ' já tem ' + prog + ' volumes'],
     sobra: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + l.parceiro + ' não tem CT-e ' + onde],
-    rota_errada: ['erro', 'ROTA ERRADA · ' + (l.parceiro ? l.parceiro + ' ' : '') + 'é da ' + (/^rota\b/i.test(l.outraRota || '') ? l.outraRota : 'rota ' + (l.outraRota || '?')) + (cte && cte.cidade ? ' (' + cte.cidade + ')' : '')],
+    rota_errada: ['erro', 'ROTA ERRADA · ' + (l.parceiro ? l.parceiro + ' ' : '') + (/^setor\b/i.test(l.outraRota || '') ? 'é do ' + l.outraRota : /^rota\b/i.test(l.outraRota || '') ? 'é da ' + l.outraRota : 'é da rota ' + (l.outraRota || '?')) + (cte && cte.cidade ? ' (' + cte.cidade + ')' : '')],
     nf_fora: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + 'NF ' + (l.nf || '') + ' (' + l.parceiro + ') não está ' + onde],
     nao_reconhecido: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + 'Etiqueta não reconhecida'],
     dacte: ['info', 'DACTE ' + l.ctrc + ' conferido'],
@@ -647,6 +673,13 @@ async function handle(req, res, u, deps) {
       await salvarRotas(pool, cli, b.rotas);
       return sendJson(res, 200, { ok: true, rotas: await rotas(pool, cli) }), true;
     }
+    if (p === '/rotas/importar-404' && req.method === 'POST') {
+      const b = await readJsonBodyLimited(req, 512 * 1024);
+      const r = rotasDa404(b.texto);
+      if (!r.rotas.length) return sendJson(res, 400, { ok: false, error: 'Não achei setores no texto. Cole o relatório da opção 404 (SETORES CADASTRADOS).' }), true;
+      await salvarRotas(pool, cli, r.rotas);
+      return sendJson(res, 200, { ok: true, avisos: r.avisos, rotas: await rotas(pool, cli) }), true;
+    }
     if ((m = p.match(/^\/sessoes\/(\d+)\/rotas$/)) && req.method === 'GET') return sendJson(res, 200, { ok: true, ...(await quadroRotas(pool, cli, m[1])) }), true;
     if ((m = p.match(/^\/sessoes\/(\d+)\/rotas$/)) && req.method === 'POST') {
       const b = await readJsonBodyLimited(req, 4 * 1024);
@@ -699,4 +732,4 @@ async function handle(req, res, u, deps) {
   }
 }
 
-module.exports = { ensureSchema, handle, classificar, compilar, parceiroDoCte, inferirPadrao, janelaDescarga, FORMATOS_PADRAO, formatos, criarSessao, ler, resumo };
+module.exports = { ensureSchema, handle, classificar, compilar, parceiroDoCte, inferirPadrao, rotasDa404, janelaDescarga, FORMATOS_PADRAO, formatos, criarSessao, ler, resumo };
