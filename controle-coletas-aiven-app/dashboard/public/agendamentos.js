@@ -145,7 +145,7 @@ function preencher(r){
   q('#agSalvar').disabled=!r||!podeAgendar();
   const lc=q('#agLocal');lc.value='';lc.placeholder=r&&r.localizacao?'Já tem: cole outro para trocar':'Cole o link do WhatsApp';lc.title=r&&r.localizacao?'Localização guardada: '+r.localizacao.link:'';
 }
-function limparForm(){if(q('#agVagas'))q('#agVagas').textContent='';preencher(null);q('#agNf').value='';q('#agData').value='';q('#agObs').value='';q('#agLocal').value='';q('#agOpcoes').style.display='none';q('#agOpcoes').innerHTML='';msg('Digite a NF e pressione Enter: os dados vêm do SSW.');q('#agNf').focus()}
+function limparForm(){avisoRota('');if(q('#agVagas'))q('#agVagas').textContent='';preencher(null);q('#agNf').value='';q('#agData').value='';q('#agObs').value='';q('#agLocal').value='';q('#agOpcoes').style.display='none';q('#agOpcoes').innerHTML='';msg('Digite a NF e pressione Enter: os dados vêm do SSW.');q('#agNf').focus()}
 function escolher(lista,origem){
   const box=q('#agOpcoes');box.style.display='block';
   box.innerHTML='<div style="font-weight:700;margin-bottom:3px">Há '+lista.length+' notas com este número. Escolha a correta:</div><table><thead><tr><th>CT-e</th><th>Remetente</th><th>Destinatário</th><th>Cidade</th><th>Situação</th><th></th></tr></thead><tbody>'+
@@ -164,6 +164,7 @@ async function buscarNf(){
   q('#agOpcoes').style.display='none';preencher(null);
   if(!nf){msg('Informe o número da nota fiscal.','err');return}
   msg('Procurando a NF '+nf+'…');
+  verificarRota(nf);
   try{
     // primeiro o que a varredura já trouxe do SSW (instantâneo); se não tiver, consulta o SSW agora
     const loc=await api('/api/painel/agendamentos/buscar-nf?nf='+encodeURIComponent(nf));
@@ -172,6 +173,14 @@ async function buscarNf(){
     if(ativos.length===1)return usarLocal(ativos[0]);
     await buscarSsw(nf,'',loc.rows||[]);
   }catch(e){msg(e.message,'err')}
+}
+// Contagem do galpão: se alguma caixa da nota foi achada em outra rota, avisa (não impede o agendamento)
+function avisoRota(t){const e=q('#agRotaAviso');if(!e)return;e.textContent=t;e.hidden=!t}
+async function verificarRota(nf){
+  avisoRota('');
+  try{const j=await api('/api/painel/conferencia/nf/'+encodeURIComponent(nf));
+    if(String(q('#agNf').value||'').replace(/\D/g,'').replace(/^0+(?=\d)/,'')!==nf)return;
+    avisoRota((j.alertas||[]).map(a=>'⚠ '+a.mensagem+(j.galpao?' ('+j.galpao.titulo+')':'')).join(' '))}catch{}
 }
 async function buscarSsw(nf,ctrc,conhecidas=[]){
   msg('Consultando a NF '+nf+' no SSW… (alguns segundos)');

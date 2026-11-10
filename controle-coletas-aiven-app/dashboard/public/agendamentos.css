@@ -37,6 +37,8 @@
 .ag-msg{grid-column:1/-1;font-size:11px;line-height:14px;min-height:14px;color:#475569}
 .ag-form .ag-btn{height:26px}
 .ag-msg.ok{color:#15803d}.ag-msg.err{color:#b91c1c}
+.ag-rota-aviso{grid-column:1/-1;background:#fee2e2;border:1px solid #fca5a5;color:#991b1b;border-radius:6px;padding:6px 9px;font-size:12px;font-weight:700;line-height:16px}
+.ag-rota-aviso[hidden]{display:none}
 .ag-opcoes{grid-column:1/-1;display:none}
 .ag-opcoes table{width:100%;border-collapse:collapse}
 .ag-opcoes td,.ag-opcoes th{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left}
