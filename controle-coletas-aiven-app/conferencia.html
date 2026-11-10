@@ -199,6 +199,7 @@ async function abrir(id){
   $('#bFechar').onclick=fecharConf;
   $('#bMot').onclick=linkMotorista;
   document.addEventListener('click',tirarCte);
+  $('#outros').addEventListener('click',e=>{const b=e.target.closest('[data-ligar]');if(b)ligarNome(b.dataset.ligar)});
   $('#leituras').onclick=async e=>{const en=e.target.closest('[data-ensina]');if(en){etiquetas(en.dataset.ensina,id);return}
     const b=e.target.closest('[data-desf]');if(!b)return;if(!confirm('Desfazer esta leitura?'))return;try{await api('DELETE','/api/painel/conferencia/sessoes/'+id+'/leituras/'+b.dataset.desf);atualizar()}catch(er){aviso(er.message)}};
   await atualizar();
@@ -294,14 +295,27 @@ function desenhar(d){
   const out=d.esperado.filter(e=>!e.parceiro);
   $('#dOutros').hidden=!out.length;
   $('#sOutros').textContent='CT-es sem etiqueta reconhecida: '+n(d.outros.ctes)+' CT-e(s), '+n(d.outros.volumes)+' volume(s)';
-  $('#outros').innerHTML=tabelaCtes(out);
+  $('#outros').innerHTML='<div class="muted" style="margin:4px 0 8px">Se a etiqueta foi lida mas deu "não tem CT-e", o nome do cliente no CT-e é diferente do cadastrado. Toque no nome certo (remetente ou pagador) e escolha a etiqueta: o CT-e passa a ser dela e as leituras são refeitas.</div>'+tabelaCtes(out,true);
   $('#esperados').innerHTML=tabelaCtes(d.esperado);
   if(d.leituras)$('#leituras').innerHTML=d.leituras.map(l=>'<div class="lei"><div><code>'+esc(l.codigo)+'</code> '+(l.situacao==='nao_reconhecido'&&aberta?'<button class="chip r" style="border:0;cursor:pointer" data-ensina="'+esc(l.codigo)+'">não reconhecida · ensinar</button>':'<span class="chip '+(COR[l.situacao]||'')+'">'+esc(ROT[l.situacao]||l.situacao)+'</span>')+'<br><small>'+esc([l.parceiro,l.ctrc].filter(Boolean).join(' · '))+' · '+hr(l.criado_em)+' · '+esc(l.usuario)+'</small></div>'+(aberta?'<button data-desf="'+l.id+'">Desfazer</button>':'')+'</div>').join('')||'<div class="muted">Nenhuma leitura.</div>';
   filaMostrar();
 }
-function tabelaCtes(l){
+function tabelaCtes(l,ligar){
   const tira=S.dados&&S.dados.sessao.tipo==='carregamento'&&S.dados.sessao.status==='aberta';
-  return l.length?'<table><thead><tr><th>CT-e</th><th>NF</th><th>Vol.</th><th>Parceiro</th><th>Destinatário</th><th>DACTE</th>'+(tira?'<th></th>':'')+'</tr></thead><tbody>'+l.map(e=>'<tr><td>'+esc(e.ctrc)+'</td><td>'+esc(e.nf)+'</td><td>'+n(e.volumes)+'</td><td>'+esc(e.parceiro||'—')+'</td><td>'+esc(e.destinatario)+'</td><td>'+(e.dacte_lido_em?'✓':'')+'</td>'+(tira?'<td><button class="chip r" style="border:0;cursor:pointer" data-tira="'+esc(e.ctrc)+'">tirar</button></td>':'')+'</tr>').join('')+'</tbody></table>':'<div class="muted">Nenhum.</div>'}
+  const nomes=e=>String(e.nomes||'').split(' | ').filter(Boolean).map(x=>ligar?'<button class="chip a" style="border:0;cursor:pointer;margin:1px" data-ligar="'+esc(x)+'">'+esc(x)+'</button>':esc(x)).join(ligar?' ':' · ');
+  return l.length?'<table><thead><tr><th>CT-e</th><th>NF</th><th>Vol.</th><th>'+(ligar?'Remetente / pagador':'Parceiro')+'</th><th>Destinatário</th><th>DACTE</th>'+(tira?'<th></th>':'')+'</tr></thead><tbody>'+l.map(e=>'<tr><td>'+esc(e.ctrc)+'</td><td>'+esc(e.nf)+'</td><td>'+n(e.volumes)+'</td><td>'+(ligar?nomes(e)||'—':esc(e.parceiro||'—'))+'</td><td>'+esc(e.destinatario)+'</td><td>'+(e.dacte_lido_em?'✓':'')+'</td>'+(tira?'<td><button class="chip r" style="border:0;cursor:pointer" data-tira="'+esc(e.ctrc)+'">tirar</button></td>':'')+'</tr>').join('')+'</tbody></table>':'<div class="muted">Nenhum.</div>'}
+// liga um nome de CT-e (remetente/pagador) a uma etiqueta cadastrada
+async function ligarNome(nome){
+  const box=$('#ligarBox');if(box)box.remove();
+  let F;try{F=await api('GET','/api/painel/conferencia/formatos')}catch(e){aviso(e.message);return}
+  const d=document.createElement('div');d.id='ligarBox';d.className='card';d.style.border='1px solid var(--ok)';
+  d.innerHTML='<b>CT-es com "'+esc(nome)+'" são de qual etiqueta?</b><div class="chips">'+F.formatos.filter(f=>f.ativo).map(f=>'<button class="btn" style="min-height:44px" data-fmt="'+esc(f.nome)+'">'+esc(f.nome)+'</button>').join('')+'</div><button class="btn" data-fmt="">Cancelar</button>';
+  $('#dOutros').before(d);d.scrollIntoView({block:'center'});
+  d.onclick=async e=>{const b=e.target.closest('[data-fmt]');if(!b)return;if(!b.dataset.fmt){d.remove();return}
+    d.querySelectorAll('button').forEach(x=>x.disabled=true);
+    try{const r=await api('POST','/api/painel/conferencia/formatos/ligar',{formato:b.dataset.fmt,termo:nome});d.remove();await atualizar();
+      aviso('"'+nome+'" ligado à etiqueta '+b.dataset.fmt+'.'+(r.reaplicadas?' '+r.reaplicadas+' leitura(s) refeita(s).':''),'ok')}catch(er){aviso(er.message);d.remove()}};
+}
 
 // ---------------- etiquetas: ensinar o formato de um cliente novo e ver/ajustar os cadastrados
 async function etiquetas(codigo,voltarSessao){

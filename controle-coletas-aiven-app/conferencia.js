@@ -187,14 +187,29 @@ async function reaplicar(pool, cli) {
       const p = parceiroDoCte(fs, [e.nomes]);
       if (p) await pool.query('UPDATE conf_esperado SET parceiro=$3 WHERE sessao_id=$1 AND ctrc=$2', [id, e.ctrc, p]);
     }
-    for (const l of (await pool.query("SELECT id,codigo,usuario FROM conf_leituras WHERE sessao_id=$1 AND situacao='nao_reconhecido' AND desfeita_em IS NULL ORDER BY id", [id])).rows) {
-      if (classificar(fs, l.codigo).tipo !== 'volume') continue;
+    // não reconhecidas que agora são etiqueta, e "sem CT-e" de parceiro que agora tem CT-e: lê de novo
+    const comCte = new Set((await pool.query("SELECT DISTINCT parceiro FROM conf_esperado WHERE sessao_id=$1 AND parceiro<>''", [id])).rows.map(r => r.parceiro));
+    for (const l of (await pool.query("SELECT id,codigo,usuario,situacao,parceiro FROM conf_leituras WHERE sessao_id=$1 AND situacao IN ('nao_reconhecido','sobra') AND desfeita_em IS NULL ORDER BY id", [id])).rows) {
+      if (l.situacao === 'nao_reconhecido' ? classificar(fs, l.codigo).tipo !== 'volume' : !comCte.has(l.parceiro)) continue;
       await pool.query('UPDATE conf_leituras SET desfeita_em=NOW() WHERE id=$1', [l.id]);
       await ler(pool, cli, { username: l.usuario }, id, { codigo: l.codigo }, null);
       n++;
     }
   }
   return n;
+}
+
+// Ligar CT-e ao cliente da etiqueta: acrescenta um nome do CT-e (remetente, pagador...) aos termos do formato e
+// refaz as conferências abertas (o CT-e ganha o parceiro e as leituras "sem CT-e" voltam a contar).
+async function ligarNome(pool, cli, b) {
+  const termo = semAcento(limpo(b.termo, 80)).replace(/[|,;]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (termo.length < 3) throw erro(400, 'Escolha o nome do CT-e (remetente ou pagador).');
+  const f = (await formatos(pool, cli)).find(x => x.nome === limpo(b.formato, 60));
+  if (!f) throw erro(404, 'Etiqueta não cadastrada.');
+  const termos = String(f.termos || '').split(/[,;\n]/).map(x => x.trim()).filter(Boolean);
+  if (!termos.map(semAcento).includes(termo)) termos.push(termo);
+  await pool.query('UPDATE conf_formatos SET termos=$2 WHERE id=$1', [f.id, termos.join(', ').slice(0, 600)]);
+  return { termos: termos.join(', '), reaplicadas: await reaplicar(pool, cli) };
 }
 
 // CT-e -> parceiro pelos nomes do relatório (remetente, pagador, tomador...)
@@ -466,7 +481,7 @@ async function sessao(db, cli, id) {
 // Resumo por parceiro: esperado (volumes dos CT-es), lidos, faltam, a mais, repetidos.
 async function resumo(db, cli, id) {
   const s = await sessao(db, cli, id);
-  const esp = (await db.query('SELECT ctrc,nf,volumes,chave,destinatario,cidade,parceiro,emitido_em,dacte_lido_em FROM conf_esperado WHERE sessao_id=$1 ORDER BY parceiro,ctrc', [id])).rows;
+  const esp = (await db.query('SELECT ctrc,nf,volumes,chave,destinatario,cidade,parceiro,nomes,emitido_em,dacte_lido_em FROM conf_esperado WHERE sessao_id=$1 ORDER BY parceiro,ctrc', [id])).rows;
   const lei = (await db.query(`SELECT parceiro,situacao,COUNT(*)::int AS n FROM conf_leituras WHERE sessao_id=$1 AND desfeita_em IS NULL GROUP BY parceiro,situacao`, [id])).rows;
   const fs = await formatos(db, cli);
   const nomes = [...new Set(fs.filter(f => f.ativo).map(f => f.nome).concat(esp.map(e => e.parceiro).filter(Boolean)).concat(lei.map(l => l.parceiro).filter(Boolean)))];
@@ -575,7 +590,7 @@ async function mensagem(db, cli, id, l) {
     ok: [r && r.completo ? 'ok_completo' : 'ok', l.parceiro + ': ' + prog + (r && r.completo ? ' ✓ completo' : '')],
     duplicado: ['alerta', 'Volume já bipado (' + l.parceiro + ')'],
     excesso: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + 'A mais: ' + l.parceiro + ' já tem ' + prog + ' volumes'],
-    sobra: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + l.parceiro + ' não tem CT-e ' + onde],
+    sobra: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + l.parceiro + ' não tem CT-e ' + onde + (carg ? '' : ' · veja "CT-es sem etiqueta reconhecida"')],
     rota_errada: ['erro', 'ROTA ERRADA · ' + (l.parceiro ? l.parceiro + ' ' : '') + (/^setor\b/i.test(l.outraRota || '') ? 'é do ' + l.outraRota : /^rota\b/i.test(l.outraRota || '') ? 'é da ' + l.outraRota : 'é da rota ' + (l.outraRota || '?')) + (cte && cte.cidade ? ' (' + cte.cidade + ')' : '')],
     nf_fora: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + 'NF ' + (l.nf || '') + ' (' + l.parceiro + ') não está ' + onde],
     nao_reconhecido: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + 'Etiqueta não reconhecida'],
@@ -764,6 +779,10 @@ async function handle(req, res, u, deps) {
       const inf = inferirPadrao(b.exemplos, b.por_volume !== false);
       const fs = compilar(await formatos(pool, cli));
       return sendJson(res, 200, { ok: true, padrao: inf.padrao, atual: inf.exemplos.map(e => { const c = classificar(fs, e); return { codigo: e, tipo: c.tipo, parceiro: c.parceiro || '' }; }) }), true;
+    }
+    if (p === '/formatos/ligar' && req.method === 'POST') {
+      const b = await readJsonBodyLimited(req, 4 * 1024);
+      return sendJson(res, 200, { ok: true, ...(await ligarNome(pool, cli, b)) }), true;
     }
     if (p === '/formatos/ensinar' && req.method === 'POST') {
       const b = await readJsonBodyLimited(req, 16 * 1024);
