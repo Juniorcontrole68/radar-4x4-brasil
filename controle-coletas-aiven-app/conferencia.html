@@ -49,6 +49,14 @@ video{width:100%;border-radius:12px;background:#000;max-height:34vh;object-fit:c
 [hidden]{display:none!important}
 @media(max-width:520px){.totais b{font-size:20px}}
 .rel h2{font-size:17px;margin:8px 0 4px}.rel td.n,.rel th.n{text-align:right}.rel tr.err td{color:#fecaca}
+#impressao{display:none}
+@media print{body.imprimindo>*:not(#impressao){display:none!important}body.imprimindo #impressao{display:block}}
+.etq{box-sizing:border-box;overflow:hidden;page-break-after:always;break-after:page;background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;display:flex;flex-direction:column;justify-content:space-between}
+.etq:last-child{page-break-after:auto;break-after:auto}
+.etq .t{display:flex;justify-content:space-between;align-items:baseline;gap:2mm}.etq .nm{font-weight:700;line-height:1.1;overflow:hidden}
+.etq .set{font-weight:900;border:.6mm solid #000;padding:0 1.5mm;white-space:nowrap}.etq svg{display:block;width:100%}
+.etq .cod{text-align:center;font:700 3mm monospace;letter-spacing:.3mm}
+.etq-prev{background:#fff;border-radius:6px;padding:0;transform-origin:top left}
 @media print{body,html{background:#fff;color:#000}header,.voltar,.noprint{display:none!important}main{max-width:none;padding:0}
   .card,.totais div{background:#fff;border:1px solid #999;color:#000}.muted,th,.totais span{color:#333}.rel tr.err td{color:#b91c1c}th,td{border-color:#999}}
 </style>
@@ -142,10 +150,11 @@ async function inicio(){
       '<div class="linha"><label>Ou digite o romaneio<input id="nRom" placeholder="AMR001186-0" autocapitalize="characters"></label></div><button class="btn p" id="nRomOk">Começar pelo romaneio</button></div>'+
       '<div class="card"><b>Novo carregamento bipando os CT-es</b><div class="muted">Bipe primeiro os DACTEs dos CT-es que vão no caminhão (cada um entra na carga) e depois os volumes.</div>'+
       '<div class="linha"><label>Placa (opcional)<input id="nPlaca" placeholder="ABC1D23" autocapitalize="characters" maxlength="8"></label></div><button class="btn p" id="nCteOk">Começar bipando os DACTEs</button></div>';
-  render(abas+novo+'<button class="btn" id="bEtq">🏷 Etiquetas dos clientes (ensinar etiqueta nova)</button>'+
+  render(abas+novo+'<button class="btn" id="bEtq">🏷 Etiquetas dos clientes (ensinar etiqueta nova)</button><button class="btn" id="bImpEtq">🖨 Imprimir etiquetas para caixas sem etiqueta</button>'+
     '<div class="card"><b>🔎 Consultar nota</b><div class="muted">Mostra se alguma caixa da nota foi achada em rota errada na contagem do galpão.</div><div class="leitura"><input id="cNf" inputmode="numeric" autocomplete="off" placeholder="Número da NF"></div><div id="cNfRes"></div></div>'+
     '<div class="aviso" id="aviso" hidden></div><b>'+(TIPO==='descarga'?'Descargas':TIPO==='contagem'?'Conferências do galpão':'Carregamentos')+'</b><div class="lst" id="lista"><div class="muted">carregando…</div></div>');
   $('#bEtq').onclick=()=>etiquetas();
+  $('#bImpEtq').onclick=()=>imprimirEtiquetas([]);
   document.querySelectorAll('[data-tipo]').forEach(b=>b.onclick=()=>{TIPO=b.dataset.tipo;try{localStorage.setItem('conf_tipo',TIPO)}catch{}inicio()});
   const criar=async(btn,corpo,txt)=>{const t0=btn.textContent;btn.disabled=true;btn.textContent=txt;
     try{const r=await api('POST','/api/painel/conferencia/sessoes',corpo);abrir(r.id)}catch(e){aviso(e.message);btn.disabled=false;btn.textContent=t0}};
@@ -199,7 +208,8 @@ async function abrir(id){
   $('#bFechar').onclick=fecharConf;
   $('#bMot').onclick=linkMotorista;
   document.addEventListener('click',tirarCte);
-  $('#outros').addEventListener('click',e=>{const b=e.target.closest('[data-ligar]');if(b)ligarNome(b.dataset.ligar)});
+  $('#outros').addEventListener('click',e=>{const b=e.target.closest('[data-ligar]');if(b)ligarNome(b.dataset.ligar);
+    if(e.target.closest('#bImpOut'))imprimirEtiquetas(S.dados.esperado.filter(x=>!x.parceiro).map(x=>({ctrc:x.ctrc,nf:x.nf,volumes:x.volumes,destinatario:x.destinatario,cidade:x.cidade,remetente:String(x.nomes||'').split(' | ')[0]||''})),id)});
   $('#leituras').onclick=async e=>{const en=e.target.closest('[data-ensina]');if(en){etiquetas(en.dataset.ensina,id);return}
     const b=e.target.closest('[data-desf]');if(!b)return;if(!confirm('Desfazer esta leitura?'))return;try{await api('DELETE','/api/painel/conferencia/sessoes/'+id+'/leituras/'+b.dataset.desf);atualizar()}catch(er){aviso(er.message)}};
   await atualizar();
@@ -219,6 +229,94 @@ function desenharRotas(q){
     const nums=c?'<span class="chip">'+n(c.lidos)+' de '+n(c.esperado)+'</span>'+(c.faltam?'<span class="chip a">faltam '+n(c.faltam)+'</span>':'')+(c.excesso?'<span class="chip r">'+n(c.excesso)+' a mais</span>':'')+(c.rota_errada?'<span class="chip r">'+n(c.rota_errada)+' rota errada</span>':''):'';
     return'<div class="lei"><div><b>'+esc(r.rota)+'</b> '+est+'<br><small>'+n(r.ctes)+' CT-e(s) · '+n(r.volumes)+' volume(s) no SSW · '+esc(r.cidades.slice(0,6).join(', ')+(r.cidades.length>6?'…':''))+'</small><div class="chips" style="margin-top:4px">'+nums+'</div></div>'+
       (aberta?'<button data-rota="'+esc(r.rota)+'">'+(st&&st.status==='aberta'?'Entrar':st?'Abrir de novo':'Bipar')+'</button>':'')+'</div>'}).join('')||'<div class="muted">Nenhuma rota cadastrada ainda.</div>'
+}
+// ---------------- etiqueta própria (Elgin): Code 128, "CL" + NF(10) + volume(3) + total(3)
+const C128=('212222 222122 222221 121223 121322 131222 122213 122312 132212 221213 221312 231212 112232 122132 122231 113222 123122 123221 223211 221132 '+
+  '221231 213212 223112 312131 311222 321122 321221 312212 322112 322211 212123 212321 232121 111323 131123 131321 112313 132113 132311 211313 '+
+  '231113 231311 112133 112331 132131 113123 113321 133121 313121 211331 231131 213113 213311 213131 311123 311321 331121 312113 312311 332111 '+
+  '314111 221411 431111 111224 111422 121124 121421 141122 141221 112214 112412 122114 122411 142112 142211 241211 221114 413111 241112 134111 '+
+  '111242 121142 121241 114212 124112 124211 411212 421112 421211 212141 214121 412121 111143 111341 131141 114113 114311 411113 411311 113141 '+
+  '114131 311141 411131 211412 211214 211232 2331112').split(' ');
+// letras/prefixo em Code B, dígitos em pares em Code C (código mais curto, barras mais largas)
+function code128(txt){
+  const v=[];let i=0;const dig=k=>/^\d+$/.test(txt.slice(i,i+k))&&txt.length-i>=k;
+  const ini=dig(4)?'C':'B';v.push(ini==='C'?105:104);let set=ini;
+  while(i<txt.length){
+    if(set==='B'&&dig(4)&&(txt.length-i)%2===0){v.push(99);set='C'}
+    if(set==='C'){if(dig(2)){v.push(+txt.slice(i,i+2));i+=2;continue}v.push(100);set='B'}
+    v.push(txt.charCodeAt(i)-32);i++;
+  }
+  v.push(v.reduce((a,x,k)=>a+x*(k||1),0)%103);v.push(106);
+  return v.map(x=>C128[x]).join('');
+}
+function svgBarras(txt,alt){
+  const w=code128(txt);let x=10,h='';const tot=w.split('').reduce((a,c)=>a+ +c,0)+20;
+  for(let k=0;k<w.length;k++){const m=+w[k];if(k%2===0)h+='<rect x="'+x+'" y="0" width="'+m+'" height="'+alt+'"/>';x+=m}
+  return'<svg viewBox="0 0 '+tot+' '+alt+'" preserveAspectRatio="none" style="height:100%" shape-rendering="crispEdges">'+h+'</svg>';
+}
+const codigoEtq=(nf,vol,tot)=>'CL'+String(nf).replace(/\D/g,'').slice(-10).padStart(10,'0')+String(vol).padStart(3,'0')+String(tot).padStart(3,'0');
+const TAMANHOS={'100x50':[100,50],'100x75':[100,75],'100x150':[100,150],'80x40':[80,40],'60x40':[60,40]};
+const semAc=v=>String(v||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/[^A-Z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+function htmlEtq(it,vol,tam,setor){
+  const [W,H]=TAMANHOS[tam]||TAMANHOS['100x50'],p=Math.max(2,Math.round(H*.05)),f=H>=75?1.4:1,cod=codigoEtq(it.nf,vol,it.volumes);
+  const barH=H>=75?H*.33:H*.36;
+  return'<div class="etq" style="width:'+W+'mm;height:'+H+'mm;padding:'+p+'mm '+(p+1)+'mm">'+
+    '<div class="t"><div class="nm" style="font-size:'+(3.4*f)+'mm;max-height:'+(8*f)+'mm">'+esc(it.destinatario||'')+'</div>'+(setor?'<div class="set" style="font-size:'+(4*f)+'mm">'+esc(setor)+'</div>':'')+'</div>'+
+    '<div class="t" style="font-size:'+(3*f)+'mm"><span>'+esc(it.cidade||'')+'</span><b>NF '+esc(it.nf)+'</b></div>'+
+    '<div style="height:'+barH+'mm">'+svgBarras(cod,100)+'</div><div class="cod">'+cod+'</div>'+
+    '<div class="t" style="font-size:'+(3*f)+'mm"><span>'+esc((it.remetente||'').slice(0,34))+(it.ctrc?' · '+esc(it.ctrc):'')+'</span><b style="font-size:'+(5*f)+'mm">'+vol+'/'+it.volumes+'</b></div></div>';
+}
+// XML de NF-e ou CT-e -> itens (NF, volumes, destinatário, cidade, remetente)
+function lerXml(txt){
+  const d=new DOMParser().parseFromString(txt,'text/xml'),t=(el,n)=>{const x=el&&el.getElementsByTagNameNS('*',n)[0];return x?x.textContent.trim():''},q=(el,n)=>el?el.getElementsByTagNameNS('*',n)[0]:null;
+  if(q(d,'infNFe')){const vols=[...d.getElementsByTagNameNS('*','vol')].reduce((a,v)=>a+(+t(v,'qVol')||0),0);
+    return[{nf:t(q(d,'ide'),'nNF'),volumes:vols||1,destinatario:t(q(d,'dest'),'xNome'),cidade:t(q(d,'dest'),'xMun'),remetente:t(q(d,'emit'),'xNome'),ctrc:''}]}
+  if(q(d,'infCte')){const nfs=[...d.getElementsByTagNameNS('*','infNFe')].map(x=>t(x,'chave').slice(25,34).replace(/^0+/,'')).filter(Boolean);
+    const qs=[...d.getElementsByTagNameNS('*','infQ')],un=qs.find(x=>t(x,'cUnid')==='03')||qs.find(x=>/VOL|UNID|CX|CAIXA/i.test(t(x,'tpMed')));
+    return[{nf:nfs[0]||t(q(d,'infNF'),'nDoc'),volumes:Math.max(1,Math.round(+(un?t(un,'qCarga'):0)||1)),destinatario:t(q(d,'dest'),'xNome'),cidade:t(q(d,'dest'),'xMun'),remetente:t(q(d,'rem'),'xNome'),ctrc:'CT-e '+t(q(d,'ide'),'nCT')}]}
+  return[];
+}
+async function imprimirEtiquetas(iniciais,voltarSessao){
+  camera(false);S.id=null;clearInterval(S.timer);document.removeEventListener('click',focoCampo);
+  $('#titulo').textContent='Imprimir etiquetas';$('#sub').textContent='Para as caixas que vêm sem etiqueta do cliente';
+  let tam='100x50';try{tam=localStorage.getItem('etq_tam')||tam}catch{}
+  const L=(iniciais||[]).filter(x=>x.nf).map(x=>({...x,volumes:Math.max(1,+x.volumes||1)}));
+  let rotas=[];try{rotas=(await api('GET','/api/painel/conferencia/rotas')).rotas}catch{}
+  const setorDe=c=>{const n=semAc(String(c||'').replace(/\s*[-\/]\s*[A-Z]{2}$/i,''));const r=rotas.find(x=>x.cidades.includes(n));return r?r.nome.split(' · ')[0]:''};
+  const voltar=()=>voltarSessao?abrir(voltarSessao):inicio();
+  render('<button class="voltar" id="voltar">← '+(voltarSessao?'Voltar para a conferência':'Conferências')+'</button>'+
+    '<div class="card"><b>De onde vêm os dados</b><div class="muted">Bipe o DACTE (o SSW devolve NF, volumes e destinatário) ou escolha os XMLs das notas ou dos CT-es. Sai uma etiqueta por volume, com código de barras que a Conferência reconhece na Descarga, no Carregamento e no Galpão.</div>'+
+      '<div class="leitura"><input id="iDacte" autocomplete="off" inputmode="numeric" placeholder="Bipe o DACTE"></div>'+
+      '<input type="file" id="iXml" accept=".xml,text/xml" multiple style="font-size:14px;padding:10px"></div>'+
+    '<div class="aviso" id="aviso" hidden></div>'+
+    '<div class="card"><b>Etiquetas</b><div class="lst" id="iLista"></div>'+
+      '<label>Tamanho da etiqueta (mm)<select id="iTam" style="min-height:48px;border-radius:10px;background:#0b1220;color:#fff;border:1px solid var(--line);font-size:16px;padding:0 10px">'+Object.keys(TAMANHOS).map(k=>'<option'+(k===tam?' selected':'')+'>'+k+'</option>').join('')+'</select></label>'+
+      '<div class="muted">Na Elgin, escolha no diálogo de impressão a impressora de etiquetas, margens "Nenhuma" e escala 100%. O tamanho do papel do driver tem que ser o mesmo daqui.</div>'+
+      '<div id="iPrev" style="overflow:hidden"></div>'+
+      '<button class="btn p" id="iImp">🖨 Imprimir</button></div>');
+  $('#voltar').onclick=voltar;
+  const desenhar=()=>{
+    $('#iLista').innerHTML=L.map((x,i)=>'<div class="lei"><div><b>NF '+esc(x.nf)+'</b> · '+esc(x.destinatario||'')+'<br><small>'+esc(x.cidade||'')+(setorDe(x.cidade)?' · <b>'+esc(setorDe(x.cidade))+'</b>':'')+(x.ctrc?' · '+esc(x.ctrc):'')+'</small></div><div style="display:flex;gap:6px;align-items:center"><input data-v="'+i+'" type="number" min="1" max="999" value="'+x.volumes+'" style="width:76px;min-height:40px;font-size:16px;padding:0 8px"><button data-x="'+i+'">✕</button></div></div>').join('')||'<div class="muted">Nenhuma nota ainda.</div>';
+    const tot=L.reduce((a,x)=>a+x.volumes,0);$('#iImp').textContent='🖨 Imprimir '+tot+' etiqueta(s)';$('#iImp').disabled=!tot;
+    const [W]=TAMANHOS[tam];$('#iPrev').innerHTML=L.length?'<div class="muted" style="margin:6px 0">Prévia:</div><div class="etq-prev" style="width:'+W+'mm">'+htmlEtq(L[0],1,tam,setorDe(L[0].cidade))+'</div>':'';
+    const pv=$('#iPrev .etq-prev');if(pv){const k=Math.min(1,$('#iPrev').clientWidth/pv.offsetWidth);pv.style.transform='scale('+k+')';pv.parentNode.style.height=(pv.offsetHeight*k+30)+'px'}
+  };
+  const somar=rows=>{let n=0;for(const r of rows){if(!r.nf){continue}const ja=L.find(x=>x.nf===r.nf&&(x.ctrc||'')===(r.ctrc||''));if(ja)continue;L.push({...r,volumes:Math.max(1,+r.volumes||1)});n++}desenhar();return n};
+  $('#iLista').onclick=e=>{const b=e.target.closest('[data-x]');if(b){L.splice(+b.dataset.x,1);desenhar()}};
+  $('#iLista').onchange=e=>{const v=e.target.closest('[data-v]');if(v){L[+v.dataset.v].volumes=Math.min(999,Math.max(1,+v.value||1));desenhar()}};
+  $('#iTam').onchange=e=>{tam=e.target.value;try{localStorage.setItem('etq_tam',tam)}catch{}desenhar()};
+  $('#iDacte').addEventListener('keydown',async e=>{if(e.key!=='Enter')return;e.preventDefault();const v=e.target.value.replace(/\D/g,'');e.target.value='';if(!v)return;
+    if(v.length!==44){aviso('Isso não é o código do DACTE (44 dígitos).');return}
+    try{const r=await api('POST','/api/painel/conferencia/etiquetas/ctes',{chaves:[v]});if(!r.rows.length){aviso('O SSW não devolveu este CT-e.');return}somar(r.rows);aviso('CT-e '+r.rows[0].ctrc+' · NF '+r.rows[0].nf+' · '+r.rows[0].volumes+' volume(s).','ok')}catch(er){aviso(er.message)}});
+  $('#iXml').onchange=async e=>{let n=0,ruins=0;for(const f of e.target.files){try{const it=lerXml(await f.text());if(!it.length)ruins++;n+=somar(it)}catch{ruins++}}e.target.value='';
+    aviso(n+' nota(s) incluída(s).'+(ruins?' '+ruins+' arquivo(s) não são XML de NF-e ou CT-e.':''),ruins?'err':'ok')};
+  $('#iImp').onclick=()=>{
+    const [W,H]=TAMANHOS[tam];let h='';for(const x of L)for(let v=1;v<=x.volumes;v++)h+=htmlEtq(x,v,tam,setorDe(x.cidade));
+    let box=$('#impressao');if(!box){box=document.createElement('div');box.id='impressao';document.body.appendChild(box)}
+    box.innerHTML='<style>@page{size:'+W+'mm '+H+'mm;margin:0}</style>'+h;
+    document.body.classList.add('imprimindo');setTimeout(()=>{print();document.body.classList.remove('imprimindo')},50);
+  };
+  desenhar();$('#iDacte').focus();
 }
 // ---------------- relatório do galpão: por rota e só os CT-es em rota errada
 const SIT_ROTA={nao_conferida:'não conferida',em_andamento:'em andamento',fechada:'fechada'};
@@ -295,7 +393,7 @@ function desenhar(d){
   const out=d.esperado.filter(e=>!e.parceiro);
   $('#dOutros').hidden=!out.length;
   $('#sOutros').textContent='CT-es sem etiqueta reconhecida: '+n(d.outros.ctes)+' CT-e(s), '+n(d.outros.volumes)+' volume(s)';
-  $('#outros').innerHTML='<div class="muted" style="margin:4px 0 8px">Se a etiqueta foi lida mas deu "não tem CT-e", o nome do cliente no CT-e é diferente do cadastrado. Toque no nome certo (remetente ou pagador) e escolha a etiqueta: o CT-e passa a ser dela e as leituras são refeitas.</div>'+tabelaCtes(out,true);
+  $('#outros').innerHTML='<button class="btn" id="bImpOut" type="button" style="width:100%;margin:6px 0">🖨 Imprimir etiquetas para estes CT-es</button><div class="muted" style="margin:4px 0 8px">Se a etiqueta foi lida mas deu "não tem CT-e", o nome do cliente no CT-e é diferente do cadastrado. Toque no nome certo (remetente ou pagador) e escolha a etiqueta: o CT-e passa a ser dela e as leituras são refeitas.</div>'+tabelaCtes(out,true);
   $('#esperados').innerHTML=tabelaCtes(d.esperado);
   if(d.leituras)$('#leituras').innerHTML=d.leituras.map(l=>'<div class="lei"><div><code>'+esc(l.codigo)+'</code> '+(l.situacao==='nao_reconhecido'&&aberta?'<button class="chip r" style="border:0;cursor:pointer" data-ensina="'+esc(l.codigo)+'">não reconhecida · ensinar</button>':'<span class="chip '+(COR[l.situacao]||'')+'">'+esc(ROT[l.situacao]||l.situacao)+'</span>')+'<br><small>'+esc([l.parceiro,l.ctrc].filter(Boolean).join(' · '))+' · '+hr(l.criado_em)+' · '+esc(l.usuario)+'</small></div>'+(aberta?'<button data-desf="'+l.id+'">Desfazer</button>':'')+'</div>').join('')||'<div class="muted">Nenhuma leitura.</div>';
   filaMostrar();

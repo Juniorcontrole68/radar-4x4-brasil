@@ -30,7 +30,7 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
   const api=async(method,url,body)=>{const x=await fetch(B+url,{method,headers:{Cookie:cookie,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});let j=null;try{j=await x.json()}catch{}return{status:x.status,j}};
   check('sem login -> 401',(await fetch(B+'/api/painel/conferencia/sessoes')).status===401);
   r=await api('GET','/api/painel/conferencia/formatos');
-  check('formatos padrão criados',r.status===200&&r.j.formatos.length===5,r.j);
+  check('formatos padrão criados',r.status===200&&r.j.formatos.length===6,r.j);
   const rows=[
     {ctrc:'AMS001045-6',nf:'113025',volumes:2,chave:dacte,destinatario:'LEIRSON',nomes:['QUADRI COMERCIO','TRANSBARBOSA LOGISTICA']},
     {ctrc:'AMS001046-4',nf:'7610',volumes:1,nomes:['MOVEIS CARRARO','TRANSBARBOSA LOGISTICA']},
@@ -254,6 +254,19 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
   check('  ...CT-e virou Conasid e a caixa contou',r.j.parceiros.find(p=>p.parceiro==='Conasid').lidos===1&&r.j.totais.excesso===0,r.j.parceiros);
   r=await api('POST','/api/painel/conferencia/formatos/ligar',{formato:'Nada',termo:'XYZ ABC'});
   check('  ...etiqueta que não existe: 404',r.status===404,r.j);
+  console.log('Etiqueta Construlog (impressa para caixas sem etiqueta)');
+  check('código da etiqueta própria traz a NF',conf.codigoPropria('326435',1,10)==='CL0000326435001010'&&c('CL0000326435001010').nf==='326435'&&c('CL0000326435001010').parceiro==='Etiqueta Construlog');
+  r=await api('POST','/api/painel/conferencia/sessoes',{tipo:'contagem',dia:'2026-01-06',rows:[{ctrc:'AMS006000-1',nf:'4455',volumes:2,cidade:'MOGI GUACU',nomes:['LOJA SEM ETIQUETA']},{ctrc:'AMS006001-0',nf:'4456',volumes:1,cidade:'MOGI GUACU',nomes:['CONASID IND']}]});
+  const g6=r.j.id,l6=x=>api('POST','/api/painel/conferencia/sessoes/'+g6+'/leituras',{codigo:x});
+  r=await api('GET','/api/painel/conferencia/sessoes/'+g6);
+  check('  ...grupo da etiqueta própria só aparece depois de bipar',!r.j.parceiros.some(p=>p.parceiro==='Etiqueta Construlog'),r.j.parceiros);
+  r=await l6(conf.codigoPropria('4455',1,2));check('  ...conta para o CT-e da nota',r.j.situacao==='ok'&&r.j.ctrc==='AMS006000-1'&&r.j.parceiro==='Etiqueta Construlog'&&r.j.progresso.esperado===2,r.j);
+  r=await l6(conf.codigoPropria('4455',1,2));check('  ...a mesma etiqueta duas vezes: repetida',r.j.situacao==='duplicado',r.j);
+  r=await l6(conf.codigoPropria('4456',1,1));check('  ...nota de CT-e com parceiro conta para ele',r.j.situacao==='ok'&&r.j.parceiro==='Conasid'&&r.j.ctrc==='AMS006001-0',r.j);
+  r=await l6(conf.codigoPropria('999',1,1));check('  ...nota que não está no galpão: NF fora',r.j.situacao==='nf_fora'&&/NF 999/.test(r.j.mensagem),r.j);
+  r=await api('POST','/api/painel/conferencia/etiquetas/ctes',{chaves:['35261100000000000000570010000030001000000001'],rows:[{ctrc:'AMS003000-1',nf:'00326435',volumes:3,destinatario:'LOJA',cidade:'MOGI GUACU',nomes:['SIKA']}]});
+  check('dados do CT-e pelo DACTE para imprimir',r.status===200&&r.j.rows[0].nf==='326435'&&r.j.rows[0].remetente==='SIKA',r.j);
+  check('  ...código que não é DACTE é recusado',(await api('POST','/api/painel/conferencia/etiquetas/ctes',{chaves:['123']})).status===400);
   const html=await (await fetch(B+'/conferencia',{headers:{Cookie:cookie}})).text();
   check('tela /conferencia abre com login',html.includes('Conferência de carga')&&html.includes('/api/painel/conferencia/sessoes'));
   check('tela /conferencia sem login vai para o login',(await fetch(B+'/conferencia',{redirect:'manual'})).status===302);

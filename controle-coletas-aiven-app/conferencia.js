@@ -9,6 +9,9 @@
 //   Leal Dutra    número do pedido (6 dígitos), igual em todos os volumes: só conta
 //   Comercial Leal QR de 23 dígitos, um por volume: NF (12) + 0 + 1001 + volume (3) + total (3),
 //                 ex.: 00000032643501001013043 = NF 326435, volume 13 de 43 (o texto impresso embaixo é só o começo)
+//   Etiqueta Construlog: a nossa, impressa na Elgin para as caixas sem etiqueta do cliente (tela de etiquetas):
+//                 Code 128 "CL" + NF (10) + volume (3) + total (3), ex.: CL0000326435001010. Traz a NF: o volume conta
+//                 para o CT-e da nota (parceiro dele, ou o grupo "Etiqueta Construlog" se o CT-e não tem parceiro).
 //   FCB / JT / THM 14 dígitos começando com 203818 (código de barras na vertical), um por volume. FCB Brasil
 //                 Transportes, JT Transportes e THM são o mesmo cliente (remetente Construdecor)
 // A etiqueta não traz NF nem CT-e: a conferência fecha por parceiro (esperado = soma dos volumes dos CT-es dele).
@@ -52,10 +55,13 @@ const FORMATOS_PADRAO = [
   { nome: 'Leal Dutra', padrao: '^\\d{6}$', termos: 'LEAL DUTRA', por_volume: false },
   { nome: 'Comercial Leal', padrao: '^(?<nf>\\d{12})0\\d{10}$', termos: 'COMERCIAL LEAL', por_volume: true },
   { nome: 'FCB / JT / THM', padrao: '^203818\\d{8}$', termos: 'FCB, JT TRANSP, CONSTRUDECOR', por_volume: true },
+  { nome: 'Etiqueta Construlog', padrao: '^CL(?<nf>\\d{10})\\d{6}$', termos: '', por_volume: true },
 ];
+const PROPRIA = 'Etiqueta Construlog';
+const codigoPropria = (nf, vol, tot) => 'CL' + String(nf).replace(/\D/g, '').slice(-10).padStart(10, '0') + String(vol).padStart(3, '0') + String(tot).padStart(3, '0');
 // Formatos que entraram depois: são acrescentados a quem já tinha a lista (se não houver um com o mesmo nome;
 // para não usar, o administrador desliga).
-const FORMATOS_ACRESCIDOS = ['Comercial Leal', 'FCB / JT / THM'];
+const FORMATOS_ACRESCIDOS = ['Comercial Leal', 'FCB / JT / THM', PROPRIA];
 const TIPOS = ['descarga', 'carregamento', 'contagem'];
 
 async function ensureSchema(pool) {
@@ -487,10 +493,10 @@ async function resumo(db, cli, id) {
   const nomes = [...new Set(fs.filter(f => f.ativo).map(f => f.nome).concat(esp.map(e => e.parceiro).filter(Boolean)).concat(lei.map(l => l.parceiro).filter(Boolean)))];
   const conta = (p, sit) => lei.filter(l => l.parceiro === p && (!sit || sit.includes(l.situacao))).reduce((a, l) => a + l.n, 0);
   const parceiros = nomes.map(p => {
-    const ctes = esp.filter(e => e.parceiro === p), esperado = ctes.reduce((a, e) => a + e.volumes, 0);
+    const ctes = esp.filter(e => p === PROPRIA ? !e.parceiro : e.parceiro === p), esperado = ctes.reduce((a, e) => a + e.volumes, 0);
     const lidos = conta(p, ['ok']), excesso = conta(p, ['excesso', 'sobra', 'nf_fora', 'rota_errada']), repetidos = conta(p, ['duplicado']);
     return { parceiro: p, ctes: ctes.length, esperado, lidos, faltam: Math.max(0, esperado - lidos), excesso, repetidos, completo: esperado > 0 && lidos >= esperado };
-  }).filter(p => p.ctes || p.lidos || p.excesso || p.repetidos);
+  }).filter(p => p.parceiro === PROPRIA ? p.lidos || p.excesso || p.repetidos : p.ctes || p.lidos || p.excesso || p.repetidos);
   const outros = esp.filter(e => !e.parceiro);
   const t = k => parceiros.reduce((a, p) => a + p[k], 0);
   return {
@@ -558,11 +564,15 @@ async function ler(pool, cli, user, id, b, lerSsw) {
       }
     }
     if (situacao === 'rota_errada') { /* já resolvido */ }
-    else if (c.tipo === 'volume' && c.nf && (s.tipo === 'carregamento' || s.pai_id) && !(await db.query("SELECT 1 FROM conf_esperado WHERE sessao_id=$1 AND ltrim(nf,'0')=$2", [id, c.nf])).rowCount) {
+    else if (c.tipo === 'volume' && c.nf && (s.tipo === 'carregamento' || s.pai_id || c.parceiro === PROPRIA) && !(await db.query("SELECT 1 FROM conf_esperado WHERE sessao_id=$1 AND ltrim(nf,'0')=$2", [id, c.nf])).rowCount) {
       parceiro = c.parceiro; situacao = 'nf_fora';   // etiqueta com NF de nota que não está nesta carga/rota
     } else if (c.tipo === 'volume') {
       parceiro = c.parceiro;
-      const esperado = Number((await db.query('SELECT COALESCE(SUM(volumes),0)::int AS v FROM conf_esperado WHERE sessao_id=$1 AND parceiro=$2', [id, parceiro])).rows[0].v);
+      if (parceiro === PROPRIA && c.nf) {   // nossa etiqueta: o volume é do CT-e da nota
+        const e = (await db.query("SELECT ctrc,parceiro FROM conf_esperado WHERE sessao_id=$1 AND ltrim(nf,'0')=$2 LIMIT 1", [id, c.nf])).rows[0];
+        if (e) { ctrc = e.ctrc; parceiro = e.parceiro || PROPRIA; }
+      }
+      const esperado = Number((await db.query('SELECT COALESCE(SUM(volumes),0)::int AS v FROM conf_esperado WHERE sessao_id=$1 AND parceiro=$2', [id, parceiro === PROPRIA ? '' : parceiro])).rows[0].v);
       const lidos = Number((await db.query("SELECT COUNT(*)::int AS n FROM conf_leituras WHERE sessao_id=$1 AND parceiro=$2 AND situacao='ok' AND desfeita_em IS NULL", [id, parceiro])).rows[0].n);
       const repetido = c.por_volume && (await db.query("SELECT 1 FROM conf_leituras WHERE sessao_id=$1 AND codigo=$2 AND situacao IN ('ok','excesso','sobra') AND desfeita_em IS NULL LIMIT 1", [id, c.codigo])).rowCount;
       if (repetido) situacao = 'duplicado';
@@ -780,6 +790,17 @@ async function handle(req, res, u, deps) {
       const fs = compilar(await formatos(pool, cli));
       return sendJson(res, 200, { ok: true, padrao: inf.padrao, atual: inf.exemplos.map(e => { const c = classificar(fs, e); return { codigo: e, tipo: c.tipo, parceiro: c.parceiro || '' }; }) }), true;
     }
+    if (p === '/etiquetas/ctes' && req.method === 'POST') {   // DACTEs bipados -> dados do CT-e para imprimir a etiqueta
+      const b = await readJsonBodyLimited(req, 64 * 1024);
+      const chaves = [...new Set((Array.isArray(b.chaves) ? b.chaves : []).map(c => String(c || '').replace(/\D/g, '')).filter(c => c.length === 44))].slice(0, 100);
+      if (!chaves.length) return sendJson(res, 400, { ok: false, error: 'Bipe o código de barras do DACTE (chave de 44 dígitos).' }), true;
+      let rows;
+      if (testMode && Array.isArray(b.rows)) rows = b.rows;
+      else if (!lerSsw) return sendJson(res, 503, { ok: false, error: 'A leitura do SSW não está disponível neste servidor.' }), true;
+      else rows = (await lerSsw('ssw-ctes', { chaves })).rows || [];
+      return sendJson(res, 200, { ok: true, rows: rows.map(r => ({ ctrc: limpo(r.ctrc, 20), nf: String(r.nf || '').replace(/\D/g, '').replace(/^0+/, ''), volumes: Number(r.volumes) || 0,
+        destinatario: limpo(r.destinatario, 80), cidade: limpo(r.cidade, 60), remetente: limpo((r.nomes || [])[0], 80), chave: String(r.chave || r.chave_parceiro || '').replace(/\D/g, '') })) }), true;
+    }
     if (p === '/formatos/ligar' && req.method === 'POST') {
       const b = await readJsonBodyLimited(req, 4 * 1024);
       return sendJson(res, 200, { ok: true, ...(await ligarNome(pool, cli, b)) }), true;
@@ -856,4 +877,4 @@ async function handle(req, res, u, deps) {
   }
 }
 
-module.exports = { ensureSchema, handle, classificar, variantesCode39, relatorioGalpao, alertasNf, compilar, parceiroDoCte, inferirPadrao, rotasDa404, janelaDescarga, FORMATOS_PADRAO, formatos, criarSessao, ler, resumo };
+module.exports = { ensureSchema, handle, classificar, codigoPropria, PROPRIA, variantesCode39, relatorioGalpao, alertasNf, compilar, parceiroDoCte, inferirPadrao, rotasDa404, janelaDescarga, FORMATOS_PADRAO, formatos, criarSessao, ler, resumo };
