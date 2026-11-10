@@ -7,6 +7,8 @@
 //   Transbarbosa  14 dígitos começando com 465701, um código por volume
 //   Conasid       12 dígitos começando com 001000, um código por volume
 //   Leal Dutra    número do pedido (6 dígitos), igual em todos os volumes: só conta
+//   Comercial Leal QR de 23 dígitos, um por volume: NF (12) + 0 + 1001 + volume (3) + total (3),
+//                 ex.: 00000032643501001013043 = NF 326435, volume 13 de 43 (o texto impresso embaixo é só o começo)
 // A etiqueta não traz NF nem CT-e: a conferência fecha por parceiro (esperado = soma dos volumes dos CT-es dele).
 // DACTE (chave de 44 dígitos) também pode ser bipado: marca o CT-e como documento conferido, não conta volume.
 //
@@ -35,7 +37,11 @@ const FORMATOS_PADRAO = [
   { nome: 'Transbarbosa', padrao: '^465701\\d{8}$', termos: 'TRANSBARBOSA', por_volume: true },
   { nome: 'Conasid', padrao: '^001000\\d{6}$', termos: 'CONASID', por_volume: true },
   { nome: 'Leal Dutra', padrao: '^\\d{6}$', termos: 'LEAL DUTRA', por_volume: false },
+  { nome: 'Comercial Leal', padrao: '^\\d{12}0\\d{10}$', termos: 'COMERCIAL LEAL', por_volume: true },
 ];
+// Formatos que entraram depois: são acrescentados a quem já tinha a lista (se não houver um com o mesmo nome;
+// para não usar, o administrador desliga).
+const FORMATOS_ACRESCIDOS = ['Comercial Leal'];
 const TIPOS = ['descarga', 'carregamento', 'contagem'];
 
 async function ensureSchema(pool) {
@@ -73,6 +79,12 @@ async function formatos(db, cli) {
   if (!q.rowCount) {
     for (const [i, f] of FORMATOS_PADRAO.entries())
       await db.query('INSERT INTO conf_formatos(client_id,nome,padrao,termos,por_volume,ordem) VALUES($1,$2,$3,$4,$5,$6)', [cli, f.nome, f.padrao, f.termos, f.por_volume, i]);
+    q = await db.query('SELECT id::text,nome,padrao,termos,por_volume,ativo,ordem FROM conf_formatos WHERE client_id IS NOT DISTINCT FROM $1 ORDER BY ordem,id', [cli]);
+  }
+  const faltam = FORMATOS_PADRAO.filter(f => FORMATOS_ACRESCIDOS.includes(f.nome) && !q.rows.some(r => r.nome === f.nome));
+  if (faltam.length) {
+    let ordem = Math.max(0, ...q.rows.map(r => r.ordem)) + 1;
+    for (const f of faltam) await db.query('INSERT INTO conf_formatos(client_id,nome,padrao,termos,por_volume,ordem) VALUES($1,$2,$3,$4,$5,$6)', [cli, f.nome, f.padrao, f.termos, f.por_volume, ordem++]);
     q = await db.query('SELECT id::text,nome,padrao,termos,por_volume,ativo,ordem FROM conf_formatos WHERE client_id IS NOT DISTINCT FROM $1 ORDER BY ordem,id', [cli]);
   }
   return q.rows;
