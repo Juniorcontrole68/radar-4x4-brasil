@@ -139,7 +139,8 @@ async function inicio(){
       '<div class="linha"><label>Ou digite o romaneio<input id="nRom" placeholder="AMR001186-0" autocapitalize="characters"></label></div><button class="btn p" id="nRomOk">Começar pelo romaneio</button></div>'+
       '<div class="card"><b>Novo carregamento bipando os CT-es</b><div class="muted">Bipe primeiro os DACTEs dos CT-es que vão no caminhão (cada um entra na carga) e depois os volumes.</div>'+
       '<div class="linha"><label>Placa (opcional)<input id="nPlaca" placeholder="ABC1D23" autocapitalize="characters" maxlength="8"></label></div><button class="btn p" id="nCteOk">Começar bipando os DACTEs</button></div>';
-  render(abas+novo+'<div class="aviso" id="aviso" hidden></div><b>'+(TIPO==='descarga'?'Descargas':TIPO==='contagem'?'Conferências do galpão':'Carregamentos')+'</b><div class="lst" id="lista"><div class="muted">carregando…</div></div>');
+  render(abas+novo+'<button class="btn" id="bEtq">🏷 Etiquetas dos clientes (ensinar etiqueta nova)</button><div class="aviso" id="aviso" hidden></div><b>'+(TIPO==='descarga'?'Descargas':TIPO==='contagem'?'Conferências do galpão':'Carregamentos')+'</b><div class="lst" id="lista"><div class="muted">carregando…</div></div>');
+  $('#bEtq').onclick=()=>etiquetas();
   document.querySelectorAll('[data-tipo]').forEach(b=>b.onclick=()=>{TIPO=b.dataset.tipo;try{localStorage.setItem('conf_tipo',TIPO)}catch{}inicio()});
   const criar=async(btn,corpo,txt)=>{const t0=btn.textContent;btn.disabled=true;btn.textContent=txt;
     try{const r=await api('POST','/api/painel/conferencia/sessoes',corpo);abrir(r.id)}catch(e){aviso(e.message);btn.disabled=false;btn.textContent=t0}};
@@ -165,7 +166,7 @@ async function abrir(id){
   render('<button class="voltar" id="voltar">← Conferências</button>'+
     '<div class="leitura" id="caixaLeitura"><input id="cod" autocomplete="off" autocapitalize="characters" inputmode="text" placeholder="Bipe a etiqueta ou o DACTE"><button type="button" id="bCam" aria-label="Ler pela câmera">📷</button></div>'+
     '<video id="video" playsinline muted hidden></video>'+
-    '<div class="sinal" id="sinal">Pronto para bipar</div><div class="aviso" id="aviso" hidden></div>'+
+    '<div class="sinal" id="sinal">Pronto para bipar</div><button class="btn" id="bEnsinar" hidden>🏷 Ensinar esta etiqueta</button><div class="aviso" id="aviso" hidden></div>'+
     '<div class="card" id="dica" hidden><b>1º bipe os DACTEs</b><div class="muted">Cada DACTE bipado coloca o CT-e na carga, com os volumes do SSW. Depois bipe os volumes: o que não for desses CT-es aparece em vermelho, NÃO CARREGAR.</div></div>'+
     '<div class="card" id="cMot" hidden><b>📱 Conferência pelo celular do motorista</b><div class="muted">O motorista abre o link e só bipa as caixas: não desfaz, não tira CT-e e não fecha. Vale só para esta carga.</div><div id="motEstado" class="muted"></div><div class="linha" id="motAcoes"><button class="btn p" id="bMot">Gerar link para o motorista</button></div></div>'+
     '<div class="totais" id="totais"></div><div class="lst" id="parceiros"></div>'+
@@ -174,6 +175,7 @@ async function abrir(id){
     '<details><summary>CT-es esperados</summary><div id="esperados" style="overflow:auto"></div></details>'+
     '<div class="linha" id="acoes"><button class="btn" id="bRec">Atualizar CT-es do SSW</button><button class="btn d" id="bFechar">Fechar conferência</button></div>');
   $('#voltar').onclick=inicio;
+  $('#bEnsinar').onclick=()=>etiquetas($('#bEnsinar').dataset.codigo,id);
   $('#bCam').onclick=()=>camera(!stream);
   const cod=$('#cod');
   cod.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();const v=cod.value.trim();cod.value='';if(v)registrar(v)}});
@@ -184,7 +186,8 @@ async function abrir(id){
   $('#bFechar').onclick=fecharConf;
   $('#bMot').onclick=linkMotorista;
   document.addEventListener('click',tirarCte);
-  $('#leituras').onclick=async e=>{const b=e.target.closest('[data-desf]');if(!b)return;if(!confirm('Desfazer esta leitura?'))return;try{await api('DELETE','/api/painel/conferencia/sessoes/'+id+'/leituras/'+b.dataset.desf);atualizar()}catch(er){aviso(er.message)}};
+  $('#leituras').onclick=async e=>{const en=e.target.closest('[data-ensina]');if(en){etiquetas(en.dataset.ensina,id);return}
+    const b=e.target.closest('[data-desf]');if(!b)return;if(!confirm('Desfazer esta leitura?'))return;try{await api('DELETE','/api/painel/conferencia/sessoes/'+id+'/leituras/'+b.dataset.desf);atualizar()}catch(er){aviso(er.message)}};
   await atualizar();
   clearInterval(S.timer);S.timer=setInterval(()=>{if(!document.hidden&&S.id===id)atualizar()},10000);   // outros coletores na mesma carga
 }
@@ -213,12 +216,69 @@ function desenhar(d){
   $('#sOutros').textContent='CT-es sem etiqueta reconhecida: '+n(d.outros.ctes)+' CT-e(s), '+n(d.outros.volumes)+' volume(s)';
   $('#outros').innerHTML=tabelaCtes(out);
   $('#esperados').innerHTML=tabelaCtes(d.esperado);
-  if(d.leituras)$('#leituras').innerHTML=d.leituras.map(l=>'<div class="lei"><div><code>'+esc(l.codigo)+'</code> <span class="chip '+(COR[l.situacao]||'')+'">'+esc(ROT[l.situacao]||l.situacao)+'</span><br><small>'+esc([l.parceiro,l.ctrc].filter(Boolean).join(' · '))+' · '+hr(l.criado_em)+' · '+esc(l.usuario)+'</small></div>'+(aberta?'<button data-desf="'+l.id+'">Desfazer</button>':'')+'</div>').join('')||'<div class="muted">Nenhuma leitura.</div>';
+  if(d.leituras)$('#leituras').innerHTML=d.leituras.map(l=>'<div class="lei"><div><code>'+esc(l.codigo)+'</code> '+(l.situacao==='nao_reconhecido'&&aberta?'<button class="chip r" style="border:0;cursor:pointer" data-ensina="'+esc(l.codigo)+'">não reconhecida · ensinar</button>':'<span class="chip '+(COR[l.situacao]||'')+'">'+esc(ROT[l.situacao]||l.situacao)+'</span>')+'<br><small>'+esc([l.parceiro,l.ctrc].filter(Boolean).join(' · '))+' · '+hr(l.criado_em)+' · '+esc(l.usuario)+'</small></div>'+(aberta?'<button data-desf="'+l.id+'">Desfazer</button>':'')+'</div>').join('')||'<div class="muted">Nenhuma leitura.</div>';
   filaMostrar();
 }
 function tabelaCtes(l){
   const tira=S.dados&&S.dados.sessao.tipo==='carregamento'&&S.dados.sessao.status==='aberta';
   return l.length?'<table><thead><tr><th>CT-e</th><th>NF</th><th>Vol.</th><th>Parceiro</th><th>Destinatário</th><th>DACTE</th>'+(tira?'<th></th>':'')+'</tr></thead><tbody>'+l.map(e=>'<tr><td>'+esc(e.ctrc)+'</td><td>'+esc(e.nf)+'</td><td>'+n(e.volumes)+'</td><td>'+esc(e.parceiro||'—')+'</td><td>'+esc(e.destinatario)+'</td><td>'+(e.dacte_lido_em?'✓':'')+'</td>'+(tira?'<td><button class="chip r" style="border:0;cursor:pointer" data-tira="'+esc(e.ctrc)+'">tirar</button></td>':'')+'</tr>').join('')+'</tbody></table>':'<div class="muted">Nenhum.</div>'}
+
+// ---------------- etiquetas: ensinar o formato de um cliente novo e ver/ajustar os cadastrados
+async function etiquetas(codigo,voltarSessao){
+  camera(false);S.id=null;clearInterval(S.timer);document.removeEventListener('click',focoCampo);
+  $('#titulo').textContent='Etiquetas dos clientes';$('#sub').textContent='Valem para Descarga, Carregamento e Galpão';
+  const E={ex:codigo?[String(codigo).replace(/\s+/g,'').toUpperCase()]:[],pv:true,editado:false};
+  const voltar=()=>voltarSessao?abrir(voltarSessao):inicio();
+  render('<button class="voltar" id="voltar">← '+(voltarSessao?'Voltar para a conferência':'Conferências')+'</button>'+
+    '<div class="card"><b>Ensinar etiqueta nova</b><div class="muted">Bipe a etiqueta do cliente (de preferência de 2 ou 3 caixas diferentes) e diga de quem é. Daí em diante ela é reconhecida na Descarga, no Carregamento e no Galpão, e as leituras "não reconhecida" das conferências abertas são refeitas.</div>'+
+      '<div class="leitura"><input id="eCod" autocomplete="off" autocapitalize="characters" placeholder="Bipe a etiqueta"></div>'+
+      '<div class="chips" id="eEx"></div><div id="eAtual" class="muted"></div>'+
+      '<label>Cliente (como vai aparecer na conferência)<input id="eNome" list="eNomes" placeholder="Ex.: Já Transportes" maxlength="60"></label><datalist id="eNomes"></datalist>'+
+      '<label>Como o nome aparece no CT-e do SSW (remetente ou pagador). Pode pôr mais de um, separados por vírgula<input id="eTermos" placeholder="Ex.: JA TRANSPORTES" maxlength="300" style="font-size:16px"></label>'+
+      '<div class="linha" style="gap:8px"><button class="btn p" id="ePv1" type="button">Cada caixa tem um código diferente</button><button class="btn" id="ePv0" type="button">O mesmo código em todas as caixas</button></div>'+
+      '<label>Padrão reconhecido (gerado sozinho; só mude se souber)<input id="ePad" style="font:600 15px monospace"></label>'+
+      '<button class="btn p" id="eOk">Salvar etiqueta</button></div>'+
+    '<div class="aviso" id="aviso" hidden></div>'+
+    '<div class="card"><b>Testar um código</b><div class="leitura"><input id="tCod" autocomplete="off" autocapitalize="characters" placeholder="Bipe para ver de quem é"></div><div id="tRes" class="muted"></div></div>'+
+    '<b>Etiquetas cadastradas</b><div class="lst" id="eLista"><div class="muted">carregando…</div></div>');
+  $('#voltar').onclick=voltar;
+  let F={formatos:[],pode_editar:false};
+  const lista=async()=>{F=await api('GET','/api/painel/conferencia/formatos');
+    $('#eNomes').innerHTML=[...new Set(F.formatos.map(f=>f.nome))].map(x=>'<option value="'+esc(x)+'">').join('');
+    $('#eLista').innerHTML=F.formatos.map((f,i)=>'<div class="lei"><div><b>'+esc(f.nome)+'</b>'+(f.ativo?'':' <span class="chip a">desligada</span>')+'<br><small><code>'+esc(f.padrao)+'</code> · '+(f.por_volume?'um código por caixa':'mesmo código em todas as caixas')+' · CT-e com: '+esc(f.termos||'—')+'</small></div>'+
+      (F.pode_editar?'<div style="display:flex;gap:6px"><button data-liga="'+i+'">'+(f.ativo?'Desligar':'Ligar')+'</button><button data-exclui="'+i+'">Excluir</button></div>':'')+'</div>').join('')||'<div class="muted">Nenhuma.</div>'};
+  const salvarTodos=async l=>{try{await api('PUT','/api/painel/conferencia/formatos',{formatos:l});await lista();aviso('Etiquetas salvas.','ok')}catch(e){aviso(e.message)}};
+  $('#eLista').onclick=e=>{const a=e.target.closest('[data-liga]'),t=e.target.closest('[data-exclui]');
+    if(a){const l=F.formatos.map(f=>({...f}));l[+a.dataset.liga].ativo=!l[+a.dataset.liga].ativo;salvarTodos(l)}
+    if(t){const f=F.formatos[+t.dataset.exclui];if(confirm('Excluir a etiqueta de '+f.nome+' ('+f.padrao+')?'))salvarTodos(F.formatos.filter((_,i)=>i!==+t.dataset.exclui))}};
+  const sugerir=async()=>{
+    $('#eEx').innerHTML=E.ex.map((x,i)=>'<button class="chip" style="border:0;cursor:pointer" data-x="'+i+'">'+esc(x)+' ✕</button>').join('');
+    $('#ePv1').className='btn'+(E.pv?' p':'');$('#ePv0').className='btn'+(E.pv?'':' p');
+    if(!E.ex.length){$('#eAtual').textContent='';if(!E.editado)$('#ePad').value='';return}
+    try{const r=await api('POST','/api/painel/conferencia/formatos/sugerir',{exemplos:E.ex,por_volume:E.pv});
+      if(!E.editado)$('#ePad').value=r.padrao;
+      $('#eAtual').innerHTML=r.atual.filter(a=>a.tipo!=='desconhecido').map(a=>'<span style="color:#fbbf24">'+esc(a.codigo)+(a.tipo==='volume'?' já é reconhecida como <b>'+esc(a.parceiro)+'</b>':' é a chave de um '+esc(a.tipo.toUpperCase())+', não a etiqueta')+'</span>').join('<br>')||(E.ex.length===1&&E.pv?'Se puder, bipe a etiqueta de mais uma caixa: o padrão fica mais certo.':'')
+    }catch(e){aviso(e.message)}};
+  $('#eEx').onclick=e=>{const b=e.target.closest('[data-x]');if(b){E.ex.splice(+b.dataset.x,1);sugerir()}};
+  $('#eCod').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();const v=e.target.value.replace(/\s+/g,'').toUpperCase();e.target.value='';if(v&&!E.ex.includes(v)&&E.ex.length<10){E.ex.push(v);sugerir()}}});
+  $('#ePv1').onclick=()=>{E.pv=true;sugerir()};$('#ePv0').onclick=()=>{E.pv=false;sugerir()};
+  $('#ePad').oninput=()=>{E.editado=true};
+  $('#eNome').oninput=()=>{const f=F.formatos.find(x=>x.nome.toUpperCase()===$('#eNome').value.trim().toUpperCase());if(f&&!$('#eTermos').value)$('#eTermos').value=f.termos};
+  $('#tCod').addEventListener('keydown',async e=>{if(e.key!=='Enter')return;e.preventDefault();const v=e.target.value.trim();e.target.value='';if(!v)return;
+    try{const r=await api('POST','/api/painel/conferencia/formatos/sugerir',{exemplos:[v]});const a=r.atual[0];
+      $('#tRes').innerHTML='<code>'+esc(a.codigo)+'</code>: '+(a.tipo==='volume'?'<b style="color:#4ade80">'+esc(a.parceiro)+'</b>':a.tipo==='desconhecido'?'<b style="color:#f87171">não reconhecida</b>':esc(a.tipo.toUpperCase()))}catch(er){aviso(er.message)}});
+  $('#eOk').onclick=async()=>{const b=$('#eOk'),nome=$('#eNome').value.trim();
+    if(!E.ex.length){aviso('Bipe a etiqueta do cliente.');return}
+    if(!nome){aviso('Informe de qual cliente é a etiqueta.');return}
+    b.disabled=true;
+    try{const r=await api('POST','/api/painel/conferencia/formatos/ensinar',{nome,termos:$('#eTermos').value.trim(),exemplos:E.ex,por_volume:E.pv,padrao:$('#ePad').value.trim()});
+      aviso('Etiqueta de '+nome+' salva.'+(r.reaplicadas?' '+r.reaplicadas+' leitura(s) refeita(s) nas conferências abertas.':''),'ok');
+      E.ex=[];E.editado=false;$('#eNome').value='';$('#eTermos').value='';await sugerir();await lista();
+      if(voltarSessao)setTimeout(()=>{if(!S.id)voltar()},1500);
+    }catch(e){aviso(e.message)}finally{b.disabled=false}};
+  await lista();await sugerir();
+  $('#eCod').focus();
+}
 
 async function linkMotorista(){
   if(S.dados&&S.dados.sessao.motorista_link_em&&!confirm('Gerar um link novo? O link anterior para de funcionar.'))return;
@@ -245,6 +305,7 @@ async function registrar(codigo){
   try{
     const r=await api('POST','/api/painel/conferencia/sessoes/'+S.id+'/leituras',{codigo,uuid:x.uuid});
     sin.className='sinal '+r.sinal;sin.innerHTML=esc(r.mensagem)+'<small>'+esc(codigo)+'</small>';bip(r.sinal);
+    const be=$('#bEnsinar');if(be){be.hidden=r.situacao!=='nao_reconhecido';be.dataset.codigo=codigo}
     atualizar();
   }catch(e){
     if(!e.status){   // sem sinal: guarda e manda depois

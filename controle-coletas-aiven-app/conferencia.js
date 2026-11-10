@@ -95,6 +95,74 @@ async function salvarFormatos(db, cli, lista) {
   for (const f of ok) await db.query('INSERT INTO conf_formatos(client_id,nome,padrao,termos,por_volume,ativo,ordem) VALUES($1,$2,$3,$4,$5,$6,$7)', [cli, f.nome, f.padrao, f.termos, f.por_volume, f.ativo, f.ordem]);
 }
 
+// Ensinar etiqueta: a partir de 1 a 10 códigos bipados do mesmo cliente, monta o padrão (regex).
+//   prefixo fixo (letras do começo e, se cada caixa tem código próprio, os primeiros dígitos até 6, só o que é comum
+//   aos exemplos) + o resto pelo tipo de caractere e pelo tamanho.
+//   "Mesmo código em todas as caixas" (número do pedido) muda a cada carga: aí só ficam as letras do começo.
+const normCodigo = v => String(v || '').replace(/[\s\r\n\t]+/g, '').toUpperCase().slice(0, 120);
+const escRe = v => v.replace(/[.*+?^${}()|[\]\\\/-]/g, '\\$&');
+function inferirPadrao(exemplos, porVolume = true) {
+  const ex = [...new Set((Array.isArray(exemplos) ? exemplos : [exemplos]).map(normCodigo).filter(Boolean))].slice(0, 10);
+  if (!ex.length) throw erro(400, 'Bipe ao menos uma etiqueta do cliente.');
+  const min = Math.min(...ex.map(e => e.length)), max = Math.max(...ex.map(e => e.length));
+  const letras = (ex[0].match(/^[^0-9]*/) || [''])[0];
+  let pre;
+  if (!porVolume) pre = ex.every(e => e.startsWith(letras)) ? letras : '';
+  else if (ex.length === 1) pre = ex[0].slice(0, Math.max(letras.length, Math.min(6, Math.floor(ex[0].length / 2))));
+  else {
+    pre = ex[0];
+    for (const e of ex.slice(1)) { let i = 0; while (i < pre.length && i < e.length && pre[i] === e[i]) i++; pre = pre.slice(0, i); }
+    pre = pre.slice(0, Math.min(min - 2, Math.max(letras.length, Math.min(6, Math.floor(min / 2)))));   // volumes da mesma carga têm números seguidos
+  }
+  const restos = ex.map(e => e.slice(pre.length)).join('');
+  const classe = /^\d*$/.test(restos) ? '\\d' : /^[A-Z0-9]*$/.test(restos) ? '[A-Z0-9]' : '\\S';
+  const a = min - pre.length, b = max - pre.length;
+  const padrao = '^' + escRe(pre) + (b <= 0 ? '' : classe + (a === b ? '{' + a + '}' : '{' + a + ',' + b + '}')) + '$';
+  return { padrao, exemplos: ex };
+}
+
+// Formato novo ensinado no chão (qualquer usuário com acesso à Conferência). Entra no fim da lista: não muda o que
+// já é reconhecido. Depois reaplica nas conferências abertas (leituras "não reconhecida" e CT-es sem parceiro).
+async function ensinar(pool, cli, b) {
+  const nome = limpo(b.nome, 60);
+  if (!nome) throw erro(400, 'Informe o cliente desta etiqueta.');
+  const porVolume = b.por_volume !== false;
+  const inf = inferirPadrao(b.exemplos, porVolume);
+  const padrao = String(b.padrao || inf.padrao).trim().slice(0, 200);
+  let re; try { re = new RegExp(padrao); } catch { throw erro(400, 'Padrão inválido.'); }
+  const naoBate = inf.exemplos.filter(e => !re.test(e));
+  if (naoBate.length) throw erro(400, 'O padrão não reconhece a etiqueta ' + naoBate[0] + '.');
+  const fs = compilar(await formatos(pool, cli));
+  for (const e of inf.exemplos) {
+    const c = classificar(fs, e);
+    if (c.tipo === 'volume') throw erro(409, 'A etiqueta ' + e + ' já é reconhecida como ' + c.parceiro + '. Para trocar, o administrador ajusta o formato de ' + c.parceiro + '.');
+    if (c.tipo === 'dacte' || c.tipo === 'danfe') throw erro(400, 'Este código é a chave de um ' + c.tipo.toUpperCase() + ', não a etiqueta do cliente.');
+  }
+  const termos = limpo(b.termos, 300) || semAcento(nome);
+  const ordem = Number((await pool.query('SELECT COALESCE(MAX(ordem),0)+1 AS o FROM conf_formatos WHERE client_id IS NOT DISTINCT FROM $1', [cli])).rows[0].o);
+  await pool.query('INSERT INTO conf_formatos(client_id,nome,padrao,termos,por_volume,ordem) VALUES($1,$2,$3,$4,$5,$6)', [cli, nome, padrao, termos, porVolume, ordem]);
+  return { padrao, reaplicadas: await reaplicar(pool, cli) };
+}
+
+async function reaplicar(pool, cli) {
+  const fs = compilar(await formatos(pool, cli));
+  const abertas = (await pool.query("SELECT id::text FROM conf_sessoes WHERE client_id IS NOT DISTINCT FROM $1 AND status='aberta' AND criado_em > NOW() - INTERVAL '7 days'", [cli])).rows;
+  let n = 0;
+  for (const { id } of abertas) {
+    for (const e of (await pool.query("SELECT ctrc,nomes FROM conf_esperado WHERE sessao_id=$1 AND parceiro=''", [id])).rows) {
+      const p = parceiroDoCte(fs, [e.nomes]);
+      if (p) await pool.query('UPDATE conf_esperado SET parceiro=$3 WHERE sessao_id=$1 AND ctrc=$2', [id, e.ctrc, p]);
+    }
+    for (const l of (await pool.query("SELECT id,codigo,usuario FROM conf_leituras WHERE sessao_id=$1 AND situacao='nao_reconhecido' AND desfeita_em IS NULL ORDER BY id", [id])).rows) {
+      if (classificar(fs, l.codigo).tipo !== 'volume') continue;
+      await pool.query('UPDATE conf_leituras SET desfeita_em=NOW() WHERE id=$1', [l.id]);
+      await ler(pool, cli, { username: l.usuario }, id, { codigo: l.codigo }, null);
+      n++;
+    }
+  }
+  return n;
+}
+
 // CT-e -> parceiro pelos nomes do relatório (remetente, pagador, tomador...)
 function parceiroDoCte(fs, nomes) {
   const txt = semAcento((nomes || []).join(' | '));
@@ -442,6 +510,17 @@ async function handle(req, res, u, deps) {
       await salvarFormatos(pool, cli, b.formatos);
       return sendJson(res, 200, { ok: true, formatos: await formatos(pool, cli) }), true;
     }
+    if (p === '/formatos/sugerir' && req.method === 'POST') {
+      const b = await readJsonBodyLimited(req, 16 * 1024);
+      const inf = inferirPadrao(b.exemplos, b.por_volume !== false);
+      const fs = compilar(await formatos(pool, cli));
+      return sendJson(res, 200, { ok: true, padrao: inf.padrao, atual: inf.exemplos.map(e => { const c = classificar(fs, e); return { codigo: e, tipo: c.tipo, parceiro: c.parceiro || '' }; }) }), true;
+    }
+    if (p === '/formatos/ensinar' && req.method === 'POST') {
+      const b = await readJsonBodyLimited(req, 16 * 1024);
+      const r = await ensinar(pool, cli, b);
+      return sendJson(res, 201, { ok: true, ...r, formatos: await formatos(pool, cli) }), true;
+    }
     if (p === '/romaneios' && req.method === 'GET') {
       if (!lerSsw) return sendJson(res, 200, { ok: true, rows: [] }), true;
       return sendJson(res, 200, { ok: true, rows: (await lerSsw('ssw-romaneios', {})).rows || [] }), true;
@@ -489,4 +568,4 @@ async function handle(req, res, u, deps) {
   }
 }
 
-module.exports = { ensureSchema, handle, classificar, compilar, parceiroDoCte, janelaDescarga, FORMATOS_PADRAO, formatos, criarSessao, ler, resumo };
+module.exports = { ensureSchema, handle, classificar, compilar, parceiroDoCte, inferirPadrao, janelaDescarga, FORMATOS_PADRAO, formatos, criarSessao, ler, resumo };
