@@ -222,12 +222,17 @@ async function telaRotas(voltarSessao){
   const linha=(r,i)=>'<div class="card"><label>Nome da rota<input data-n="'+i+'" value="'+esc(r.nome)+'" maxlength="40" placeholder="Ex.: Rota 1 · Mogi Guaçu"></label><label>Cidades (separadas por vírgula)<textarea data-c="'+i+'" placeholder="MOGI GUACU, MOGI MIRIM, ESTIVA GERBI">'+esc(r.cidades)+'</textarea></label><button class="btn d" data-x="'+i+'" type="button">Tirar esta rota</button></div>';
   const tela=()=>{render('<button class="voltar" id="voltar">← Voltar</button>'+
     (semRota.length?'<div class="card"><b>Cidades no galpão que ainda não estão em nenhuma rota</b><div class="muted">Toque para pôr na última rota da lista.</div><div class="chips" id="semRota">'+semRota.map(c=>'<button class="chip a" style="border:0;cursor:pointer" data-sr="'+esc(c)+'">'+esc(c)+'</button>').join('')+'</div></div>':'')+
+    '<div class="card"><b>Importar os setores da opção 404 do SSW</b><div class="muted">Cada setor vira uma rota, pelo número que sai no DACTE. Escolha o arquivo do relatório (SETORES CADASTRADOS) ou cole o texto. Substitui as rotas abaixo.</div><input type="file" id="r404f" accept=".sswweb,.txt,text/plain" style="font-size:14px;padding:10px"><textarea id="r404" placeholder="ou cole aqui o relatório da 404"></textarea><button class="btn" id="r404ok" type="button">Importar setores</button></div>'+
     '<div class="lst" id="rotasCad">'+L.map(linha).join('')+'</div><button class="btn" id="rNova" type="button">+ Nova rota</button><div class="aviso" id="aviso" hidden></div><button class="btn p" id="rSalvar">Salvar rotas</button>');
     $('#voltar').onclick=voltar;
     const ler=()=>{document.querySelectorAll('[data-n]').forEach(x=>L[+x.dataset.n].nome=x.value);document.querySelectorAll('[data-c]').forEach(x=>L[+x.dataset.c].cidades=x.value)};
     $('#rNova').onclick=()=>{ler();L.push({nome:'',cidades:''});tela()};
     $('#rotasCad').onclick=e=>{const b=e.target.closest('[data-x]');if(b){ler();L.splice(+b.dataset.x,1);tela()}};
     const sr=$('#semRota');if(sr)sr.onclick=e=>{const b=e.target.closest('[data-sr]');if(!b)return;ler();if(!L.length)L.push({nome:'',cidades:''});const u=L[L.length-1];u.cidades=(u.cidades?u.cidades.replace(/[,\s]+$/,'')+', ':'')+b.dataset.sr;semRota=semRota.filter(c=>c!==b.dataset.sr);tela()};
+    $('#r404f').onchange=async e=>{const f=e.target.files[0];if(!f)return;const b=await f.arrayBuffer();let t=new TextDecoder('utf-8').decode(b);if(t.includes('\ufffd'))t=new TextDecoder('latin1').decode(b);$('#r404').value=t};
+    $('#r404ok').onclick=async()=>{const t=$('#r404').value;if(!t.trim()){aviso('Escolha o arquivo ou cole o relatório da 404.');return}
+      try{const r=await api('POST','/api/painel/conferencia/rotas/importar-404',{texto:t});L.length=0;r.rotas.forEach(x=>L.push({nome:x.nome,cidades:x.cidades.join(', ')}));semRota=[];tela();
+        aviso(r.rotas.length+' setores importados.'+(r.avisos.length?' Atenção: '+r.avisos.join(' '):''),r.avisos.length?'err':'ok')}catch(er){aviso(er.message)}};
     $('#rSalvar').onclick=async()=>{ler();try{await api('PUT','/api/painel/conferencia/rotas',{rotas:L.filter(r=>r.nome.trim()||r.cidades.trim())});aviso('Rotas salvas.','ok');setTimeout(voltar,800)}catch(e){aviso(e.message)}};
   };
   tela();

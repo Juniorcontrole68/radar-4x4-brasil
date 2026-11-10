@@ -182,6 +182,12 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
   check('  ...no carregamento, Já Transportes fora do romaneio: NÃO CARREGAR',r.j.situacao==='sobra'&&/NÃO CARREGAR/.test(r.j.mensagem),r.j);
   console.log('Galpão por rota');
   check('Comercial Leal: a etiqueta traz a NF',c('00000032643501001013043').nf==='326435');
+  r=await api('GET','/api/painel/conferencia/rotas');
+  check('rotas já vêm com os setores da 404 do SSW',r.status===200&&r.j.rotas.some(x=>x.nome==='Setor 8 · MOGI GUACU'&&x.cidades.includes('MOGI MIRIM'))&&r.j.rotas.some(x=>x.cidades.includes('SANTA BARBARA D OESTE')),r.j.rotas&&r.j.rotas.map(x=>x.nome));
+  r=await api('POST','/api/painel/conferencia/rotas/importar-404',{texto:'X\nAGUAI                          SP 13860001 13869999 8   MOGI GUACU\nCAMPINAS                       SP 13000001 13139999 1   CAMPINAS CENTRO\nSAO CARLOS                     SP 13560001 13579999 1   RIBEIRAO\n'});
+  check('importa a 404: setor vira rota e avisa número com dois nomes',r.status===200&&r.j.rotas.length===2&&r.j.rotas[0].nome==='Setor 1 · CAMPINAS CENTRO / RIBEIRAO'&&r.j.avisos.length===1,r.j);
+  r=await api('POST','/api/painel/conferencia/rotas/importar-404',{texto:'nada'});
+  check('  ...texto sem setores é recusado',r.status===400,r.j);
   r=await api('PUT','/api/painel/conferencia/rotas',{rotas:[{nome:'Rota 1',cidades:'Mogi Guaçu, MOGI MIRIM'},{nome:'Rota 2',cidades:['PIEDADE']}]});
   check('cadastra rotas (cidades sem acento)',r.status===200&&r.j.rotas.length===2&&r.j.rotas[0].cidades.includes('MOGI GUACU'),r.j);
   r=await api('PUT','/api/painel/conferencia/rotas',{rotas:[{nome:'A',cidades:'X'},{nome:'B',cidades:'X'}]});

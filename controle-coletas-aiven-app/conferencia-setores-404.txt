@@ -1,0 +1,132 @@
+CONSTRULOG DIST COMERCIO E TRA                                                      PAG:   1
+ssw0004                             SETORES CADASTRADOS                       10/11/26 13:53
+------------------------------+--+--------+--------+---+------------------------------------
+CIDADE                         UF CEP INI  CEP FIN  SET NOME SETOR                          
+------------------------------+--+--------+--------+---+------------------------------------
+AGUAI                          SP 13860001 13869999 8   MOGI GUACU                    
+AGUAS DA PRATA                 SP 13890000 13899999 08  MOGI GUACU                    
+AGUAS DE LINDOIA               SP 13940000 13949999 9   CIRCUITO DAS AGUAS            
+AGUAS DE SAO PEDRO             SP 13525001 13529999 7   PIRACICABA                    
+ALUMINIO                       SP 18125000 18129999 12  IBIUNA                        
+AMERICANA                      SP 13465001 13479999 2   CAMPINAS                      
+AMPARO                         SP 13900001 13909999 9   CIRCUITO DAS AGUAS            
+ANALANDIA                      SP 13550000 13559999 5   LIMEIRA                       
+ANGATUBA                       SP 18240000 18244999 13  BOITUVA                       
+ARACARIGUAMA                   SP 18147000 18149999 12  IBIUNA                        
+ARACOIABA DA SERRA             SP 18190000 18194999 13  IBIUNA                        
+ARARAS                         SP 13600001 13609999 5   LIMEIRA                       
+ARTUR NOGUEIRA                 SP 13160001 13169999 5   LIMEIRA                       
+ATIBAIA                        SP 12940001 12954999 10  BRAGANCA                      
+BOFETE                         SP 18590000 18599999 14  ITAPETININGA                  
+BOITUVA                        SP 18550001 18559999 13  BOITUVA                       
+BOM JESUS DOS PERDOES          SP 12955000 12959999 10  BRAGANCA                      
+BRAGANCA PAULISTA              SP 12900001 12929999 11  BRAGANCA                      
+CABREUVA                       SP 13315001 13319999 4   JUNDIAI                       
+CAMPINAS                       SP 13000001 13139999 1   CAMPINAS CENTRO               
+CAMPO LIMPO PAULISTA           SP 13230001 13239999 4   JUNDIAI                       
+CAPELA DO ALTO                 SP 18195000 18199999 13  BOITUVA                       
+CAPIVARI                       SP 13360001 13369999 14  ITAPETININGA                  
+CERQUILHO                      SP 18520001 18529999 13  BOITUVA                       
+CESARIO LANGE                  SP 18285000 18289999 14  ITAPETININGA                  
+CHARQUEADA                     SP 13515001 13519999 7   PIRACICABA                    
+CONCHAL                        SP 13835000 13839999 5   LIMEIRA                       
+CONCHAS                        SP 18570000 18579999 14  ITAPETININGA                  
+CORDEIROPOLIS                  SP 13490000 13494999 5   LIMEIRA                       
+COSMOPOLIS                     SP 13150001 13159999 6   LIMEIRA                       
+COTIA                          SP 06700001 06729999 12  IBIUNA                        
+DIVINOLANDIA                   SP 13780000 13789999 100 100                           
+ELIAS FAUSTO                   SP 13350000 13359999 14  ITAPETININGA                  
+ENGENHEIRO COELHO              SP 13445001 13449999 5   LIMEIRA                       
+ESPIRITO SANTO DO PINHAL       SP 13990000 13994999 8   MOGI GUACU                    
+ESTIVA GERBI                   SP 13857000 13859999 5   LIMEIRA                       
+GUAREI                         SP 18250000 18254999 14  ITAPETININGA                  
+GUARULHOS                      SP 07000001 07399999 4   SAO PAULO                     
+HOLAMBRA                       SP 13825000 13829999 5   LIMEIRA                       
+HORTOLANDIA                    SP 13183001 13189999 2   CAMPINAS                      
+IBIUNA                         SP 18150000 18159999 12  IBIUNA                        
+IGARATA                        SP 12350000 12379999 10  BRAGANCA                      
+INDAIATUBA                     SP 13330001 13349999 3   INDAIATUBA                    
+IPERO                          SP 18560000 18569999 13  BOITUVA                       
+IPEUNA                         SP 13537000 13539999 7   PIRACICABA                    
+IRACEMAPOLIS                   SP 13495001 13499999 5   LIMEIRA                       
+ITAPETININGA                   SP 18200001 18219999 14  ITAPETININGA                  
+ITAPIRA                        SP 13970001 13989999 9   CIRCUITO DAS AGUAS            
+ITATIBA                        SP 13250001 13259999 4   JUNDIAI                       
+ITIRAPINA                      SP 13530000 13536999 5   LIMEIRA                       
+ITU                            SP 13300001 13314999 3   INDAIATUBA                    
+ITUPEVA                        SP 13295001 13299999 4   JUNDIAI                       
+JAGUARIUNA                     SP 13910001 13919999 8   MOGI GUACU                    
+JARINU                         SP 13240000 13249999 10  BRAGANCA                      
+JOANOPOLIS                     SP 12980000 12989999 10  BRAGANCA                      
+JUMIRIM                        SP 18535000 18539999 14  ITAPETININGA                  
+JUNDIAI                        SP 13200001 13219999 4   JUNDIAI                       
+LARANJAL PAULISTA              SP 18500000 18519999 14  ITAPETININGA                  
+LEME                           SP 13610001 13624999 5   LIMEIRA                       
+LIMEIRA                        SP 13480001 13489999 5   LIMEIRA                       
+
+CONSTRULOG DIST COMERCIO E TRA                                                      PAG:   2
+ssw0004                             SETORES CADASTRADOS                       10/11/26 13:53
+------------------------------+--+--------+--------+---+------------------------------------
+CIDADE                         UF CEP INI  CEP FIN  SET NOME SETOR                          
+------------------------------+--+--------+--------+---+------------------------------------
+LINDOIA                        SP 13950000 13959999 9   CIRCUITO DAS AGUAS            
+LOUVEIRA                       SP 13290001 13294999 4   JUNDIAI                       
+MAIRINQUE                      SP 18120000 18124999 12  IBIUNA                        
+MOGI GUACU                     SP 13840001 13856999 8   MOGI GUACU                    
+MOGI MIRIM                     SP 13800001 13819999 8   MOGI GUACU                    
+MOMBUCA                        SP 13375000 13379999 14  ITAPETININGA                  
+MONTE ALEGRE DO SUL            SP 13820000 13824999 9   CIRCUITO DAS AGUAS            
+MONTE MOR                      SP 13190001 13199999 2   CAMPINAS                      
+MORUNGABA                      SP 13260000 13269999 9   CIRCUITO DAS AGUAS            
+NAZARE PAULISTA                SP 12960000 12969999 10  BRAGANCA                      
+NOVA ODESSA                    SP 13380001 13389999 2   CAMPINAS                      
+PARDINHO                       SP 18640000 18649999 14  ITAPETINIGA                   
+PAULINIA                       SP 13140001 13149999 2   CAMPINAS                      
+PEDRA BELA                     SP 12990000 12994999 9   CIRCUITO DAS AGUAS            
+PEDREIRA                       SP 13920000 13929999 9   CIRCUITO DAS AGUAS            
+PEREIRAS                       SP 18580000 18589999 14  ITAPETININGA                  
+PIEDADE                        SP 18170000 18179999 13  BOITUVA                       
+PILAR DO SUL                   SP 18185000 18189999 13  BOITUVA                       
+PINHALZINHO                    SP 12995000 12999999 9   CIRCUITO DAS AGUAS            
+PIRACAIA                       SP 12970000 12979999 10  BRAGANCA                      
+PIRACICABA                     SP 13400001 13439999 7   PIRACICABA                    
+PIRASSUNUNGA                   SP 13630001 13649999 5   LIMEIRA                       
+PORANGABA                      SP 18260000 18264999 14  ITAPETININGA                  
+PORTO FELIZ                    SP 18540001 18549999 3   INDAIATUBA                    
+QUADRA                         SP 18255000 18259999 14  ITAPETININGA                  
+RAFARD                         SP 13370000 13374999 14  ITAPETININGA                  
+RIO CLARO                      SP 13500001 13509999 5   LIMEIRA                       
+RIO DAS PEDRAS                 SP 13390001 13399999 5   LIMEIRA                       
+SALTINHO                       SP 13440001 13444999 7   PIRACICABA                    
+SALTO                          SP 13320001 13329999 3   INDAIATUBA                    
+SALTO DE PIRAPORA              SP 18160000 18169999 13  BOITUVA                       
+SANTA BARBARA D OESTE          SP 13450001 13459999 2   CAMPINAS                      
+SANTA CRUZ DA CONCEICAO        SP 13625001 13629999 5   LIMEIRA                       
+SANTA GERTRUDES                SP 13510001 13514999 5   LIMEIRA                       
+SANTA MARIA DA SERRA           SP 17370001 17374999 7   PIRACICABA                    
+SANTO ANTONIO DE POSSE         SP 13830001 13834999 8   MOGI GUACU                    
+SANTO ANTONIO DO JARDIM        SP 13995000 13999999 8   MOGI GUACU                    
+SAO CARLOS                     SP 13560001 13579999 1   RIBEIRAO                      
+SAO JOAO DA BOA VISTA          SP 13870001 13879999 8   MOGI GUACU                    
+SAO MIGUEL ARCANJO             SP 18230000 18239999 13  BOITUVA                       
+SAO PAULO                      SP 01000001 05999999 4   SAO PAULO                     
+SAO PAULO                      SP 08000000 08499999 4   SAO PAULO                     
+SAO PEDRO                      SP 13520000 13524999 7   PIRACICABA                    
+SAO ROQUE                      SP 18130001 18146999 12  IBIUNA                        
+SARAPUI                        SP 18225000 18229999 13  BOITUVA                       
+SERRA NEGRA                    SP 13930000 13939999 9   CIRCUITO DAS AGUAS            
+SOCORRO                        SP 13960000 13969999 9   CIRCUITO DAS AGUAS            
+SOROCABA                       SP 18000001 18109999 11  SOROCABA                      
+SUMARE                         SP 13170001 13182999 2   CAMPINAS                      
+TAPIRAI                        SP 18180000 18184999 13  BOITUVA                       
+TATUI                          SP 18270001 18284999 13  BOITUVA                       
+TIETE                          SP 18530000 18534999 14  ITAPETININGA                  
+TORRE DE PEDRA                 SP 18265000 18269999 14  ITAPETININGA                  
+TORRINHA                       SP 17360000 17369999 7   PIRACICABA                    
+TUIUTI                         SP 12930000 12934999 9   CIRCUITO DAS AGUAS            
+VALINHOS                       SP 13270001 13279999 4   JUNDIAI                       
+VARGEM                         SP 12935000 12939999 10  BRAGANCA                      
+VARZEA PAULISTA                SP 13220001 13229999 4   JUNDIAI                       
+VINHEDO                        SP 13280001 13289999 4   JUNDIAI                       
+VOTORANTIM                     SP 18110001 18119999 13  BOITUVA                       
+------------------------------+--+--------+--------+---+------------------------------------
