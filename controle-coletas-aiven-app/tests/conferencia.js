@@ -15,6 +15,7 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
   check('Leal Dutra: pedido de 6 dígitos, só conta',c('941221').parceiro==='Leal Dutra'&&c('941221').por_volume===false);
   check('Comercial Leal: QR de 23 dígitos (NF + volume), um por volume',c('00000032643501001013043').parceiro==='Comercial Leal'&&c('00000032646601001007026').por_volume===true&&c('0000003264350').tipo==='desconhecido');
   check('parceiro do CT-e: Comercial Leal e Leal Dutra separados',conf.parceiroDoCte(fs,['COMERCIAL LEAL LTDA'])==='Comercial Leal'&&conf.parceiroDoCte(fs,['LEAL DUTRA DISTRIBUIDORA'])==='Leal Dutra');
+  check('FCB / JT / THM: 14 dígitos 203818…, um por volume',c('20381808308160').parceiro==='FCB / JT / THM'&&c('20381807560310').por_volume===true&&conf.parceiroDoCte(fs,['CONSTRUDECOR S A'])==='FCB / JT / THM');
   check('código desconhecido',c('ABC-123').tipo==='desconhecido');
   const dacte='35261012345678000199570010000123451000012345';
   check('DACTE (modelo 57) e DANFE (modelo 55)',c(dacte).tipo==='dacte'&&c('35261012345678000199550010000113251000012345').tipo==='danfe'&&c('35261012345678000199550010000113251000012345').nf==='11325');
@@ -29,7 +30,7 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
   const api=async(method,url,body)=>{const x=await fetch(B+url,{method,headers:{Cookie:cookie,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});let j=null;try{j=await x.json()}catch{}return{status:x.status,j}};
   check('sem login -> 401',(await fetch(B+'/api/painel/conferencia/sessoes')).status===401);
   r=await api('GET','/api/painel/conferencia/formatos');
-  check('formatos padrão criados',r.status===200&&r.j.formatos.length===4,r.j);
+  check('formatos padrão criados',r.status===200&&r.j.formatos.length===5,r.j);
   const rows=[
     {ctrc:'AMS001045-6',nf:'113025',volumes:2,chave:dacte,destinatario:'LEIRSON',nomes:['QUADRI COMERCIO','TRANSBARBOSA LOGISTICA']},
     {ctrc:'AMS001046-4',nf:'7610',volumes:1,nomes:['MOVEIS CARRARO','TRANSBARBOSA LOGISTICA']},
