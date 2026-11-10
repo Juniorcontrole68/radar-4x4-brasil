@@ -9,6 +9,8 @@
 //   Leal Dutra    número do pedido (6 dígitos), igual em todos os volumes: só conta
 //   Comercial Leal QR de 23 dígitos, um por volume: NF (12) + 0 + 1001 + volume (3) + total (3),
 //                 ex.: 00000032643501001013043 = NF 326435, volume 13 de 43 (o texto impresso embaixo é só o começo)
+//   FCB / JT / THM 14 dígitos começando com 203818 (código de barras na vertical), um por volume. FCB Brasil
+//                 Transportes, JT Transportes e THM são o mesmo cliente (remetente Construdecor)
 // A etiqueta não traz NF nem CT-e: a conferência fecha por parceiro (esperado = soma dos volumes dos CT-es dele).
 // DACTE (chave de 44 dígitos) também pode ser bipado: marca o CT-e como documento conferido, não conta volume.
 //
@@ -38,10 +40,11 @@ const FORMATOS_PADRAO = [
   { nome: 'Conasid', padrao: '^001000\\d{6}$', termos: 'CONASID', por_volume: true },
   { nome: 'Leal Dutra', padrao: '^\\d{6}$', termos: 'LEAL DUTRA', por_volume: false },
   { nome: 'Comercial Leal', padrao: '^\\d{12}0\\d{10}$', termos: 'COMERCIAL LEAL', por_volume: true },
+  { nome: 'FCB / JT / THM', padrao: '^203818\\d{8}$', termos: 'FCB, JT TRANSP, CONSTRUDECOR', por_volume: true },
 ];
 // Formatos que entraram depois: são acrescentados a quem já tinha a lista (se não houver um com o mesmo nome;
 // para não usar, o administrador desliga).
-const FORMATOS_ACRESCIDOS = ['Comercial Leal'];
+const FORMATOS_ACRESCIDOS = ['Comercial Leal', 'FCB / JT / THM'];
 const TIPOS = ['descarga', 'carregamento', 'contagem'];
 
 async function ensureSchema(pool) {
