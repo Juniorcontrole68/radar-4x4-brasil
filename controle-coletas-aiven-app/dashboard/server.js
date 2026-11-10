@@ -143,7 +143,7 @@ async function dashboardUserFromReq(req){
   // a situação das sobras em galpão (conferência de hora em hora, das 05:00 às 20:00), a varredura e os produtos do agendamento.
   const ik=String(req.headers['x-internal-key']||'');
   if(INTERNAL_KEY&&ik.length===INTERNAL_KEY.length&&crypto.timingSafeEqual(Buffer.from(ik),Buffer.from(INTERNAL_KEY))
-     &&(String(req.url||'').startsWith('/api/tracking/planned-route')||String(req.url||'').startsWith('/api/ssw/despesas475?')||String(req.url||'').startsWith('/api/programacao-entregas/status-nfs?')||['/api/agendamentos/ssw-snapshot','/api/agendamentos/baixas-ssw','/api/agendamentos/ctes-faixa','/api/agendamentos/produtos-ssw','/api/conferencia/ssw-esperado','/api/conferencia/ssw-romaneios','/api/conferencia/ssw-romaneio','/api/conferencia/ssw-ctes'].includes(String(req.url||'').split('?')[0])))
+     &&(String(req.url||'').startsWith('/api/tracking/planned-route')||String(req.url||'').startsWith('/api/ssw/despesas475?')||String(req.url||'').startsWith('/api/programacao-entregas/status-nfs?')||['/api/agendamentos/ssw-snapshot','/api/agendamentos/baixas-ssw','/api/agendamentos/ctes-faixa','/api/agendamentos/produtos-ssw','/api/conferencia/ssw-esperado','/api/conferencia/ssw-romaneios','/api/conferencia/ssw-romaneio','/api/conferencia/ssw-ctes','/api/conferencia/ssw-galpao'].includes(String(req.url||'').split('?')[0])))
     return{token:'',id:0,username:'servidor',is_admin:true,permissions:['*'],internal:true};
   const token=dashboardRequestToken(req);
   if(!token){const e=new Error('Não autenticado.');e.status=401;throw e}
@@ -6710,6 +6710,7 @@ if(u.pathname==='/api/agendamentos/produtos-ssw'&&req.method==='POST'){try{
 //   ssw-romaneios  carregamento: romaneios de hoje na opção 38
 //   ssw-romaneio   carregamento: CT-es de um romaneio (opção 38), com volumes e nomes pelo relatório 174
 //   ssw-ctes       carregamento: CT-es pelas chaves dos DACTEs bipados (relatório 174; na falta, opção 101)
+//   ssw-galpao     contagem do galpão: CT-es disponíveis para entrega na unidade (opção 38, pendências), com os nomes do 174
 // Cada CT-e: ctrc, NF, volumes, chave e os nomes (remetente, pagador, tomador...) para achar o parceiro da etiqueta.
 const CONF_JSON={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'};
 function confCtrc174(r){
@@ -6803,6 +6804,22 @@ if(u.pathname.startsWith('/api/conferencia/ssw-')&&req.method==='POST'){try{
     }
     res.writeHead(200,CONF_JSON);
     return res.end(JSON.stringify({ok:true,romaneio:rom,motorista:det.motorista||'',placa:det.veiculo||'',rows,fontes}))
+  }
+  if(rota==='ssw-galpao'){
+    const p=await fetchSswPendingDeliveries();
+    const {linhas,fontes}=await confLinhas174(confDiasAtras(20));
+    const por=new Map();for(const r of linhas){const x=confLinha174(r),k=normCtrc(x.ctrc);if(k&&!por.has(k))por.set(k,x)}
+    const vistos=new Set(),rows=[];
+    for(const r of p.rows||[]){
+      const k=normCtrc(r.ctrc);if(!k||vistos.has(k))continue;vistos.add(k);
+      const x=por.get(k)||{};
+      rows.push({ctrc:x.ctrc||String(r.ctrc).toUpperCase().trim(),nf:x.nf||String(r.nf||'').replace(/\D/g,'').replace(/^0+/,''),volumes:Number(r.volumes)||x.volumes||0,
+        chave:x.chave||'',destinatario:x.destinatario||String(r.cliente||'').slice(0,80),cidade:x.cidade||String(r.cidade||'').slice(0,60),
+        nomes:[...new Set([...(x.nomes||[]),String(r.remetente||'').trim()].filter(Boolean))].slice(0,8),ctes_parceiro:x.ctes_parceiro||[]});
+    }
+    console.log('CONFERENCIA galpão: '+JSON.stringify({disponiveis:(p.rows||[]).length,ctes:rows.length,com174:rows.filter(r=>r.chave).length}));
+    res.writeHead(200,CONF_JSON);
+    return res.end(JSON.stringify({ok:true,rows,fontes}))
   }
   if(rota==='ssw-ctes'){
     const chaves=[...new Set((Array.isArray(body.chaves)?body.chaves:[]).map(c=>String(c||'').replace(/\D/g,'')).filter(c=>c.length===44))].slice(0,200);

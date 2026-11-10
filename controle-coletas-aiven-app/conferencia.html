@@ -126,8 +126,11 @@ let TIPO=(()=>{try{return localStorage.getItem('conf_tipo')||'descarga'}catch{re
 async function inicio(){
   camera(false);S.id=null;clearInterval(S.timer);
   $('#titulo').textContent='Conferência de carga';$('#sub').textContent='Pelas etiquetas dos clientes';
-  const abas='<div class="linha" style="gap:8px"><button class="btn '+(TIPO==='descarga'?'p':'')+'" data-tipo="descarga">⬇ Descarga</button><button class="btn '+(TIPO==='carregamento'?'p':'')+'" data-tipo="carregamento">⬆ Carregamento</button></div>';
-  const novo=TIPO==='descarga'
+  const abas='<div class="linha" style="gap:8px"><button class="btn '+(TIPO==='descarga'?'p':'')+'" data-tipo="descarga">⬇ Descarga</button><button class="btn '+(TIPO==='carregamento'?'p':'')+'" data-tipo="carregamento">⬆ Carregamento</button><button class="btn '+(TIPO==='contagem'?'p':'')+'" data-tipo="contagem">📦 Galpão</button></div>';
+  const novo=TIPO==='contagem'
+    ?'<div class="card"><b>Nova conferência do galpão</b><div class="muted">A contagem esperada são os CT-es disponíveis para entrega no SSW (ainda sem romaneio). Bipe todos os volumes que estão no galpão: no fim aparece o que falta e o que sobra, por parceiro.</div>'+
+      '<button class="btn p" id="nGalOk">Começar conferência do galpão</button></div>'
+    :TIPO==='descarga'
     ?'<div class="card"><b>Nova descarga</b><div class="muted">A carga esperada são os CT-es emitidos no SSW entre o horário inicial da véspera e o horário final do dia da descarga.</div>'+
       '<div class="linha"><label>Dia da descarga<input id="nData" type="date"></label><label>Da véspera, a partir de<input id="nIni" type="time" value="19:00"></label><label>Até (no dia)<input id="nFim" type="time" value="04:00"></label></div>'+
       '<button class="btn p" id="nOk">Começar descarga</button></div>'
@@ -136,12 +139,14 @@ async function inicio(){
       '<div class="linha"><label>Ou digite o romaneio<input id="nRom" placeholder="AMR001186-0" autocapitalize="characters"></label></div><button class="btn p" id="nRomOk">Começar pelo romaneio</button></div>'+
       '<div class="card"><b>Novo carregamento bipando os CT-es</b><div class="muted">Bipe primeiro os DACTEs dos CT-es que vão no caminhão (cada um entra na carga) e depois os volumes.</div>'+
       '<div class="linha"><label>Placa (opcional)<input id="nPlaca" placeholder="ABC1D23" autocapitalize="characters" maxlength="8"></label></div><button class="btn p" id="nCteOk">Começar bipando os DACTEs</button></div>';
-  render(abas+novo+'<div class="aviso" id="aviso" hidden></div><b>'+(TIPO==='descarga'?'Descargas':'Carregamentos')+'</b><div class="lst" id="lista"><div class="muted">carregando…</div></div>');
+  render(abas+novo+'<div class="aviso" id="aviso" hidden></div><b>'+(TIPO==='descarga'?'Descargas':TIPO==='contagem'?'Conferências do galpão':'Carregamentos')+'</b><div class="lst" id="lista"><div class="muted">carregando…</div></div>');
   document.querySelectorAll('[data-tipo]').forEach(b=>b.onclick=()=>{TIPO=b.dataset.tipo;try{localStorage.setItem('conf_tipo',TIPO)}catch{}inicio()});
   const criar=async(btn,corpo,txt)=>{const t0=btn.textContent;btn.disabled=true;btn.textContent=txt;
     try{const r=await api('POST','/api/painel/conferencia/sessoes',corpo);abrir(r.id)}catch(e){aviso(e.message);btn.disabled=false;btn.textContent=t0}};
   const j=await api('GET','/api/painel/conferencia/sessoes?tipo='+TIPO);
-  if(TIPO==='descarga'){
+  if(TIPO==='contagem'){
+    $('#nGalOk').onclick=()=>criar($('#nGalOk'),{tipo:'contagem'},'Buscando os CT-es do galpão no SSW… (até 2 min)');
+  }else if(TIPO==='descarga'){
     $('#nData').value=j.hoje;
     $('#nOk').onclick=()=>criar($('#nOk'),{tipo:'descarga',data:$('#nData').value,hora_inicio:$('#nIni').value,hora_fim:$('#nFim').value},'Buscando os CT-es no SSW… (até 1 min)');
   }else{
@@ -193,7 +198,7 @@ const COR={ok:'v',duplicado:'a',excesso:'r',sobra:'r',nao_reconhecido:'r',dacte:
 function desenhar(d){
   S.dados=d;const s=d.sessao,t=d.totais,aberta=s.status==='aberta';
   $('#titulo').textContent=s.titulo+(aberta?'':' · fechada');
-  $('#sub').textContent=(s.tipo==='descarga'?'CT-es emitidos de '+dh(s.janela_ini)+' a '+dh(s.janela_fim):s.modo==='romaneio'?'Romaneio '+s.referencia:'Carga montada pelos DACTEs bipados')+(s.carregado_em?' · SSW lido às '+hr(s.carregado_em):'');
+  $('#sub').textContent=(s.tipo==='contagem'?'CT-es disponíveis para entrega no SSW':s.tipo==='descarga'?'CT-es emitidos de '+dh(s.janela_ini)+' a '+dh(s.janela_fim):s.modo==='romaneio'?'Romaneio '+s.referencia:'Carga montada pelos DACTEs bipados')+(s.carregado_em?' · SSW lido às '+hr(s.carregado_em):'');
   $('#cod').placeholder=s.tipo==='carregamento'&&s.modo==='ctes'?'Bipe os DACTEs e depois os volumes':'Bipe a etiqueta ou o DACTE';
   $('#dica').hidden=!(aberta&&s.tipo==='carregamento'&&s.modo==='ctes'&&!d.esperado.length);
   $('#cMot').hidden=!(aberta&&s.tipo==='carregamento');
