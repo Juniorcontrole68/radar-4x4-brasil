@@ -48,6 +48,9 @@ details summary{cursor:pointer;color:#cbd5e1;font-weight:700;padding:6px 0}
 video{width:100%;border-radius:12px;background:#000;max-height:34vh;object-fit:cover}
 [hidden]{display:none!important}
 @media(max-width:520px){.totais b{font-size:20px}}
+.rel h2{font-size:17px;margin:8px 0 4px}.rel td.n,.rel th.n{text-align:right}.rel tr.err td{color:#fecaca}
+@media print{body,html{background:#fff;color:#000}header,.voltar,.noprint{display:none!important}main{max-width:none;padding:0}
+  .card,.totais div{background:#fff;border:1px solid #999;color:#000}.muted,th,.totais span{color:#333}.rel tr.err td{color:#b91c1c}th,td{border-color:#999}}
 </style>
 </head>
 <body>
@@ -128,8 +131,8 @@ async function inicio(){
   $('#titulo').textContent='Conferência de carga';$('#sub').textContent='Pelas etiquetas dos clientes';
   const abas='<div class="linha" style="gap:8px"><button class="btn '+(TIPO==='descarga'?'p':'')+'" data-tipo="descarga">⬇ Descarga</button><button class="btn '+(TIPO==='carregamento'?'p':'')+'" data-tipo="carregamento">⬆ Carregamento</button><button class="btn '+(TIPO==='contagem'?'p':'')+'" data-tipo="contagem">📦 Galpão</button></div>';
   const novo=TIPO==='contagem'
-    ?'<div class="card"><b>Nova conferência do galpão</b><div class="muted">A contagem esperada são os CT-es disponíveis para entrega no SSW (ainda sem romaneio). Bipe todos os volumes que estão no galpão: no fim aparece o que falta e o que sobra, por parceiro.</div>'+
-      '<button class="btn p" id="nGalOk">Começar conferência do galpão</button></div>'
+    ?'<div class="card"><b>Nova conferência do galpão</b><div class="muted">A contagem esperada são os CT-es disponíveis para entrega no SSW (ainda sem romaneio). Bipe todos os volumes que estão no galpão: no fim aparece o que falta e o que sobra, por parceiro. É uma contagem por dia: ela fica gravada com todas as rotas.</div>'+
+      '<button class="btn p" id="nGalOk">Começar a contagem de hoje</button></div>'
     :TIPO==='descarga'
     ?'<div class="card"><b>Nova descarga</b><div class="muted">A carga esperada são os CT-es emitidos no SSW entre o horário inicial da véspera e o horário final do dia da descarga.</div>'+
       '<div class="linha"><label>Dia da descarga<input id="nData" type="date"></label><label>Da véspera, a partir de<input id="nIni" type="time" value="19:00"></label><label>Até (no dia)<input id="nFim" type="time" value="04:00"></label></div>'+
@@ -139,13 +142,18 @@ async function inicio(){
       '<div class="linha"><label>Ou digite o romaneio<input id="nRom" placeholder="AMR001186-0" autocapitalize="characters"></label></div><button class="btn p" id="nRomOk">Começar pelo romaneio</button></div>'+
       '<div class="card"><b>Novo carregamento bipando os CT-es</b><div class="muted">Bipe primeiro os DACTEs dos CT-es que vão no caminhão (cada um entra na carga) e depois os volumes.</div>'+
       '<div class="linha"><label>Placa (opcional)<input id="nPlaca" placeholder="ABC1D23" autocapitalize="characters" maxlength="8"></label></div><button class="btn p" id="nCteOk">Começar bipando os DACTEs</button></div>';
-  render(abas+novo+'<button class="btn" id="bEtq">🏷 Etiquetas dos clientes (ensinar etiqueta nova)</button><div class="aviso" id="aviso" hidden></div><b>'+(TIPO==='descarga'?'Descargas':TIPO==='contagem'?'Conferências do galpão':'Carregamentos')+'</b><div class="lst" id="lista"><div class="muted">carregando…</div></div>');
+  render(abas+novo+'<button class="btn" id="bEtq">🏷 Etiquetas dos clientes (ensinar etiqueta nova)</button>'+
+    '<div class="card"><b>🔎 Consultar nota</b><div class="muted">Mostra se alguma caixa da nota foi achada em rota errada na contagem do galpão.</div><div class="leitura"><input id="cNf" inputmode="numeric" autocomplete="off" placeholder="Número da NF"></div><div id="cNfRes"></div></div>'+
+    '<div class="aviso" id="aviso" hidden></div><b>'+(TIPO==='descarga'?'Descargas':TIPO==='contagem'?'Conferências do galpão':'Carregamentos')+'</b><div class="lst" id="lista"><div class="muted">carregando…</div></div>');
   $('#bEtq').onclick=()=>etiquetas();
   document.querySelectorAll('[data-tipo]').forEach(b=>b.onclick=()=>{TIPO=b.dataset.tipo;try{localStorage.setItem('conf_tipo',TIPO)}catch{}inicio()});
   const criar=async(btn,corpo,txt)=>{const t0=btn.textContent;btn.disabled=true;btn.textContent=txt;
     try{const r=await api('POST','/api/painel/conferencia/sessoes',corpo);abrir(r.id)}catch(e){aviso(e.message);btn.disabled=false;btn.textContent=t0}};
   const j=await api('GET','/api/painel/conferencia/sessoes?tipo='+TIPO);
+  $('#cNf').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();consultarNf($('#cNf').value,$('#cNfRes'))}});
   if(TIPO==='contagem'){
+    const hoje=j.rows.find(x=>x.tipo==='contagem'&&(x.dia||new Date(x.criado_em).toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}))===j.hoje);
+    if(hoje)$('#nGalOk').textContent='Abrir a contagem de hoje'+(hoje.status==='aberta'?'':' (fechada)');
     $('#nGalOk').onclick=()=>criar($('#nGalOk'),{tipo:'contagem'},'Buscando os CT-es do galpão no SSW… (até 2 min)');
   }else if(TIPO==='descarga'){
     $('#nData').value=j.hoje;
@@ -167,7 +175,7 @@ async function abrir(id){
     '<div class="leitura" id="caixaLeitura"><input id="cod" autocomplete="off" autocapitalize="characters" inputmode="text" placeholder="Bipe a etiqueta ou o DACTE"><button type="button" id="bCam" aria-label="Ler pela câmera">📷</button></div>'+
     '<video id="video" playsinline muted hidden></video>'+
     '<div class="sinal" id="sinal">Pronto para bipar</div><button class="btn" id="bEnsinar" hidden>🏷 Ensinar esta etiqueta</button><div class="aviso" id="aviso" hidden></div>'+
-    '<div class="card" id="cRotas" hidden><b>🚚 Rotas do galpão</b><div class="muted">Cada conferente abre a rota que vai bipar. Terminou, abre a próxima. Etiqueta com NF, DANFE ou DACTE de outra rota acusa ROTA ERRADA na hora; nas etiquetas só com o número da caixa, o que passa do total do parceiro na rota aparece como a mais.</div><div class="lst" id="rotasLista"><div class="muted">carregando…</div></div><button class="btn" id="bRotasCad" type="button">Cadastrar rotas (cidades de cada rota)</button></div>'+
+    '<div class="card" id="cRotas" hidden><b>🚚 Rotas do galpão</b><div class="muted">Cada conferente abre a rota que vai bipar. Terminou, abre a próxima. Etiqueta com NF, DANFE ou DACTE de outra rota acusa ROTA ERRADA na hora; nas etiquetas só com o número da caixa, o que passa do total do parceiro na rota aparece como a mais.</div><div class="lst" id="rotasLista"><div class="muted">carregando…</div></div><button class="btn p" id="bRel" type="button">📋 Relatório do galpão</button><button class="btn" id="bRotasCad" type="button">Cadastrar rotas (cidades de cada rota)</button></div>'+
     '<div class="card" id="dica" hidden><b>1º bipe os DACTEs</b><div class="muted">Cada DACTE bipado coloca o CT-e na carga, com os volumes do SSW. Depois bipe os volumes: o que não for desses CT-es aparece em vermelho, NÃO CARREGAR.</div></div>'+
     '<div class="card" id="cMot" hidden><b>📱 Conferência pelo celular do motorista</b><div class="muted">O motorista abre o link e só bipa as caixas: não desfaz, não tira CT-e e não fecha. Vale só para esta carga.</div><div id="motEstado" class="muted"></div><div class="linha" id="motAcoes"><button class="btn p" id="bMot">Gerar link para o motorista</button></div></div>'+
     '<div class="totais" id="totais"></div><div class="lst" id="parceiros"></div>'+
@@ -177,6 +185,7 @@ async function abrir(id){
     '<div class="linha" id="acoes"><button class="btn" id="bRec">Atualizar CT-es do SSW</button><button class="btn d" id="bFechar">Fechar conferência</button></div>');
   $('#voltar').onclick=()=>S.dados&&S.dados.sessao.pai_id?abrir(S.dados.sessao.pai_id):inicio();
   $('#bRotasCad').onclick=()=>telaRotas(id);
+  $('#bRel').onclick=()=>relatorio(id);
   $('#rotasLista').onclick=async e=>{const b=e.target.closest('[data-rota]');if(!b)return;b.disabled=true;
     try{const r=await api('POST','/api/painel/conferencia/sessoes/'+id+'/rotas',{rota:b.dataset.rota});abrir(r.id)}catch(er){aviso(er.message);b.disabled=false}};
   $('#bEnsinar').onclick=()=>etiquetas($('#bEnsinar').dataset.codigo,id);
@@ -209,6 +218,34 @@ function desenharRotas(q){
     const nums=c?'<span class="chip">'+n(c.lidos)+' de '+n(c.esperado)+'</span>'+(c.faltam?'<span class="chip a">faltam '+n(c.faltam)+'</span>':'')+(c.excesso?'<span class="chip r">'+n(c.excesso)+' a mais</span>':'')+(c.rota_errada?'<span class="chip r">'+n(c.rota_errada)+' rota errada</span>':''):'';
     return'<div class="lei"><div><b>'+esc(r.rota)+'</b> '+est+'<br><small>'+n(r.ctes)+' CT-e(s) · '+n(r.volumes)+' volume(s) no SSW · '+esc(r.cidades.slice(0,6).join(', ')+(r.cidades.length>6?'…':''))+'</small><div class="chips" style="margin-top:4px">'+nums+'</div></div>'+
       (aberta?'<button data-rota="'+esc(r.rota)+'">'+(st&&st.status==='aberta'?'Entrar':st?'Abrir de novo':'Bipar')+'</button>':'')+'</div>'}).join('')||'<div class="muted">Nenhuma rota cadastrada ainda.</div>'
+}
+// ---------------- relatório do galpão: por rota e só os CT-es em rota errada
+const SIT_ROTA={nao_conferida:'não conferida',em_andamento:'em andamento',fechada:'fechada'};
+async function relatorio(paiId){
+  camera(false);S.id=null;clearInterval(S.timer);document.removeEventListener('click',focoCampo);
+  render('<div class="muted">montando o relatório…</div>');
+  let r;try{r=await api('GET','/api/painel/conferencia/sessoes/'+paiId+'/relatorio')}catch(e){render('<button class="voltar" id="voltar">← Voltar</button><div class="aviso err">'+esc(e.message)+'</div>');$('#voltar').onclick=()=>abrir(paiId);return}
+  const g=r.galpao,t=r.totais;
+  $('#titulo').textContent='Relatório · '+g.titulo;$('#sub').textContent='Contagem do galpão de '+g.dia.split('-').reverse().join('/')+(g.status==='aberta'?' · em andamento':' · fechada');
+  const tr=x=>'<tr'+(x.rota_errada?' class="err"':'')+'><td>'+esc(x.rota)+'</td><td>'+esc(SIT_ROTA[x.situacao])+'</td><td class="n">'+n(x.ctes)+'</td><td class="n">'+n(x.volumes_ssw)+'</td><td class="n">'+n(x.bipados)+'</td><td class="n">'+n(x.faltam)+'</td><td class="n">'+n(x.a_mais)+'</td><td class="n">'+n(x.rota_errada)+'</td><td>'+esc(x.conferentes)+'</td></tr>';
+  render('<button class="voltar" id="voltar">← Voltar para o galpão</button><div class="rel">'+
+    '<div class="totais"><div><b>'+n(t.bipados)+'</b><span>de '+n(t.volumes_ssw)+' bipados</span></div><div><b style="color:'+(t.faltam?'#fbbf24':'#4ade80')+'">'+n(t.faltam)+'</b><span>não bipados</span></div><div><b style="color:'+(t.rota_errada?'#f87171':'inherit')+'">'+n(t.rota_errada)+'</b><span>em rota errada</span></div><div><b>'+n(t.a_mais)+'</b><span>a mais</span></div></div>'+
+    '<div class="muted" style="margin-top:6px">'+n(t.conferidas)+' de '+n(t.rotas)+' rotas conferidas · '+n(t.ctes)+' CT-es no SSW'+(t.nao_reconhecidos?' · '+n(t.nao_reconhecidos)+' etiqueta(s) não reconhecida(s)':'')+' · SSW lido '+esc(dh(g.carregado_em))+'</div>'+
+    '<h2>Erros de localização (rota errada)</h2>'+(r.rota_errada.length?'<div style="overflow:auto"><table><thead><tr><th>CT-e</th><th>NF</th><th>Cliente</th><th>Cidade</th><th>Achado em</th><th>Rota certa</th><th class="n">Vol.</th><th>Quem bipou</th></tr></thead><tbody>'+
+      r.rota_errada.map(x=>'<tr class="err"><td>'+esc(x.ctrc)+'</td><td>'+esc(x.nf)+'</td><td>'+esc(x.destinatario||x.parceiro)+'</td><td>'+esc(x.cidade)+'</td><td>'+esc(x.achada_em)+'</td><td><b>'+esc(x.rota_certa)+'</b></td><td class="n">'+n(x.volumes)+(x.volumes_cte?' de '+n(x.volumes_cte):'')+'</td><td>'+esc(x.usuario)+' '+esc(hr(x.quando).slice(0,5))+'</td></tr>').join('')+'</tbody></table></div>':'<div class="muted">Nenhuma mercadoria achada em rota errada.</div>')+
+    '<h2>Por rota: o que foi e o que não foi bipado</h2><div style="overflow:auto"><table><thead><tr><th>Rota</th><th>Situação</th><th class="n">CT-es</th><th class="n">Vol. SSW</th><th class="n">Bipados</th><th class="n">Não bipados</th><th class="n">A mais</th><th class="n">Rota errada</th><th>Conferentes</th></tr></thead><tbody>'+r.rotas.map(tr).join('')+'</tbody></table></div>'+
+    '<div class="muted">Etiquetas só com o número da caixa (Conasid, Transbarbosa, FCB) não dizem a nota: nelas o erro de rota aparece como "a mais" na rota onde a caixa estava.</div></div>'+
+    '<div class="linha noprint" style="margin-top:10px"><button class="btn p" id="bImp">🖨 Imprimir / salvar PDF</button></div>');
+  $('#voltar').onclick=()=>abrir(paiId);$('#bImp').onclick=()=>print();
+}
+// consulta de nota: avisa se tem mercadoria dela fora da rota
+async function consultarNf(v,alvo){
+  const nf=String(v||'').replace(/\D/g,'');if(!nf){alvo.innerHTML='';return}
+  alvo.innerHTML='<div class="muted">consultando…</div>';
+  try{const r=await api('GET','/api/painel/conferencia/nf/'+nf);
+    alvo.innerHTML=r.alertas.length?r.alertas.map(a=>'<div class="sinal erro" style="font-size:16px;text-align:left">⚠ '+esc(a.mensagem)+'<small>'+esc(r.galpao.titulo)+' · '+esc(a.usuario)+' às '+esc(hr(a.quando).slice(0,5))+'</small></div>').join(''):
+      '<div class="aviso ok">'+(r.galpao?'NF '+esc(r.nf)+': nenhuma caixa fora da rota na contagem '+esc(r.galpao.titulo)+'.':'NF '+esc(r.nf)+' não estava em nenhuma contagem do galpão dos últimos 7 dias.')+'</div>'}
+  catch(e){alvo.innerHTML='<div class="aviso err">'+esc(e.message)+'</div>'}
 }
 // ---------------- cadastro das rotas: nome + cidades
 async function telaRotas(voltarSessao){

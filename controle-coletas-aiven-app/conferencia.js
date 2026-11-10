@@ -33,6 +33,11 @@
 // hoje a Comercial Leal), DANFE ou DACTE de um CT-e de outra rota dá "ROTA ERRADA". Etiqueta que só tem o número
 // da caixa (Conasid, Transbarbosa, FCB) conta por parceiro dentro da rota: o que passa do total é sobra.
 //
+// A contagem do galpão é uma por dia (coluna dia): quem pede outra no mesmo dia entra na que já existe, e ela fica
+// gravada com as leituras de todas as rotas. Relatório (/sessoes/:id/relatorio): por rota, o que foi e o que não foi
+// bipado, e a lista só dos CT-es achados em rota errada. Consulta de nota (/nf/:nf): avisa se, na última contagem
+// do galpão em que a nota estava, alguma caixa dela foi achada em outra rota.
+//
 // Tabelas: conf_rotas, conf_formatos (formatos de etiqueta por empresa, editáveis), conf_sessoes, conf_esperado, conf_leituras.
 // Testado em tests/conferencia.js.
 
@@ -81,6 +86,9 @@ async function ensureSchema(pool) {
   await pool.query(`CREATE TABLE IF NOT EXISTS conf_rotas (id BIGSERIAL PRIMARY KEY, client_id BIGINT, nome TEXT NOT NULL,
     cidades TEXT NOT NULL DEFAULT '', ordem INT NOT NULL DEFAULT 0, criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
   await pool.query('ALTER TABLE conf_sessoes ADD COLUMN IF NOT EXISTS pai_id BIGINT');
+  await pool.query('ALTER TABLE conf_sessoes ADD COLUMN IF NOT EXISTS dia DATE');   // contagem do galpão: uma por dia
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_conf_sessoes_galpao ON conf_sessoes (client_id, dia) WHERE tipo='contagem' AND pai_id IS NULL");
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_conf_sessoes_pai ON conf_sessoes (pai_id) WHERE pai_id IS NOT NULL');
   // Comercial Leal: o padrão passou a separar a NF (grupo nf)
   await pool.query("UPDATE conf_formatos SET padrao='^(?<nf>\\d{12})0\\d{10}$' WHERE nome='Comercial Leal' AND padrao='^\\d{12}0\\d{10}$'");
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS uq_conf_leitura_uuid ON conf_leituras (sessao_id, uuid) WHERE uuid IS NOT NULL');
@@ -205,12 +213,26 @@ function classificar(fs, bruto) {
     if (modelo === '57') return { codigo, tipo: 'dacte' };
     if (modelo === '55') return { codigo, tipo: 'danfe', nf: codigo.slice(25, 34).replace(/^0+/, '') };
   }
-  const f = fs.find(x => x.re.test(codigo));
-  if (f) {
-    const nf = String(((f.re.exec(codigo) || {}).groups || {}).nf || '').replace(/^0+/, '');
-    return { codigo, tipo: 'volume', parceiro: f.nome, por_volume: f.por_volume, ...(nf ? { nf } : {}) };
+  for (const cod of variantesCode39(codigo)) {
+    const f = fs.find(x => x.re.test(cod));
+    if (!f) continue;
+    const nf = String(((f.re.exec(cod) || {}).groups || {}).nf || '').replace(/^0+/, '');
+    return { codigo: cod, tipo: 'volume', parceiro: f.nome, por_volume: f.por_volume, ...(nf ? { nf } : {}) };
   }
   return { codigo, tipo: 'desconhecido' };
+}
+// Code 39 (etiqueta da Conasid): conforme a configuração, o coletor manda os asteriscos de início e fim e/ou o
+// dígito verificador (módulo 43) no fim. Tenta o código como veio, sem os asteriscos e sem o verificador.
+const C39 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-. $/+%';
+function variantesCode39(codigo) {
+  const out = [codigo];
+  const sem = codigo.replace(/^\*+|\*+$/g, '');
+  if (sem && sem !== codigo) out.push(sem);
+  if (sem.length > 4 && [...sem].every(c => C39.includes(c))) {
+    const corpo = sem.slice(0, -1);
+    if (C39[[...corpo].reduce((a, c) => a + C39.indexOf(c), 0) % 43] === sem.slice(-1)) out.push(corpo);
+  }
+  return out;
 }
 
 // ------------------------------------------------------------------ rotas do galpão
@@ -345,8 +367,12 @@ async function criarSessao(pool, cli, user, b, lerSsw) {
   const teste = Array.isArray(b.rows) && b.testMode;   // testes: carga esperada informada
   const semSsw = () => erro(503, 'A leitura do SSW não está disponível neste servidor.');
   let rows = [], fontes = [], titulo, ini = null, fim = null, modo = '', referencia = '';
+  let dia = null;
   if (tipo === 'contagem') {
-    titulo = 'Galpão ' + new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    dia = b.testMode && /^\d{4}-\d{2}-\d{2}$/.test(String(b.dia || '')) ? b.dia : hojeSp();
+    const ja = await contagemDoDia(pool, cli, dia);
+    if (ja) return { id: ja, fontes: [], existente: true };
+    titulo = 'Galpão ' + dia.split('-').reverse().slice(0, 2).join('/') + ' · ' + new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
     if (teste) rows = b.rows;
     else { if (!lerSsw) throw semSsw(); const r = await lerSsw('ssw-galpao', {}); rows = r.rows || []; fontes = r.fontes || []; }
   } else if (tipo === 'descarga') {
@@ -371,11 +397,31 @@ async function criarSessao(pool, cli, user, b, lerSsw) {
       if (teste) rows = b.rows;
     }
   }
-  const s = await pool.query('INSERT INTO conf_sessoes(client_id,tipo,titulo,janela_ini,janela_fim,criado_por,modo,referencia) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id::text',
-    [cli, tipo, titulo, ini, fim, limpo(user.username, 80), modo, referencia]);
-  const id = s.rows[0].id;
+  let id;
+  if (tipo === 'contagem') {   // a leitura do SSW leva até 2 min: dois conferentes ao mesmo tempo não criam duas contagens
+    const db = await pool.connect();
+    try {
+      await db.query('BEGIN');
+      await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['conf-galpao-' + (cli || '') + '-' + dia]);
+      const ja = await contagemDoDia(db, cli, dia);
+      if (ja) { await db.query('COMMIT'); return { id: ja, fontes, existente: true }; }
+      id = (await db.query("INSERT INTO conf_sessoes(client_id,tipo,titulo,criado_por,dia) VALUES($1,'contagem',$2,$3,$4) RETURNING id::text", [cli, titulo, limpo(user.username, 80), dia])).rows[0].id;
+      await db.query('COMMIT');
+    } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
+  } else {
+    id = (await pool.query('INSERT INTO conf_sessoes(client_id,tipo,titulo,janela_ini,janela_fim,criado_por,modo,referencia) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id::text',
+      [cli, tipo, titulo, ini, fim, limpo(user.username, 80), modo, referencia])).rows[0].id;
+  }
   await carregarEsperado(pool, cli, id, rows);
   return { id, fontes };
+}
+// coluna DATE: o pg devolve meia-noite no fuso do servidor
+const diaDe = s => { const d = s.dia; if (d instanceof Date) return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); return d ? String(d).slice(0, 10) : hojeSp(new Date(s.criado_em)); };
+// contagem do galpão do dia (as de antes da coluna dia contam pela data de criação)
+async function contagemDoDia(db, cli, dia) {
+  const q = await db.query(`SELECT id::text FROM conf_sessoes WHERE client_id IS NOT DISTINCT FROM $1 AND tipo='contagem' AND pai_id IS NULL
+    AND (dia=$2::date OR (dia IS NULL AND (criado_em AT TIME ZONE 'America/Sao_Paulo')::date=$2::date)) ORDER BY (status='aberta') DESC, id DESC LIMIT 1`, [cli, dia]);
+  return q.rowCount ? q.rows[0].id : null;
 }
 
 async function recarregar(pool, cli, id, lerSsw, b = {}) {
@@ -560,10 +606,67 @@ async function fechar(pool, cli, user, id, obs) {
 }
 
 async function listar(db, cli, tipo) {
-  return (await db.query(`SELECT s.id::text,s.tipo,s.modo,s.referencia,s.titulo,s.status,s.criado_por,s.criado_em,s.fechada_em,
+  return (await db.query(`SELECT s.id::text,s.tipo,s.modo,s.referencia,s.titulo,s.status,s.criado_por,s.criado_em,s.fechada_em,s.dia::text AS dia,
       (SELECT COALESCE(SUM(volumes),0)::int FROM conf_esperado e WHERE e.sessao_id=s.id) AS esperado,
       (SELECT COUNT(*)::int FROM conf_leituras l WHERE l.sessao_id=s.id AND l.situacao='ok' AND l.desfeita_em IS NULL) AS lidos
     FROM conf_sessoes s WHERE s.client_id IS NOT DISTINCT FROM $1 AND s.pai_id IS NULL AND ($2::text IS NULL OR s.tipo=$2) ORDER BY s.id DESC LIMIT 60`, [cli, TIPOS.includes(tipo) ? tipo : null])).rows;
+}
+
+// ------------------------------------------------------------------ relatório do galpão
+// Por rota: o que o SSW tem, o que foi bipado, o que falta e o que sobra. CT-e só aparece quando foi achado em rota errada.
+async function relatorioGalpao(db, cli, id) {
+  let pai = await sessao(db, cli, id);
+  if (pai.pai_id) pai = await sessao(db, cli, pai.pai_id);
+  if (pai.tipo !== 'contagem') throw erro(400, 'O relatório é da conferência do galpão.');
+  const paiId = String(pai.id);
+  const q = await quadroRotas(db, cli, paiId);
+  const filhas = (await db.query('SELECT id::text,referencia FROM conf_sessoes WHERE pai_id=$1', [paiId])).rows;
+  const ids = filhas.map(f => f.id);
+  const quem = ids.length ? (await db.query(`SELECT s.referencia, string_agg(DISTINCT l.usuario, ', ') AS u FROM conf_leituras l JOIN conf_sessoes s ON s.id=l.sessao_id
+    WHERE l.sessao_id = ANY($1::bigint[]) AND l.desfeita_em IS NULL GROUP BY s.referencia`, [ids])).rows : [];
+  const rotasR = q.rotas.map(r => {
+    const c = r.contagem || {};
+    return { rota: r.rota, ctes: r.ctes, volumes_ssw: r.volumes, situacao: !r.sessao ? 'nao_conferida' : r.sessao.status === 'aberta' ? 'em_andamento' : 'fechada',
+      bipados: c.lidos || 0, faltam: r.sessao ? (c.faltam || 0) : r.volumes, a_mais: c.excesso || 0, rota_errada: c.rota_errada || 0,
+      nao_reconhecidos: c.nao_reconhecidos || 0, conferentes: ((quem.find(x => x.referencia === r.rota) || {}).u) || '' };
+  });
+  const erradas = ids.length ? (await db.query(`SELECT l.ctrc, s.referencia AS achada_em, COUNT(*)::int AS volumes, MIN(l.criado_em) AS quando,
+      string_agg(DISTINCT l.usuario, ', ') AS usuario, MAX(l.parceiro) AS parceiro
+    FROM conf_leituras l JOIN conf_sessoes s ON s.id=l.sessao_id
+    WHERE l.sessao_id = ANY($1::bigint[]) AND l.situacao='rota_errada' AND l.desfeita_em IS NULL AND l.ctrc<>''
+    GROUP BY l.ctrc, s.referencia ORDER BY s.referencia, l.ctrc`, [ids])).rows : [];
+  const rs = await rotas(db, cli);
+  const esp = new Map((await db.query('SELECT ctrc,nf,volumes,destinatario,cidade,parceiro FROM conf_esperado WHERE sessao_id=$1', [paiId])).rows.map(e => [e.ctrc, e]));
+  const rotaErrada = erradas.map(x => { const e = esp.get(x.ctrc) || {};
+    return { ctrc: x.ctrc, nf: e.nf || '', parceiro: x.parceiro || e.parceiro || '', destinatario: e.destinatario || '', cidade: e.cidade || '',
+      volumes_cte: e.volumes || 0, achada_em: x.achada_em, rota_certa: rotaDaCidade(rs, e.cidade || ''), volumes: x.volumes, quando: x.quando, usuario: x.usuario || '' }; });
+  const t = k => rotasR.reduce((a, r) => a + (r[k] || 0), 0);
+  return { galpao: { id: paiId, titulo: pai.titulo, dia: diaDe(pai), status: pai.status, criado_por: pai.criado_por, criado_em: pai.criado_em, fechada_em: pai.fechada_em, carregado_em: pai.carregado_em },
+    totais: { ctes: t('ctes'), volumes_ssw: t('volumes_ssw'), bipados: t('bipados'), faltam: t('faltam'), a_mais: t('a_mais'), rota_errada: t('rota_errada'), nao_reconhecidos: t('nao_reconhecidos'),
+      rotas: rotasR.length, conferidas: rotasR.filter(r => r.situacao !== 'nao_conferida').length },
+    rotas: rotasR, rota_errada: rotaErrada };
+}
+
+// Consulta de nota: na última contagem do galpão (até 7 dias) em que a NF estava, alguma caixa dela foi achada em outra rota?
+async function alertasNf(db, cli, nfBruta) {
+  const nf = String(nfBruta || '').replace(/\D/g, '').replace(/^0+/, '');
+  if (!nf) throw erro(400, 'Informe o número da nota.');
+  const re = '(^|[^0-9])0*' + nf + '([^0-9]|$)';
+  const g = (await db.query(`SELECT s.id::text, s.titulo, s.dia, s.criado_em, e.ctrc, e.nf, e.cidade, e.parceiro, e.destinatario, e.volumes
+    FROM conf_esperado e JOIN conf_sessoes s ON s.id=e.sessao_id
+    WHERE s.client_id IS NOT DISTINCT FROM $1 AND s.tipo='contagem' AND s.pai_id IS NULL AND s.criado_em > NOW() - INTERVAL '7 days' AND e.nf ~ $2
+    ORDER BY s.id DESC`, [cli, re])).rows;
+  if (!g.length) return { nf, galpao: null, alertas: [] };
+  const ultimo = g[0].id, ctes = g.filter(x => x.id === ultimo);
+  const rs = await rotas(db, cli);
+  const lei = (await db.query(`SELECT l.ctrc, s.referencia AS achada_em, COUNT(*)::int AS volumes, MAX(l.criado_em) AS quando, string_agg(DISTINCT l.usuario, ', ') AS usuario
+    FROM conf_leituras l JOIN conf_sessoes s ON s.id=l.sessao_id
+    WHERE s.pai_id=$1 AND l.situacao='rota_errada' AND l.desfeita_em IS NULL AND l.ctrc = ANY($2::text[]) GROUP BY l.ctrc, s.referencia`, [ultimo, ctes.map(c => c.ctrc)])).rows;
+  const alertas = lei.map(l => { const e = ctes.find(c => c.ctrc === l.ctrc) || {}; const certa = rotaDaCidade(rs, e.cidade || '');
+    return { nf, ctrc: l.ctrc, parceiro: e.parceiro || '', destinatario: e.destinatario || '', cidade: e.cidade || '', rota_certa: certa, achada_em: l.achada_em,
+      volumes: l.volumes, volumes_cte: e.volumes || 0, quando: l.quando, usuario: l.usuario || '',
+      mensagem: 'Mercadoria fora da rota: ' + l.volumes + ' volume(s) da NF ' + nf + ' (CT-e ' + l.ctrc + ') foram achados em ' + l.achada_em + ', mas a nota é de ' + certa + (e.cidade ? ' (' + e.cidade + ')' : '') + '.' }; });
+  return { nf, galpao: { id: ultimo, titulo: g[0].titulo, dia: diaDe(g[0]) }, alertas };
 }
 
 // ------------------------------------------------------------------ link do motorista
@@ -680,6 +783,8 @@ async function handle(req, res, u, deps) {
       await salvarRotas(pool, cli, r.rotas);
       return sendJson(res, 200, { ok: true, avisos: r.avisos, rotas: await rotas(pool, cli) }), true;
     }
+    if ((m = p.match(/^\/sessoes\/(\d+)\/relatorio$/)) && req.method === 'GET') return sendJson(res, 200, { ok: true, ...(await relatorioGalpao(pool, cli, m[1])) }), true;
+    if ((m = p.match(/^\/nf\/(\d{1,12})$/)) && req.method === 'GET') return sendJson(res, 200, { ok: true, ...(await alertasNf(pool, cli, m[1])) }), true;
     if ((m = p.match(/^\/sessoes\/(\d+)\/rotas$/)) && req.method === 'GET') return sendJson(res, 200, { ok: true, ...(await quadroRotas(pool, cli, m[1])) }), true;
     if ((m = p.match(/^\/sessoes\/(\d+)\/rotas$/)) && req.method === 'POST') {
       const b = await readJsonBodyLimited(req, 4 * 1024);
@@ -703,7 +808,7 @@ async function handle(req, res, u, deps) {
     if (p === '/sessoes' && req.method === 'POST') {
       const b = await readJsonBodyLimited(req, 2 * 1024 * 1024);
       const r = await criarSessao(pool, cli, user, { ...b, testMode: !!testMode }, lerSsw);
-      return sendJson(res, 201, { ok: true, id: r.id, fontes: r.fontes, ...(await resumo(pool, cli, r.id)) }), true;
+      return sendJson(res, r.existente ? 200 : 201, { ok: true, id: r.id, fontes: r.fontes, existente: !!r.existente, ...(await resumo(pool, cli, r.id)) }), true;
     }
     if ((m = p.match(/^\/sessoes\/(\d+)$/)) && req.method === 'GET')
       return sendJson(res, 200, { ok: true, ...(await resumo(pool, cli, m[1])), leituras: await leituras(pool, cli, m[1]) }), true;
@@ -732,4 +837,4 @@ async function handle(req, res, u, deps) {
   }
 }
 
-module.exports = { ensureSchema, handle, classificar, compilar, parceiroDoCte, inferirPadrao, rotasDa404, janelaDescarga, FORMATOS_PADRAO, formatos, criarSessao, ler, resumo };
+module.exports = { ensureSchema, handle, classificar, variantesCode39, relatorioGalpao, alertasNf, compilar, parceiroDoCte, inferirPadrao, rotasDa404, janelaDescarga, FORMATOS_PADRAO, formatos, criarSessao, ler, resumo };

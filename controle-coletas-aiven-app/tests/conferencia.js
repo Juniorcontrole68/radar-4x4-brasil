@@ -149,6 +149,8 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
   r=await api('POST','/api/painel/conferencia/sessoes',{tipo:'contagem',rows:[rows[1],rows[2]]});
   const gid=r.j&&r.j.id;
   check('cria a conferência do galpão com os CT-es disponíveis no SSW',r.status===201&&!!gid&&r.j.sessao.tipo==='contagem'&&/^Galpão /.test(r.j.sessao.titulo)&&r.j.totais.esperado===3,r.j);
+  r=await api('POST','/api/painel/conferencia/sessoes',{tipo:'contagem',rows:[rows[1]]});
+  check('  ...uma contagem por dia: pedir outra hoje abre a mesma',r.status===200&&r.j.existente===true&&r.j.id===gid&&r.j.totais.esperado===3,r.j);
   const lerG=codigo=>api('POST','/api/painel/conferencia/sessoes/'+gid+'/leituras',{codigo});
   r=await lerG('46570145384634');check('  ...volume no galpão conta',r.j.situacao==='ok'&&r.j.progresso.lidos===1,r.j);
   r=await lerG('941221');check('  ...parceiro sem CT-e no galpão aparece como sobra',r.j.situacao==='sobra'&&/galpão/.test(r.j.mensagem)&&!/NÃO CARREGAR/.test(r.j.mensagem),r.j);
@@ -160,7 +162,7 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
   console.log('Ensinar etiqueta nova (vale nas três conferências)');
   check('padrão inferido dos códigos reais (Transbarbosa e Conasid)',conf.inferirPadrao(['46570145384634','46570145384771']).padrao==='^465701\\d{8}$'&&conf.inferirPadrao(['001000257623']).padrao==='^001000\\d{6}$');
   check('mesmo código em todas as caixas: só o formato',conf.inferirPadrao(['941221'],false).padrao==='^\\d{6}$'&&conf.inferirPadrao(['PED-00123'],false).padrao==='^PED\\-\\d{5}$');
-  r=await api('POST','/api/painel/conferencia/sessoes',{tipo:'contagem',rows:[{ctrc:'AMS002000-1',nf:'9',volumes:2,nomes:['JA TRANSPORTES E LOGISTICA']}]});
+  r=await api('POST','/api/painel/conferencia/sessoes',{tipo:'contagem',dia:'2026-01-02',rows:[{ctrc:'AMS002000-1',nf:'9',volumes:2,nomes:['JA TRANSPORTES E LOGISTICA']}]});
   const g2=r.j&&r.j.id;
   check('  ...CT-e da Já Transportes ainda sem parceiro',r.status===201&&r.j.outros.ctes===1,r.j);
   r=await api('POST','/api/painel/conferencia/sessoes/'+g2+'/leituras',{codigo:'JT00012345'});
@@ -181,6 +183,7 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
   r=await api('POST','/api/painel/conferencia/sessoes/'+c2+'/leituras',{codigo:'JT00012400'});
   check('  ...no carregamento, Já Transportes fora do romaneio: NÃO CARREGAR',r.j.situacao==='sobra'&&/NÃO CARREGAR/.test(r.j.mensagem),r.j);
   console.log('Galpão por rota');
+  check('Conasid (Code 39): aceita com asteriscos e com dígito verificador',c('*001000262303*').parceiro==='Conasid'&&c('001000262303H').parceiro==='Conasid'&&c('001000262303H').codigo==='001000262303'&&c('001000262303X').tipo==='desconhecido');
   check('Comercial Leal: a etiqueta traz a NF',c('00000032643501001013043').nf==='326435');
   r=await api('GET','/api/painel/conferencia/rotas');
   check('rotas já vêm com os setores da 404 do SSW',r.status===200&&r.j.rotas.some(x=>x.nome==='Setor 8 · MOGI GUACU'&&x.cidades.includes('MOGI MIRIM'))&&r.j.rotas.some(x=>x.cidades.includes('SANTA BARBARA D OESTE')),r.j.rotas&&r.j.rotas.map(x=>x.nome));
@@ -198,7 +201,7 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
     {ctrc:'AMS003002-8',nf:'777',volumes:2,cidade:'MOGI MIRIM',nomes:['CONASID IND']},
     {ctrc:'AMS003003-6',nf:'778',volumes:1,cidade:'PIRACICABA',nomes:['CONASID IND']},
   ];
-  r=await api('POST','/api/painel/conferencia/sessoes',{tipo:'contagem',rows:gr});
+  r=await api('POST','/api/painel/conferencia/sessoes',{tipo:'contagem',dia:'2026-01-03',rows:gr});
   const gp=r.j.id;
   r=await api('GET','/api/painel/conferencia/sessoes/'+gp+'/rotas');
   const qr=n=>r.j.rotas.find(x=>x.rota===n);
@@ -219,6 +222,17 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
   check('quadro mostra a contagem da rota e a rota errada',qr('Rota 1').sessao.id===r1&&qr('Rota 1').contagem.rota_errada===1&&qr('Rota 1').contagem.lidos===3,qr('Rota 1'));
   r=await api('GET','/api/painel/conferencia/sessoes?tipo=contagem');
   check('lista não mostra as rotas soltas',r.j.rows.every(x=>x.id!==r1));
+  r=await api('GET','/api/painel/conferencia/sessoes/'+gp+'/relatorio');
+  const rr=r.j.rotas&&r.j.rotas.find(x=>x.rota==='Rota 2'),re0=r.j.rota_errada&&r.j.rota_errada[0];
+  check('relatório: só o CT-e em rota errada, onde estava e a rota certa',r.status===200&&r.j.rota_errada.length===1&&re0.ctrc==='AMS003000-1'&&re0.nf==='326435'&&re0.achada_em==='Rota 1'&&re0.rota_certa==='Rota 2'&&re0.volumes===1,r.j.rota_errada);
+  check('  ...por rota: bipado e não bipado; rota não conferida',r.j.rotas.find(x=>x.rota==='Rota 1').bipados===3&&rr.situacao==='nao_conferida'&&rr.faltam===2&&r.j.totais.rota_errada===1&&r.j.totais.conferidas===1,r.j.rotas);
+  check('  ...abre também pela rota',(await api('GET','/api/painel/conferencia/sessoes/'+r1+'/relatorio')).j.galpao.id===gp);
+  r=await api('GET','/api/painel/conferencia/nf/326435');
+  check('consulta de nota avisa mercadoria fora da rota',r.status===200&&r.j.alertas.length===1&&r.j.alertas[0].achada_em==='Rota 1'&&r.j.alertas[0].rota_certa==='Rota 2'&&/fora da rota/.test(r.j.alertas[0].mensagem),r.j);
+  r=await api('GET','/api/painel/conferencia/nf/000326466');
+  check('  ...nota na rota certa: sem aviso',r.status===200&&r.j.alertas.length===0&&r.j.galpao&&r.j.galpao.id===gp,r.j);
+  r=await api('GET','/api/painel/conferencia/nf/98765432');
+  check('  ...nota fora das contagens',r.status===200&&r.j.galpao===null,r.j);
   r=await api('POST','/api/painel/conferencia/sessoes/'+r1+'/rotas',{rota:'Rota 2'});
   check('não abre rota dentro de rota',r.status===400,r.j);
   r=await api('POST','/api/painel/conferencia/sessoes/'+r1+'/recarregar',{rows:gr.concat([{ctrc:'AMS003004-4',nf:'779',volumes:1,cidade:'MOGI MIRIM',nomes:['CONASID']}])});
