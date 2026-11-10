@@ -180,6 +180,43 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
   const c2=r.j&&r.j.id;
   r=await api('POST','/api/painel/conferencia/sessoes/'+c2+'/leituras',{codigo:'JT00012400'});
   check('  ...no carregamento, Já Transportes fora do romaneio: NÃO CARREGAR',r.j.situacao==='sobra'&&/NÃO CARREGAR/.test(r.j.mensagem),r.j);
+  console.log('Galpão por rota');
+  check('Comercial Leal: a etiqueta traz a NF',c('00000032643501001013043').nf==='326435');
+  r=await api('PUT','/api/painel/conferencia/rotas',{rotas:[{nome:'Rota 1',cidades:'Mogi Guaçu, MOGI MIRIM'},{nome:'Rota 2',cidades:['PIEDADE']}]});
+  check('cadastra rotas (cidades sem acento)',r.status===200&&r.j.rotas.length===2&&r.j.rotas[0].cidades.includes('MOGI GUACU'),r.j);
+  r=await api('PUT','/api/painel/conferencia/rotas',{rotas:[{nome:'A',cidades:'X'},{nome:'B',cidades:'X'}]});
+  check('  ...cidade em duas rotas é recusada',r.status===400,r.j);
+  const gr=[
+    {ctrc:'AMS003000-1',nf:'326435',volumes:2,cidade:'PIEDADE',nomes:['COMERCIAL LEAL LTDA']},
+    {ctrc:'AMS003001-0',nf:'326466',volumes:1,cidade:'MOGI GUACU',nomes:['COMERCIAL LEAL LTDA']},
+    {ctrc:'AMS003002-8',nf:'777',volumes:2,cidade:'MOGI MIRIM',nomes:['CONASID IND']},
+    {ctrc:'AMS003003-6',nf:'778',volumes:1,cidade:'PIRACICABA',nomes:['CONASID IND']},
+  ];
+  r=await api('POST','/api/painel/conferencia/sessoes',{tipo:'contagem',rows:gr});
+  const gp=r.j.id;
+  r=await api('GET','/api/painel/conferencia/sessoes/'+gp+'/rotas');
+  const qr=n=>r.j.rotas.find(x=>x.rota===n);
+  check('quadro das rotas: volumes do SSW por rota e cidades sem rota',r.status===200&&qr('Rota 1').volumes===3&&qr('Rota 2').volumes===2&&qr('Sem rota').cidades.includes('PIRACICABA')&&!qr('Rota 1').sessao,r.j);
+  r=await api('POST','/api/painel/conferencia/sessoes/'+gp+'/rotas',{rota:'Rota 1'});
+  const r1=r.j.id;
+  const r1b=(await api('POST','/api/painel/conferencia/sessoes/'+gp+'/rotas',{rota:'rota 1'})).j.id;
+  check('abre a Rota 1 (outro conferente entra na mesma)',r.status===201&&!!r1&&r1b===r1,r.j);
+  r=await api('GET','/api/painel/conferencia/sessoes/'+r1);
+  check('  ...só os CT-es das cidades da rota',r.j.totais.esperado===3&&r.j.sessao.pai_id===gp&&r.j.esperado.length===2,r.j.totais);
+  const l1=x=>api('POST','/api/painel/conferencia/sessoes/'+r1+'/leituras',{codigo:x});
+  r=await l1('00000032646601001001001');check('  ...caixa da Comercial Leal desta rota: ok',r.j.situacao==='ok'&&r.j.sinal==='ok_completo',r.j);
+  r=await l1('00000032643501001001002');check('  ...caixa de NF de outra rota: ROTA ERRADA, diz qual',r.j.situacao==='rota_errada'&&r.j.rota_certa==='Rota 2'&&/ROTA ERRADA/.test(r.j.mensagem)&&/Rota 2/.test(r.j.mensagem),r.j);
+  r=await l1('00000099999901001001001');check('  ...NF que nem está no galpão',r.j.situacao==='nf_fora',r.j);
+  await l1('001000262293');await l1('001000262294');r=await l1('001000262295');
+  check('  ...Conasid (só número da caixa) passa do total da rota: a mais',r.j.situacao==='excesso',r.j);
+  r=await api('GET','/api/painel/conferencia/sessoes/'+gp+'/rotas');
+  check('quadro mostra a contagem da rota e a rota errada',qr('Rota 1').sessao.id===r1&&qr('Rota 1').contagem.rota_errada===1&&qr('Rota 1').contagem.lidos===3,qr('Rota 1'));
+  r=await api('GET','/api/painel/conferencia/sessoes?tipo=contagem');
+  check('lista não mostra as rotas soltas',r.j.rows.every(x=>x.id!==r1));
+  r=await api('POST','/api/painel/conferencia/sessoes/'+r1+'/rotas',{rota:'Rota 2'});
+  check('não abre rota dentro de rota',r.status===400,r.j);
+  r=await api('POST','/api/painel/conferencia/sessoes/'+r1+'/recarregar',{rows:gr.concat([{ctrc:'AMS003004-4',nf:'779',volumes:1,cidade:'MOGI MIRIM',nomes:['CONASID']}])});
+  check('atualizar a rota relê o galpão e separa de novo',r.status===200&&r.j.esperado.length===3&&r.j.totais.lidos===3,r.j.totais);
   r=await api('POST','/api/painel/conferencia/formatos/ensinar',{nome:'X',exemplos:['ZZ1'],padrao:'^AA$'});
   check('padrão que não reconhece o exemplo é recusado',r.status===400,r.j);
   r=await api('PUT','/api/painel/conferencia/formatos',{formatos:[{nome:'X',padrao:'([',termos:'X'}]});
