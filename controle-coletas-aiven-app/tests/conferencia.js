@@ -13,6 +13,8 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
   check('Transbarbosa: 14 dígitos 465701…',c('46570145384634').parceiro==='Transbarbosa'&&c('46570145384634').por_volume===true);
   check('Conasid: 12 dígitos 001000…',c('001000257623').parceiro==='Conasid'&&c(' 001000257627\r\n').codigo==='001000257627');
   check('Leal Dutra: pedido de 6 dígitos, só conta',c('941221').parceiro==='Leal Dutra'&&c('941221').por_volume===false);
+  check('Comercial Leal: QR de 23 dígitos (NF + volume), um por volume',c('00000032643501001013043').parceiro==='Comercial Leal'&&c('00000032646601001007026').por_volume===true&&c('0000003264350').tipo==='desconhecido');
+  check('parceiro do CT-e: Comercial Leal e Leal Dutra separados',conf.parceiroDoCte(fs,['COMERCIAL LEAL LTDA'])==='Comercial Leal'&&conf.parceiroDoCte(fs,['LEAL DUTRA DISTRIBUIDORA'])==='Leal Dutra');
   check('código desconhecido',c('ABC-123').tipo==='desconhecido');
   const dacte='35261012345678000199570010000123451000012345';
   check('DACTE (modelo 57) e DANFE (modelo 55)',c(dacte).tipo==='dacte'&&c('35261012345678000199550010000113251000012345').tipo==='danfe'&&c('35261012345678000199550010000113251000012345').nf==='11325');
@@ -27,7 +29,7 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
   const api=async(method,url,body)=>{const x=await fetch(B+url,{method,headers:{Cookie:cookie,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});let j=null;try{j=await x.json()}catch{}return{status:x.status,j}};
   check('sem login -> 401',(await fetch(B+'/api/painel/conferencia/sessoes')).status===401);
   r=await api('GET','/api/painel/conferencia/formatos');
-  check('formatos padrão criados',r.status===200&&r.j.formatos.length===3,r.j);
+  check('formatos padrão criados',r.status===200&&r.j.formatos.length===4,r.j);
   const rows=[
     {ctrc:'AMS001045-6',nf:'113025',volumes:2,chave:dacte,destinatario:'LEIRSON',nomes:['QUADRI COMERCIO','TRANSBARBOSA LOGISTICA']},
     {ctrc:'AMS001046-4',nf:'7610',volumes:1,nomes:['MOVEIS CARRARO','TRANSBARBOSA LOGISTICA']},
@@ -154,6 +156,31 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
   r=await api('GET','/api/painel/conferencia/sessoes?tipo=contagem');
   check('  ...lista das conferências do galpão',r.status===200&&r.j.rows.length>=1&&r.j.rows.every(x=>x.tipo==='contagem'),r.j.rows);
 
+  console.log('Ensinar etiqueta nova (vale nas três conferências)');
+  check('padrão inferido dos códigos reais (Transbarbosa e Conasid)',conf.inferirPadrao(['46570145384634','46570145384771']).padrao==='^465701\\d{8}$'&&conf.inferirPadrao(['001000257623']).padrao==='^001000\\d{6}$');
+  check('mesmo código em todas as caixas: só o formato',conf.inferirPadrao(['941221'],false).padrao==='^\\d{6}$'&&conf.inferirPadrao(['PED-00123'],false).padrao==='^PED\\-\\d{5}$');
+  r=await api('POST','/api/painel/conferencia/sessoes',{tipo:'contagem',rows:[{ctrc:'AMS002000-1',nf:'9',volumes:2,nomes:['JA TRANSPORTES E LOGISTICA']}]});
+  const g2=r.j&&r.j.id;
+  check('  ...CT-e da Já Transportes ainda sem parceiro',r.status===201&&r.j.outros.ctes===1,r.j);
+  r=await api('POST','/api/painel/conferencia/sessoes/'+g2+'/leituras',{codigo:'JT00012345'});
+  check('  ...etiqueta da Já Transportes não reconhecida',r.j.situacao==='nao_reconhecido',r.j);
+  r=await api('POST','/api/painel/conferencia/formatos/sugerir',{exemplos:['JT00012345','JT00012346']});
+  check('sugerir padrão a partir das etiquetas bipadas',r.status===200&&r.j.padrao==='^JT000\\d{5}$'&&r.j.atual.every(a=>a.tipo==='desconhecido'),r.j);
+  r=await api('POST','/api/painel/conferencia/formatos/ensinar',{nome:'Já Transportes',exemplos:['46570145384634']});
+  check('não ensina etiqueta que já é de outro cliente',r.status===409&&/Transbarbosa/.test(r.j.error),r.j);
+  r=await api('POST','/api/painel/conferencia/formatos/ensinar',{nome:'Já Transportes',exemplos:['JT00012345','JT00012346'],termos:'JA TRANSPORTES'});
+  check('ensina a etiqueta e refaz a leitura da conferência aberta',r.status===201&&r.j.reaplicadas===1&&r.j.formatos.some(f=>f.nome==='Já Transportes'&&f.padrao==='^JT000\\d{5}$'),r.j);
+  r=await api('GET','/api/painel/conferencia/sessoes/'+g2);
+  const ja=r.j.parceiros.find(p=>p.parceiro==='Já Transportes');
+  check('  ...CT-e ganhou o parceiro e a leitura antiga contou',!!ja&&ja.esperado===2&&ja.lidos===1&&r.j.nao_reconhecidos===0,r.j.parceiros);
+  r=await api('POST','/api/painel/conferencia/sessoes/'+g2+'/leituras',{codigo:'JT00012399'});
+  check('  ...próxima caixa já é reconhecida e completa',r.j.situacao==='ok'&&r.j.sinal==='ok_completo',r.j);
+  r=await api('POST','/api/painel/conferencia/sessoes',{tipo:'carregamento',modo:'romaneio',romaneio:'AMR001190-0',rows:[rows[2]]});
+  const c2=r.j&&r.j.id;
+  r=await api('POST','/api/painel/conferencia/sessoes/'+c2+'/leituras',{codigo:'JT00012400'});
+  check('  ...no carregamento, Já Transportes fora do romaneio: NÃO CARREGAR',r.j.situacao==='sobra'&&/NÃO CARREGAR/.test(r.j.mensagem),r.j);
+  r=await api('POST','/api/painel/conferencia/formatos/ensinar',{nome:'X',exemplos:['ZZ1'],padrao:'^AA$'});
+  check('padrão que não reconhece o exemplo é recusado',r.status===400,r.j);
   r=await api('PUT','/api/painel/conferencia/formatos',{formatos:[{nome:'X',padrao:'([',termos:'X'}]});
   check('padrão inválido é recusado',r.status===400,r.j);
   const html=await (await fetch(B+'/conferencia',{headers:{Cookie:cookie}})).text();
