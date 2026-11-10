@@ -167,6 +167,7 @@ async function abrir(id){
     '<div class="leitura" id="caixaLeitura"><input id="cod" autocomplete="off" autocapitalize="characters" inputmode="text" placeholder="Bipe a etiqueta ou o DACTE"><button type="button" id="bCam" aria-label="Ler pela câmera">📷</button></div>'+
     '<video id="video" playsinline muted hidden></video>'+
     '<div class="sinal" id="sinal">Pronto para bipar</div><button class="btn" id="bEnsinar" hidden>🏷 Ensinar esta etiqueta</button><div class="aviso" id="aviso" hidden></div>'+
+    '<div class="card" id="cRotas" hidden><b>🚚 Rotas do galpão</b><div class="muted">Cada conferente abre a rota que vai bipar. Terminou, abre a próxima. Etiqueta com NF, DANFE ou DACTE de outra rota acusa ROTA ERRADA na hora; nas etiquetas só com o número da caixa, o que passa do total do parceiro na rota aparece como a mais.</div><div class="lst" id="rotasLista"><div class="muted">carregando…</div></div><button class="btn" id="bRotasCad" type="button">Cadastrar rotas (cidades de cada rota)</button></div>'+
     '<div class="card" id="dica" hidden><b>1º bipe os DACTEs</b><div class="muted">Cada DACTE bipado coloca o CT-e na carga, com os volumes do SSW. Depois bipe os volumes: o que não for desses CT-es aparece em vermelho, NÃO CARREGAR.</div></div>'+
     '<div class="card" id="cMot" hidden><b>📱 Conferência pelo celular do motorista</b><div class="muted">O motorista abre o link e só bipa as caixas: não desfaz, não tira CT-e e não fecha. Vale só para esta carga.</div><div id="motEstado" class="muted"></div><div class="linha" id="motAcoes"><button class="btn p" id="bMot">Gerar link para o motorista</button></div></div>'+
     '<div class="totais" id="totais"></div><div class="lst" id="parceiros"></div>'+
@@ -174,7 +175,10 @@ async function abrir(id){
     '<details><summary>Últimas leituras</summary><div class="lst" id="leituras"></div></details>'+
     '<details><summary>CT-es esperados</summary><div id="esperados" style="overflow:auto"></div></details>'+
     '<div class="linha" id="acoes"><button class="btn" id="bRec">Atualizar CT-es do SSW</button><button class="btn d" id="bFechar">Fechar conferência</button></div>');
-  $('#voltar').onclick=inicio;
+  $('#voltar').onclick=()=>S.dados&&S.dados.sessao.pai_id?abrir(S.dados.sessao.pai_id):inicio();
+  $('#bRotasCad').onclick=()=>telaRotas(id);
+  $('#rotasLista').onclick=async e=>{const b=e.target.closest('[data-rota]');if(!b)return;b.disabled=true;
+    try{const r=await api('POST','/api/painel/conferencia/sessoes/'+id+'/rotas',{rota:b.dataset.rota});abrir(r.id)}catch(er){aviso(er.message);b.disabled=false}};
   $('#bEnsinar').onclick=()=>etiquetas($('#bEnsinar').dataset.codigo,id);
   $('#bCam').onclick=()=>camera(!stream);
   const cod=$('#cod');
@@ -195,16 +199,50 @@ function focoCampo(e){const c=$('#cod');if(c&&!e.target.closest('input,textarea,
 async function atualizar(){
   if(!S.id)return;
   try{desenhar(await api('GET','/api/painel/conferencia/sessoes/'+S.id))}catch(e){if(e.status)aviso(e.message)}
+  const s=S.dados&&S.dados.sessao;
+  if(s&&s.tipo==='contagem'&&!s.pai_id)try{desenharRotas(await api('GET','/api/painel/conferencia/sessoes/'+S.id+'/rotas'))}catch{}
 }
-const ROT={ok:'ok',duplicado:'repetido',excesso:'a mais',sobra:'sem CT-e',nao_reconhecido:'não reconhecida',dacte:'DACTE',dacte_parceiro:'DACTE parceiro',danfe:'DANFE',danfe_fora:'DANFE fora',cte_adicionado:'CT-e na carga',cte_nao_achado:'CT-e não achado'};
-const COR={ok:'v',duplicado:'a',excesso:'r',sobra:'r',nao_reconhecido:'r',dacte:'',dacte_parceiro:'',danfe:'',danfe_fora:'a',cte_adicionado:'v',cte_nao_achado:'r'};
+function desenharRotas(q){
+  const aberta=q.pai.status==='aberta';
+  $('#rotasLista').innerHTML=q.rotas.map(r=>{const c=r.contagem,st=r.sessao;
+    const est=!st?'<span class="chip">não começou</span>':(st.status==='aberta'?'<span class="chip a">em andamento · '+esc(st.criado_por)+'</span>':'<span class="chip v">fechada</span>');
+    const nums=c?'<span class="chip">'+n(c.lidos)+' de '+n(c.esperado)+'</span>'+(c.faltam?'<span class="chip a">faltam '+n(c.faltam)+'</span>':'')+(c.excesso?'<span class="chip r">'+n(c.excesso)+' a mais</span>':'')+(c.rota_errada?'<span class="chip r">'+n(c.rota_errada)+' rota errada</span>':''):'';
+    return'<div class="lei"><div><b>'+esc(r.rota)+'</b> '+est+'<br><small>'+n(r.ctes)+' CT-e(s) · '+n(r.volumes)+' volume(s) no SSW · '+esc(r.cidades.slice(0,6).join(', ')+(r.cidades.length>6?'…':''))+'</small><div class="chips" style="margin-top:4px">'+nums+'</div></div>'+
+      (aberta?'<button data-rota="'+esc(r.rota)+'">'+(st&&st.status==='aberta'?'Entrar':st?'Abrir de novo':'Bipar')+'</button>':'')+'</div>'}).join('')||'<div class="muted">Nenhuma rota cadastrada ainda.</div>'
+}
+// ---------------- cadastro das rotas: nome + cidades
+async function telaRotas(voltarSessao){
+  camera(false);S.id=null;clearInterval(S.timer);
+  $('#titulo').textContent='Rotas do galpão';$('#sub').textContent='Cidades de cada rota';
+  const j=await api('GET','/api/painel/conferencia/rotas');
+  let semRota=[];
+  if(voltarSessao)try{semRota=((await api('GET','/api/painel/conferencia/sessoes/'+voltarSessao+'/rotas')).rotas.find(r=>r.rota==='Sem rota')||{}).cidades||[]}catch{}
+  const L=j.rotas.map(r=>({nome:r.nome,cidades:r.cidades.join(', ')}));
+  const voltar=()=>voltarSessao?abrir(voltarSessao):inicio();
+  const linha=(r,i)=>'<div class="card"><label>Nome da rota<input data-n="'+i+'" value="'+esc(r.nome)+'" maxlength="40" placeholder="Ex.: Rota 1 · Mogi Guaçu"></label><label>Cidades (separadas por vírgula)<textarea data-c="'+i+'" placeholder="MOGI GUACU, MOGI MIRIM, ESTIVA GERBI">'+esc(r.cidades)+'</textarea></label><button class="btn d" data-x="'+i+'" type="button">Tirar esta rota</button></div>';
+  const tela=()=>{render('<button class="voltar" id="voltar">← Voltar</button>'+
+    (semRota.length?'<div class="card"><b>Cidades no galpão que ainda não estão em nenhuma rota</b><div class="muted">Toque para pôr na última rota da lista.</div><div class="chips" id="semRota">'+semRota.map(c=>'<button class="chip a" style="border:0;cursor:pointer" data-sr="'+esc(c)+'">'+esc(c)+'</button>').join('')+'</div></div>':'')+
+    '<div class="lst" id="rotasCad">'+L.map(linha).join('')+'</div><button class="btn" id="rNova" type="button">+ Nova rota</button><div class="aviso" id="aviso" hidden></div><button class="btn p" id="rSalvar">Salvar rotas</button>');
+    $('#voltar').onclick=voltar;
+    const ler=()=>{document.querySelectorAll('[data-n]').forEach(x=>L[+x.dataset.n].nome=x.value);document.querySelectorAll('[data-c]').forEach(x=>L[+x.dataset.c].cidades=x.value)};
+    $('#rNova').onclick=()=>{ler();L.push({nome:'',cidades:''});tela()};
+    $('#rotasCad').onclick=e=>{const b=e.target.closest('[data-x]');if(b){ler();L.splice(+b.dataset.x,1);tela()}};
+    const sr=$('#semRota');if(sr)sr.onclick=e=>{const b=e.target.closest('[data-sr]');if(!b)return;ler();if(!L.length)L.push({nome:'',cidades:''});const u=L[L.length-1];u.cidades=(u.cidades?u.cidades.replace(/[,\s]+$/,'')+', ':'')+b.dataset.sr;semRota=semRota.filter(c=>c!==b.dataset.sr);tela()};
+    $('#rSalvar').onclick=async()=>{ler();try{await api('PUT','/api/painel/conferencia/rotas',{rotas:L.filter(r=>r.nome.trim()||r.cidades.trim())});aviso('Rotas salvas.','ok');setTimeout(voltar,800)}catch(e){aviso(e.message)}};
+  };
+  tela();
+}
+const ROT={ok:'ok',duplicado:'repetido',excesso:'a mais',sobra:'sem CT-e',nao_reconhecido:'não reconhecida',dacte:'DACTE',dacte_parceiro:'DACTE parceiro',danfe:'DANFE',danfe_fora:'DANFE fora',rota_errada:'rota errada',nf_fora:'NF fora',cte_adicionado:'CT-e na carga',cte_nao_achado:'CT-e não achado'};
+const COR={ok:'v',duplicado:'a',excesso:'r',sobra:'r',nao_reconhecido:'r',dacte:'',dacte_parceiro:'',danfe:'',danfe_fora:'a',rota_errada:'r',nf_fora:'r',cte_adicionado:'v',cte_nao_achado:'r'};
 function desenhar(d){
   S.dados=d;const s=d.sessao,t=d.totais,aberta=s.status==='aberta';
   $('#titulo').textContent=s.titulo+(aberta?'':' · fechada');
-  $('#sub').textContent=(s.tipo==='contagem'?'CT-es disponíveis para entrega no SSW':s.tipo==='descarga'?'CT-es emitidos de '+dh(s.janela_ini)+' a '+dh(s.janela_fim):s.modo==='romaneio'?'Romaneio '+s.referencia:'Carga montada pelos DACTEs bipados')+(s.carregado_em?' · SSW lido às '+hr(s.carregado_em):'');
+  $('#sub').textContent=(s.pai_id?'CT-es do galpão nas cidades da rota '+s.referencia:s.tipo==='contagem'?'CT-es disponíveis para entrega no SSW':s.tipo==='descarga'?'CT-es emitidos de '+dh(s.janela_ini)+' a '+dh(s.janela_fim):s.modo==='romaneio'?'Romaneio '+s.referencia:'Carga montada pelos DACTEs bipados')+(s.carregado_em?' · SSW lido às '+hr(s.carregado_em):'');
   $('#cod').placeholder=s.tipo==='carregamento'&&s.modo==='ctes'?'Bipe os DACTEs e depois os volumes':'Bipe a etiqueta ou o DACTE';
   $('#dica').hidden=!(aberta&&s.tipo==='carregamento'&&s.modo==='ctes'&&!d.esperado.length);
   $('#cMot').hidden=!(aberta&&s.tipo==='carregamento');
+  $('#cRotas').hidden=!(s.tipo==='contagem'&&!s.pai_id);
+  $('#voltar').textContent=s.pai_id?'← Rotas do galpão':'← Conferências';
   if(!S.linkMot||S.linkMot.id!==S.id)$('#motEstado').innerHTML=s.motorista_link_em?'Link enviado às '+esc(hr(s.motorista_link_em))+(s.motorista_terminou_em?' · <b style="color:#4ade80">motorista avisou que terminou às '+esc(hr(s.motorista_terminou_em))+'</b>':' · motorista ainda carregando'):'';
   $('#caixaLeitura').hidden=!aberta;$('#acoes').hidden=!aberta;
   $('#totais').innerHTML='<div><b>'+n(t.lidos)+'</b><span>de '+n(t.esperado)+' lidos</span></div><div><b style="color:'+(t.faltam?'#fbbf24':'#4ade80')+'">'+n(t.faltam)+'</b><span>faltam</span></div><div><b style="color:'+(t.excesso?'#f87171':'inherit')+'">'+n(t.excesso)+'</b><span>a mais</span></div><div><b style="color:'+(d.nao_reconhecidos?'#f87171':'inherit')+'">'+n(d.nao_reconhecidos)+'</b><span>não reconhecidas</span></div>';

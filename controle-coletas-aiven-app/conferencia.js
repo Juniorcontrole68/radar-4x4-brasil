@@ -27,7 +27,13 @@
 // leitura, não tira nem põe CT-e, não atualiza do SSW, não fecha e não vê outras cargas. O link vale enquanto a
 // conferência estiver aberta (até 24 h) e pode ser trocado (o anterior para de funcionar).
 //
-// Tabelas: conf_formatos (formatos de etiqueta por empresa, editáveis), conf_sessoes, conf_esperado, conf_leituras.
+// Galpão por rota: as rotas são cadastradas como listas de cidades (conf_rotas). Dentro da conferência do galpão o
+// conferente abre uma rota (vários conferentes, várias rotas ao mesmo tempo): a rota é uma conferência filha
+// (pai_id) com os CT-es do galpão cujas cidades são dela. Etiqueta que traz a NF (padrão com o grupo (?<nf>...),
+// hoje a Comercial Leal), DANFE ou DACTE de um CT-e de outra rota dá "ROTA ERRADA". Etiqueta que só tem o número
+// da caixa (Conasid, Transbarbosa, FCB) conta por parceiro dentro da rota: o que passa do total é sobra.
+//
+// Tabelas: conf_rotas, conf_formatos (formatos de etiqueta por empresa, editáveis), conf_sessoes, conf_esperado, conf_leituras.
 // Testado em tests/conferencia.js.
 
 const crypto = require('crypto');
@@ -39,7 +45,7 @@ const FORMATOS_PADRAO = [
   { nome: 'Transbarbosa', padrao: '^465701\\d{8}$', termos: 'TRANSBARBOSA', por_volume: true },
   { nome: 'Conasid', padrao: '^001000\\d{6}$', termos: 'CONASID', por_volume: true },
   { nome: 'Leal Dutra', padrao: '^\\d{6}$', termos: 'LEAL DUTRA', por_volume: false },
-  { nome: 'Comercial Leal', padrao: '^\\d{12}0\\d{10}$', termos: 'COMERCIAL LEAL', por_volume: true },
+  { nome: 'Comercial Leal', padrao: '^(?<nf>\\d{12})0\\d{10}$', termos: 'COMERCIAL LEAL', por_volume: true },
   { nome: 'FCB / JT / THM', padrao: '^203818\\d{8}$', termos: 'FCB, JT TRANSP, CONSTRUDECOR', por_volume: true },
 ];
 // Formatos que entraram depois: são acrescentados a quem já tinha a lista (se não houver um com o mesmo nome;
@@ -72,6 +78,11 @@ async function ensureSchema(pool) {
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS uq_conf_motorista_token ON conf_sessoes (motorista_token_hash) WHERE motorista_token_hash IS NOT NULL');
   // DACTE do parceiro (Transbarbosa): a chave do CT-e dele, que bipamos no lugar do nosso
   await pool.query("ALTER TABLE conf_esperado ADD COLUMN IF NOT EXISTS chave_parceiro TEXT NOT NULL DEFAULT ''");
+  await pool.query(`CREATE TABLE IF NOT EXISTS conf_rotas (id BIGSERIAL PRIMARY KEY, client_id BIGINT, nome TEXT NOT NULL,
+    cidades TEXT NOT NULL DEFAULT '', ordem INT NOT NULL DEFAULT 0, criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+  await pool.query('ALTER TABLE conf_sessoes ADD COLUMN IF NOT EXISTS pai_id BIGINT');
+  // Comercial Leal: o padrão passou a separar a NF (grupo nf)
+  await pool.query("UPDATE conf_formatos SET padrao='^(?<nf>\\d{12})0\\d{10}$' WHERE nome='Comercial Leal' AND padrao='^\\d{12}0\\d{10}$'");
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS uq_conf_leitura_uuid ON conf_leituras (sessao_id, uuid) WHERE uuid IS NOT NULL');
   await pool.query('CREATE INDEX IF NOT EXISTS idx_conf_leitura_sessao ON conf_leituras (sessao_id, id)');
 }
@@ -195,8 +206,81 @@ function classificar(fs, bruto) {
     if (modelo === '55') return { codigo, tipo: 'danfe', nf: codigo.slice(25, 34).replace(/^0+/, '') };
   }
   const f = fs.find(x => x.re.test(codigo));
-  if (f) return { codigo, tipo: 'volume', parceiro: f.nome, por_volume: f.por_volume };
+  if (f) {
+    const nf = String(((f.re.exec(codigo) || {}).groups || {}).nf || '').replace(/^0+/, '');
+    return { codigo, tipo: 'volume', parceiro: f.nome, por_volume: f.por_volume, ...(nf ? { nf } : {}) };
+  }
   return { codigo, tipo: 'desconhecido' };
+}
+
+// ------------------------------------------------------------------ rotas do galpão
+const SEM_ROTA = 'Sem rota';
+const cidadesDe = txt => [...new Set(String(txt || '').split(/[,;\n]/).map(semAcento).filter(Boolean))];
+async function rotas(db, cli) {
+  return (await db.query('SELECT id::text,nome,cidades,ordem FROM conf_rotas WHERE client_id IS NOT DISTINCT FROM $1 ORDER BY ordem,id', [cli])).rows
+    .map(r => ({ ...r, cidades: cidadesDe(r.cidades) }));
+}
+async function salvarRotas(db, cli, lista) {
+  if (!Array.isArray(lista)) throw erro(400, 'Lista de rotas inválida.');
+  const vistas = new Map();
+  const ok = lista.slice(0, 80).map((r, i) => {
+    const nome = limpo(r.nome, 40);
+    if (!nome) throw erro(400, 'Cada rota precisa de um nome.');
+    if (semAcento(nome) === semAcento(SEM_ROTA)) throw erro(400, '"' + SEM_ROTA + '" é reservado.');
+    const cidades = cidadesDe(Array.isArray(r.cidades) ? r.cidades.join(',') : r.cidades);
+    for (const c of cidades) { if (vistas.has(c) && vistas.get(c) !== nome) throw erro(400, c + ' está em duas rotas (' + vistas.get(c) + ' e ' + nome + ').'); vistas.set(c, nome); }
+    return { nome, cidades: cidades.join(', '), ordem: i };
+  });
+  if (new Set(ok.map(r => semAcento(r.nome))).size !== ok.length) throw erro(400, 'Há duas rotas com o mesmo nome.');
+  await db.query('DELETE FROM conf_rotas WHERE client_id IS NOT DISTINCT FROM $1', [cli]);
+  for (const r of ok) await db.query('INSERT INTO conf_rotas(client_id,nome,cidades,ordem) VALUES($1,$2,$3,$4)', [cli, r.nome, r.cidades, r.ordem]);
+}
+// cidade do CT-e -> nome da rota ('Sem rota' quando nenhuma rota tem a cidade)
+function rotaDaCidade(rs, cidade) {
+  const c = semAcento(cidade).replace(/\s*[-\/]\s*[A-Z]{2}$/, '');
+  const r = rs.find(x => x.cidades.includes(c));
+  return r ? r.nome : SEM_ROTA;
+}
+// CT-es do galpão (conferência pai) que são da rota
+async function esperadoDaRota(db, cli, paiId, nome) {
+  const rs = await rotas(db, cli);
+  const esp = (await db.query('SELECT ctrc,nf,volumes,chave,destinatario,cidade,parceiro,nomes,emitido_em,chave_parceiro FROM conf_esperado WHERE sessao_id=$1', [paiId])).rows;
+  return esp.filter(e => rotaDaCidade(rs, e.cidade) === nome).map(e => ({ ...e, nomes: String(e.nomes || '').split(' | ').filter(Boolean) }));
+}
+// abre a rota dentro da conferência do galpão (ou entra na que já está aberta: vários conferentes na mesma rota)
+async function abrirRota(pool, cli, user, paiId, nomeRota) {
+  const pai = await sessao(pool, cli, paiId);
+  if (pai.tipo !== 'contagem' || pai.pai_id) throw erro(400, 'Abra a rota dentro da conferência do galpão.');
+  if (pai.status !== 'aberta') throw erro(409, 'A conferência do galpão já foi fechada.');
+  const rs = await rotas(pool, cli);
+  const nome = semAcento(nomeRota) === semAcento(SEM_ROTA) ? SEM_ROTA : (rs.find(r => semAcento(r.nome) === semAcento(nomeRota)) || {}).nome;
+  if (!nome) throw erro(404, 'Rota não cadastrada.');
+  const ja = await pool.query("SELECT id::text FROM conf_sessoes WHERE pai_id=$1 AND referencia=$2 AND status='aberta' ORDER BY id DESC LIMIT 1", [paiId, nome]);
+  if (ja.rowCount) return { id: ja.rows[0].id, nova: false };
+  const s = await pool.query("INSERT INTO conf_sessoes(client_id,tipo,titulo,criado_por,modo,referencia,pai_id) VALUES($1,'contagem',$2,$3,'rota',$4,$5) RETURNING id::text",
+    [cli, pai.titulo + ' · ' + nome, limpo(user.username, 80), nome, paiId]);
+  await carregarEsperado(pool, cli, s.rows[0].id, await esperadoDaRota(pool, cli, paiId, nome));
+  return { id: s.rows[0].id, nova: true };
+}
+// quadro das rotas na conferência do galpão: o que o SSW tem em cada rota e como está a contagem
+async function quadroRotas(db, cli, paiId) {
+  const pai = await sessao(db, cli, paiId);
+  const rs = await rotas(db, cli);
+  const esp = (await db.query('SELECT volumes,cidade FROM conf_esperado WHERE sessao_id=$1', [paiId])).rows;
+  const filhas = (await db.query('SELECT id::text,referencia,status,criado_por FROM conf_sessoes WHERE pai_id=$1 ORDER BY id', [paiId])).rows;
+  const nomes = rs.map(r => r.nome).concat([SEM_ROTA]);
+  const out = [];
+  for (const nome of nomes) {
+    const meus = esp.filter(e => rotaDaCidade(rs, e.cidade) === nome);
+    const fs = filhas.filter(f => f.referencia === nome);
+    const f = fs.find(x => x.status === 'aberta') || fs[fs.length - 1];
+    let r = null;
+    if (f) { const x = await resumo(db, cli, f.id); r = { ...x.totais, nao_reconhecidos: x.nao_reconhecidos, rota_errada: x.rota_errada }; }
+    if (!meus.length && !f && nome === SEM_ROTA) continue;
+    out.push({ rota: nome, cidades: nome === SEM_ROTA ? [...new Set(meus.map(e => semAcento(e.cidade)).filter(Boolean))] : rs.find(x => x.nome === nome).cidades,
+      ctes: meus.length, volumes: meus.reduce((a, e) => a + e.volumes, 0), sessao: f ? { id: f.id, status: f.status, criado_por: f.criado_por } : null, contagem: r });
+  }
+  return { pai: { id: String(pai.id), titulo: pai.titulo, status: pai.status }, rotas: out };
 }
 
 // ------------------------------------------------------------------ janela da descarga
@@ -272,7 +356,11 @@ async function recarregar(pool, cli, id, lerSsw, b = {}) {
   const s = await sessao(pool, cli, id);
   if (s.status !== 'aberta') throw erro(409, 'Conferência já fechada.');
   let rows;
-  if (Array.isArray(b.rows) && b.testMode) rows = b.rows;
+  if (s.pai_id) {   // rota do galpão: atualiza o galpão inteiro e separa a rota de novo
+    const pai = await sessao(pool, cli, s.pai_id);
+    if (pai.status === 'aberta') await recarregar(pool, cli, String(pai.id), lerSsw, b);
+    rows = await esperadoDaRota(pool, cli, String(pai.id), s.referencia);
+  } else if (Array.isArray(b.rows) && b.testMode) rows = b.rows;
   else if (!lerSsw) throw erro(503, 'A leitura do SSW não está disponível neste servidor.');
   else if (s.tipo === 'contagem') rows = (await lerSsw('ssw-galpao', {})).rows || [];
   else if (s.tipo === 'descarga') rows = (await lerSsw('ssw-esperado', { inicio: new Date(s.janela_ini).toISOString(), fim: new Date(s.janela_fim).toISOString() })).rows || [];
@@ -313,16 +401,17 @@ async function resumo(db, cli, id) {
   const conta = (p, sit) => lei.filter(l => l.parceiro === p && (!sit || sit.includes(l.situacao))).reduce((a, l) => a + l.n, 0);
   const parceiros = nomes.map(p => {
     const ctes = esp.filter(e => e.parceiro === p), esperado = ctes.reduce((a, e) => a + e.volumes, 0);
-    const lidos = conta(p, ['ok']), excesso = conta(p, ['excesso', 'sobra']), repetidos = conta(p, ['duplicado']);
+    const lidos = conta(p, ['ok']), excesso = conta(p, ['excesso', 'sobra', 'nf_fora', 'rota_errada']), repetidos = conta(p, ['duplicado']);
     return { parceiro: p, ctes: ctes.length, esperado, lidos, faltam: Math.max(0, esperado - lidos), excesso, repetidos, completo: esperado > 0 && lidos >= esperado };
   }).filter(p => p.ctes || p.lidos || p.excesso || p.repetidos);
   const outros = esp.filter(e => !e.parceiro);
   const t = k => parceiros.reduce((a, p) => a + p[k], 0);
   return {
-    sessao: { id: String(s.id), tipo: s.tipo, modo: s.modo || '', referencia: s.referencia || '', titulo: s.titulo, status: s.status, janela_ini: s.janela_ini, janela_fim: s.janela_fim, criado_por: s.criado_por, criado_em: s.criado_em, carregado_em: s.carregado_em, fechada_em: s.fechada_em, fechada_por: s.fechada_por, observacao: s.observacao || '', motorista_link_em: s.motorista_link_em || null, motorista_terminou_em: s.motorista_terminou_em || null },
+    sessao: { id: String(s.id), pai_id: s.pai_id ? String(s.pai_id) : null, tipo: s.tipo, modo: s.modo || '', referencia: s.referencia || '', titulo: s.titulo, status: s.status, janela_ini: s.janela_ini, janela_fim: s.janela_fim, criado_por: s.criado_por, criado_em: s.criado_em, carregado_em: s.carregado_em, fechada_em: s.fechada_em, fechada_por: s.fechada_por, observacao: s.observacao || '', motorista_link_em: s.motorista_link_em || null, motorista_terminou_em: s.motorista_terminou_em || null },
     parceiros,
     outros: { ctes: outros.length, volumes: outros.reduce((a, e) => a + e.volumes, 0) },
     nao_reconhecidos: conta('', ['nao_reconhecido']),
+    rota_errada: lei.filter(l => l.situacao === 'rota_errada').reduce((a, l) => a + l.n, 0),
     totais: { esperado: t('esperado'), lidos: t('lidos'), faltam: t('faltam'), excesso: t('excesso'), repetidos: t('repetidos') },
     esperado: esp,
   };
@@ -371,6 +460,19 @@ async function ler(pool, cli, user, id, b, lerSsw) {
     } else if (c.tipo === 'danfe') {
       const e = (await db.query("SELECT ctrc,parceiro FROM conf_esperado WHERE sessao_id=$1 AND ltrim(nf,'0')=$2 LIMIT 1", [id, c.nf])).rows[0];
       situacao = e ? 'danfe' : 'danfe_fora'; if (e) { ctrc = e.ctrc; parceiro = e.parceiro; }
+    }
+    // rota do galpão: DACTE, DANFE ou etiqueta com NF de um CT-e que o galpão tem em outra rota
+    let outraRota = '';
+    if (s.pai_id && ['dacte_parceiro', 'danfe_fora'].includes(situacao) || s.pai_id && c.tipo === 'volume' && c.nf) {
+      const ja = c.tipo === 'volume' && (await db.query("SELECT 1 FROM conf_esperado WHERE sessao_id=$1 AND ltrim(nf,'0')=$2", [id, c.nf])).rowCount;
+      if (!ja) {
+        const e = (await db.query("SELECT ctrc,parceiro,cidade FROM conf_esperado WHERE sessao_id=$1 AND (chave=$2 OR chave_parceiro=$2 OR ltrim(nf,'0')=$3) LIMIT 1", [s.pai_id, c.codigo, c.nf || '-'])).rows[0];
+        if (e) { outraRota = rotaDaCidade(await rotas(db, cli), e.cidade); situacao = 'rota_errada'; ctrc = e.ctrc; parceiro = c.parceiro || e.parceiro; }
+      }
+    }
+    if (situacao === 'rota_errada') { /* já resolvido */ }
+    else if (c.tipo === 'volume' && c.nf && (s.tipo === 'carregamento' || s.pai_id) && !(await db.query("SELECT 1 FROM conf_esperado WHERE sessao_id=$1 AND ltrim(nf,'0')=$2", [id, c.nf])).rowCount) {
+      parceiro = c.parceiro; situacao = 'nf_fora';   // etiqueta com NF de nota que não está nesta carga/rota
     } else if (c.tipo === 'volume') {
       parceiro = c.parceiro;
       const esperado = Number((await db.query('SELECT COALESCE(SUM(volumes),0)::int AS v FROM conf_esperado WHERE sessao_id=$1 AND parceiro=$2', [id, parceiro])).rows[0].v);
@@ -383,7 +485,7 @@ async function ler(pool, cli, user, id, b, lerSsw) {
     }
     const ins = await db.query('INSERT INTO conf_leituras(sessao_id,uuid,codigo,tipo,parceiro,ctrc,situacao,usuario) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id::text',
       [id, uuid, c.codigo, c.tipo, parceiro, ctrc, situacao, limpo(user.username, 80)]);
-    const out = { id: ins.rows[0].id, codigo: c.codigo, tipo: c.tipo, parceiro, ctrc, situacao, ...(await mensagem(db, cli, id, { situacao, parceiro, ctrc, codigo: c.codigo, tipo: s.tipo })) };
+    const out = { id: ins.rows[0].id, codigo: c.codigo, tipo: c.tipo, parceiro, ctrc, situacao, ...(outraRota ? { rota_certa: outraRota } : {}), ...(await mensagem(db, cli, id, { situacao, parceiro, ctrc, codigo: c.codigo, tipo: s.tipo, outraRota, nf: c.nf, pai: !!s.pai_id })) };
     await db.query('COMMIT');
     return out;
   } catch (e) { await db.query('ROLLBACK').catch(() => {}); throw e; } finally { db.release(); }
@@ -391,8 +493,9 @@ async function ler(pool, cli, user, id, b, lerSsw) {
 async function mensagem(db, cli, id, l) {
   const r = l.parceiro ? (await resumo(db, cli, id)).parceiros.find(p => p.parceiro === l.parceiro) : null;
   const prog = r ? r.lidos + ' de ' + r.esperado : '';
-  const carg = l.tipo === 'carregamento', onde = l.tipo === 'contagem' ? 'no galpão (SSW)' : 'nesta carga';
-  const cte = l.ctrc ? (await db.query('SELECT volumes,parceiro FROM conf_esperado WHERE sessao_id=$1 AND ctrc=$2', [id, l.ctrc])).rows[0] : null;
+  const carg = l.tipo === 'carregamento', onde = l.pai ? 'nesta rota' : l.tipo === 'contagem' ? 'no galpão (SSW)' : 'nesta carga';
+  const cte = l.ctrc ? (await db.query('SELECT volumes,parceiro,cidade FROM conf_esperado WHERE sessao_id=$1 AND ctrc=$2', [id, l.ctrc])).rows[0]
+    || (l.situacao === 'rota_errada' ? (await db.query('SELECT e.volumes,e.parceiro,e.cidade FROM conf_esperado e JOIN conf_sessoes s ON s.pai_id=e.sessao_id WHERE s.id=$1 AND e.ctrc=$2', [id, l.ctrc])).rows[0] : null) : null;
   const M = {
     cte_adicionado: ['info', 'CT-e ' + l.ctrc + ' na carga' + (cte ? ' · ' + cte.volumes + ' volume(s)' + (cte.parceiro ? ' · ' + cte.parceiro : ' · sem etiqueta reconhecida') : '')],
     cte_nao_achado: ['erro', 'CT-e deste DACTE não encontrado no SSW'],
@@ -401,6 +504,8 @@ async function mensagem(db, cli, id, l) {
     duplicado: ['alerta', 'Volume já bipado (' + l.parceiro + ')'],
     excesso: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + 'A mais: ' + l.parceiro + ' já tem ' + prog + ' volumes'],
     sobra: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + l.parceiro + ' não tem CT-e ' + onde],
+    rota_errada: ['erro', 'ROTA ERRADA · ' + (l.parceiro ? l.parceiro + ' ' : '') + 'é da ' + (/^rota\b/i.test(l.outraRota || '') ? l.outraRota : 'rota ' + (l.outraRota || '?')) + (cte && cte.cidade ? ' (' + cte.cidade + ')' : '')],
+    nf_fora: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + 'NF ' + (l.nf || '') + ' (' + l.parceiro + ') não está ' + onde],
     nao_reconhecido: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + 'Etiqueta não reconhecida'],
     dacte: ['info', 'DACTE ' + l.ctrc + ' conferido'],
     dacte_parceiro: ['info', 'DACTE de outra transportadora registrado'],
@@ -432,7 +537,7 @@ async function listar(db, cli, tipo) {
   return (await db.query(`SELECT s.id::text,s.tipo,s.modo,s.referencia,s.titulo,s.status,s.criado_por,s.criado_em,s.fechada_em,
       (SELECT COALESCE(SUM(volumes),0)::int FROM conf_esperado e WHERE e.sessao_id=s.id) AS esperado,
       (SELECT COUNT(*)::int FROM conf_leituras l WHERE l.sessao_id=s.id AND l.situacao='ok' AND l.desfeita_em IS NULL) AS lidos
-    FROM conf_sessoes s WHERE s.client_id IS NOT DISTINCT FROM $1 AND ($2::text IS NULL OR s.tipo=$2) ORDER BY s.id DESC LIMIT 60`, [cli, TIPOS.includes(tipo) ? tipo : null])).rows;
+    FROM conf_sessoes s WHERE s.client_id IS NOT DISTINCT FROM $1 AND s.pai_id IS NULL AND ($2::text IS NULL OR s.tipo=$2) ORDER BY s.id DESC LIMIT 60`, [cli, TIPOS.includes(tipo) ? tipo : null])).rows;
 }
 
 // ------------------------------------------------------------------ link do motorista
@@ -535,6 +640,17 @@ async function handle(req, res, u, deps) {
       const b = await readJsonBodyLimited(req, 16 * 1024);
       const r = await ensinar(pool, cli, b);
       return sendJson(res, 201, { ok: true, ...r, formatos: await formatos(pool, cli) }), true;
+    }
+    if (p === '/rotas' && req.method === 'GET') return sendJson(res, 200, { ok: true, rotas: await rotas(pool, cli) }), true;
+    if (p === '/rotas' && req.method === 'PUT') {
+      const b = await readJsonBodyLimited(req, 128 * 1024);
+      await salvarRotas(pool, cli, b.rotas);
+      return sendJson(res, 200, { ok: true, rotas: await rotas(pool, cli) }), true;
+    }
+    if ((m = p.match(/^\/sessoes\/(\d+)\/rotas$/)) && req.method === 'GET') return sendJson(res, 200, { ok: true, ...(await quadroRotas(pool, cli, m[1])) }), true;
+    if ((m = p.match(/^\/sessoes\/(\d+)\/rotas$/)) && req.method === 'POST') {
+      const b = await readJsonBodyLimited(req, 4 * 1024);
+      return sendJson(res, 201, { ok: true, ...(await abrirRota(pool, cli, user, m[1], b.rota)) }), true;
     }
     if (p === '/romaneios' && req.method === 'GET') {
       if (!lerSsw) return sendJson(res, 200, { ok: true, rows: [] }), true;
