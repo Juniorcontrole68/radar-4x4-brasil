@@ -14,6 +14,10 @@
 // CT-es que vão no caminhão (cada DACTE novo entra na carga). Depois os volumes: volume de parceiro sem CT-e na
 // carga ou a mais do que os CT-es dizem aparece em vermelho, "NÃO CARREGAR".
 //
+// Contagem do galpão: a carga esperada são os CT-es disponíveis para entrega na unidade (pendências da opção 38 do
+// SSW, ainda sem romaneio). Bipa-se tudo o que está no galpão; fecha por parceiro: o que falta (está no SSW e não foi
+// achado) e o que sobra (volume a mais ou de parceiro sem CT-e na unidade).
+//
 // Motorista: no carregamento, o conferente gera um link exclusivo daquela carga (placa/romaneio) e manda pelo
 // WhatsApp. O motorista abre no celular sem login (/conferencia/m/<token>) e só bipa e acompanha: não desfaz
 // leitura, não tira nem põe CT-e, não atualiza do SSW, não fecha e não vê outras cargas. O link vale enquanto a
@@ -145,11 +149,14 @@ async function carregarEsperado(pool, cli, sessaoId, rows, { acrescentar = false
 // lerSsw(rota, corpo): rotas /api/conferencia/<rota> do painel (ssw-esperado, ssw-romaneio, ssw-ctes, ssw-romaneios)
 async function criarSessao(pool, cli, user, b, lerSsw) {
   const tipo = TIPOS.includes(b.tipo) ? b.tipo : 'descarga';
-  if (tipo === 'contagem') throw erro(400, 'A contagem do galpão ainda não está disponível.');
   const teste = Array.isArray(b.rows) && b.testMode;   // testes: carga esperada informada
   const semSsw = () => erro(503, 'A leitura do SSW não está disponível neste servidor.');
   let rows = [], fontes = [], titulo, ini = null, fim = null, modo = '', referencia = '';
-  if (tipo === 'descarga') {
+  if (tipo === 'contagem') {
+    titulo = 'Galpão ' + new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    if (teste) rows = b.rows;
+    else { if (!lerSsw) throw semSsw(); const r = await lerSsw('ssw-galpao', {}); rows = r.rows || []; fontes = r.fontes || []; }
+  } else if (tipo === 'descarga') {
     const j = janelaDescarga(b.data, /^\d{2}:\d{2}$/.test(b.hora_inicio || '') ? b.hora_inicio : '19:00', /^\d{2}:\d{2}$/.test(b.hora_fim || '') ? b.hora_fim : '04:00');
     ini = j.inicio; fim = j.fim; titulo = 'Descarga ' + j.data.split('-').reverse().join('/');
     if (teste) rows = b.rows;
@@ -184,6 +191,7 @@ async function recarregar(pool, cli, id, lerSsw, b = {}) {
   let rows;
   if (Array.isArray(b.rows) && b.testMode) rows = b.rows;
   else if (!lerSsw) throw erro(503, 'A leitura do SSW não está disponível neste servidor.');
+  else if (s.tipo === 'contagem') rows = (await lerSsw('ssw-galpao', {})).rows || [];
   else if (s.tipo === 'descarga') rows = (await lerSsw('ssw-esperado', { inicio: new Date(s.janela_ini).toISOString(), fim: new Date(s.janela_fim).toISOString() })).rows || [];
   else if (s.modo === 'romaneio') rows = (await lerSsw('ssw-romaneio', { romaneio: s.referencia })).rows || [];
   else {
@@ -300,7 +308,7 @@ async function ler(pool, cli, user, id, b, lerSsw) {
 async function mensagem(db, cli, id, l) {
   const r = l.parceiro ? (await resumo(db, cli, id)).parceiros.find(p => p.parceiro === l.parceiro) : null;
   const prog = r ? r.lidos + ' de ' + r.esperado : '';
-  const carg = l.tipo === 'carregamento';
+  const carg = l.tipo === 'carregamento', onde = l.tipo === 'contagem' ? 'no galpão (SSW)' : 'nesta carga';
   const cte = l.ctrc ? (await db.query('SELECT volumes,parceiro FROM conf_esperado WHERE sessao_id=$1 AND ctrc=$2', [id, l.ctrc])).rows[0] : null;
   const M = {
     cte_adicionado: ['info', 'CT-e ' + l.ctrc + ' na carga' + (cte ? ' · ' + cte.volumes + ' volume(s)' + (cte.parceiro ? ' · ' + cte.parceiro : ' · sem etiqueta reconhecida') : '')],
@@ -309,12 +317,12 @@ async function mensagem(db, cli, id, l) {
     ok: [r && r.completo ? 'ok_completo' : 'ok', l.parceiro + ': ' + prog + (r && r.completo ? ' ✓ completo' : '')],
     duplicado: ['alerta', 'Volume já bipado (' + l.parceiro + ')'],
     excesso: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + 'A mais: ' + l.parceiro + ' já tem ' + prog + ' volumes'],
-    sobra: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + l.parceiro + ' não tem CT-e nesta carga'],
+    sobra: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + l.parceiro + ' não tem CT-e ' + onde],
     nao_reconhecido: ['erro', (carg ? 'NÃO CARREGAR · ' : '') + 'Etiqueta não reconhecida'],
     dacte: ['info', 'DACTE ' + l.ctrc + ' conferido'],
     dacte_parceiro: ['info', 'DACTE de outra transportadora registrado'],
     danfe: ['info', 'DANFE do CT-e ' + l.ctrc],
-    danfe_fora: ['alerta', 'DANFE de nota que não está nesta carga'],
+    danfe_fora: ['alerta', 'DANFE de nota que não está ' + onde],
   }[l.situacao] || ['info', l.situacao];
   return { sinal: M[0], mensagem: M[1], progresso: r || null };
 }

@@ -142,6 +142,18 @@ function check(name,cond,extra=''){if(cond){pass++;console.log('  OK   ',name)}e
   r=await api('GET','/api/painel/conferencia/romaneios');
   check('romaneios do SSW (sem SSW no teste: lista vazia)',r.status===200&&Array.isArray(r.j.rows));
 
+  console.log('Conferência do galpão');
+  r=await api('POST','/api/painel/conferencia/sessoes',{tipo:'contagem',rows:[rows[1],rows[2]]});
+  const gid=r.j&&r.j.id;
+  check('cria a conferência do galpão com os CT-es disponíveis no SSW',r.status===201&&!!gid&&r.j.sessao.tipo==='contagem'&&/^Galpão /.test(r.j.sessao.titulo)&&r.j.totais.esperado===3,r.j);
+  const lerG=codigo=>api('POST','/api/painel/conferencia/sessoes/'+gid+'/leituras',{codigo});
+  r=await lerG('46570145384634');check('  ...volume no galpão conta',r.j.situacao==='ok'&&r.j.progresso.lidos===1,r.j);
+  r=await lerG('941221');check('  ...parceiro sem CT-e no galpão aparece como sobra',r.j.situacao==='sobra'&&/galpão/.test(r.j.mensagem)&&!/NÃO CARREGAR/.test(r.j.mensagem),r.j);
+  r=await api('GET','/api/painel/conferencia/sessoes/'+gid);
+  check('  ...resumo mostra o que falta por parceiro',r.j.parceiros.find(p=>p.parceiro==='Conasid').faltam===2&&r.j.totais.excesso===1,r.j.totais);
+  r=await api('GET','/api/painel/conferencia/sessoes?tipo=contagem');
+  check('  ...lista das conferências do galpão',r.status===200&&r.j.rows.length>=1&&r.j.rows.every(x=>x.tipo==='contagem'),r.j.rows);
+
   r=await api('PUT','/api/painel/conferencia/formatos',{formatos:[{nome:'X',padrao:'([',termos:'X'}]});
   check('padrão inválido é recusado',r.status===400,r.j);
   const html=await (await fetch(B+'/conferencia',{headers:{Cookie:cookie}})).text();
