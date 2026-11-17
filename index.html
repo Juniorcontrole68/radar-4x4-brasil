@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loterias · Mega-Sena e Quina</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#209869">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Loterias">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="/icone-180.png">
+<link rel="icon" href="/icone-192.png">
+<style>
+:root{
+  --bg:#f4f6f8; --card:#fff; --tx:#1b2430; --mut:#5d6b7a; --bd:#dfe4ea;
+  --mega:#209869; --quina:#3b2a8f; --cor:var(--mega);
+  --ok:#1f8f4e; --warn:#a15c00; --err:#b42318; --hit:#f2b705;
+}
+@media (prefers-color-scheme: dark){
+  :root{--bg:#12161c; --card:#1b2129; --tx:#e7ecf1; --mut:#9aa7b4; --bd:#2c3540; --quina:#7f6bff;}
+}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--tx)}
+body.quina{--cor:var(--quina)}
+header{background:var(--cor);color:#fff;padding:calc(14px + env(safe-area-inset-top)) 16px 14px}
+header .linha{max-width:1100px;margin:0 auto;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}
+header h1{margin:0;font-size:20px}
+.seletor{display:flex;background:rgba(255,255,255,.18);border-radius:10px;padding:3px}
+.seletor button{border:0;background:transparent;color:#fff;padding:8px 14px;border-radius:8px;font-weight:600;cursor:pointer;font-size:15px}
+.seletor button.ativo{background:#fff;color:var(--cor)}
+nav{background:var(--card);border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:5}
+nav .linha{max-width:1100px;margin:0 auto;display:flex;overflow-x:auto}
+nav button{border:0;background:none;padding:13px 16px;font-size:15px;color:var(--mut);cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap}
+nav button.ativo{color:var(--cor);border-color:var(--cor);font-weight:600}
+main{max-width:1100px;margin:0 auto;padding:16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;margin-bottom:14px}
+.card h2{margin:0 0 10px;font-size:17px}
+.mut{color:var(--mut)} .peq{font-size:13px}
+.aviso{border-left:4px solid var(--warn);background:rgba(240,160,0,.10);padding:10px 12px;border-radius:8px;margin-bottom:14px;font-size:14px}
+.erro{border-left-color:var(--err);background:rgba(180,35,24,.10)}
+.bolas{display:flex;flex-wrap:wrap;gap:5px}
+.bola{width:32px;height:32px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;background:var(--cor);color:#fff;font-variant-numeric:tabular-nums}
+.bola.vazia{background:transparent;color:var(--mut);border:1px solid var(--bd)}
+.bola.acerto{background:var(--hit);color:#222;box-shadow:0 0 0 2px var(--cor)}
+.bola.fixa{outline:2px dashed var(--hit);outline-offset:1px}
+.grade{display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:5px}
+.cel{border-radius:8px;padding:6px 0;text-align:center;font-weight:700;font-size:14px;cursor:pointer;user-select:none;border:2px solid transparent}
+.cel small{display:block;font-weight:500;font-size:11px;opacity:.85}
+.cel.fixa{border-color:var(--hit)} .cel.excl{opacity:.25;text-decoration:line-through}
+.form{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+label{display:block;font-size:13px;color:var(--mut);margin-bottom:4px}
+select,input[type=number],input[type=text],textarea{width:100%;padding:9px 10px;border:1px solid var(--bd);border-radius:8px;background:var(--card);color:var(--tx);font-size:15px}
+.chk{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--tx);margin:6px 0}
+.btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+button.b{border:1px solid var(--bd);background:var(--card);color:var(--tx);padding:10px 14px;border-radius:9px;font-size:15px;cursor:pointer;font-weight:600}
+button.b.pri{background:var(--cor);border-color:var(--cor);color:#fff}
+button.b:disabled{opacity:.5;cursor:default}
+button.mini{border:1px solid var(--bd);background:none;color:var(--mut);padding:4px 8px;border-radius:6px;cursor:pointer;font-size:13px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--bd);vertical-align:middle}
+th{color:var(--mut);font-weight:600;font-size:13px}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.tag{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:600;background:var(--bd);color:var(--tx)}
+.tag.ok{background:var(--ok);color:#fff} .tag.cor{background:var(--cor);color:#fff}
+.duas{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.kpi{border:1px solid var(--bd);border-radius:10px;padding:10px}
+.kpi b{display:block;font-size:20px}
+.lista-jogo{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bd)}
+.lista-jogo:last-child{border-bottom:0}
+.lista-jogo .idx{width:28px;color:var(--mut);font-weight:600}
+.oculto{display:none}
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:10px;opacity:0;transition:.25s;pointer-events:none;z-index:9}
+#toast.on{opacity:1}
+@media (max-width:700px){.duas{grid-template-columns:1fr}.grade{gap:3px}.cel{font-size:12px}.bola{width:28px;height:28px;font-size:12px}}
+@media print{header,nav,.btns,.naoimprimir{display:none!important}.card{border:0}}
+</style>
+</head>
+<body>
+<header><div class="linha">
+  <h1>🍀 Loterias</h1>
+  <div class="seletor" id="selJogo">
+    <button data-jogo="megasena" class="ativo">Mega-Sena</button>
+    <button data-jogo="quina">Quina</button>
+  </div>
+</div></header>
+<nav><div class="linha" id="abas">
+  <button data-aba="gerar" class="ativo">🎲 Gerar jogos</button>
+  <button data-aba="estat">📊 Estatísticas</button>
+  <button data-aba="result">🏆 Resultados</button>
+  <button data-aba="meus">📁 Meus jogos e conferência</button>
+</div></nav>
+
+<main>
+  <div id="status" class="aviso oculto"></div>
+
+  <!-- ============ GERAR ============ -->
+  <section id="aba-gerar">
+    <div class="card">
+      <h2>Gerar jogos da <span class="nomeJogo">Mega-Sena</span></h2>
+      <div class="form">
+        <div><label>Quantos jogos?</label><input type="number" id="gQtd" min="1" max="500" value="5"></div>
+        <div><label>Dezenas por jogo</label><select id="gDez"></select></div>
+        <div><label>Base estatística</label>
+          <select id="gJanela">
+            <option value="25">Últimos 25 concursos</option>
+            <option value="50">Últimos 50 concursos</option>
+            <option value="100">Últimos 100 concursos</option>
+            <option value="mix" selected>Combinada (25 + 50 + 100)</option>
+          </select></div>
+        <div><label>Estilo de escolha</label>
+          <select id="gEstr">
+            <option value="quentes">Quentes (saem mais)</option>
+            <option value="equilibrada" selected>Equilibrada (quentes + atrasadas)</option>
+            <option value="frias">Frias / atrasadas</option>
+            <option value="aleatoria">Aleatória pura</option>
+          </select></div>
+      </div>
+      <div style="margin-top:10px">
+        <label class="chk"><input type="checkbox" id="fParImpar" checked> Equilibrar pares e ímpares</label>
+        <label class="chk"><input type="checkbox" id="fSoma" checked> Soma das dezenas na faixa mais comum (80% central)</label>
+        <label class="chk"><input type="checkbox" id="fSeq" checked> Evitar 3 ou mais números seguidos (ex.: 21 22 23)</label>
+        <label class="chk"><input type="checkbox" id="fRepet" checked> Não repetir resultados já sorteados nem jogos repetidos</label>
+      </div>
+      <details style="margin-top:8px"><summary class="mut">Fixar ou excluir dezenas (opcional)</summary>
+        <p class="peq mut">Clique uma vez para <b>fixar</b> (entra em todos os jogos), duas para <b>excluir</b>, três para voltar ao normal.</p>
+        <div class="grade" id="gradeFix"></div>
+      </details>
+      <div class="btns">
+        <button class="b pri" id="btnGerar">🎲 Gerar jogos</button>
+      </div>
+      <p class="peq mut" id="probTexto"></p>
+    </div>
+
+    <div class="card oculto" id="cardGerados">
+      <h2>Jogos gerados <span class="tag cor" id="tagConc"></span></h2>
+      <p class="mut peq" id="custoTexto"></p>
+      <div id="listaGerados"></div>
+      <div class="btns">
+        <button class="b pri" id="btnSalvar">💾 Salvar todos</button>
+        <button class="b" id="btnCopiar">📋 Copiar</button>
+        <button class="b" id="btnTxt">⬇️ Baixar arquivo</button>
+        <button class="b" onclick="window.print()">🖨️ Imprimir</button>
+        <button class="b" id="btnCaixa">🌐 Apostar no site da Caixa</button>
+      </div>
+      <p class="peq mut">Para apostar: clique em <b>Copiar</b>, abra o <b>Loterias Online da Caixa</b> (ou o app Loterias CAIXA no celular), escolha o jogo e marque as dezenas de cada jogo. O pagamento e a confirmação acontecem só no ambiente oficial da Caixa.</p>
+    </div>
+  </section>
+
+  <!-- ============ ESTATÍSTICAS ============ -->
+  <section id="aba-estat" class="oculto">
+    <div class="aviso">Cada sorteio é independente e todas as dezenas têm a mesma chance em todo concurso. As estatísticas abaixo descrevem o passado e servem como <b>estilo de escolha</b>; elas não aumentam a probabilidade de acerto.</div>
+    <div class="card">
+      <div class="form">
+        <div><label>Período</label>
+          <select id="eJanela"><option value="25">Últimos 25</option><option value="50">Últimos 50</option><option value="100" selected>Últimos 100</option></select></div>
+      </div>
+      <div class="kpis" style="margin-top:12px" id="eKpis"></div>
+    </div>
+    <div class="card">
+      <h2>Mapa de frequência</h2>
+      <p class="peq mut">Quanto mais escura a cor, mais vezes a dezena saiu no período. O número pequeno é a quantidade de vezes.</p>
+      <div class="grade" id="eGrade"></div>
+    </div>
+    <div class="duas">
+      <div class="card"><h2>🔥 Mais sorteadas</h2><table id="eTopQ"></table></div>
+      <div class="card"><h2>❄️ Menos sorteadas</h2><table id="eTopF"></table></div>
+    </div>
+    <div class="duas">
+      <div class="card"><h2>⏳ Mais atrasadas</h2><p class="peq mut">Concursos desde a última vez que saiu.</p><table id="eAtraso"></table></div>
+      <div class="card"><h2>Comparativo 25 · 50 · 100</h2><p class="peq mut">Top 10 de cada período.</p><table id="eComp"></table></div>
+    </div>
+  </section>
+
+  <!-- ============ RESULTADOS ============ -->
+  <section id="aba-result" class="oculto">
+    <div class="card" id="rProximo"></div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <h2 style="margin:0">Resultados anteriores</h2>
+        <button class="b" id="btnAtualizar">🔄 Atualizar da Caixa</button>
+      </div>
+      <p class="peq mut" id="rInfo"></p>
+      <table><thead><tr><th>Concurso</th><th>Data</th><th>Dezenas</th><th>Prêmio principal</th></tr></thead><tbody id="rCorpo"></tbody></table>
+    </div>
+  </section>
+
+  <!-- ============ MEUS JOGOS ============ -->
+  <section id="aba-meus" class="oculto">
+    <div class="card">
+      <h2>Resumo da conferência</h2>
+      <div class="kpis" id="mKpis"></div>
+      <div class="form" style="margin-top:12px">
+        <div><label>Mostrar</label>
+          <select id="mFiltro"><option value="todos">Todos os jogos salvos</option><option value="pend">Aguardando sorteio</option><option value="conf">Já conferidos</option><option value="prem">Só os premiados</option></select></div>
+        <div><label>Também conferir contra os últimos</label>
+          <select id="mHist"><option value="0">Só o concurso do jogo</option><option value="25">25 concursos</option><option value="50">50 concursos</option><option value="100">100 concursos</option></select></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Adicionar um jogo feito por fora</h2>
+      <p class="peq mut">Digite as dezenas separadas por espaço ou vírgula, para conferir apostas feitas na lotérica ou no app.</p>
+      <div class="form">
+        <div style="grid-column:span 2"><label>Dezenas</label><input type="text" id="mManual" placeholder="ex.: 05 12 23 34 45 56"></div>
+        <div><label>Concurso</label><input type="number" id="mConc"></div>
+      </div>
+      <div class="btns"><button class="b pri" id="btnManual">➕ Adicionar</button></div>
+    </div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <h2 style="margin:0">Jogos salvos da <span class="nomeJogo">Mega-Sena</span></h2>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="b" id="btnCopiarSalvos">📋 Copiar pendentes</button>
+          <button class="b" id="btnApagarTodos">🗑️ Apagar todos</button>
+          <button class="b" id="btnBackup">💾 Backup</button>
+          <button class="b" id="btnRestaurar">📂 Restaurar</button>
+          <input type="file" id="arqBackup" accept=".json,application/json" class="oculto">
+        </div>
+      </div>
+      <div id="mLista" style="margin-top:8px"></div>
+    </div>
+  </section>
+  <div class="card oculto naoimprimir" id="cardInstalar">
+    <h2>📲 Instalar no celular</h2>
+    <p class="peq" id="txtInstalar"></p>
+    <div class="btns"><button class="b pri oculto" id="btnInstalar">Instalar app</button></div>
+  </div>
+  <p class="peq mut" style="text-align:center">Resultados: API pública do Portal de Loterias CAIXA. Jogue com responsabilidade; maiores de 18 anos.</p>
+</main>
+<div id="toast"></div>
+
+<script>
+const CFG = {
+  megasena:{nome:'Mega-Sena', total:60, sorteio:6, min:6, max:20, preco:6.00,
+            faixas:{6:'Sena',5:'Quina',4:'Quadra'}, premioMin:4},
+  quina:   {nome:'Quina', total:80, sorteio:5, min:5, max:15, preco:3.00,
+            faixas:{5:'Quina',4:'Quadra',3:'Terno',2:'Duque'}, premioMin:2},
+};
+const URL_CAIXA = 'https://www.loteriasonline.caixa.gov.br/';
+const S = { jogo:'megasena', aba:'gerar', res:{}, salvos:[], gerados:[], marc:{megasena:{},quina:{}} };
+
+const $ = id => document.getElementById(id);
+const p2 = n => String(n).padStart(2,'0');
+const brl = v => (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const comb = (n,k) => { if(k<0||k>n) return 0; let r=1; for(let i=1;i<=k;i++) r=r*(n-k+i)/i; return Math.round(r); };
+const bolas = (arr, acertos, fixas) => '<div class="bolas">'+arr.map(n=>`<span class="bola ${acertos&&acertos.has(n)?'acerto':''} ${fixas&&fixas.has(n)?'fixa':''}">${p2(n)}</span>`).join('')+'</div>';
+function toast(t){ const e=$('toast'); e.textContent=t; e.classList.add('on'); clearTimeout(toast.t); toast.t=setTimeout(()=>e.classList.remove('on'),2200); }
+function status(msg, erro){ const e=$('status'); if(!msg){e.classList.add('oculto');return;} e.innerHTML=msg; e.classList.remove('oculto'); e.classList.toggle('erro',!!erro); }
+
+/* ---------------- dados ---------------- */
+async function carregar(jogo, atualizar=true){
+  status('Baixando resultados oficiais da '+CFG[jogo].nome+'… (na primeira vez pode levar alguns segundos)');
+  try{
+    const r = await fetch(`/api/resultados?jogo=${jogo}&qtd=100&atualizar=${atualizar?1:0}`);
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.erro||'falha');
+    S.res[jogo] = d;
+    try{ localStorage.setItem('res_'+jogo, JSON.stringify(d)); }catch(_){}
+    status(d.aviso || '');
+  }catch(e){
+    let local=null; try{ local=JSON.parse(localStorage.getItem('res_'+jogo)); }catch(_){}
+    if(local && local.concursos && local.concursos.length){ S.res[jogo]=local; status('Sem conexão agora. Mostrando os resultados guardados no aparelho (atualizados em '+(local.atualizado||'-')+').'); return; }
+    status('Não consegui baixar os resultados da Caixa agora. Verifique a internet e clique em “Atualizar da Caixa”.<br><span class="peq">'+e.message+'</span>', true);
+    if(!S.res[jogo]) S.res[jogo] = {concursos:[], ultimo:null};
+  }
+}
+// Jogos ficam salvos no proprio aparelho (localStorage).
+function lerLocal(){ try{ return JSON.parse(localStorage.getItem('jogos_salvos')||'[]'); }catch(e){ return []; } }
+function gravarLocal(l){ try{ localStorage.setItem('jogos_salvos', JSON.stringify(l)); return true; }catch(e){ toast('Não consegui salvar no aparelho.'); return false; } }
+async function carregarSalvos(){
+  S.salvos = lerLocal();
+  // migra jogos da versao antiga (salvos em arquivo no computador), uma unica vez
+  if(!localStorage.getItem('migrado')){
+    try{ const r=await fetch('/api/jogos'); if(r.ok){ const antigos=await r.json(); const ids=new Set(S.salvos.map(j=>j.id));
+      antigos.forEach(j=>{ if(!ids.has(j.id)) S.salvos.push(j); }); gravarLocal(S.salvos); } }catch(e){}
+    try{ localStorage.setItem('migrado','1'); }catch(e){}
+  }
+}
+const concursos = (jogo=S.jogo) => (S.res[jogo]&&S.res[jogo].concursos)||[];
+const proxConcurso = (jogo=S.jogo) => { const u=S.res[jogo]&&S.res[jogo].ultimo; return u ? (u.proximo&&u.proximo.concurso) || u.concurso+1 : null; };
+
+function estat(jogo, n){
+  const c = CFG[jogo], lista = concursos(jogo).slice(0,n);
+  const freq = Array(c.total+1).fill(0), atraso = Array(c.total+1).fill(null);
+  lista.forEach((r,i)=> r.dezenas.forEach(d=>{ freq[d]++; if(atraso[d]===null) atraso[d]=i; }));
+  for(let d=1; d<=c.total; d++) if(atraso[d]===null) atraso[d]=lista.length;
+  let pares=0, soma=0; lista.forEach(r=>{ r.dezenas.forEach(d=>{ if(d%2===0) pares++; soma+=d; }); });
+  return {n:lista.length, freq, atraso, mediaPares: lista.length? pares/lista.length:0, mediaSoma: lista.length? soma/lista.length:0};
+}
+
+/* ---------------- gerador ---------------- */
+function pesos(jogo, janela, estr){
+  const c = CFG[jogo], w = Array(c.total+1).fill(1);
+  if(estr==='aleatoria') return w;
+  const jan = janela==='mix' ? [25,50,100] : [+janela];
+  const norm = a => { const v=a.slice(1), mn=Math.min(...v), mx=Math.max(...v); return a.map(x=> mx>mn ? (x-mn)/(mx-mn) : 0.5); };
+  const fq = Array(c.total+1).fill(0), at = Array(c.total+1).fill(0);
+  jan.forEach(j=>{ const e=estat(jogo,j); const nf=norm(e.freq), na=norm(e.atraso); for(let d=1; d<=c.total; d++){ fq[d]+=nf[d]/jan.length; at[d]+=na[d]/jan.length; } });
+  for(let d=1; d<=c.total; d++){
+    if(estr==='quentes') w[d] = 0.25 + fq[d]*1.75;
+    else if(estr==='frias') w[d] = 0.25 + ((1-fq[d])*0.6 + at[d]*0.4)*1.75;
+    else w[d] = 0.5 + fq[d]*0.9 + at[d]*0.6;  // equilibrada
+  }
+  return w;
+}
+function sortearPonderado(w, k, fixas, excl){
+  const esc = new Set(fixas);
+  const cand = []; for(let d=1; d<w.length; d++) if(!esc.has(d) && !excl.has(d)) cand.push(d);
+  while(esc.size<k && cand.length){
+    let tot=0; cand.forEach(d=>tot+=w[d]); let r=Math.random()*tot, i=0;
+    for(; i<cand.length; i++){ r-=w[cand[i]]; if(r<=0) break; }
+    i=Math.min(i,cand.length-1); esc.add(cand[i]); cand.splice(i,1);
+  }
+  return [...esc].sort((a,b)=>a-b);
+}
+function passaFiltros(j, c, f){
+  const k=j.length;
+  if(f.parImpar){ const p=j.filter(x=>x%2===0).length, lim=Math.max(1,Math.round(k*0.3)); if(p<lim || k-p<lim) return false; }
+  if(f.soma){ const s=j.reduce((a,b)=>a+b,0), N=c.total, m=k*(N+1)/2, dp=Math.sqrt(k*(N*N-1)/12*(N-k)/(N-1)); if(Math.abs(s-m) > 1.2816*dp) return false; }
+  if(f.seq && k<=10){ let run=1; for(let i=1;i<k;i++){ run = j[i]===j[i-1]+1 ? run+1 : 1; if(run>=3) return false; } }
+  return true;
+}
+function gerar(){
+  const jogo=S.jogo, c=CFG[jogo];
+  const qtd = Math.max(1, Math.min(500, +$('gQtd').value||1)), k = +$('gDez').value;
+  const marc = S.marc[jogo];
+  const fixas = Object.keys(marc).filter(d=>marc[d]===1).map(Number), excl = new Set(Object.keys(marc).filter(d=>marc[d]===2).map(Number));
+  if(fixas.length>k){ toast(`Você fixou ${fixas.length} dezenas, mas o jogo tem ${k}.`); return; }
+  if(c.total-excl.size < k){ toast('Dezenas excluídas demais.'); return; }
+  const est=$('gEstr').value, jan=$('gJanela').value;
+  if(est!=='aleatoria' && !concursos(jogo).length){ toast('Sem resultados carregados; usando escolha aleatória.'); }
+  const w = pesos(jogo, jan, concursos(jogo).length? est : 'aleatoria');
+  const f = {parImpar:$('fParImpar').checked, soma:$('fSoma').checked, seq:$('fSeq').checked};
+  const evitar = new Set(); if($('fRepet').checked) concursos(jogo).forEach(r=>evitar.add(r.dezenas.join('-')));
+  const vistos = new Set(), saida=[];
+  for(let g=0; g<qtd; g++){
+    let j=null;
+    for(let t=0; t<3000; t++){
+      const cand = sortearPonderado(w,k,fixas,excl), chave=cand.join('-');
+      if($('fRepet').checked && (vistos.has(chave) || (k===c.sorteio && evitar.has(chave)))) continue;
+      const relax = t>2000; // se os filtros ficarem impossiveis, relaxa
+      if(!relax && !passaFiltros(cand,c,f)) continue;
+      j=cand; break;
+    }
+    if(!j) j=sortearPonderado(w,k,fixas,excl);
+    vistos.add(j.join('-')); saida.push(j);
+  }
+  const nomes={quentes:'Quentes',equilibrada:'Equilibrada',frias:'Frias/atrasadas',aleatoria:'Aleatória'};
+  S.gerados = saida.map(d=>({dezenas:d, estrategia:nomes[est], janela: jan==='mix'?'25+50+100':jan}));
+  renderGerados();
+}
+function textoJogos(lista, jogo=S.jogo){
+  const conc = lista[0]&&lista[0].concurso ? lista[0].concurso : proxConcurso(jogo);
+  return `${CFG[jogo].nome}${conc?' - concurso '+conc:''}\n` + lista.map((j,i)=>`Jogo ${p2(i+1)}: ${j.dezenas.map(p2).join(' ')}`).join('\n');
+}
+function custo(lista, jogo=S.jogo){ const c=CFG[jogo]; return lista.reduce((a,j)=>a+comb(j.dezenas.length,c.sorteio)*c.preco,0); }
+
+/* ---------------- render ---------------- */
+function renderTudo(){
+  document.body.classList.toggle('quina', S.jogo==='quina');
+  document.querySelectorAll('.nomeJogo').forEach(e=>e.textContent=CFG[S.jogo].nome);
+  renderFormGerar(); renderEstat(); renderResultados(); renderMeus();
+  if(S.gerados.length && S.gerados.jogo===S.jogo) renderGerados(); else $('cardGerados').classList.add('oculto');
+}
+function renderFormGerar(){
+  const c=CFG[S.jogo], sel=$('gDez'), atual=+sel.value;
+  sel.innerHTML=''; for(let k=c.min;k<=c.max;k++){ const o=document.createElement('option'); o.value=k; o.textContent=`${k} dezenas (${brl(comb(k,c.sorteio)*c.preco)})`; sel.appendChild(o); }
+  sel.value = (atual>=c.min&&atual<=c.max)? atual : c.min;
+  const g=$('gradeFix'); g.innerHTML='';
+  const marc=S.marc[S.jogo];
+  for(let d=1; d<=c.total; d++){
+    const e=document.createElement('div'); e.className='cel '+(marc[d]===1?'fixa':marc[d]===2?'excl':'');
+    e.style.background='var(--bd)'; e.textContent=p2(d);
+    e.onclick=()=>{ marc[d]=((marc[d]||0)+1)%3; if(!marc[d]) delete marc[d]; renderFormGerar(); };
+    g.appendChild(e);
+  }
+  atualizarProb();
+}
+function atualizarProb(){
+  const c=CFG[S.jogo], k=+$('gDez').value, total=comb(c.total,c.sorteio), cob=comb(k,c.sorteio);
+  $('probTexto').innerHTML = `Chance real de acertar o prêmio principal com um jogo de ${k} dezenas: <b>1 em ${Math.round(total/cob).toLocaleString('pt-BR')}</b>. Ela é a mesma para qualquer combinação, seja qual for o estilo escolhido.`;
+}
+function renderGerados(){
+  S.gerados.jogo = S.jogo;
+  const conc=proxConcurso();
+  $('tagConc').textContent = conc ? 'para o concurso '+conc : '';
+  $('custoTexto').textContent = `${S.gerados.length} jogo(s) · custo estimado ${brl(custo(S.gerados))} (valores de referência; confira no site da Caixa).`;
+  const marc=S.marc[S.jogo], fixas=new Set(Object.keys(marc).filter(d=>marc[d]===1).map(Number));
+  $('listaGerados').innerHTML = S.gerados.map((j,i)=>`<div class="lista-jogo"><span class="idx">${p2(i+1)}</span>${bolas(j.dezenas,null,fixas)}</div>`).join('');
+  $('cardGerados').classList.remove('oculto');
+}
+function renderEstat(){
+  const c=CFG[S.jogo], n=+$('eJanela').value, e=estat(S.jogo,n);
+  if(!e.n){ $('eKpis').innerHTML='<p class="mut">Sem resultados carregados.</p>'; $('eGrade').innerHTML=''; ['eTopQ','eTopF','eAtraso','eComp'].forEach(id=>$(id).innerHTML=''); return; }
+  const esperado = e.n*c.sorteio/c.total;
+  const ds=[]; for(let d=1; d<=c.total; d++) ds.push(d);
+  const porFreq = ds.slice().sort((a,b)=>e.freq[b]-e.freq[a]||a-b);
+  $('eKpis').innerHTML = `
+    <div class="kpi"><span class="mut peq">Concursos analisados</span><b>${e.n}</b></div>
+    <div class="kpi"><span class="mut peq">Frequência esperada por dezena</span><b>${esperado.toFixed(1)}x</b></div>
+    <div class="kpi"><span class="mut peq">Média de pares por sorteio</span><b>${e.mediaPares.toFixed(1)} de ${c.sorteio}</b></div>
+    <div class="kpi"><span class="mut peq">Soma média das dezenas</span><b>${Math.round(e.mediaSoma)}</b></div>`;
+  const mx=Math.max(...e.freq.slice(1)), mn=Math.min(...e.freq.slice(1));
+  $('eGrade').innerHTML = ds.map(d=>{ const t = mx>mn? (e.freq[d]-mn)/(mx-mn):.5; const a=(0.12+t*0.88).toFixed(2);
+    return `<div class="cel" style="cursor:default;background:color-mix(in srgb, var(--cor) ${Math.round(a*100)}%, transparent);color:${t>.45?'#fff':'var(--tx)'}">${p2(d)}<small>${e.freq[d]}x</small></div>`; }).join('');
+  const linha = (d,val,rot) => `<tr><td><span class="bola">${p2(d)}</span></td><td class="num">${val} ${rot}</td></tr>`;
+  $('eTopQ').innerHTML = porFreq.slice(0,10).map(d=>linha(d,e.freq[d],'vezes')).join('');
+  $('eTopF').innerHTML = porFreq.slice(-10).reverse().map(d=>linha(d,e.freq[d],'vezes')).join('');
+  $('eAtraso').innerHTML = ds.slice().sort((a,b)=>e.atraso[b]-e.atraso[a]||a-b).slice(0,10).map(d=>linha(d,e.atraso[d],'concursos')).join('');
+  const tops=[25,50,100].map(j=>{ const x=estat(S.jogo,j); return ds.slice().sort((a,b)=>x.freq[b]-x.freq[a]||a-b).slice(0,10); });
+  $('eComp').innerHTML = '<tr><th>#</th><th>25</th><th>50</th><th>100</th></tr>' + [...Array(10).keys()].map(i=>`<tr><td class="mut">${i+1}º</td>${tops.map(t=>`<td><b>${p2(t[i])}</b></td>`).join('')}</tr>`).join('');
+}
+function renderResultados(){
+  const d=S.res[S.jogo]||{}, u=d.ultimo, lista=concursos();
+  if(u && u.proximo){
+    const p=u.proximo;
+    $('rProximo').innerHTML = `<h2>Próximo concurso${p.concurso?' '+p.concurso:''}</h2>
+      <div class="kpis"><div class="kpi"><span class="mut peq">Data</span><b>${p.data||'-'}</b></div>
+      <div class="kpi"><span class="mut peq">Prêmio estimado</span><b>${brl(p.estimativa)}</b></div>
+      <div class="kpi"><span class="mut peq">Último concurso</span><b>${u.concurso} ${u.acumulado?'<span class="tag">acumulou</span>':''}</b></div></div>`;
+  } else $('rProximo').innerHTML='<p class="mut">Sem dados do próximo concurso.</p>';
+  $('rInfo').textContent = lista.length ? `${lista.length} concursos carregados · atualizado em ${d.atualizado||'-'}` : '';
+  $('rCorpo').innerHTML = lista.map(r=>{ const f=r.faixas&&r.faixas[0];
+    const pr = f ? (f.ganhadores? `${f.ganhadores} ganhador(es) · ${brl(f.premio)}` : '<span class="tag">Acumulou</span>') : '-';
+    return `<tr><td><b>${r.concurso}</b></td><td>${r.data}</td><td>${bolas(r.dezenas)}</td><td class="peq">${pr}</td></tr>`; }).join('');
+}
+function conferir(j){
+  const c=CFG[j.jogo], porConc={}; concursos(j.jogo).forEach(r=>porConc[r.concurso]=r);
+  const r = porConc[j.concurso]; if(!r) return {pendente:true};
+  const ac = new Set(j.dezenas.filter(d=>r.dezenas.includes(d)));
+  return {pendente:false, resultado:r, acertos:ac, faixa:c.faixas[ac.size]||null};
+}
+function renderMeus(){
+  const c=CFG[S.jogo], lista=S.salvos.filter(j=>j.jogo===S.jogo).slice().reverse(), filtro=$('mFiltro').value, hist=+$('mHist').value;
+  if(!$('mConc').value && proxConcurso()) $('mConc').value = proxConcurso();
+  let nConf=0, nPrem=0, nPend=0; const conf = lista.map(j=>{ const x=conferir(j); if(x.pendente) nPend++; else { nConf++; if(x.faixa) nPrem++; } return x; });
+  $('mKpis').innerHTML = `<div class="kpi"><span class="mut peq">Jogos salvos</span><b>${lista.length}</b></div>
+    <div class="kpi"><span class="mut peq">Aguardando sorteio</span><b>${nPend}</b></div>
+    <div class="kpi"><span class="mut peq">Já conferidos</span><b>${nConf}</b></div>
+    <div class="kpi"><span class="mut peq">Premiados</span><b>${nPrem}</b></div>`;
+  const ultimos = concursos().slice(0,hist);
+  const html = lista.map((j,i)=>{
+    const x=conf[i];
+    if(filtro==='pend'&&!x.pendente) return ''; if(filtro==='conf'&&x.pendente) return ''; if(filtro==='prem'&&!x.faixa) return '';
+    let st = x.pendente ? `<span class="tag">Aguardando concurso ${j.concurso}</span>`
+      : `<span class="tag ${x.faixa?'ok':''}">${x.acertos.size} acerto(s)${x.faixa?' · '+x.faixa+' 🎉':''}</span> <span class="peq mut">concurso ${j.concurso}: ${x.resultado.dezenas.map(p2).join(' ')}</span>`;
+    let extra='';
+    if(hist){ const cont={}; let melhor=0, ondeM=null;
+      ultimos.forEach(r=>{ const a=j.dezenas.filter(d=>r.dezenas.includes(d)).length; if(a>=c.premioMin) cont[a]=(cont[a]||0)+1; if(a>melhor){melhor=a; ondeM=r.concurso;} });
+      const partes = Object.keys(cont).sort((a,b)=>b-a).map(a=>`${cont[a]}× ${c.faixas[a]}`);
+      extra = `<div class="peq mut" style="width:100%;padding-left:38px">Nos últimos ${ultimos.length}: melhor ${melhor} acerto(s)${ondeM?' (conc. '+ondeM+')':''}${partes.length?' · '+partes.join(', '):' · nenhum prêmio'}</div>`; }
+    return `<div class="lista-jogo"><span class="idx">${p2(lista.length-i)}</span>${bolas(j.dezenas, x.acertos)}
+      <div style="flex:1;min-width:200px">${st}<div class="peq mut">${j.estrategia||'Manual'}${j.janela?' · base '+j.janela:''} · salvo em ${j.criadoEm}</div></div>
+      <button class="mini" data-del="${j.id}">apagar</button>${extra}</div>`;
+  }).join('');
+  $('mLista').innerHTML = html || '<p class="mut">Nenhum jogo aqui ainda. Gere jogos na aba “Gerar jogos” e clique em “Salvar todos”.</p>';
+}
+
+/* ---------------- ações ---------------- */
+const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+async function salvar(novos){
+  S.salvos = lerLocal().concat(novos); gravarLocal(S.salvos); renderMeus();
+}
+async function copiar(txt){
+  try{ await navigator.clipboard.writeText(txt); }
+  catch(e){ const t=document.createElement('textarea'); t.value=txt; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
+  toast('Jogos copiados!');
+}
+function baixar(nome, txt){ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([txt],{type:'text/plain;charset=utf-8'})); a.download=nome; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
+
+$('selJogo').onclick = async ev => { const b=ev.target.closest('button'); if(!b) return;
+  document.querySelectorAll('#selJogo button').forEach(x=>x.classList.toggle('ativo',x===b)); S.jogo=b.dataset.jogo;
+  if(!S.res[S.jogo]) { renderTudo(); await carregar(S.jogo); } renderTudo(); };
+$('abas').onclick = ev => { const b=ev.target.closest('button'); if(!b) return;
+  document.querySelectorAll('#abas button').forEach(x=>x.classList.toggle('ativo',x===b));
+  ['gerar','estat','result','meus'].forEach(a=>$('aba-'+a).classList.toggle('oculto',a!==b.dataset.aba)); };
+$('gDez').onchange = atualizarProb;
+$('btnGerar').onclick = gerar;
+$('btnSalvar').onclick = async () => { const conc=proxConcurso(), agora=new Date().toLocaleString('pt-BR');
+  await salvar(S.gerados.map(j=>({id:uid(), jogo:S.jogo, concurso:conc, dezenas:j.dezenas, estrategia:j.estrategia, janela:j.janela, criadoEm:agora})));
+  toast(`${S.gerados.length} jogo(s) salvos para o concurso ${conc||'?'}`); };
+$('btnCopiar').onclick = () => copiar(textoJogos(S.gerados));
+$('btnTxt').onclick = () => baixar(`${S.jogo}_concurso_${proxConcurso()||''}.txt`, textoJogos(S.gerados));
+$('btnCaixa').onclick = () => { copiar(textoJogos(S.gerados)); window.open(URL_CAIXA,'_blank','noopener'); };
+$('eJanela').onchange = renderEstat;
+$('mFiltro').onchange = renderMeus; $('mHist').onchange = renderMeus;
+$('btnAtualizar').onclick = async () => { $('btnAtualizar').disabled=true; await carregar(S.jogo,true); $('btnAtualizar').disabled=false; renderTudo(); toast('Resultados atualizados'); };
+$('btnManual').onclick = async () => { const c=CFG[S.jogo];
+  const ds=[...new Set(($('mManual').value.match(/\d+/g)||[]).map(Number))].filter(n=>n>=1&&n<=c.total).sort((a,b)=>a-b);
+  if(ds.length<c.min||ds.length>c.max){ toast(`Informe de ${c.min} a ${c.max} dezenas entre 1 e ${c.total}.`); return; }
+  const conc=+$('mConc').value||proxConcurso();
+  await salvar([{id:uid(), jogo:S.jogo, concurso:conc, dezenas:ds, estrategia:'Manual', criadoEm:new Date().toLocaleString('pt-BR')}]);
+  $('mManual').value=''; toast('Jogo adicionado'); };
+$('mLista').onclick = async ev => { const id=ev.target.dataset&&ev.target.dataset.del; if(!id) return;
+  S.salvos = lerLocal().filter(j=>j.id!==id); gravarLocal(S.salvos); renderMeus(); };
+$('btnApagarTodos').onclick = async () => { const meus=S.salvos.filter(j=>j.jogo===S.jogo); if(!meus.length) return;
+  if(!confirm(`Apagar os ${meus.length} jogos salvos da ${CFG[S.jogo].nome}?`)) return;
+  S.salvos = lerLocal().filter(j=>j.jogo!==S.jogo); gravarLocal(S.salvos); renderMeus(); };
+$('btnBackup').onclick = () => baixar('loterias_backup_'+new Date().toISOString().slice(0,10)+'.json', JSON.stringify(lerLocal(),null,1));
+$('btnRestaurar').onclick = () => $('arqBackup').click();
+$('arqBackup').onchange = async ev => { const f=ev.target.files[0]; if(!f) return;
+  try{ const novos=JSON.parse(await f.text()); if(!Array.isArray(novos)) throw 0; const atual=lerLocal(), ids=new Set(atual.map(j=>j.id));
+    const add=novos.filter(j=>j&&j.id&&j.jogo&&Array.isArray(j.dezenas)&&!ids.has(j.id)); S.salvos=atual.concat(add); gravarLocal(S.salvos); renderMeus(); toast(add.length+' jogo(s) restaurados'); }
+  catch(e){ toast('Arquivo de backup inválido.'); } ev.target.value=''; };
+$('btnCopiarSalvos').onclick = () => { const pend=S.salvos.filter(j=>j.jogo===S.jogo && conferir(j).pendente);
+  if(!pend.length){ toast('Nenhum jogo pendente.'); return; } copiar(textoJogos(pend)); };
+
+/* ---------------- instalacao (PWA) ---------------- */
+if('serviceWorker' in navigator && location.protocol!=='file:') navigator.serviceWorker.register('/sw.js').catch(()=>{});
+const instalado = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+let pedidoInstalar=null;
+window.addEventListener('beforeinstallprompt', e=>{ e.preventDefault(); pedidoInstalar=e; $('btnInstalar').classList.remove('oculto');
+  $('txtInstalar').textContent='Toque em “Instalar app” para colocar o Loterias na tela inicial.'; $('cardInstalar').classList.remove('oculto'); });
+$('btnInstalar').onclick = async ()=>{ if(!pedidoInstalar) return; pedidoInstalar.prompt(); await pedidoInstalar.userChoice; pedidoInstalar=null; $('cardInstalar').classList.add('oculto'); };
+if(!instalado && /iphone|ipad|ipod/i.test(navigator.userAgent)){
+  $('txtInstalar').innerHTML='No iPhone: abra este site no <b>Safari</b>, toque no botão <b>Compartilhar</b> (quadrado com seta para cima) e depois em <b>Adicionar à Tela de Início</b>.';
+  $('cardInstalar').classList.remove('oculto'); }
+
+(async function iniciar(){
+  renderTudo();
+  await Promise.all([carregar('megasena'), carregarSalvos()]);
+  renderTudo();
+  carregar('quina').then(()=>{ if(S.jogo==='quina') renderTudo(); });
+})();
+</script>
+</body>
+</html>
