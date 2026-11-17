@@ -251,7 +251,7 @@ function status(msg, erro){ const e=$('status'); if(!msg){e.classList.add('ocult
 
 /* ---------------- dados ---------------- */
 async function carregar(jogo, atualizar=true){
-  status('Baixando resultados oficiais da '+CFG[jogo].nome+'… (na primeira vez pode levar alguns segundos)');
+  status('Atualizando resultados oficiais da '+CFG[jogo].nome+'… (se o servidor estava dormindo, pode levar até 1 minuto)');
   try{
     const r = await fetch(`/api/resultados?jogo=${jogo}&qtd=100&atualizar=${atualizar?1:0}`);
     const d = await r.json();
@@ -519,6 +519,8 @@ if(!instalado && /iphone|ipad|ipod/i.test(navigator.userAgent)){
   $('cardInstalar').classList.remove('oculto'); }
 
 (async function iniciar(){
+  // mostra na hora os resultados guardados no aparelho; atualiza em seguida
+  ['megasena','quina'].forEach(j=>{ try{ const l=JSON.parse(localStorage.getItem('res_'+j)); if(l&&l.concursos) S.res[j]=l; }catch(e){} });
   renderTudo();
   await Promise.all([carregar('megasena'), carregarSalvos()]);
   renderTudo();

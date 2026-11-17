@@ -1,5 +1,5 @@
 // Service worker: guarda a "casca" do app para abrir rapido e funcionar sem internet.
-const CACHE = 'loterias-v1';
+const CACHE = 'loterias-v2';
 const ARQUIVOS = ['/', '/manifest.webmanifest', '/icone-192.png', '/icone-512.png', '/icone-180.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ARQUIVOS))); self.skipWaiting(); });
 self.addEventListener('activate', e => {

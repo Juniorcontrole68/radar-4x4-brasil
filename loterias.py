@@ -157,7 +157,7 @@ def resultados(jogo, quantidade=100, atualizar=True):
                     except Exception:  # noqa: BLE001
                         return None
 
-                with ThreadPoolExecutor(max_workers=6) as ex:
+                with ThreadPoolExecutor(max_workers=10) as ex:
                     for r in ex.map(pega, faltando):
                         if r:
                             cache["concursos"][str(r["concurso"])] = r
